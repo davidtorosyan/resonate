@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f0f1e" />
+    <title>Resonate</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; -webkit-tap-highlight-color: transparent; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: radial-gradient(ellipse at top, #1a1a3e, #0f0f1e 70%);
+        color: #e8e8f0;
+        display: flex;
+        flex-direction: column;
+        padding-top: env(safe-area-inset-top);
+      }
+      header {
+        padding: 1rem 1.25rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+      }
+      h1 {
+        font-size: 1.25rem;
+        margin: 0;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        opacity: 0.95;
+      }
+      #status {
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.75rem;
+        opacity: 0.55;
+      }
+      main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.25rem;
+        padding: 0.5rem 1rem;
+        width: 100%;
+        max-width: 900px;
+        margin: 0 auto;
+        min-height: 0;
+      }
+      #pitch-display {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.6rem;
+        flex-shrink: 0;
+      }
+      #note {
+        font-size: clamp(4rem, 18vw, 7rem);
+        font-weight: 800;
+        letter-spacing: -0.05em;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+        background: linear-gradient(135deg, #4f7cff, #a64fff, #ff4f9f);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        color: transparent;
+        transition: opacity 0.22s ease-out;
+        min-width: 4ch;
+        text-align: center;
+        opacity: 1;
+      }
+      #note[data-active="false"] {
+        background: none;
+        -webkit-text-fill-color: rgba(255,255,255,0.25);
+        color: rgba(255,255,255,0.25);
+      }
+      #note[data-onnote="false"] { opacity: 0.35; }
+      #cents-bar {
+        position: relative;
+        width: 280px;
+        max-width: 80vw;
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(255,255,255,0.08);
+      }
+      #cents-bar::before {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: -5px;
+        width: 1px;
+        height: 16px;
+        background: rgba(255,255,255,0.35);
+        transform: translateX(-50%);
+      }
+      #cents-needle {
+        position: absolute;
+        top: -3px;
+        left: 50%;
+        width: 6px;
+        height: 12px;
+        border-radius: 3px;
+        background: rgba(255,255,255,0.6);
+        transform: translateX(-50%);
+        transition: left 0.18s ease-out, background 0.2s ease;
+        box-shadow: 0 0 12px rgba(255,255,255,0.3);
+      }
+      #cents-needle[data-tune="good"]  { background: #4ade80; box-shadow: 0 0 14px rgba(74,222,128,0.7); }
+      #cents-needle[data-tune="ok"]    { background: linear-gradient(135deg, #4f7cff, #a64fff); box-shadow: 0 0 12px rgba(166,79,255,0.6); }
+      #cents-needle[data-tune="off"]   { background: linear-gradient(135deg, #ff4f6f, #ff8a4f); box-shadow: 0 0 12px rgba(255,79,111,0.6); }
+      #cents-label {
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.85rem;
+        opacity: 0.65;
+        font-variant-numeric: tabular-nums;
+        min-width: 6ch;
+        text-align: center;
+      }
+      #volume-row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        width: 280px;
+        max-width: 80vw;
+        margin-top: 0.25rem;
+      }
+      #volume-meter {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      #volume-bar {
+        position: relative;
+        height: 10px;
+        border-radius: 3px;
+        background: rgba(255,255,255,0.08);
+        overflow: hidden;
+        transition: box-shadow 0.12s ease;
+      }
+      #volume-bar[data-over="true"] {
+        box-shadow: 0 0 14px rgba(255,79,111,0.85), inset 0 0 0 1px rgba(255,79,111,0.6);
+      }
+      #volume-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, rgba(79,124,255,0.6), #a64fff 70%, #ff4f9f);
+        border-radius: 3px;
+        transition: width 0.05s linear, background 0.18s ease;
+      }
+      #volume-bar[data-over="true"] #volume-fill {
+        background: linear-gradient(90deg, #a64fff, #ff4f9f 50%, #ff4f6f);
+      }
+      .vtick {
+        position: absolute;
+        top: 0;
+        width: 1px;
+        height: 100%;
+        margin-left: -0.5px;
+        background: rgba(255,255,255,0.22);
+        pointer-events: none;
+      }
+      #volume-scale {
+        display: flex;
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.55rem;
+        letter-spacing: 0.04em;
+        opacity: 0.45;
+        font-variant-numeric: tabular-nums;
+      }
+      #volume-scale span {
+        flex: 1;
+        text-align: center;
+      }
+      #volume-label {
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.65rem;
+        letter-spacing: 0.12em;
+        opacity: 0.45;
+        text-align: right;
+        min-width: 3ch;
+      }
+      canvas {
+        width: 100%;
+        flex: 0 1 auto;
+        height: 28vh;
+        max-height: 240px;
+        min-height: 120px;
+        border-radius: 1rem;
+        background: rgba(255,255,255,0.02);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+        touch-action: none;
+      }
+      footer {
+        padding: 1.25rem 1.25rem calc(1.5rem + env(safe-area-inset-bottom));
+        display: flex;
+        justify-content: center;
+      }
+      button {
+        font: inherit;
+        font-size: 1rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        padding: 1rem 2.5rem;
+        border: 0;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #4f7cff, #a64fff);
+        color: white;
+        cursor: pointer;
+        transition: transform 0.1s ease, filter 0.2s ease, background 0.2s ease;
+        min-width: 180px;
+        box-shadow: 0 8px 24px -8px rgba(79,124,255,0.5);
+      }
+      button:active { transform: scale(0.97); }
+      button[data-recording="true"] {
+        background: linear-gradient(135deg, #ff4f6f, #ff8a4f);
+        box-shadow: 0 8px 24px -8px rgba(255,79,111,0.5);
+      }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      button.ghost {
+        background: transparent;
+        border: 1px solid rgba(255,255,255,0.2);
+        box-shadow: none;
+        color: rgba(255,255,255,0.85);
+        min-width: 130px;
+        padding: 0.85rem 1.5rem;
+      }
+      button.ghost:hover { background: rgba(255,255,255,0.06); }
+      footer {
+        gap: 0.75rem;
+      }
+      #calibrate-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        background: rgba(10,10,25,0.78);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+        padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
+      }
+      #calibrate-modal[hidden] { display: none; }
+      .cal-card {
+        width: 100%;
+        max-width: 380px;
+        background: linear-gradient(180deg, rgba(40,40,80,0.55), rgba(20,20,50,0.55));
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 1rem;
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        box-shadow: 0 20px 60px -20px rgba(0,0,0,0.6);
+      }
+      #cal-title {
+        margin: 0;
+        font-size: 1.05rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      #cal-instructions {
+        margin: 0;
+        opacity: 0.78;
+        line-height: 1.45;
+        font-size: 0.9rem;
+      }
+      #cal-readout {
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 1.6rem;
+        text-align: center;
+        padding: 0.7rem;
+        background: rgba(255,255,255,0.04);
+        border-radius: 0.5rem;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.02em;
+      }
+      #cal-readout[data-capturing="true"] {
+        background: linear-gradient(90deg, rgba(79,124,255,0.15), rgba(166,79,255,0.25), rgba(255,79,159,0.15));
+      }
+      .cal-buttons {
+        display: flex;
+        gap: 0.6rem;
+        justify-content: flex-end;
+        margin-top: 0.25rem;
+      }
+      .cal-buttons button {
+        font-size: 0.9rem;
+        padding: 0.7rem 1.2rem;
+        min-width: 110px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Resonate</h1>
+      <span id="status">idle</span>
+    </header>
+    <main>
+      <section id="pitch-display">
+        <div id="note" data-active="false" data-onnote="true">—</div>
+        <div id="cents-bar"><div id="cents-needle"></div></div>
+        <div id="cents-label">—</div>
+        <div id="volume-row">
+          <div id="volume-meter">
+            <div id="volume-bar">
+              <div id="volume-fill"></div>
+              <i class="vtick" style="left:10%"></i>
+              <i class="vtick" style="left:20%"></i>
+              <i class="vtick" style="left:30%"></i>
+              <i class="vtick" style="left:40%"></i>
+              <i class="vtick" style="left:50%"></i>
+              <i class="vtick" style="left:60%"></i>
+              <i class="vtick" style="left:70%"></i>
+              <i class="vtick" style="left:80%"></i>
+              <i class="vtick" style="left:90%"></i>
+            </div>
+            <div id="volume-scale">
+              <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span>
+            </div>
+          </div>
+          <span id="volume-label">VOL</span>
+        </div>
+      </section>
+      <canvas id="scope"></canvas>
+    </main>
+    <footer>
+      <button id="calibrate" type="button" class="ghost">Calibrate</button>
+      <button id="toggle">Start</button>
+    </footer>
+    <div id="calibrate-modal" hidden>
+      <div class="cal-card" role="dialog" aria-modal="true" aria-labelledby="cal-title">
+        <h2 id="cal-title">Calibrate · Step 1 of 2</h2>
+        <p id="cal-instructions">Make your QUIETEST sustained sound, then tap Capture. We'll record for 2.5 seconds.</p>
+        <div id="cal-readout">— dB</div>
+        <div class="cal-buttons">
+          <button id="cal-cancel" type="button" class="ghost">Cancel</button>
+          <button id="cal-action" type="button">Capture quietest</button>
+        </div>
+      </div>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>
