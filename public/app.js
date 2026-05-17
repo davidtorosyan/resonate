@@ -11,13 +11,15 @@ const volumeSteadyEl = document.getElementById("volume-steady");
 const volDbLoEl = document.getElementById("vol-db-lo");
 const volDbHiEl = document.getElementById("vol-db-hi");
 const calibrateBtn = document.getElementById("calibrate");
-const clearCalBtn = document.getElementById("clear-cal");
 const calModal = document.getElementById("calibrate-modal");
-const calTitle = document.getElementById("cal-title");
-const calInstr = document.getElementById("cal-instructions");
-const calReadout = document.getElementById("cal-readout");
-const calAction = document.getElementById("cal-action");
-const calCancel = document.getElementById("cal-cancel");
+const calLowPad = document.getElementById("cal-low");
+const calHighPad = document.getElementById("cal-high");
+const calLowDbEl = document.getElementById("cal-low-db");
+const calHighDbEl = document.getElementById("cal-high-db");
+const calLiveEl = document.getElementById("cal-live");
+const calClearBtn = document.getElementById("cal-clear");
+const calCancelBtn = document.getElementById("cal-cancel");
+const calConfirmBtn = document.getElementById("cal-confirm");
 const ctx = canvas.getContext("2d");
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -222,12 +224,15 @@ const volHistory = [];
 let isCalibrated = false;
 
 const CAL_KEY = "resonate.volCal";
-const CAL_CAPTURE_MS = 2500;
-let calState = "idle"; // idle | await-quiet | capturing-quiet | await-loud | capturing-loud | done
+const CAL_HOLD_MS = 2000; // how long a pad must be held to lock in a level
+const CAL_MIN_DB = -50;   // sound must exceed this for a held pad to fill
+
+let calLowDb = null;
+let calHighDb = null;
+let calCapturing = null; // which pad is mid-capture: null | "low" | "high"
+let calActiveMs = 0;     // time held with sound present — this drives the fill
+let calLastTick = 0;
 let calSamples = [];
-let calFloor = null;
-let calCeiling = null;
-let calTimer = null;
 
 try {
   const raw = localStorage.getItem(CAL_KEY);
@@ -241,41 +246,6 @@ try {
   }
 } catch {}
 
-function setCalState(state) {
-  calState = state;
-  if (state === "idle") {
-    calModal.hidden = true;
-    calReadout.dataset.capturing = "false";
-    return;
-  }
-  calModal.hidden = false;
-  calReadout.dataset.capturing = state === "capturing-quiet" || state === "capturing-loud" ? "true" : "false";
-  if (state === "await-quiet") {
-    calTitle.textContent = "Calibrate · Step 1 of 2";
-    calInstr.textContent = "Make your QUIETEST sustained sound, then tap Capture. We'll record for 2.5 seconds.";
-    calAction.textContent = "Capture quietest";
-    calAction.disabled = false;
-  } else if (state === "capturing-quiet") {
-    calInstr.textContent = "Hold your quiet sound…";
-    calAction.textContent = "Capturing…";
-    calAction.disabled = true;
-  } else if (state === "await-loud") {
-    calTitle.textContent = "Calibrate · Step 2 of 2";
-    calInstr.textContent = "Now make your LOUDEST sustained sound, then tap Capture.";
-    calAction.textContent = "Capture loudest";
-    calAction.disabled = false;
-  } else if (state === "capturing-loud") {
-    calInstr.textContent = "Hold your loud sound…";
-    calAction.textContent = "Capturing…";
-    calAction.disabled = true;
-  } else if (state === "done") {
-    calTitle.textContent = "Calibrated";
-    calInstr.textContent = `Floor: ${calFloor.toFixed(1)} dB · Ceiling: ${calCeiling.toFixed(1)} dB. Saved.`;
-    calAction.textContent = "Done";
-    calAction.disabled = false;
-  }
-}
-
 function calPercentile(arr, p) {
   if (arr.length === 0) return -60;
   const sorted = [...arr].sort((a, b) => a - b);
@@ -283,14 +253,100 @@ function calPercentile(arr, p) {
   return sorted[idx];
 }
 
-function startCalCapture(captureState, onDone) {
+// --- Volume calibration (one modal, hold-to-capture) --------------------
+// Hold "Low" while sustaining your quietest sound and "High" for your
+// loudest; each pad fills over CAL_HOLD_MS, then locks that level. Confirm
+// saves the pair; Clear discards a stored calibration.
+
+function renderCalPad(pad, dbEl, side, value) {
+  const capturing = calCapturing === side;
+  pad.dataset.state = capturing ? "capturing" : value !== null ? "done" : "empty";
+  if (!capturing) pad.style.setProperty("--cal-progress", "0%");
+  dbEl.textContent = capturing ? "…" : value !== null ? `${Math.round(value)} dB` : "— dB";
+}
+
+function renderCal() {
+  renderCalPad(calLowPad, calLowDbEl, "low", calLowDb);
+  renderCalPad(calHighPad, calHighDbEl, "high", calHighDb);
+  calConfirmBtn.disabled = calLowDb === null || calHighDb === null;
+}
+
+function startCalCapture(side) {
+  if (calCapturing || calModal.hidden) return;
+  calCapturing = side;
+  calActiveMs = 0;
+  calLastTick = performance.now();
   calSamples = [];
-  setCalState(captureState);
-  if (calTimer) clearTimeout(calTimer);
-  calTimer = setTimeout(() => {
-    calTimer = null;
-    onDone();
-  }, CAL_CAPTURE_MS);
+  renderCal();
+}
+
+function finishCalCapture() {
+  // Low pad -> quiet floor (low percentile); High pad -> loud ceiling.
+  const value =
+    calCapturing === "low"
+      ? calPercentile(calSamples, 0.25)
+      : calPercentile(calSamples, 0.9);
+  if (calCapturing === "low") calLowDb = value;
+  else calHighDb = value;
+  calCapturing = null;
+  calSamples = [];
+  renderCal();
+}
+
+function cancelCalCapture() {
+  if (!calCapturing) return;
+  calCapturing = null;
+  calSamples = [];
+  renderCal();
+}
+
+// Called every frame while the modal is open; advances any held capture.
+// The fill only grows while the pad is held AND sound is coming in — holding
+// it in silence pauses the fill instead of running out the clock.
+function tickCalibration(db, now) {
+  calLiveEl.textContent = `${db.toFixed(1)} dB`;
+  if (!calCapturing) return;
+  const delta = Math.min(now - calLastTick, 100);
+  calLastTick = now;
+  if (db > CAL_MIN_DB) {
+    calActiveMs += delta;
+    calSamples.push(db);
+  }
+  const progress = Math.min(1, calActiveMs / CAL_HOLD_MS);
+  const pad = calCapturing === "low" ? calLowPad : calHighPad;
+  pad.style.setProperty("--cal-progress", `${progress * 100}%`);
+  if (progress >= 1) finishCalCapture();
+}
+
+function openCalModal() {
+  calCapturing = null;
+  calSamples = [];
+  // Pre-fill from the active calibration so the user can redo just one side.
+  calLowDb = isCalibrated ? VOL_FLOOR_DB : null;
+  calHighDb = isCalibrated ? VOL_CEIL_DB : null;
+  calClearBtn.hidden = !isCalibrated;
+  calLiveEl.textContent = "— dB";
+  renderCal();
+  calModal.hidden = false;
+}
+
+function closeCalModal() {
+  cancelCalCapture();
+  calModal.hidden = true;
+}
+
+function confirmCalibration() {
+  if (calLowDb === null || calHighDb === null) return;
+  const floor = Math.min(calLowDb, calHighDb);
+  let ceiling = Math.max(calLowDb, calHighDb);
+  if (ceiling - floor < 6) ceiling = floor + 6; // keep a usable span
+  VOL_FLOOR_DB = floor;
+  VOL_CEIL_DB = ceiling;
+  setCalibrated(true);
+  try {
+    localStorage.setItem(CAL_KEY, JSON.stringify({ floor, ceiling }));
+  } catch {}
+  closeCalModal();
 }
 
 function updateVolumeMeter(db) {
@@ -312,7 +368,6 @@ function dbToLevel(db) {
 function setCalibrated(v) {
   isCalibrated = v;
   volumeRowEl.dataset.calibrated = v ? "true" : "false";
-  clearCalBtn.hidden = !v;
   if (v) {
     volDbLoEl.textContent = `${Math.round(VOL_FLOOR_DB)} dB`;
     volDbHiEl.textContent = `${Math.round(VOL_CEIL_DB)} dB`;
@@ -360,14 +415,9 @@ function draw() {
   const rms = Math.sqrt(sumSq / floatBuf.length);
   const db = 20 * Math.log10(rms || 1e-6);
 
-  if (calState !== "idle") {
-    calReadout.textContent = `${db.toFixed(1)} dB`;
-    if (calState === "capturing-quiet" || calState === "capturing-loud") {
-      calSamples.push(db);
-    }
-  }
-
   const now = performance.now();
+  if (!calModal.hidden) tickCalibration(db, now);
+
   if (rms > MIN_RMS) {
     volHistory.push({ time: now, db });
     const r = detectPitch(floatBuf, audioCtx.sampleRate);
@@ -471,11 +521,7 @@ async function start() {
 }
 
 async function stop() {
-  if (calTimer) {
-    clearTimeout(calTimer);
-    calTimer = null;
-  }
-  if (calState !== "idle") setCalState("idle");
+  closeCalModal();
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
   if (stream) stream.getTracks().forEach((t) => t.stop());
@@ -523,43 +569,35 @@ calibrateBtn.addEventListener("click", async () => {
     await start();
     if (button.dataset.recording !== "true") return;
   }
-  calFloor = null;
-  calCeiling = null;
-  calReadout.textContent = "— dB";
-  setCalState("await-quiet");
+  openCalModal();
 });
 
-clearCalBtn.addEventListener("click", clearCalibration);
+for (const [pad, side] of [
+  [calLowPad, "low"],
+  [calHighPad, "high"],
+]) {
+  pad.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    startCalCapture(side);
+  });
+  pad.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+// A capture ends when the pointer is released anywhere. If the pad already
+// filled, finishCalCapture cleared calCapturing and this is a no-op.
+document.addEventListener("pointerup", cancelCalCapture);
+document.addEventListener("pointercancel", cancelCalCapture);
 
-calCancel.addEventListener("click", () => {
-  if (calTimer) {
-    clearTimeout(calTimer);
-    calTimer = null;
-  }
-  setCalState("idle");
-});
-
-calAction.addEventListener("click", () => {
-  if (calState === "await-quiet") {
-    startCalCapture("capturing-quiet", () => {
-      calFloor = calPercentile(calSamples, 0.25);
-      setCalState("await-loud");
-    });
-  } else if (calState === "await-loud") {
-    startCalCapture("capturing-loud", () => {
-      calCeiling = calPercentile(calSamples, 0.9);
-      if (calCeiling - calFloor < 6) calCeiling = calFloor + 6;
-      VOL_FLOOR_DB = calFloor;
-      VOL_CEIL_DB = calCeiling;
-      setCalibrated(true);
-      try {
-        localStorage.setItem(CAL_KEY, JSON.stringify({ floor: calFloor, ceiling: calCeiling }));
-      } catch {}
-      setCalState("done");
-    });
-  } else if (calState === "done") {
-    setCalState("idle");
-  }
+calConfirmBtn.addEventListener("click", confirmCalibration);
+calCancelBtn.addEventListener("click", closeCalModal);
+calClearBtn.addEventListener("click", () => {
+  clearCalibration();
+  // Reset the modal back to a blank capture, but leave it open.
+  calCapturing = null;
+  calSamples = [];
+  calLowDb = null;
+  calHighDb = null;
+  calClearBtn.hidden = true;
+  renderCal();
 });
 
 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {

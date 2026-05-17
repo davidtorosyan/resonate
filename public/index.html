@@ -276,13 +276,6 @@
         padding: 0.85rem 1.5rem;
       }
       button.ghost:hover { background: rgba(255,255,255,0.06); }
-      #clear-cal {
-        min-width: 0;
-        padding: 0.85rem 1.1rem;
-        font-size: 0.85rem;
-        font-weight: 500;
-      }
-      #clear-cal[hidden] { display: none; }
       footer {
         gap: 0.75rem;
         flex-wrap: wrap;
@@ -325,37 +318,107 @@
         line-height: 1.45;
         font-size: 0.9rem;
       }
-      #cal-readout {
-        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
-        font-size: 1.6rem;
-        text-align: center;
-        padding: 0.7rem;
-        background: rgba(255,255,255,0.04);
-        border-radius: 0.5rem;
-        font-variant-numeric: tabular-nums;
-        letter-spacing: 0.02em;
+      .cal-pads {
+        display: flex;
+        gap: 0.7rem;
       }
-      #cal-readout[data-capturing="true"] {
-        background: linear-gradient(90deg, rgba(79,124,255,0.15), rgba(166,79,255,0.25), rgba(255,79,159,0.15));
+      .cal-pad {
+        flex: 1;
+        min-width: 0;
+        position: relative;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.3rem;
+        height: 104px;
+        padding: 0.5rem;
+        border-radius: 0.75rem;
+        border: 1px solid rgba(255,255,255,0.16);
+        background: rgba(255,255,255,0.04);
+        color: #e8e8f0;
+        box-shadow: none;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        transition: border-color 0.15s ease, background 0.15s ease;
+      }
+      .cal-pad:active { transform: none; }
+      .cal-pad[data-state="capturing"] {
+        border-color: rgba(166,79,255,0.7);
+        background: rgba(166,79,255,0.1);
+      }
+      .cal-pad[data-state="done"] {
+        border-color: rgba(74,222,128,0.55);
+        background: rgba(74,222,128,0.08);
+      }
+      .cal-pad-fill {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: var(--cal-progress, 0%);
+        background: linear-gradient(180deg, rgba(79,124,255,0.45), rgba(166,79,255,0.6));
+        pointer-events: none;
+      }
+      .cal-pad-label {
+        position: relative;
+        font-size: 1.1rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+      }
+      .cal-pad-db {
+        position: relative;
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.8rem;
+        opacity: 0.72;
+        font-variant-numeric: tabular-nums;
+      }
+      #cal-live {
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.95rem;
+        text-align: center;
+        opacity: 0.55;
+        font-variant-numeric: tabular-nums;
       }
       .cal-buttons {
         display: flex;
+        align-items: center;
         gap: 0.6rem;
-        justify-content: flex-end;
         margin-top: 0.25rem;
       }
-      .cal-buttons button {
-        font-size: 0.9rem;
-        padding: 0.7rem 1.2rem;
-        min-width: 110px;
+      .cal-actions {
+        display: flex;
+        gap: 0.6rem;
+        margin-left: auto;
       }
+      .cal-actions button {
+        font-size: 0.9rem;
+        padding: 0.7rem 1.3rem;
+        min-width: 104px;
+      }
+      .cal-link {
+        background: none;
+        border: 0;
+        box-shadow: none;
+        min-width: 0;
+        padding: 0.4rem 0;
+        font-size: 0.78rem;
+        font-weight: 500;
+        color: rgba(255,255,255,0.55);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      .cal-link[hidden] { display: none; }
     </style>
   </head>
   <body>
     <header>
       <h1>Resonate</h1>
       <div class="header-right">
-        <span id="version">v11</span>
+        <span id="version">v13</span>
         <span id="status">idle</span>
       </div>
     </header>
@@ -396,17 +459,34 @@
     </main>
     <footer>
       <button id="calibrate" type="button" class="ghost">Calibrate</button>
-      <button id="clear-cal" type="button" class="ghost" hidden>Clear cal</button>
       <button id="toggle">Start</button>
     </footer>
     <div id="calibrate-modal" hidden>
       <div class="cal-card" role="dialog" aria-modal="true" aria-labelledby="cal-title">
-        <h2 id="cal-title">Calibrate · Step 1 of 2</h2>
-        <p id="cal-instructions">Make your QUIETEST sustained sound, then tap Capture. We'll record for 2.5 seconds.</p>
-        <div id="cal-readout">— dB</div>
+        <h2 id="cal-title">Calibrate your volume</h2>
+        <p id="cal-instructions">
+          Hold a pad and sustain a sound until it fills — <b>Low</b> for your
+          quietest, <b>High</b> for your loudest. Redo a side anytime, then Confirm.
+        </p>
+        <div class="cal-pads">
+          <button id="cal-low" class="cal-pad" type="button" data-state="empty">
+            <span class="cal-pad-fill"></span>
+            <span class="cal-pad-label">Low</span>
+            <span class="cal-pad-db" id="cal-low-db">— dB</span>
+          </button>
+          <button id="cal-high" class="cal-pad" type="button" data-state="empty">
+            <span class="cal-pad-fill"></span>
+            <span class="cal-pad-label">High</span>
+            <span class="cal-pad-db" id="cal-high-db">— dB</span>
+          </button>
+        </div>
+        <div id="cal-live">— dB</div>
         <div class="cal-buttons">
-          <button id="cal-cancel" type="button" class="ghost">Cancel</button>
-          <button id="cal-action" type="button">Capture quietest</button>
+          <button id="cal-clear" class="cal-link" type="button" hidden>Clear calibration</button>
+          <span class="cal-actions">
+            <button id="cal-cancel" type="button" class="ghost">Cancel</button>
+            <button id="cal-confirm" type="button" disabled>Confirm</button>
+          </span>
         </div>
       </div>
     </div>
