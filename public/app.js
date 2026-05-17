@@ -6,7 +6,12 @@ const centsLabelEl = document.getElementById("cents-label");
 const centsNeedleEl = document.getElementById("cents-needle");
 const volumeFillEl = document.getElementById("volume-fill");
 const volumeBarEl = document.getElementById("volume-bar");
+const volumeRowEl = document.getElementById("volume-row");
+const volumeSteadyEl = document.getElementById("volume-steady");
+const volDbLoEl = document.getElementById("vol-db-lo");
+const volDbHiEl = document.getElementById("vol-db-hi");
 const calibrateBtn = document.getElementById("calibrate");
+const clearCalBtn = document.getElementById("clear-cal");
 const calModal = document.getElementById("calibrate-modal");
 const calTitle = document.getElementById("cal-title");
 const calInstr = document.getElementById("cal-instructions");
@@ -204,8 +209,17 @@ function updatePitchDisplay() {
   centsNeedleEl.dataset.tune = abs < 5 ? "good" : abs < 20 ? "ok" : "off";
 }
 
-let VOL_FLOOR_DB = -50;
-let VOL_CEIL_DB = -20;
+// Wide default range so an uncalibrated meter rarely pins to either end.
+// Calibration replaces these with values tailored to the singer.
+const VOL_FLOOR_DEFAULT = -65;
+const VOL_CEIL_DEFAULT = -5;
+let VOL_FLOOR_DB = VOL_FLOOR_DEFAULT;
+let VOL_CEIL_DB = VOL_CEIL_DEFAULT;
+
+// Steady-volume readout: median of voiced loudness over this window.
+const VOL_STEADY_MS = 2000;
+const volHistory = [];
+let isCalibrated = false;
 
 const CAL_KEY = "resonate.volCal";
 const CAL_CAPTURE_MS = 2500;
@@ -222,6 +236,7 @@ try {
     if (typeof cal.floor === "number" && typeof cal.ceiling === "number" && cal.ceiling > cal.floor) {
       VOL_FLOOR_DB = cal.floor;
       VOL_CEIL_DB = cal.ceiling;
+      setCalibrated(true);
     }
   }
 } catch {}
@@ -285,6 +300,54 @@ function updateVolumeMeter(db) {
   volumeBarEl.dataset.over = db > VOL_CEIL_DB ? "true" : "false";
 }
 
+// Map a loudness in dB onto the calibrated 1-10 scale (floor -> 1, ceiling -> 10).
+function dbToLevel(db) {
+  const range = VOL_CEIL_DB - VOL_FLOOR_DB;
+  const t = Math.max(0, Math.min(1, (db - VOL_FLOOR_DB) / range));
+  return 1 + t * 9;
+}
+
+// Calibrated meter reveals the 1-10 scale, tick marks, dB endpoints, and the
+// steady-volume number; uncalibrated it's just a raw bar.
+function setCalibrated(v) {
+  isCalibrated = v;
+  volumeRowEl.dataset.calibrated = v ? "true" : "false";
+  clearCalBtn.hidden = !v;
+  if (v) {
+    volDbLoEl.textContent = `${Math.round(VOL_FLOOR_DB)} dB`;
+    volDbHiEl.textContent = `${Math.round(VOL_CEIL_DB)} dB`;
+  }
+}
+
+// Discard the saved calibration and revert to the wide default range.
+function clearCalibration() {
+  try {
+    localStorage.removeItem(CAL_KEY);
+  } catch {}
+  VOL_FLOOR_DB = VOL_FLOOR_DEFAULT;
+  VOL_CEIL_DB = VOL_CEIL_DEFAULT;
+  setCalibrated(false);
+}
+
+// "idle" dims the meter to show the mic isn't running; "live" while recording.
+function setMeterState(state) {
+  volumeRowEl.dataset.state = state;
+}
+
+// Steady volume — median of recent voiced loudness, like the locked-note logic
+// for pitch. Only meaningful (and only shown) once calibrated.
+function updateSteadyVolume() {
+  if (!isCalibrated) return;
+  if (volHistory.length < 8) {
+    volumeSteadyEl.textContent = "—";
+    return;
+  }
+  const sorted = volHistory.map((v) => v.db).sort((a, b) => a - b);
+  const n = sorted.length;
+  const medDb = n % 2 === 0 ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2 : sorted[n >> 1];
+  volumeSteadyEl.textContent = dbToLevel(medDb).toFixed(0);
+}
+
 function draw() {
   rafId = requestAnimationFrame(draw);
   if (!analyser) return;
@@ -306,6 +369,7 @@ function draw() {
 
   const now = performance.now();
   if (rms > MIN_RMS) {
+    volHistory.push({ time: now, db });
     const r = detectPitch(floatBuf, audioCtx.sampleRate);
     if (r && r.clarity > MIN_CLARITY && r.freq >= MIN_FREQ && r.freq <= MAX_FREQ) {
       pushPitch(freqToMidi(r.freq), now);
@@ -314,8 +378,10 @@ function draw() {
     const cutoff = now - PITCH_WINDOW_MS;
     while (pitchHistory.length && pitchHistory[0].time < cutoff) pitchHistory.shift();
   }
+  while (volHistory.length && volHistory[0].time < now - VOL_STEADY_MS) volHistory.shift();
   updatePitchDisplay();
   updateVolumeMeter(db);
+  updateSteadyVolume();
 
   const rect = canvas.getBoundingClientRect();
   const w = rect.width;
@@ -385,9 +451,12 @@ async function start() {
 
     pitchHistory.length = 0;
     peakHistory.length = 0;
+    volHistory.length = 0;
     lockedNote = null;
     offNoteSince = 0;
 
+    setMeterState("live");
+    volumeSteadyEl.textContent = "—";
     button.textContent = "Stop";
     button.dataset.recording = "true";
     button.disabled = false;
@@ -421,13 +490,17 @@ async function stop() {
   yinBuf = null;
   pitchHistory.length = 0;
   peakHistory.length = 0;
+  volHistory.length = 0;
   lockedNote = null;
   offNoteSince = 0;
   button.textContent = "Start";
   button.dataset.recording = "false";
   statusEl.textContent = "idle";
   updatePitchDisplay();
-  updateVolumeMeter(0);
+  setMeterState("idle");
+  volumeFillEl.style.width = "0%";
+  volumeBarEl.dataset.over = "false";
+  volumeSteadyEl.textContent = "—";
   clearCanvas();
 }
 
@@ -456,6 +529,8 @@ calibrateBtn.addEventListener("click", async () => {
   setCalState("await-quiet");
 });
 
+clearCalBtn.addEventListener("click", clearCalibration);
+
 calCancel.addEventListener("click", () => {
   if (calTimer) {
     clearTimeout(calTimer);
@@ -476,6 +551,7 @@ calAction.addEventListener("click", () => {
       if (calCeiling - calFloor < 6) calCeiling = calFloor + 6;
       VOL_FLOOR_DB = calFloor;
       VOL_CEIL_DB = calCeiling;
+      setCalibrated(true);
       try {
         localStorage.setItem(CAL_KEY, JSON.stringify({ floor: calFloor, ceiling: calCeiling }));
       } catch {}

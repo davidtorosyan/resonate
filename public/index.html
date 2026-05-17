@@ -138,7 +138,9 @@
         width: 280px;
         max-width: 80vw;
         margin-top: 0.25rem;
+        transition: opacity 0.25s ease;
       }
+      #volume-row[data-state="idle"] { opacity: 0.4; }
       #volume-meter {
         flex: 1;
         display: flex;
@@ -187,13 +189,46 @@
         flex: 1;
         text-align: center;
       }
+      #volume-range {
+        display: flex;
+        justify-content: space-between;
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.55rem;
+        letter-spacing: 0.03em;
+        opacity: 0.5;
+        font-variant-numeric: tabular-nums;
+        margin-top: 2px;
+      }
+      #volume-readout {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        min-width: 3ch;
+      }
+      #volume-steady {
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 1.05rem;
+        font-weight: 700;
+        line-height: 1.15;
+        font-variant-numeric: tabular-nums;
+        color: #a64fff;
+        width: 2ch;
+        text-align: right;
+      }
       #volume-label {
         font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
         font-size: 0.65rem;
         letter-spacing: 0.12em;
         opacity: 0.45;
         text-align: right;
-        min-width: 3ch;
+      }
+      /* 1-10 scale, ticks, dB range, and steady number only make sense
+         once the meter has been calibrated to the singer. */
+      #volume-row:not([data-calibrated="true"]) .vtick,
+      #volume-row:not([data-calibrated="true"]) #volume-scale,
+      #volume-row:not([data-calibrated="true"]) #volume-range,
+      #volume-row:not([data-calibrated="true"]) #volume-steady {
+        display: none;
       }
       canvas {
         width: 100%;
@@ -241,8 +276,16 @@
         padding: 0.85rem 1.5rem;
       }
       button.ghost:hover { background: rgba(255,255,255,0.06); }
+      #clear-cal {
+        min-width: 0;
+        padding: 0.85rem 1.1rem;
+        font-size: 0.85rem;
+        font-weight: 500;
+      }
+      #clear-cal[hidden] { display: none; }
       footer {
         gap: 0.75rem;
+        flex-wrap: wrap;
       }
       #calibrate-modal {
         position: fixed;
@@ -312,7 +355,7 @@
     <header>
       <h1>Resonate</h1>
       <div class="header-right">
-        <span id="version">v8</span>
+        <span id="version">v11</span>
         <span id="status">idle</span>
       </div>
     </header>
@@ -321,7 +364,7 @@
         <div id="note" data-active="false" data-onnote="true">—</div>
         <div id="cents-bar"><div id="cents-needle"></div></div>
         <div id="cents-label">—</div>
-        <div id="volume-row">
+        <div id="volume-row" data-state="idle" data-calibrated="false">
           <div id="volume-meter">
             <div id="volume-bar">
               <div id="volume-fill"></div>
@@ -338,14 +381,22 @@
             <div id="volume-scale">
               <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span>
             </div>
+            <div id="volume-range">
+              <span id="vol-db-lo">— dB</span>
+              <span id="vol-db-hi">— dB</span>
+            </div>
           </div>
-          <span id="volume-label">VOL</span>
+          <div id="volume-readout">
+            <span id="volume-steady">—</span>
+            <span id="volume-label">VOL</span>
+          </div>
         </div>
       </section>
       <canvas id="scope"></canvas>
     </main>
     <footer>
       <button id="calibrate" type="button" class="ghost">Calibrate</button>
+      <button id="clear-cal" type="button" class="ghost" hidden>Clear cal</button>
       <button id="toggle">Start</button>
     </footer>
     <div id="calibrate-modal" hidden>
