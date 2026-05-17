@@ -35,6 +35,19 @@
         font-size: 0.75rem;
         opacity: 0.55;
       }
+      .header-right {
+        display: flex;
+        align-items: baseline;
+        gap: 0.6rem;
+      }
+      #version {
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        color: #a64fff;
+        opacity: 0.9;
+      }
       main {
         flex: 1;
         display: flex;
@@ -298,7 +311,10 @@
   <body>
     <header>
       <h1>Resonate</h1>
-      <span id="status">idle</span>
+      <div class="header-right">
+        <span id="version">v8</span>
+        <span id="status">idle</span>
+      </div>
     </header>
     <main>
       <section id="pitch-display">

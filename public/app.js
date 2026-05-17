@@ -20,8 +20,8 @@ const PITCH_WINDOW_MS = 1500;
 const SWITCH_WINDOW_MS = 300;
 const SWITCH_DELAY_MS = 250;
 const MIN_RMS = 0.012;
-const MIN_CLARITY = 0.85;
-const MIN_FREQ = 70;
+const MIN_CLARITY = 0.8;
+const MIN_FREQ = 50;
 const MAX_FREQ = 1100;
 
 let lockedNote = null;
@@ -69,7 +69,9 @@ function clearCanvas() {
 // YIN pitch detection (de Cheveigné & Kawahara, 2002).
 // Reliable for monophonic pitch like singing.
 function detectPitch(buf, sampleRate) {
-  const halfN = buf.length >> 1;
+  // Use as many samples as the largest lag allows. With fftSize 4096 and
+  // maxTau ~870, this lets low pitches see ~3.7 cycles instead of ~2.3.
+  const halfN = buf.length - maxTau;
 
   for (let tau = 1; tau <= maxTau; tau++) {
     let sum = 0;
@@ -87,7 +89,7 @@ function detectPitch(buf, sampleRate) {
     yinBuf[tau] = (yinBuf[tau] * tau) / (running || 1);
   }
 
-  const threshold = 0.15;
+  const threshold = 0.2;
   let tau = -1;
   for (let i = minTau; i <= maxTau; i++) {
     if (yinBuf[i] < threshold) {
@@ -371,7 +373,7 @@ async function start() {
 
     source = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 2048;
+    analyser.fftSize = 4096;
     analyser.smoothingTimeConstant = 0;
     timeBuf = new Uint8Array(analyser.fftSize);
     floatBuf = new Float32Array(analyser.fftSize);
@@ -432,6 +434,15 @@ async function stop() {
 button.addEventListener("click", () => {
   if (button.dataset.recording === "true") stop();
   else start();
+});
+
+// Auto-stop when the page is backgrounded — minimized, tab hidden, or the phone
+// screen locked. Otherwise the mic keeps capturing while the app isn't visible.
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden && button.dataset.recording === "true") {
+    await stop();
+    statusEl.textContent = "auto-stopped (backgrounded)";
+  }
 });
 
 calibrateBtn.addEventListener("click", async () => {
