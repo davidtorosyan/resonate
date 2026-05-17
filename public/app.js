@@ -10,7 +10,7 @@ const volumeRowEl = document.getElementById("volume-row");
 const volumeSteadyEl = document.getElementById("volume-steady");
 const volDbLoEl = document.getElementById("vol-db-lo");
 const volDbHiEl = document.getElementById("vol-db-hi");
-const calibrateBtn = document.getElementById("calibrate");
+const volumeReadoutEl = document.getElementById("volume-readout");
 const calModal = document.getElementById("calibrate-modal");
 const calLowPad = document.getElementById("cal-low");
 const calHighPad = document.getElementById("cal-high");
@@ -564,7 +564,8 @@ document.addEventListener("visibilitychange", async () => {
   }
 });
 
-calibrateBtn.addEventListener("click", async () => {
+// The volume readout (the "VOL" gear) is the calibration entry point.
+volumeReadoutEl.addEventListener("click", async () => {
   if (button.dataset.recording !== "true") {
     await start();
     if (button.dataset.recording !== "true") return;
