@@ -2,7 +2,16 @@
 
 A vocal pitch + waveform web app served over LAN so it can be used from a phone. Sing into the mic, see the note name, cents-off, volume, and live waveform.
 
-## Run
+## Deploy (primary workflow)
+
+Push to `main` → `.github/workflows/deploy.yml` publishes `public/` to the `gh-pages` branch → live on GitHub Pages (HTTPS, so the mic works on a phone with no cert hassle). This is the normal iteration loop: make the change, bump the version badge, push to `main`, tell the user when the deploy finishes. The local server below is only for offline testing.
+
+## Pages
+
+- `index.html` + `app.js` — the tuner (hold a note, see note/cents/volume/waveform). Header has a **Record** link.
+- `record.html` + `record.js` — record mode: record a sung phrase, see a live piano-roll of pitch with detected notes, then a transcript of notes (name, duration, cents). Self-contained (its own copy of YIN) so it can't break the tuner.
+
+## Run (local, optional)
 
 ```
 cd C:\Data\Claude\resonate
@@ -17,7 +26,7 @@ Server prints both HTTP (port 3000) and HTTPS (port 3443) URLs for localhost and
 
 ## Version marker
 
-`index.html` shows a `v<N>` badge in the top-right of the header (`#version`, purple). It exists so you can confirm a frontend change actually reached the phone — bump the number, refresh, check the badge. To bump: edit the single `<span id="version">` line. If the badge doesn't change after a refresh, the phone is serving a cached `index.html` — hard-refresh / pull-to-refresh.
+`index.html` shows a `v<N>` badge in the top-right of the header (`#version`, purple). It exists so you can confirm a frontend change actually reached the phone — bump the number, refresh, check the badge. To bump: edit the `<span id="version">` line in **both** `index.html` and `record.html` (keep them equal). If the badge doesn't change after a refresh, the phone is serving a cached `index.html` — hard-refresh / pull-to-refresh.
 
 ## Stack
 
@@ -70,3 +79,7 @@ Net feel: holding a note is rock-stable; intentional jumps cause a brief dim the
 ## Volume meter
 
 Maps RMS → bar width via `(dB + 55) * 2`, clamped 0–100%. Roughly −55 dB empty, 0 dB full. If the bar sits too full or too empty for your mic gain, adjust the `+55` constant in `updateVolumeMeter()`.
+
+## Record mode note segmentation (`public/record.js`)
+
+Per frame: YIN pitch (same settings as the tuner) → median over `SMOOTH_MS` (100 ms). A note continues while the smoothed pitch stays within 50¢ of the note's median; it splits when the pitch sits >50¢ away for `SPLIT_MS` (80 ms), and ends on an unvoiced gap ≥ `GAP_MS` (70 ms). Notes shorter than `MIN_NOTE_MS` (80 ms) are dropped. Voicing also requires the RMS of the newest `TAIL_SAMPLES` (1024, ~21 ms) to pass `MIN_RMS` — the full 4096-sample window smears short gaps, which otherwise merges repeated same-pitch notes. No beat grid yet; times are seconds.
