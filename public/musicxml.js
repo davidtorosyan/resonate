@@ -1,15 +1,17 @@
-// MusicXML → a flat melody: [{ midi, beats, measure, verses: { "1": {text, syllabic} } }].
-// Rhythm is kept (in quarter-note beats) for display only; matching ignores it.
+// MusicXML → a timed melody for karaoke.
+//   score = { title, partName, fifths, tempo (quarter notes / min), beats, beatType,
+//             verses, measures: [start (quarters)], length (quarters), notes }
+//   note  = { midi, onset, dur (quarters), measure, verses: { "1": {text, syllabic} }, restBefore }
 
 const STEP_PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+const UNIT_QUARTERS = { whole: 4, half: 2, quarter: 1, eighth: 0.5, "16th": 0.25 };
+export const DEFAULT_TEMPO = 90;
 
-// Load a File (or {name, arrayBuffer}) that is .musicxml / .xml / .mxl.
-export async function loadScoreFile(file) {
-  const buf = await file.arrayBuffer();
-  const bytes = new Uint8Array(buf);
+// Read a File that is .musicxml / .xml / .mxl and return the score XML text.
+export async function readScoreFile(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
   const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK"
-  const xml = isZip ? await xmlFromMxl(bytes) : new TextDecoder().decode(bytes);
-  return parseMusicXml(xml, file.name);
+  return isZip ? xmlFromMxl(bytes) : new TextDecoder().decode(bytes);
 }
 
 export function parseMusicXml(xmlText, fallbackName = "Untitled") {
@@ -47,30 +49,58 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
   const partId = best.part.getAttribute("id");
   const partName = text(root.querySelector(`score-part[id="${partId}"] > part-name`)) || partId;
 
+  const tempo = findTempo(root);
   let divisions = 1;
-  let fifths = 0;
-  let fifthsSet = false;
+  let fifths = null;
+  let beats = null, beatType = null;
   const notes = [];
+  const measures = [];
   const verseSet = new Set();
   let restPending = false;
+  let measureStart = 0;
 
   for (const measure of best.part.querySelectorAll(":scope > measure")) {
     const mNum = measure.getAttribute("number");
+    measures.push(measureStart);
+    // Track the position across every voice (backup/forward) so the
+    // measure's length — and so every note's onset — is right.
+    let pos = 0, maxPos = 0, lastStart = 0;
     for (const el of measure.children) {
-      if (el.nodeName === "attributes") {
+      const name = el.nodeName;
+      if (name === "attributes") {
         const d = text(el.querySelector("divisions"));
         if (d) divisions = Number(d) || 1;
         const f = text(el.querySelector("key > fifths"));
-        if (f && !fifthsSet) { fifths = Number(f); fifthsSet = true; }
+        if (f && fifths === null) fifths = Number(f);
+        if (beats === null && el.querySelector("time > beats")) {
+          beats = Number(text(el.querySelector("time > beats"))) || 4;
+          beatType = Number(text(el.querySelector("time > beat-type"))) || 4;
+        }
         continue;
       }
-      if (el.nodeName !== "note") continue;
-      const voice = text(el.querySelector("voice")) || "1";
-      if (voice !== best.voice) continue;
-      if (el.querySelector("grace") || el.querySelector("cue")) continue;
-      const beats = (Number(text(el.querySelector(":scope > duration"))) || 0) / divisions;
+      if (name === "backup") { pos -= (Number(text(el.querySelector("duration"))) || 0) / divisions; continue; }
+      if (name === "forward") {
+        pos += (Number(text(el.querySelector("duration"))) || 0) / divisions;
+        maxPos = Math.max(maxPos, pos);
+        continue;
+      }
+      if (name !== "note") continue;
 
-      if (el.querySelector("rest")) {
+      const isChord = !!el.querySelector(":scope > chord");
+      const isGrace = !!el.querySelector(":scope > grace");
+      const dur = isGrace ? 0 : (Number(text(el.querySelector(":scope > duration"))) || 0) / divisions;
+      let start;
+      if (isChord) start = lastStart;
+      else {
+        start = pos;
+        lastStart = pos;
+        pos += dur;
+        maxPos = Math.max(maxPos, pos);
+      }
+
+      const voice = text(el.querySelector("voice")) || "1";
+      if (voice !== best.voice || isGrace || el.querySelector(":scope > cue")) continue;
+      if (el.querySelector(":scope > rest")) {
         restPending = true;
         continue;
       }
@@ -80,11 +110,12 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
         (Number(text(pitch.querySelector("octave"))) + 1) * 12 +
         STEP_PC[text(pitch.querySelector("step"))] +
         Math.round(Number(text(pitch.querySelector("alter")) || 0));
+      const onset = measureStart + start;
 
       // Chord tones: keep only the highest note at that onset.
-      if (el.querySelector("chord")) {
+      if (isChord) {
         const last = notes[notes.length - 1];
-        if (last && midi > last.midi) last.midi = midi;
+        if (last && Math.abs(last.onset - onset) < 1e-6 && midi > last.midi) last.midi = midi;
         continue;
       }
 
@@ -92,8 +123,12 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
       const verses = {};
       for (const ly of el.querySelectorAll(":scope > lyric")) {
         const num = ly.getAttribute("number") || "1";
-        const t = [...ly.querySelectorAll("text")].map((x) => x.textContent).join(" ");
-        const clean = t.replace(/^\s*\d+\.\s*/, "").trim();
+        // Elided syllables (<text>I</text><elision/><text>'m</text>): join
+        // directly before an apostrophe, otherwise with a space.
+        const t = [...ly.querySelectorAll("text")].map((x) => x.textContent)
+          .reduce((acc, x) => (acc ? acc + (/^['’]/.test(x) ? "" : " ") + x : x), "");
+        // Drop verse numbers ("1. "), and old-style spaced contractions ("I 'm").
+        const clean = t.replace(/^\s*\d+\.\s*/, "").replace(/(\w)\s(['’](?:m|s|t|ll|re|ve|d)\b)/g, "$1$2").trim();
         if (!clean) continue;
         verses[num] = { text: clean, syllabic: text(ly.querySelector("syllabic")) || "single" };
         verseSet.add(num);
@@ -101,26 +136,40 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
 
       const last = notes[notes.length - 1];
       if (tieTypes.includes("stop") && last && last.midi === midi && last.tieOpen) {
-        last.beats += beats;
+        last.dur += dur;
         last.tieOpen = tieTypes.includes("start");
         continue;
       }
-      notes.push({
-        midi,
-        beats,
-        measure: mNum,
-        verses,
-        restBefore: restPending,
-        tieOpen: tieTypes.includes("start"),
-      });
+      notes.push({ midi, onset, dur, measure: mNum, verses, restBefore: restPending, tieOpen: tieTypes.includes("start") });
       restPending = false;
     }
+    measureStart += maxPos;
   }
   if (!notes.length) throw new Error("No pitched notes found");
   for (const n of notes) delete n.tieOpen;
 
   const verses = [...verseSet].sort((a, b) => (Number(a) || 0) - (Number(b) || 0) || a.localeCompare(b));
-  return { title, partName, fifths, verses, notes };
+  return {
+    title, partName, fifths: fifths ?? 0, tempo: tempo ?? DEFAULT_TEMPO, tempoFromScore: tempo !== null,
+    beats: beats ?? 4, beatType: beatType ?? 4, verses, measures, length: measureStart, notes,
+  };
+}
+
+// First tempo marking: <sound tempo> (quarter notes/min) or a <metronome>.
+function findTempo(root) {
+  const snd = root.querySelector("sound[tempo]");
+  if (snd) {
+    const t = Number(snd.getAttribute("tempo"));
+    if (t > 0) return t;
+  }
+  const met = root.querySelector("metronome");
+  if (met) {
+    const per = Number(text(met.querySelector("per-minute")));
+    const unit = UNIT_QUARTERS[text(met.querySelector("beat-unit"))] || 1;
+    const dotted = met.querySelector("beat-unit-dot") ? 1.5 : 1;
+    if (per > 0) return per * unit * dotted;
+  }
+  return null;
 }
 
 // Resolve the notes for one verse: each note gets the syllable it carries, or
@@ -129,12 +178,33 @@ export function notesForVerse(score, verse) {
   let lastSyl = null;
   return score.notes.map((n) => {
     const v = n.verses[verse];
+    const base = { midi: n.midi, onset: n.onset, dur: n.dur, measure: n.measure, restBefore: n.restBefore };
     if (v) {
       lastSyl = v;
-      return { midi: n.midi, beats: n.beats, measure: n.measure, restBefore: n.restBefore, text: v.text, syllabic: v.syllabic, melisma: false };
+      return { ...base, text: v.text, syllabic: v.syllabic, melisma: false };
     }
-    return { midi: n.midi, beats: n.beats, measure: n.measure, restBefore: n.restBefore, text: "", syllabic: null, melisma: !!lastSyl && !n.restBefore };
+    return { ...base, text: "", syllabic: null, melisma: !!lastSyl && !n.restBefore };
   });
+}
+
+// Split a verse's notes into lyric lines for the karaoke display: break at
+// rests and after line-ending punctuation; cap very long lines.
+export function lyricLines(notes, maxSyllables = 14) {
+  const lines = [];
+  let cur = [];
+  let syl = 0;
+  notes.forEach((n, i) => {
+    if (cur.length && n.restBefore) { lines.push(cur); cur = []; syl = 0; }
+    cur.push(i);
+    if (!n.melisma) syl++;
+    const next = notes[i + 1];
+    const endsLine = /[,.;:!?]["'”’)]*$/.test(n.text) && !(next && next.melisma);
+    if (endsLine || (syl >= maxSyllables && !(next && next.melisma) && n.syllabic !== "begin" && n.syllabic !== "middle")) {
+      lines.push(cur); cur = []; syl = 0;
+    }
+  });
+  if (cur.length) lines.push(cur);
+  return lines;
 }
 
 // Many exporters (e.g. MuseScore) only put the title in a page credit:

@@ -25,7 +25,8 @@
         align-items: baseline;
         gap: 0.75rem;
       }
-      .header-left { display: flex; align-items: baseline; gap: 0.75rem; }
+      .header-left { display: flex; align-items: baseline; gap: 0.5rem; }
+      h1 { margin-right: 0.25rem !important; }
       h1 { font-size: 1.25rem; margin: 0; font-weight: 600; letter-spacing: 0.02em; opacity: 0.95; }
       .nav-link {
         font-size: 0.8rem;
@@ -150,38 +151,6 @@
       .note-chip[data-tune="ok"]   { border-color: rgba(166,79,255,0.5); }
       .note-chip[data-tune="off"]  { border-color: rgba(255,111,111,0.5); }
       .note-chip[data-selected="true"] { background: rgba(166,79,255,0.22); }
-      .score-chip { min-width: 2.9rem; padding: 0.25rem 0.4rem; }
-      .score-chip i {
-        font-family: system-ui, sans-serif;
-        font-style: italic;
-        font-weight: 600;
-        font-size: 0.85rem;
-        color: #ffe6a0;
-        min-height: 1.1em;
-        white-space: nowrap;
-      }
-      .score-chip b { font-size: 0.78rem; opacity: 0.85; }
-      .note-chip[data-tune="pending"], .note-chip[data-tune="unsung"] { border-color: rgba(255,255,255,0.1); }
-      .note-chip[data-tune="unsung"] { opacity: 0.45; }
-      .note-chip[data-tune="missed"] { border-style: dashed; border-color: rgba(255,255,255,0.35); opacity: 0.75; }
-      .phrase-break { flex-basis: 100%; height: 0; }
-      #song-bar { display: flex; gap: 0.4rem; flex-shrink: 0; }
-      #song-bar select {
-        font: inherit;
-        font-size: 0.8rem;
-        color: #e8e8f0;
-        background: rgba(255,255,255,0.06);
-        border: 1px solid rgba(255,255,255,0.18);
-        border-radius: 0.5rem;
-        padding: 0.35rem 0.3rem;
-        min-width: 0;
-        flex: 0 1 auto;
-      }
-      #song-select { flex: 1 1 0; }
-      #song-bar select[hidden] { display: none; }
-      #song-error { font-size: 0.8rem; color: #ff8a9a; }
-      #song-error[hidden] { display: none; }
-      .transcript-left { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
       #playbar { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; margin-top: -0.25rem; }
       #playbar[hidden] { display: none; }
       #play {
@@ -210,19 +179,6 @@
       .seg button[hidden] { display: none; }
       .seg button:disabled { opacity: 0.3; cursor: default; }
       .seg button[data-active="true"] { background: rgba(120,200,255,0.3); color: #fff; }
-      #tabs { display: inline-flex; border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; overflow: hidden; }
-      #tabs[hidden] { display: none; }
-      #tabs button {
-        font: inherit;
-        font-size: 0.68rem;
-        letter-spacing: 0.06em;
-        padding: 0.2rem 0.55rem;
-        border: 0;
-        background: transparent;
-        color: rgba(255,255,255,0.6);
-        cursor: pointer;
-      }
-      #tabs button[data-active="true"] { background: rgba(166,79,255,0.35); color: #fff; }
       footer {
         padding: 0.9rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom));
         display: flex;
@@ -254,29 +210,16 @@
   <body>
     <header>
       <div class="header-left">
-        <a class="nav-link" href="./">← Tuner</a>
         <h1>Record</h1>
+        <a class="nav-link" href="./">Tuner</a>
+        <a class="nav-link" href="sing.html">Sing</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v18</span>
+        <span id="version">v19</span>
         <span id="status">idle</span>
       </div>
     </header>
     <main>
-      <section id="song-bar">
-        <select id="song-select" aria-label="Song">
-          <option value="">No song</option>
-          <option value="amazing-grace">Amazing Grace</option>
-          <option value="load">Load MusicXML…</option>
-        </select>
-        <select id="verse-select" aria-label="Verse" hidden></select>
-        <select id="key-select" aria-label="Key" hidden>
-          <option value="written">As written</option>
-          <option value="any">Any key</option>
-        </select>
-        <input id="file-input" type="file" accept=".musicxml,.xml,.mxl,application/vnd.recordare.musicxml+xml,application/vnd.recordare.musicxml" hidden />
-      </section>
-      <div id="song-error" hidden></div>
       <section id="live">
         <div id="live-note" data-active="false">—</div>
         <div class="live-side mono">
@@ -291,20 +234,16 @@
           <button type="button" data-mode="voice" title="Your recording">Voice</button>
           <button type="button" data-mode="notes" title="A piano note for each detected note">Notes</button>
           <button type="button" data-mode="both" title="Your recording + detected notes">Both</button>
-          <button type="button" data-mode="score" title="Your recording + the score's correct notes (piano) on your timing" hidden>Score</button>
         </span>
       </section>
       <section id="transcript-wrap">
         <div class="transcript-head mono">
-          <span class="transcript-left">
-            <span id="tabs" hidden><button type="button" data-tab="score">Score</button><button type="button" data-tab="notes">Notes</button></span>
-          </span>
+          <span id="note-count">NOTES</span>
           <span class="transcript-tools">
             <button id="accidentals" class="chip-btn" type="button">♯ / ♭</button>
             <button id="copy" class="chip-btn" type="button" disabled>Copy</button>
           </span>
         </div>
-        <div id="note-count" class="mono">NOTES</div>
         <div id="transcript" data-empty="Hit Record and sing — notes will appear here."></div>
       </section>
     </main>

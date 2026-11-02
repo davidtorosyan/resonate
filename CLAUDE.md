@@ -8,12 +8,17 @@ Push to `main` → `.github/workflows/deploy.yml` publishes `public/` to the `gh
 
 ## Pages
 
-- `index.html` + `app.js` — the tuner (hold a note, see note/cents/volume/waveform). Header has a **Record** link.
-- `record.html` + `record.js` (ES module) — record mode: record a sung phrase, see a live piano-roll of pitch with detected notes, then a transcript of notes (name, duration, cents). Self-contained (its own copy of YIN) so it can't break the tuner.
-  - `musicxml.js` — MusicXML parser (`.musicxml`/`.xml`, and zipped `.mxl` via a tiny zip reader + `DecompressionStream`).
-  - `align.js` — rhythm-agnostic alignment of sung notes to the score melody.
-  - `recorder-worklet.js` — AudioWorklet that captures the take's raw samples for playback.
-  - `songs/` — bundled sample scores (see `songs/README.md` for licensing). Add to `SAMPLES` in `record.js` and an `<option>` in `record.html`.
+- `index.html` + `app.js` — the tuner (hold a note, see note/cents/volume/waveform). Classic script with its own YIN — deliberately untouched by the other pages. Header links to Record and Sing.
+- `record.html` + `record.js` — free singing: live piano roll, transcript of detected notes, playback (voice / notes on piano / both).
+- `sing.html` + `sing.js` — karaoke against a MusicXML song: the score sets the clock, you sing along, each note is graded in its own time slot.
+- Shared ES modules used by record + sing:
+  - `pitch.js` — `openMic()` (mic with processing off, AnalyserNode, `read()` → `{rms, db, midi}`) and the YIN detector. Same algorithm/settings as `app.js`.
+  - `music.js` — note names, `fold` (octave-free semitone difference), `median`, `centsLabel`.
+  - `piano.js` — sample piano (`loadPiano`/`playPiano`) and a noise-burst metronome `playClick`.
+  - `capture.js` + `recorder-worklet.js` — capture a take's raw audio for playback; `playVoice`.
+  - `musicxml.js` — MusicXML parser with timing (`.musicxml`/`.xml`, zipped `.mxl` via a tiny zip reader + `DecompressionStream`).
+- `songs/` — bundled sample scores (see `songs/README.md` for licensing). Add to `SAMPLES` in `sing.js` and an `<option>` in `sing.html`.
+- `piano/` — piano samples (see below).
 
 ## Run (local, optional)
 
@@ -30,7 +35,7 @@ Server prints both HTTP (port 3000) and HTTPS (port 3443) URLs for localhost and
 
 ## Version marker
 
-`index.html` shows a `v<N>` badge in the top-right of the header (`#version`, purple). It exists so you can confirm a frontend change actually reached the phone — bump the number, refresh, check the badge. To bump: edit the `<span id="version">` line in **both** `index.html` and `record.html` (keep them equal). If the badge doesn't change after a refresh, the phone is serving a cached `index.html` — hard-refresh / pull-to-refresh.
+`index.html` shows a `v<N>` badge in the top-right of the header (`#version`, purple). It exists so you can confirm a frontend change actually reached the phone — bump the number, refresh, check the badge. To bump: edit the `<span id="version">` line in **all three** pages — `index.html`, `record.html`, `sing.html` (keep them equal). If the badge doesn't change after a refresh, the phone is serving a cached `index.html` — hard-refresh / pull-to-refresh.
 
 ## Stack
 
@@ -84,22 +89,28 @@ Net feel: holding a note is rock-stable; intentional jumps cause a brief dim the
 
 Maps RMS → bar width via `(dB + 55) * 2`, clamped 0–100%. Roughly −55 dB empty, 0 dB full. If the bar sits too full or too empty for your mic gain, adjust the `+55` constant in `updateVolumeMeter()`.
 
-## Record mode note segmentation (`public/record.js`)
+## Record page note segmentation (`public/record.js`)
 
-Per frame: YIN pitch (same settings as the tuner) → median over `SMOOTH_MS` (100 ms). A note continues while the smoothed pitch stays within 50¢ of the note's median; it splits when the pitch sits >50¢ away for `SPLIT_MS` (80 ms), and ends on an unvoiced gap ≥ `GAP_MS` (70 ms). Notes shorter than `MIN_NOTE_MS` (60 ms) are dropped. Voicing also requires the RMS of the newest `TAIL_SAMPLES` (1024, ~21 ms) to pass `MIN_RMS` — the full 4096-sample window smears short gaps, which otherwise merges repeated same-pitch notes. No beat grid yet; times are seconds.
+Per frame: YIN pitch (`pitch.js`, same settings as the tuner) → median over `SMOOTH_MS` (100 ms). A note continues while the smoothed pitch stays within 50¢ of the note's median; it splits when the pitch sits >50¢ away for `SPLIT_MS` (80 ms), and ends on an unvoiced gap ≥ `GAP_MS` (70 ms). Notes shorter than `MIN_NOTE_MS` (60 ms) are dropped. Voicing also requires the RMS of the newest `TAIL_SAMPLES` (1024, ~21 ms) to pass `MIN_RMS` — the full 4096-sample window smears short gaps, which otherwise merges repeated same-pitch notes. No beat grid yet; times are seconds.
 
-## Song mode (MusicXML scoring)
+## Sing mode (karaoke, `sing.js`)
 
-Song picker on the record page: a bundled sample, or *Load MusicXML…* (parsed score is cached in `localStorage` under `resonate.customSong`).
+The **score is the clock** (an earlier version aligned sung notes to the score ignoring rhythm — dropped: wrong notes leave nothing reliable to align on).
 
-**Parsing (`musicxml.js`):** picks the part+voice with the most lyric syllables (the sung melody — e.g. the soprano in an SATB hymn), keeps the highest note of chords, skips grace/cue notes, merges ties, drops rests (but remembers them as phrase breaks). Each note carries lyrics per verse; a note with no syllable after a sung one is a melisma continuation (shown as `‿`). Title falls back to the largest-font `<credit-words>` (MuseScore puts it there).
+**Parsing (`musicxml.js`):** picks the part+voice with the most lyric syllables (the melody — e.g. soprano of an SATB hymn). Tracks position across all voices (`backup`/`forward`) so each note gets an `onset` and `dur` in quarter notes; measure starts in `measures` (a short first measure = pickup). Keeps the highest note of chords, skips grace/cue notes, merges ties; rests become gaps (and `restBefore`). Tempo = first `<sound tempo>` or `<metronome>` (default 90 if none), time signature from the first `<time>`. Lyrics per verse; a note with no syllable after a sung one is a melisma continuation (`‿`). Lyric text cleanup: verse numbers stripped, `I 'm` (often with a non-breaking space) → `I'm`. `lyricLines()` splits a verse into display lines at rests and line-ending punctuation. Title falls back to the largest-font `<credit-words>`.
 
-**Alignment (`align.js`):** edit-distance DP over (sung note, score note) with moves match / split (one score note sung as two) / merge (one sung note covering repeated or legato notes) / miss / extra. Pitch compared modulo the octave (singing an octave off is fine; shown as ↑8/↓8). The take is **anchored at the start of the song** (`startAt`, default 0 — reserved for a future start-point selector): two DP layers, A = nothing matched yet, B = matched; skipping score notes in layer A costs `LEAD_MISS` (1.5), so the first sung note pairs with the first score note even if it's way off, instead of being explained as a near-miss of some later note. Free end, so stopping early is fine. *Any key* searches 12 transpositions; with *As written*, if another key fits far better the summary suggests switching. Grades: ≤25¢ good, ≤50¢ ok, else off (wrong note, a dashed ghost marks the target on the piano roll); unsung notes inside the sung stretch are *missed*. Costs at the top of `align.js`: `MISS` (0.5), `MISS_MELISMA` (0.3), `LEAD_MISS` (1.5), `splitPen(dur)` (0.15 for a fragment → 0.65 for a sustained note, so two separate long notes aren't read as one broken note), `MERGE_PEN`, `pitchCost` (capped at 1.0 so "wrong note" beats contortions), `extraCost` (up to 1.5 for a sustained note). Keep a missed note much cheaper than discarding a sustained sung note. Re-aligns live whenever a note closes, and on song/verse/key change.
+**Session:** one AudioContext for mic + guide so clocks match. Count-in = one bar (+ the missing beats of a pickup bar) of clicks; `songT0` = song time 0 on the audio clock. Guide while singing: **click** (default — a noise burst, so speaker bleed into the mic isn't read as pitch), **melody** (piano; use headphones or the mic grades the piano), **none**. Settings: verse, key (±6 semitones, transposes targets + guide), tempo (50–125% of the score's), all persisted in `localStorage` (`resonate.sing.*`). Custom songs are stored as raw XML (`resonate.sing.customXml`) and re-parsed on load.
 
-**Known limits:** fast ornaments (~180 ms notes) sometimes aren't segmented and show as missed; no rhythm scoring yet.
+**Frame timing:** `frameT = songT − ANALYSIS_LAG − latency`, where `latency = outputLatency (or baseLatency) + INPUT_LATENCY (20 ms)` — the singer follows what they hear late, the mic hears them late, and a pitch frame lags its audio.
 
-## Take playback
+**Grading (`gradeNote`):** frames inside the note's slot, skipping the first `min(GRACE_MAX 120 ms, 25%)` for scoops/late entries. Voiced < `MIN_VOICED` (35%) → *missed*. Else median octave-folded deviation: ≤25¢ good, ≤50¢ close (ok), else off (shows the note you sang). `hit` = share of the slot's frames voiced and within 50¢; the take's % = duration-weighted mean `hit`. Notes after Stop are *unsung* (not counted). Octave sung is reported (8vb/8va). Graded live as each slot passes.
 
-The take clock is `audioCtx.currentTime - ctxT0` (not `performance.now()`), so pitch frames and captured audio share one timebase. `recorder-worklet.js` posts the audio-clock time of its first sample plus `Float32Array` chunks; on stop they're stitched into `voice` (peak-normalised gain). Modes: **Voice** (recording), **Notes** (a piano note per detected note), **Both**, **Score** (voice + the score's correct note, in your octave, on each matched sung note). Synth notes are shifted earlier by `SYNTH_LAG` (50 ms) because a pitch frame describes the trailing 85 ms window — measured lag is ~47 ms. Tap the roll or a chip to move the play cursor. iOS: `navigator.audioSession.type` is set to `playback` for playback (speaker, ignores silent switch) and `play-and-record` before the mic opens. `window.resonateDebug()` exposes take state for tests. Takes auto-stop at `MAX_TAKE_SEC` (300 s).
+**Display:** lane with the "now" line at 30%; score notes as bars with lyrics; your pitch drawn octave-shifted next to the current target (green within 50¢, red outside). Karaoke lyric line above (current syllable yellow, graded syllables coloured). Chips per score note. After a take: % + counts, drag the lane to review, tap a chip to seek; Play modes Voice / Melody / Both (voice is shifted by the recording latency so it lines up with the score). **Listen** plays the melody with the lane + lyrics, no mic.
 
-Piano: `public/piano/` holds Salamander Grand Piano samples (CC-BY 3.0, attribution in `piano/README.md`), one every minor third A1–C7, trimmed to 3 s mono 64 kbps (~530 KB total). Lazy-loaded and decoded on the first playback that needs notes; each note uses the nearest sample pitch-shifted via `playbackRate`, starts `PIANO_ONSET` (12 ms) into the file, and is damped with `PIANO_RELEASE` when the sung note ends. Falls back to the old triangle tone if samples fail to load.
+**Future:** a start-point selector (sing from a later line), latency calibration (Bluetooth headphones add 150–250 ms the browser may not report), rhythm/timing scoring.
+
+## Take playback (record page)
+
+The take clock is `mic.ac.currentTime - ctxT0` (not `performance.now()`), so pitch frames and captured audio share one timebase. `recorder-worklet.js` posts the audio-clock time of its first sample plus `Float32Array` chunks; on stop they're stitched into `voice` (peak-normalised gain). Modes: **Voice** (recording), **Notes** (a piano note per detected note), **Both**. Piano notes are shifted earlier by `ANALYSIS_LAG` (50 ms) because a pitch frame describes the trailing 85 ms window — measured lag is ~47 ms. Tap the roll or a chip to move the play cursor. iOS: `navigator.audioSession.type` is set to `playback` for playback (speaker, ignores silent switch) and `play-and-record` before the mic opens. `window.resonateDebug()` (record and sing pages) exposes state for automated tests. Record takes auto-stop at `MAX_TAKE_SEC` (300 s).
+
+Piano: `public/piano/` holds Salamander Grand Piano samples (CC-BY 3.0, attribution in `piano/README.md`), one every minor third A1–C7, trimmed to 3 s mono 64 kbps (~530 KB total). Lazy-loaded and decoded once per AudioContext (`piano.js`); each note uses the nearest sample pitch-shifted via `playbackRate`, starts `ONSET` (12 ms) into the file, and is damped with `RELEASE` when the note ends. Pitch of every sample verified against its name (all within normal piano stretch tuning).
