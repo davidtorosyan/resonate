@@ -10,7 +10,12 @@
 // The singer may cover any contiguous stretch of the score (free start/end).
 // With anyKey, a single transposition for the whole take is also searched.
 
-const MISS = 1.0;
+// A missed score note is cheap-ish (fast melisma ornaments often aren't
+// segmented at all); discarding a sustained sung note as "extra" is
+// expensive — otherwise the free start lets the aligner throw away a
+// clearly sung opening note rather than pay for one missed ornament.
+const MISS = 0.5;
+const MISS_MELISMA = 0.3;
 const SPLIT_PEN = 0.15;
 const MERGE_PEN = 0.3;
 
@@ -27,10 +32,10 @@ function pitchCost(diff) {
 }
 
 function extraCost(dur) {
-  return 0.25 + 0.75 * Math.min(1, dur / 0.5);
+  return 0.3 + 1.2 * Math.min(1, dur / 0.5);
 }
 
-// sung: [{ midi (float), dur (s) }], target: [{ midi }]
+// sung: [{ midi (float), dur (s) }], target: [{ midi, melisma? }]
 export function alignTake(sung, target, { anyKey = false } = {}) {
   const n = sung.length, m = target.length;
   if (!n || !m) return null;
@@ -58,7 +63,7 @@ function runDp(sung, target, t) {
       if (v < b && mv[(i - 1) * W + j] <= MERGE) { b = v; k = SPLIT; }
       v = dp[i * W + j - 1] + c + MERGE_PEN;
       if (v < b && j > 1 && mv[i * W + j - 1] <= MERGE) { b = v; k = MERGE; }
-      v = dp[i * W + j - 1] + MISS;
+      v = dp[i * W + j - 1] + (target[j - 1].melisma ? MISS_MELISMA : MISS);
       if (v < b) { b = v; k = SKIP; }
       v = dp[(i - 1) * W + j] + ex;
       if (v < b) { b = v; k = EXTRA; }

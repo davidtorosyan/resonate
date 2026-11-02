@@ -4,7 +4,7 @@
 // (rhythm ignored, octave-tolerant) and each note is graded against it.
 
 import { parseMusicXml, loadScoreFile, notesForVerse } from "./musicxml.js";
-import { alignTake } from "./align.js";
+import { alignTake, fold } from "./align.js";
 
 const canvas = document.getElementById("roll");
 const ctx = canvas.getContext("2d");
@@ -23,6 +23,9 @@ const keySelect = document.getElementById("key-select");
 const fileInput = document.getElementById("file-input");
 const tabsEl = document.getElementById("tabs");
 const songErrEl = document.getElementById("song-error");
+const playbarEl = document.getElementById("playbar");
+const playBtn = document.getElementById("play");
+const playModesEl = document.getElementById("play-modes");
 
 const SAMPLES = { "amazing-grace": { title: "Amazing Grace", url: "songs/amazing-grace.musicxml" } };
 const SONG_KEY = "resonate.song";       // selected song id
@@ -74,7 +77,22 @@ let maxTau = 0;
 let rafId = null;
 let wakeLock = null;
 let recording = false;
-let t0 = 0; // performance.now() at record start
+let ctxT0 = 0; // audioCtx.currentTime at record start — the take's clock
+
+// --- Take audio + playback ---------------------------------------------------------
+const MAX_TAKE_SEC = 300;  // auto-stop (raw audio is ~11 MB/min)
+const SYNTH_LAG = 0.05;    // detected notes trail the audio by ~half an analysis window
+const PLAYMODE_KEY = "resonate.playMode";
+let recNode = null, recSink = null, recChunks = [], recStart = null, recFlushed = null;
+let voice = null;          // { data: Float32Array, sampleRate, start (take s), gain }
+let playCtx = null;
+let playNodes = [];
+let playing = false;
+let playT0 = 0, playFrom = 0, playRaf = null;
+let playhead = null;       // take time being played, or null
+let cursorT = 0;           // where Play starts
+let playMode = "both";     // voice | notes | both | score
+try { playMode = localStorage.getItem(PLAYMODE_KEY) || "both"; } catch {}
 
 // --- Take state ---------------------------------------------------------------
 let frames = [];   // { t (s), midi | null }
@@ -337,8 +355,9 @@ function render() {
       }
     }
     ctx.fillStyle = fill;
-    ctx.strokeStyle = i === selected ? "#fff" : stroke;
-    ctx.lineWidth = i === selected ? 2 : 1;
+    const active = playhead !== null && !s.live && s.start - SYNTH_LAG <= playhead && playhead < s.end - SYNTH_LAG;
+    ctx.strokeStyle = i === selected || active ? "#fff" : stroke;
+    ctx.lineWidth = i === selected || active ? 2 : 1;
     roundRect(x0, y - barH / 2, Math.max(2, x1 - x0), barH, Math.min(5, barH / 2));
     ctx.fill();
     ctx.stroke();
@@ -368,6 +387,12 @@ function render() {
     const x = xOf(duration);
     ctx.fillStyle = "rgba(255,111,138,0.8)";
     ctx.fillRect(x, 0, 1.5, h);
+  } else if (playhead !== null) {
+    ctx.fillStyle = "rgba(120,200,255,0.95)";
+    ctx.fillRect(xOf(playhead), 0, 2, h);
+  } else if (frames.length) {
+    ctx.fillStyle = "rgba(120,200,255,0.45)";
+    ctx.fillRect(xOf(cursorT), 0, 1.5, h);
   }
   ctx.restore();
 
@@ -435,6 +460,7 @@ function renderTranscript() {
   if (targets && tab === "score") renderScoreChips();
   else renderNoteChips();
   copyBtn.disabled = recording || segments.length === 0;
+  updatePlayUI();
 }
 
 function renderScoreChips() {
@@ -506,6 +532,8 @@ function selectSegment(i) {
     const s = segments[i];
     const span = visibleSpan(canvas.getBoundingClientRect().width);
     scrollT = (s.start + s.end) / 2 - span / 2;
+    cursorT = Math.max(0, s.start - 0.25);
+    if (playing) startPlayback(cursorT);
   }
   renderTranscript();
   render();
@@ -550,8 +578,9 @@ function tick() {
   let tailSq = 0;
   for (let i = floatBuf.length - TAIL_SAMPLES; i < floatBuf.length; i++) tailSq += floatBuf[i] * floatBuf[i];
   const tailRms = Math.sqrt(tailSq / TAIL_SAMPLES);
-  const t = (performance.now() - t0) / 1000;
+  const t = audioCtx.currentTime - ctxT0;
   duration = t;
+  if (t > MAX_TAKE_SEC) { stopRecording(); return; }
 
   let midi = null;
   if (rms > MIN_RMS && tailRms > MIN_RMS) {
@@ -570,6 +599,8 @@ async function startRecording() {
   try {
     recBtn.disabled = true;
     statusEl.textContent = "requesting mic…";
+    stopPlayback();
+    setAudioSession("play-and-record");
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
@@ -584,6 +615,7 @@ async function startRecording() {
     minTau = Math.max(2, Math.floor(audioCtx.sampleRate / MAX_FREQ));
     maxTau = Math.min((analyser.fftSize >> 1) - 1, Math.floor(audioCtx.sampleRate / MIN_FREQ));
     yinBuf = new Float32Array(maxTau + 1);
+    await startCapture();
 
     frames = [];
     segments = [];
@@ -598,7 +630,8 @@ async function startRecording() {
     rangeLo = 48;
     rangeHi = 72;
     hasPitch = false;
-    t0 = performance.now();
+    cursorT = 0;
+    ctxT0 = audioCtx.currentTime;
     recording = true;
     canvas.dataset.pannable = "false";
     renderTranscript();
@@ -624,6 +657,7 @@ async function stopRecording() {
   if (recording) closeCurrent();
   recording = false;
   realign();
+  await finishCapture();
   if (stream) stream.getTracks().forEach((t) => t.stop());
   if (source) try { source.disconnect(); } catch {}
   if (audioCtx) try { await audioCtx.close(); } catch {}
@@ -648,6 +682,7 @@ async function stopRecording() {
 recBtn.addEventListener("click", () => (recording ? stopRecording() : startRecording()));
 
 document.addEventListener("visibilitychange", async () => {
+  if (document.hidden && playing) stopPlayback();
   if (document.hidden && recording) {
     await stopRecording();
     statusEl.textContent = "auto-stopped (backgrounded)";
@@ -669,7 +704,16 @@ canvas.addEventListener("pointermove", (e) => {
   render();
 });
 const endDrag = () => { drag = null; };
-canvas.addEventListener("pointerup", endDrag);
+canvas.addEventListener("pointerup", (e) => {
+  const tap = drag && !drag.moved;
+  drag = null;
+  if (!tap) return;
+  // Tap = move the play cursor there (and jump, if playing).
+  const x = e.clientX - canvas.getBoundingClientRect().left;
+  cursorT = Math.max(0, Math.min(duration, scrollT + (x - GUTTER) / PX_PER_SEC));
+  if (playing) startPlayback(cursorT);
+  else render();
+});
 canvas.addEventListener("pointercancel", endDrag);
 canvas.addEventListener("wheel", (e) => {
   if (recording || !frames.length) return;
@@ -720,6 +764,231 @@ if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
   recBtn.disabled = true;
   statusEl.textContent = "mic API unavailable — open over HTTPS";
 }
+
+// --- Take capture ---------------------------------------------------------------
+
+function setAudioSession(type) {
+  // iOS: "playback" plays through the speaker even with the silent switch on.
+  try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {}
+}
+
+async function startCapture() {
+  voice = null;
+  recChunks = [];
+  recStart = null;
+  try {
+    await audioCtx.audioWorklet.addModule("recorder-worklet.js");
+    recNode = new AudioWorkletNode(audioCtx, "pcm-recorder");
+    recSink = audioCtx.createGain();
+    recSink.gain.value = 0; // keep the node pulled without hearing yourself
+    source.connect(recNode);
+    recNode.connect(recSink);
+    recSink.connect(audioCtx.destination);
+    recNode.port.onmessage = (e) => {
+      const d = e.data;
+      if (d instanceof Float32Array) recChunks.push(d);
+      else if (d.start !== undefined) recStart = d.start;
+      else if (d.done && recFlushed) recFlushed();
+    };
+  } catch (err) {
+    console.warn("Take audio capture unavailable — playback will be notes only", err);
+    recNode = recSink = null;
+  }
+}
+
+async function finishCapture() {
+  if (!recNode) return;
+  await new Promise((res) => {
+    recFlushed = res;
+    recNode.port.postMessage("flush");
+    setTimeout(res, 400);
+  });
+  recFlushed = null;
+  try { recNode.disconnect(); recSink.disconnect(); } catch {}
+  recNode = recSink = null;
+  const len = recChunks.reduce((a, c) => a + c.length, 0);
+  if (!len || recStart === null) { recChunks = []; return; }
+  const data = new Float32Array(len);
+  let o = 0;
+  for (const c of recChunks) { data.set(c, o); o += c.length; }
+  recChunks = [];
+  let peak = 0;
+  for (let i = 0; i < len; i++) { const a = Math.abs(data[i]); if (a > peak) peak = a; }
+  voice = { data, sampleRate: audioCtx.sampleRate, start: recStart - ctxT0, gain: peak > 0 ? Math.min(8, 0.9 / peak) : 1 };
+}
+
+// --- Playback ---------------------------------------------------------------
+// voice = the recording; notes = a tone per detected note; both = voice + notes;
+// score = voice + the score's correct notes on your timing (needs a song).
+
+function midiToFreq(m) {
+  return 440 * 2 ** ((m - 69) / 12);
+}
+
+function synthNotes(mode) {
+  if (mode !== "score") return segments.map((s) => ({ start: s.start, end: s.end, midi: s.note }));
+  if (!alignment) return [];
+  const out = [];
+  segments.forEach((s, i) => {
+    const j = alignment.segTo[i];
+    if (j < 0 || alignment.notes[j].status === "unsung") return;
+    const target = targets[j].midi + alignment.transpose;
+    const raw = s.note + s.cents / 100 - target;
+    out.push({ start: s.start, end: s.end, midi: target + 12 * Math.round((raw - fold(raw)) / 12) });
+  });
+  return out;
+}
+
+function playTone(ac, when, dur, midi, level) {
+  const f = midiToFreq(midi);
+  const o1 = ac.createOscillator();
+  o1.type = "triangle";
+  o1.frequency.value = f;
+  const o2 = ac.createOscillator();
+  o2.type = "sine";
+  o2.frequency.value = f * 2;
+  const g2 = ac.createGain();
+  g2.gain.value = 0.2;
+  const g = ac.createGain();
+  const a = 0.015, r = 0.06, hold = Math.max(a, dur);
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(level, when + a);
+  g.gain.setValueAtTime(level, when + hold);
+  g.gain.linearRampToValueAtTime(0, when + hold + r);
+  o1.connect(g);
+  o2.connect(g2);
+  g2.connect(g);
+  g.connect(ac.destination);
+  o1.start(when);
+  o2.start(when);
+  o1.stop(when + hold + r + 0.02);
+  o2.stop(when + hold + r + 0.02);
+  playNodes.push(o1, o2);
+}
+
+function effectiveMode() {
+  let m = playMode;
+  if (m === "score" && !alignment) m = "both";
+  if (!voice && m !== "notes") m = "notes";
+  return m;
+}
+
+async function startPlayback(from) {
+  stopPlayback();
+  if (recording || (!voice && !segments.length)) return;
+  setAudioSession("playback");
+  if (!playCtx || playCtx.state === "closed") playCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (playCtx.state === "suspended") await playCtx.resume();
+  const ac = playCtx;
+  from = Math.max(0, Math.min(from, duration));
+  if (from >= duration - 0.05) from = 0;
+  const start = ac.currentTime + 0.08;
+  const mode = effectiveMode();
+
+  const withVoice = mode !== "notes";
+  if (withVoice) {
+    const buf = ac.createBuffer(1, voice.data.length, voice.sampleRate);
+    buf.copyToChannel(voice.data, 0);
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    const g = ac.createGain();
+    g.gain.value = voice.gain;
+    src.connect(g);
+    g.connect(ac.destination);
+    const off = from - voice.start;
+    if (off >= 0) src.start(start, off);
+    else src.start(start - off);
+    playNodes.push(src);
+  }
+  if (mode !== "voice") {
+    const level = withVoice ? 0.16 : 0.3;
+    for (const n of synthNotes(mode === "score" ? "score" : "notes")) {
+      const s0 = n.start - SYNTH_LAG, e0 = n.end - SYNTH_LAG;
+      if (e0 <= from) continue;
+      const st = Math.max(s0, from);
+      playTone(ac, start + (st - from), e0 - st, n.midi, level);
+    }
+  }
+
+  playing = true;
+  playFrom = from;
+  playT0 = start;
+  playhead = from;
+  updatePlayUI();
+  const loop = () => {
+    if (!playing) return;
+    playhead = playFrom + Math.max(0, ac.currentTime - playT0);
+    if (playhead >= duration + 0.15) {
+      stopPlayback();
+      return;
+    }
+    followPlayhead();
+    showPlayingNote();
+    render();
+    playRaf = requestAnimationFrame(loop);
+  };
+  playRaf = requestAnimationFrame(loop);
+}
+
+function stopPlayback() {
+  for (const n of playNodes) try { n.stop(); } catch {}
+  playNodes = [];
+  const was = playing;
+  playing = false;
+  playhead = null;
+  if (playRaf) cancelAnimationFrame(playRaf);
+  playRaf = null;
+  updatePlayUI();
+  if (was) {
+    showTakeResult();
+    render();
+  }
+}
+
+function followPlayhead() {
+  const span = visibleSpan(canvas.getBoundingClientRect().width);
+  if (playhead < scrollT || playhead > scrollT + span * 0.85) scrollT = playhead - span * 0.15;
+}
+
+// While playing, the big readout shows the note under the playhead.
+function showPlayingNote() {
+  timerEl.textContent = formatTime(playhead);
+  const i = segments.findIndex((s) => s.start - SYNTH_LAG <= playhead && playhead < s.end - SYNTH_LAG);
+  if (i < 0) {
+    liveNoteEl.textContent = "—";
+    liveNoteEl.dataset.active = "false";
+    liveCentsEl.textContent = "";
+    return;
+  }
+  const s = segments[i];
+  liveNoteEl.textContent = noteName(s.note);
+  liveNoteEl.dataset.active = "true";
+  const j = alignment ? alignment.segTo[i] : -1;
+  liveCentsEl.textContent = j >= 0 && targets[j] && !targets[j].melisma ? `“${targets[j].text}” ${centsLabel(s.cents)}` : centsLabel(s.cents);
+}
+
+function updatePlayUI() {
+  playbarEl.hidden = recording || (!voice && !segments.length);
+  playBtn.textContent = playing ? "■ Stop" : "▶ Play";
+  playBtn.dataset.playing = playing ? "true" : "false";
+  const mode = effectiveMode();
+  for (const b of playModesEl.querySelectorAll("button")) {
+    const m = b.dataset.mode;
+    b.hidden = m === "score" && !alignment;
+    b.disabled = m !== "notes" && !voice;
+    b.dataset.active = m === mode ? "true" : "false";
+  }
+}
+
+playBtn.addEventListener("click", () => (playing ? stopPlayback() : startPlayback(cursorT)));
+playModesEl.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-mode]");
+  if (!b || b.disabled) return;
+  playMode = b.dataset.mode;
+  try { localStorage.setItem(PLAYMODE_KEY, playMode); } catch {}
+  if (playing) startPlayback(playhead);
+  else updatePlayUI();
+});
 
 // --- Song selection ---------------------------------------------------------------
 
@@ -850,3 +1119,6 @@ const savedSong = recall(SONG_KEY);
 renderTranscript();
 render();
 selectSong(savedSong === null ? "amazing-grace" : savedSong === "custom" && !recall(CUSTOM_KEY) ? "" : savedSong);
+
+// Debug hook for automated tests / poking around in devtools.
+window.resonateDebug = () => ({ voice, segments, frames, duration, alignment, playing, playhead, cursorT });
