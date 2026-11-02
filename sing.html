@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f0f1e" />
+    <title>Resonate · Sing</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; -webkit-tap-highlight-color: transparent; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: radial-gradient(ellipse at top, #1a1a3e, #0f0f1e 70%);
+        color: #e8e8f0;
+        display: flex;
+        flex-direction: column;
+        padding-top: env(safe-area-inset-top);
+      }
+      .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace; }
+      header {
+        padding: 0.9rem 1.25rem 0.5rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 0.75rem;
+      }
+      .header-left { display: flex; align-items: baseline; gap: 0.5rem; }
+      h1 { font-size: 1.25rem; margin: 0 0.25rem 0 0; font-weight: 600; letter-spacing: 0.02em; opacity: 0.95; }
+      .nav-link {
+        font-size: 0.8rem;
+        color: rgba(255,255,255,0.6);
+        text-decoration: none;
+        padding: 0.2rem 0.6rem;
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 999px;
+      }
+      .header-right { display: flex; align-items: baseline; gap: 0.6rem; }
+      #version { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; color: #a64fff; opacity: 0.9; }
+      #status { font-size: 0.75rem; opacity: 0.55; }
+      main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+        padding: 0.25rem 1rem;
+        width: 100%;
+        max-width: 900px;
+        margin: 0 auto;
+        min-height: 0;
+      }
+      .controls { display: flex; gap: 0.4rem; flex-shrink: 0; }
+      .controls select {
+        font: inherit;
+        font-size: 0.8rem;
+        color: #e8e8f0;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 0.5rem;
+        padding: 0.35rem 0.3rem;
+        min-width: 0;
+        flex: 1 1 0;
+      }
+      .controls select[hidden] { display: none; }
+      .controls select:disabled { opacity: 0.4; }
+      #song-select { flex: 2 1 0; }
+      #song-error { font-size: 0.8rem; color: #ff8a9a; }
+      #song-error[hidden] { display: none; }
+
+      #lyrics { flex-shrink: 0; min-height: 3.6rem; text-align: center; }
+      #lyric-now { font-size: 1.35rem; font-weight: 700; line-height: 1.35; min-height: 1.35em; }
+      #lyric-next { font-size: 0.9rem; opacity: 0.45; min-height: 1.35em; margin-top: 0.15rem; }
+      .syl { transition: color 0.1s ease; color: rgba(255,255,255,0.75); }
+      .syl[data-state="current"] { color: #ffe6a0; text-shadow: 0 0 12px rgba(255,230,160,0.5); }
+      .syl[data-state="good"] { color: #4ade80; }
+      .syl[data-state="ok"] { color: #c49bff; }
+      .syl[data-state="off"] { color: #ff6f6f; }
+      .syl[data-state="missed"] { color: rgba(255,255,255,0.35); }
+
+      #lane {
+        width: 100%;
+        flex: 1 1 auto;
+        min-height: 170px;
+        border-radius: 1rem;
+        background: rgba(255,255,255,0.02);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+        touch-action: pan-y;
+      }
+      #lane[data-pannable="true"] { cursor: grab; touch-action: none; }
+
+      #results { flex: 0 0 auto; display: flex; flex-direction: column; gap: 0.4rem; }
+      .results-head { display: flex; align-items: center; gap: 0.6rem; }
+      #score-pct { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; min-width: 3.2ch; }
+      #score-pct:empty { display: none; }
+      #summary { font-size: 0.68rem; letter-spacing: 0.08em; color: rgba(255,255,255,0.55); flex: 1; min-width: 0; }
+      #playbar { display: flex; align-items: center; gap: 0.5rem; }
+      #playbar[hidden] { display: none; }
+      #play {
+        font: inherit;
+        font-size: 0.85rem;
+        font-weight: 600;
+        padding: 0.4rem 0.9rem;
+        border-radius: 999px;
+        border: 0;
+        color: #0f0f1e;
+        background: rgb(120,200,255);
+        cursor: pointer;
+        min-width: 5.5rem;
+      }
+      #play[data-playing="true"] { background: #fff; }
+      .seg { display: inline-flex; border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; overflow: hidden; }
+      .seg button {
+        font: inherit;
+        font-size: 0.75rem;
+        padding: 0.35rem 0.6rem;
+        border: 0;
+        background: transparent;
+        color: rgba(255,255,255,0.65);
+        cursor: pointer;
+      }
+      .seg button:disabled { opacity: 0.3; cursor: default; }
+      .seg button[data-active="true"] { background: rgba(120,200,255,0.3); color: #fff; }
+
+      #chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+        max-height: 18vh;
+        overflow-y: auto;
+        align-content: flex-start;
+      }
+      .chip {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 0.2rem 0.35rem;
+        border-radius: 0.5rem;
+        border: 1px solid rgba(255,255,255,0.1);
+        background: rgba(255,255,255,0.04);
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+        min-width: 2.7rem;
+      }
+      .chip i { font-style: italic; font-weight: 600; font-size: 0.8rem; color: #ffe6a0; white-space: nowrap; min-height: 1.1em; }
+      .chip b { font-size: 0.72rem; opacity: 0.85; }
+      .chip small { font-size: 0.6rem; opacity: 0.65; font-variant-numeric: tabular-nums; min-height: 1.1em; }
+      .chip[data-tune="good"] { border-color: rgba(74,222,128,0.5); }
+      .chip[data-tune="ok"] { border-color: rgba(166,79,255,0.55); }
+      .chip[data-tune="off"] { border-color: rgba(255,111,111,0.55); }
+      .chip[data-tune="missed"] { border-style: dashed; border-color: rgba(255,255,255,0.35); opacity: 0.75; }
+      .chip[data-tune="unsung"] { opacity: 0.45; }
+      .chip[data-current="true"] { background: rgba(255,230,160,0.15); }
+      .phrase-break { flex-basis: 100%; height: 0; }
+
+      footer {
+        padding: 0.8rem 1.25rem calc(1.1rem + env(safe-area-inset-bottom));
+        display: flex;
+        justify-content: center;
+        gap: 0.75rem;
+      }
+      footer button {
+        font: inherit;
+        font-size: 1rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        padding: 0.95rem 1.6rem;
+        border: 0;
+        border-radius: 999px;
+        color: white;
+        cursor: pointer;
+        transition: transform 0.1s ease;
+      }
+      footer button:active { transform: scale(0.97); }
+      footer button:disabled { opacity: 0.5; cursor: not-allowed; }
+      #listen { background: transparent; border: 1px solid rgba(255,255,255,0.25); min-width: 120px; }
+      #sing {
+        background: linear-gradient(135deg, #4f7cff, #a64fff);
+        box-shadow: 0 8px 24px -8px rgba(79,124,255,0.5);
+        min-width: 160px;
+      }
+      #sing[data-active="true"] {
+        background: linear-gradient(135deg, #ff4f6f, #ff8a4f);
+        box-shadow: 0 8px 24px -8px rgba(255,79,111,0.5);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="header-left">
+        <h1>Sing</h1>
+        <a class="nav-link" href="./">Tuner</a>
+        <a class="nav-link" href="record.html">Record</a>
+      </div>
+      <div class="header-right mono">
+        <span id="version">v19</span>
+        <span id="status">idle</span>
+      </div>
+    </header>
+    <main>
+      <section class="controls">
+        <select id="song-select" aria-label="Song">
+          <option value="amazing-grace">Amazing Grace</option>
+          <option value="load">Load MusicXML…</option>
+        </select>
+        <select id="verse-select" aria-label="Verse" hidden></select>
+      </section>
+      <section class="controls">
+        <select id="key-select" aria-label="Key"></select>
+        <select id="tempo-select" aria-label="Tempo"></select>
+        <select id="guide-select" aria-label="Guide while singing">
+          <option value="click">Guide: click</option>
+          <option value="melody">Guide: melody</option>
+          <option value="none">Guide: none</option>
+        </select>
+        <input id="file-input" type="file" accept=".musicxml,.xml,.mxl,application/vnd.recordare.musicxml+xml,application/vnd.recordare.musicxml" hidden />
+      </section>
+      <div id="song-error" hidden></div>
+      <section id="lyrics">
+        <div id="lyric-now"></div>
+        <div id="lyric-next"></div>
+      </section>
+      <canvas id="lane"></canvas>
+      <section id="results">
+        <div class="results-head">
+          <span id="score-pct"></span>
+          <span id="summary" class="mono"></span>
+        </div>
+        <div id="playbar" hidden>
+          <button id="play" type="button">▶ Play</button>
+          <span id="play-modes" class="seg" role="group" aria-label="Playback">
+            <button type="button" data-mode="voice" title="Your recording">Voice</button>
+            <button type="button" data-mode="melody" title="The song's melody on piano">Melody</button>
+            <button type="button" data-mode="both" title="Your recording + the melody">Both</button>
+          </span>
+        </div>
+        <div id="chips"></div>
+      </section>
+    </main>
+    <footer>
+      <button id="listen" type="button">▶ Listen</button>
+      <button id="sing" type="button">● Sing</button>
+    </footer>
+    <script type="module" src="sing.js"></script>
+  </body>
+</html>
