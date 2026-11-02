@@ -64,8 +64,37 @@
       .controls select[hidden] { display: none; }
       .controls select:disabled { opacity: 0.4; }
       #song-select { flex: 2 1 0; }
-      #song-error { font-size: 0.8rem; color: #ff8a9a; }
-      #song-error[hidden] { display: none; }
+      .tool-btn {
+        font: inherit;
+        font-size: 0.78rem;
+        color: #e8e8f0;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 0.5rem;
+        padding: 0.35rem 0.55rem;
+        cursor: pointer;
+        flex: 0 0 auto;
+      }
+      .tool-btn[hidden] { display: none; }
+      .tool-btn:disabled { opacity: 0.4; }
+      #song-msg { font-size: 0.8rem; color: rgba(255,255,255,0.7); line-height: 1.35; }
+      #song-msg[data-kind="error"] { color: #ff8a9a; }
+      #song-msg[data-kind="ok"] { color: #4ade80; }
+      #song-msg[hidden] { display: none; }
+      #drop {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(15,15,30,0.85);
+        border: 3px dashed rgba(166,79,255,0.7);
+        font-size: 1.2rem;
+        font-weight: 600;
+        pointer-events: none;
+      }
+      #drop[hidden] { display: none; }
 
       #lyrics { flex-shrink: 0; min-height: 3.6rem; text-align: center; }
       #lyric-now { font-size: 1.35rem; font-weight: 700; line-height: 1.35; min-height: 1.35em; }
@@ -193,29 +222,35 @@
         <a class="nav-link" href="record.html">Record</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v19</span>
+        <span id="version">v20</span>
         <span id="status">idle</span>
       </div>
     </header>
     <main>
       <section class="controls">
         <select id="song-select" aria-label="Song">
-          <option value="amazing-grace">Amazing Grace</option>
-          <option value="load">Load MusicXML…</option>
+          <optgroup label="Samples">
+            <option value="amazing-grace">Amazing Grace</option>
+          </optgroup>
+          <optgroup id="my-songs" label="My songs" hidden></optgroup>
         </select>
-        <select id="verse-select" aria-label="Verse" hidden></select>
+        <button id="open-file" class="tool-btn" type="button" title="Open a MusicXML file (.musicxml, .xml, .mxl)">Open</button>
+        <button id="open-link" class="tool-btn" type="button" title="Load MusicXML from a link">Link</button>
+        <button id="remove-song" class="tool-btn" type="button" title="Remove this song from My songs" hidden>✕</button>
+        <!-- No accept filter: iOS greys out .musicxml/.mxl (no system file type for them). Files are validated after picking. -->
+        <input id="file-input" type="file" hidden />
       </section>
       <section class="controls">
+        <select id="verse-select" aria-label="Verse" hidden></select>
         <select id="key-select" aria-label="Key"></select>
         <select id="tempo-select" aria-label="Tempo"></select>
         <select id="guide-select" aria-label="Guide while singing">
-          <option value="click">Guide: click</option>
-          <option value="melody">Guide: melody</option>
-          <option value="none">Guide: none</option>
+          <option value="click">Click</option>
+          <option value="melody">Melody</option>
+          <option value="none">No guide</option>
         </select>
-        <input id="file-input" type="file" accept=".musicxml,.xml,.mxl,application/vnd.recordare.musicxml+xml,application/vnd.recordare.musicxml" hidden />
       </section>
-      <div id="song-error" hidden></div>
+      <div id="song-msg" hidden></div>
       <section id="lyrics">
         <div id="lyric-now"></div>
         <div id="lyric-next"></div>
@@ -241,6 +276,7 @@
       <button id="listen" type="button">▶ Listen</button>
       <button id="sing" type="button">● Sing</button>
     </footer>
+    <div id="drop" hidden>Drop a MusicXML file to load it</div>
     <script type="module" src="sing.js"></script>
   </body>
 </html>

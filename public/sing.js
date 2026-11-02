@@ -7,6 +7,7 @@ import { noteName as nameOf, BLACK, fold, median, centsLabel } from "./music.js"
 import { openMic, ANALYSIS_LAG } from "./pitch.js";
 import { startCapture, playVoice } from "./capture.js";
 import { loadPiano, pianoReady, playPiano, playClick } from "./piano.js";
+import { listSongs, getSong, addSong, removeSong, persistent } from "./library.js";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -18,7 +19,12 @@ const keySelect = $("key-select");
 const tempoSelect = $("tempo-select");
 const guideSelect = $("guide-select");
 const fileInput = $("file-input");
-const songErrEl = $("song-error");
+const songMsgEl = $("song-msg");
+const openFileBtn = $("open-file");
+const openLinkBtn = $("open-link");
+const removeBtn = $("remove-song");
+const mySongsEl = $("my-songs");
+const dropEl = $("drop");
 const lyricNowEl = $("lyric-now");
 const lyricNextEl = $("lyric-next");
 const scorePctEl = $("score-pct");
@@ -33,8 +39,8 @@ const singBtn = $("sing");
 const SAMPLES = { "amazing-grace": { title: "Amazing Grace", url: "songs/amazing-grace.musicxml" } };
 const K = {
   song: "resonate.sing.song",
-  customXml: "resonate.sing.customXml",
-  customName: "resonate.sing.customName",
+  legacyXml: "resonate.sing.customXml",   // pre-library single custom song (migrated)
+  legacyName: "resonate.sing.customName",
   verse: "resonate.sing.verse",
   transpose: "resonate.sing.transpose",
   rate: "resonate.sing.rate",
@@ -62,6 +68,8 @@ let lines = [];    // [[note index]]
 let lineOf = [];   // note index → line index
 let flats = false;
 let songEnd = 0;   // s
+let entryIdx = 0;  // measure where the singing starts (skips instrumental intros)
+let entryT = 0;    // its start time (s) — count-in, lane and Listen start here
 let range = { lo: 55, hi: 72 };
 
 const store = (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} };
@@ -77,6 +85,8 @@ let session = null; // { kind, ac, nodes, songT0, raf, mic?, capture?, latency? 
 let take = null;    // { frames, grades, endT, voice, songT0, latency, octave }
 let scrollT = 0;    // song time at the now-line when idle (also where Play/Listen start)
 let nowT = 0;       // song time at the now-line (follows the session)
+let shownLine = -1; // lyric line currently rendered
+let lastChip = -1;  // chip marked as current
 
 const noteName = (m) => nameOf(m, flats);
 
@@ -110,7 +120,14 @@ function applySong() {
   flats = f < 0;
   fillTempoOptions();
   if (take && (take.transpose !== transpose || take.rate !== rate)) take = null; // grades no longer apply
-  scrollT = 0;
+  // Start at the bar containing the first note, not at bar 1 — songs with a
+  // long piano intro would otherwise mean a long wait before singing.
+  entryIdx = 0;
+  if (notes.length) score.measures.forEach((m, i) => { if (m * spq <= notes[0].t + 1e-6) entryIdx = i; });
+  entryT = (score.measures[entryIdx] ?? 0) * spq;
+  shownLine = -1; // force the lyric line to redraw for the new song
+  lastChip = -1;
+  scrollT = entryT;
   renderAll();
 }
 
@@ -125,7 +142,6 @@ function fillTempoOptions() {
 
 function setScore(sc) {
   score = sc;
-  songErrEl.hidden = true;
   verseSelect.textContent = "";
   for (const v of sc.verses) verseSelect.add(new Option(`Verse ${v}`, v));
   const saved = recall(K.verse);
@@ -135,15 +151,12 @@ function setScore(sc) {
   applySong();
 }
 
+// id: a sample key, or a saved song's id (from library.js).
 async function selectSong(id) {
-  if (id === "load") {
-    songSelect.value = recall(K.song) || "amazing-grace";
-    fileInput.click();
-    return;
-  }
   stopSession();
   songSelect.value = id;
   store(K.song, id);
+  removeBtn.hidden = !!SAMPLES[id];
   try {
     if (SAMPLES[id]) {
       const res = await fetch(SAMPLES[id].url);
@@ -152,29 +165,116 @@ async function selectSong(id) {
       sc.title = SAMPLES[id].title;
       return setScore(sc);
     }
-    if (id === "custom") {
-      const xml = recall(K.customXml);
-      if (!xml) throw new Error("no saved song");
-      return setScore(parseMusicXml(xml, recall(K.customName) || "Custom"));
-    }
+    const song = await getSong(id);
+    if (!song) throw new Error("that song is no longer saved");
+    return setScore(parseMusicXml(song.xml, song.title));
   } catch (err) {
     console.error(err);
-    showSongError(err.message);
+    showMsg(`Couldn't load song: ${err.message}`, "error");
   }
 }
 
-function showSongError(msg) {
-  songErrEl.textContent = `Couldn't load song: ${msg}`;
-  songErrEl.hidden = false;
+function showMsg(text, kind = "info") {
+  songMsgEl.textContent = text;
+  songMsgEl.dataset.kind = kind;
+  songMsgEl.hidden = !text;
 }
 
-function setCustomOption(title) {
-  let opt = songSelect.querySelector('option[value="custom"]');
-  if (!opt) {
-    opt = new Option("", "custom");
-    songSelect.insertBefore(opt, songSelect.querySelector('option[value="load"]'));
+async function refreshLibrary() {
+  const songs = await listSongs();
+  mySongsEl.textContent = "";
+  for (const s of songs) mySongsEl.appendChild(new Option(s.title, s.id));
+  mySongsEl.hidden = !songs.length;
+}
+
+// Validate, save to My songs, and switch to it.
+async function importXml(xml, name) {
+  const sc = parseMusicXml(xml, name);
+  const id = await addSong(sc.title, xml);
+  await refreshLibrary();
+  store(K.verse, null);
+  await selectSong(id);
+  const notes = sc.notes.length;
+  const bits = [`${notes} notes`, sc.verses.length ? `${sc.verses.length} verse${sc.verses.length > 1 ? "s" : ""}` : "no lyrics found — notes only"];
+  if (!sc.tempoFromScore) bits.push(`no tempo in the file, using ♩=${sc.tempo}`);
+  if (sc.partName) bits.push(`melody from “${sc.partName}”`);
+  const kept = (await persistent()) ? "" : " (this browser won't keep it after reload)";
+  showMsg(`Loaded “${sc.title}”: ${bits.join(", ")}.${kept}`, "ok");
+}
+
+// Explain the common wrong-format cases instead of a generic parse error.
+function formatHint(name) {
+  const ext = (name.match(/\.([a-z0-9]+)$/i) || [])[1]?.toLowerCase();
+  const hints = {
+    mscz: "That's a MuseScore file — in MuseScore use File → Export → MusicXML, then open the .musicxml/.mxl.",
+    mscx: "That's a MuseScore file — in MuseScore use File → Export → MusicXML, then open the .musicxml/.mxl.",
+    mid: "MIDI files aren't supported (no lyrics) — export MusicXML from your notation app instead.",
+    midi: "MIDI files aren't supported (no lyrics) — export MusicXML from your notation app instead.",
+    pdf: "PDF sheet music can't be read — it needs MusicXML (.musicxml, .xml or .mxl).",
+    sib: "That's a Sibelius file — export it as MusicXML first.",
+    gp: "Guitar Pro files aren't supported — export MusicXML first.",
+  };
+  return hints[ext] || null;
+}
+
+async function importFile(file) {
+  showMsg(`Opening “${file.name}”…`);
+  try {
+    const hint = formatHint(file.name);
+    if (hint) throw new Error(hint);
+    if (file.size > 20 * 1024 * 1024) throw new Error("file is over 20 MB — that's not a single song score");
+    const xml = await readScoreFile(file);
+    await importXml(xml, file.name);
+  } catch (err) {
+    console.error(err);
+    showMsg(`Couldn't load “${file.name}”: ${err.message}`, "error");
   }
-  opt.textContent = title;
+}
+
+// GitHub page links → the raw file; Dropbox share links → direct download.
+function normalizeLink(url) {
+  const u = new URL(url);
+  if (u.hostname === "github.com") {
+    const m = u.pathname.match(/^\/([^/]+)\/([^/]+)\/blob\/(.+)$/);
+    if (m) return `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}`;
+  }
+  if (u.hostname.endsWith("dropbox.com")) {
+    u.searchParams.set("dl", "1");
+    return u.toString();
+  }
+  return u.toString();
+}
+
+async function importLink() {
+  const raw = prompt("Paste a link to a MusicXML file (.musicxml, .xml or .mxl):");
+  if (!raw || !raw.trim()) return;
+  let url;
+  try {
+    url = normalizeLink(raw.trim());
+  } catch {
+    showMsg("That doesn't look like a link.", "error");
+    return;
+  }
+  const name = decodeURIComponent(new URL(url).pathname.split("/").pop() || "Linked song");
+  showMsg(`Downloading ${name}…`);
+  try {
+    const hint = formatHint(name);
+    if (hint) throw new Error(hint);
+    let res;
+    try {
+      res = await fetch(url);
+    } catch {
+      throw new Error("that site doesn't let other pages download its files. Download the file to your device and use Open instead.");
+    }
+    if (!res.ok) throw new Error(`the link returned ${res.status}`);
+    const blob = await res.blob();
+    const xml = await readScoreFile(new File([blob], name));
+    if (/^\s*<!doctype html|^\s*<html/i.test(xml)) throw new Error("the link is a web page, not a MusicXML file — use the site's direct download link.");
+    await importXml(xml, name);
+  } catch (err) {
+    console.error(err);
+    showMsg(`Couldn't load the link: ${err.message}`, "error");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +296,7 @@ function focusNote(t) {
 function countInBeats() {
   const beatQ = 4 / score.beatType;
   const barQ = score.beats * beatQ;
-  const firstQ = (score.measures[1] ?? score.length) - score.measures[0];
+  const firstQ = (score.measures[entryIdx + 1] ?? score.length) - score.measures[entryIdx];
   // Pickup bar: count a full bar, then the rest of the pickup bar's beats.
   const pickupFill = firstQ < barQ - 1e-6 ? Math.round((barQ - firstQ) / beatQ) : 0;
   return score.beats + pickupFill;
@@ -220,6 +320,7 @@ function beatGrid() {
 async function startSing() {
   stopSession();
   take = null;
+  showMsg("");
   singBtn.disabled = listenBtn.disabled = true;
   statusEl.textContent = "requesting mic…";
   let mic;
@@ -245,9 +346,9 @@ async function startSing() {
   const beatSec = (4 / score.beatType) * secPerQuarter();
   const count = countInBeats();
   const t0 = ac.currentTime + 0.3;
-  const songT0 = t0 + count * beatSec;
+  const songT0 = t0 + count * beatSec - entryT; // song time entryT sounds right after the count-in
   for (let k = 0; k < count; k++) playClick(ac, t0 + k * beatSec, k % score.beats === 0, nodes);
-  if (guide === "click") for (const b of beatGrid()) playClick(ac, songT0 + b.t, b.accent, nodes);
+  if (guide === "click") for (const b of beatGrid()) if (b.t >= entryT - 1e-6) playClick(ac, songT0 + b.t, b.accent, nodes);
   if (piano) for (const n of notes) playPiano(ac, piano, songT0 + n.t, n.d, n.midi, 0.9, nodes);
 
   // The singer follows what they hear (output latency); the mic hears them
@@ -263,10 +364,10 @@ async function startSing() {
     const songT = ac.currentTime - songT0;
     const r = mic.read();
     const ft = songT - ANALYSIS_LAG - latency;
-    if (ft > -0.5) addFrame(ft, r.midi);
+    if (ft > entryT - 0.5) addFrame(ft, r.midi);
     gradeUpTo(ft);
     nowT = songT;
-    statusEl.textContent = songT < 0 ? `count-in ${Math.min(count, Math.floor((songT + count * beatSec) / beatSec) + 1)}` : `${r.db.toFixed(0)} dB`;
+    statusEl.textContent = songT < entryT ? `count-in ${Math.min(count, Math.floor((songT - entryT + count * beatSec) / beatSec) + 1)}` : `${r.db.toFixed(0)} dB`;
     renderLive();
     if (songT > songEnd + END_PAD) { stopSing(); return; }
     session.raf = requestAnimationFrame(loop);
@@ -336,8 +437,8 @@ async function stopSing() {
   try { await s.wakeLock?.release(); } catch {}
   await s.mic.close();
   statusEl.textContent = "idle";
-  scrollT = 0;
-  nowT = 0;
+  scrollT = entryT;
+  nowT = entryT;
   renderAll();
   chipsEl.scrollTop = 0;
 }
@@ -359,7 +460,7 @@ async function startPlay(kind, from) {
   stopSession();
   const ac = await getPlayCtx();
   const end = kind === "playback" && take ? Math.max(take.endT ?? songEnd, 0) : songEnd;
-  if (from >= end - 0.05) from = 0;
+  if (from >= end - 0.05 || from < entryT - 1) from = entryT;
   const wantMelody = kind === "listen" || playMode !== "voice" || !take?.voice;
   const wantVoice = kind === "playback" && take?.voice && playMode !== "melody";
   let piano = null;
@@ -423,11 +524,11 @@ function renderLive() {
   renderLane();
 }
 
-let shownLine = -1;
 let sylEls = new Map();
 
 function sylText(n) {
   if (n.melisma) return "";
+  if (!score.verses.length) return noteName(n.midi) + " "; // no lyrics: show the notes
   return n.text + (n.syllabic === "begin" || n.syllabic === "middle" ? "" : " ");
 }
 
@@ -498,7 +599,6 @@ function makeChip(j) {
     return b;
 }
 
-let lastChip = -1;
 function markCurrentChip() {
   const i = noteAt(nowT);
   if (i === lastChip) return;
@@ -548,7 +648,7 @@ function updateButtons() {
     b.disabled = b.dataset.mode !== "melody" && !take?.voice;
     b.dataset.active = b.dataset.mode === playMode ? "true" : "false";
   }
-  for (const el of [songSelect, verseSelect, keySelect, tempoSelect, guideSelect]) el.disabled = kind === "sing";
+  for (const el of [songSelect, verseSelect, keySelect, tempoSelect, guideSelect, openFileBtn, openLinkBtn, removeBtn]) el.disabled = kind === "sing";
   canvas.dataset.pannable = session ? "false" : "true";
 }
 
@@ -673,9 +773,9 @@ function renderLane() {
   ctx.restore();
 
   // Count-in overlay.
-  if (session?.kind === "sing" && nowT < 0) {
+  if (session?.kind === "sing" && nowT < entryT) {
     const beatSec = (4 / score.beatType) * spq;
-    const left = Math.ceil(-nowT / beatSec);
+    const left = Math.ceil((entryT - nowT) / beatSec);
     ctx.fillStyle = "rgba(255,230,160,0.9)";
     ctx.font = "800 44px system-ui, sans-serif";
     ctx.textAlign = "center";
@@ -782,26 +882,41 @@ guideSelect.addEventListener("change", () => {
   guide = guideSelect.value;
   store(K.guide, guide);
 });
-fileInput.addEventListener("change", async () => {
+fileInput.addEventListener("change", () => {
   const file = fileInput.files[0];
   fileInput.value = "";
-  if (!file) return;
-  try {
-    const xml = await readScoreFile(file);
-    const sc = parseMusicXml(xml, file.name); // validate before saving
-    try {
-      localStorage.setItem(K.customXml, xml);
-      localStorage.setItem(K.customName, sc.title);
-    } catch {
-      throw new Error("file too large to keep — try a smaller score");
-    }
-    setCustomOption(sc.title);
-    store(K.verse, null);
-    await selectSong("custom");
-  } catch (err) {
-    console.error(err);
-    showSongError(err.message);
-  }
+  if (file) importFile(file);
+});
+openFileBtn.addEventListener("click", () => fileInput.click());
+openLinkBtn.addEventListener("click", importLink);
+removeBtn.addEventListener("click", async () => {
+  const id = songSelect.value;
+  if (SAMPLES[id]) return;
+  const title = songSelect.selectedOptions[0]?.textContent || "this song";
+  if (!confirm(`Remove “${title}” from My songs?`)) return;
+  await removeSong(id);
+  await refreshLibrary();
+  showMsg(`Removed “${title}”.`);
+  await selectSong("amazing-grace");
+});
+
+// Drag and drop a file anywhere on the page (desktop).
+let dragDepth = 0;
+document.addEventListener("dragenter", (e) => {
+  if (![...(e.dataTransfer?.types || [])].includes("Files")) return;
+  dragDepth++;
+  dropEl.hidden = false;
+});
+document.addEventListener("dragleave", () => {
+  if (--dragDepth <= 0) { dragDepth = 0; dropEl.hidden = true; }
+});
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  dropEl.hidden = true;
+  const file = e.dataTransfer?.files?.[0];
+  if (file && session?.kind !== "sing") importFile(file);
 });
 
 document.addEventListener("visibilitychange", () => {
@@ -817,12 +932,25 @@ document.addEventListener("visibilitychange", () => {
 for (let k = -6; k <= 6; k++) keySelect.add(new Option(k === 0 ? "Key ±0" : `Key ${k > 0 ? "+" : ""}${k}`, String(k)));
 keySelect.value = String(transpose);
 guideSelect.value = guide;
-if (recall(K.customXml)) setCustomOption(recall(K.customName) || "Custom song");
 if (!navigator.mediaDevices?.getUserMedia) {
   statusEl.textContent = "mic API unavailable — open over HTTPS";
 }
-const savedSong = recall(K.song);
-selectSong(savedSong === "custom" && !recall(K.customXml) ? "amazing-grace" : savedSong || "amazing-grace");
+(async () => {
+  // One-time move of the old single custom song into the library.
+  const legacy = recall(K.legacyXml);
+  let savedSong = recall(K.song);
+  if (legacy) {
+    try {
+      const id = await addSong(recall(K.legacyName) || "Custom song", legacy);
+      if (savedSong === "custom") savedSong = id;
+      store(K.legacyXml, null);
+      store(K.legacyName, null);
+    } catch (err) { console.warn("couldn't migrate saved song", err); }
+  }
+  await refreshLibrary();
+  const known = SAMPLES[savedSong] || (savedSong && [...mySongsEl.querySelectorAll("option")].some((o) => o.value === savedSong));
+  await selectSong(known ? savedSong : "amazing-grace");
+})();
 
 // Debug hook for automated tests / devtools.
 window.resonateDebug = () => ({ score, notes, take, session: session && { kind: session.kind }, nowT, scrollT });

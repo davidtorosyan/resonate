@@ -16,7 +16,8 @@ Push to `main` → `.github/workflows/deploy.yml` publishes `public/` to the `gh
   - `music.js` — note names, `fold` (octave-free semitone difference), `median`, `centsLabel`.
   - `piano.js` — sample piano (`loadPiano`/`playPiano`) and a noise-burst metronome `playClick`.
   - `capture.js` + `recorder-worklet.js` — capture a take's raw audio for playback; `playVoice`.
-  - `musicxml.js` — MusicXML parser with timing (`.musicxml`/`.xml`, zipped `.mxl` via a tiny zip reader + `DecompressionStream`).
+  - `musicxml.js` — MusicXML parser with timing (`.musicxml`/`.xml`, zipped `.mxl` via a tiny zip reader + `DecompressionStream`; UTF-8 or UTF-16).
+  - `library.js` — "My songs": imported scores (raw XML) in IndexedDB, in-memory fallback.
 - `songs/` — bundled sample scores (see `songs/README.md` for licensing). Add to `SAMPLES` in `sing.js` and an `<option>` in `sing.html`.
 - `piano/` — piano samples (see below).
 
@@ -99,13 +100,19 @@ The **score is the clock** (an earlier version aligned sung notes to the score i
 
 **Parsing (`musicxml.js`):** picks the part+voice with the most lyric syllables (the melody — e.g. soprano of an SATB hymn). Tracks position across all voices (`backup`/`forward`) so each note gets an `onset` and `dur` in quarter notes; measure starts in `measures` (a short first measure = pickup). Keeps the highest note of chords, skips grace/cue notes, merges ties; rests become gaps (and `restBefore`). Tempo = first `<sound tempo>` or `<metronome>` (default 90 if none), time signature from the first `<time>`. Lyrics per verse; a note with no syllable after a sung one is a melisma continuation (`‿`). Lyric text cleanup: verse numbers stripped, `I 'm` (often with a non-breaking space) → `I'm`. `lyricLines()` splits a verse into display lines at rests and line-ending punctuation. Title falls back to the largest-font `<credit-words>`.
 
-**Session:** one AudioContext for mic + guide so clocks match. Count-in = one bar (+ the missing beats of a pickup bar) of clicks; `songT0` = song time 0 on the audio clock. Guide while singing: **click** (default — a noise burst, so speaker bleed into the mic isn't read as pitch), **melody** (piano; use headphones or the mic grades the piano), **none**. Settings: verse, key (±6 semitones, transposes targets + guide), tempo (50–125% of the score's), all persisted in `localStorage` (`resonate.sing.*`). Custom songs are stored as raw XML (`resonate.sing.customXml`) and re-parsed on load.
+**Session:** one AudioContext for mic + guide so clocks match. Count-in = one bar (+ the missing beats of a pickup bar) of clicks; `songT0` = song time 0 on the audio clock. Guide while singing: **click** (default — a noise burst, so speaker bleed into the mic isn't read as pitch), **melody** (piano; use headphones or the mic grades the piano), **none**. Settings: verse, key (±6 semitones, transposes targets + guide), tempo (50–125% of the score's), all persisted in `localStorage` (`resonate.sing.*`).
+
+**Loading songs:** **Open** button (a direct tap → `fileInput.click()`; iOS blocks file pickers opened from a `<select>` change, which is why there's no "Load…" menu item) with **no `accept` filter** — iOS greys out `.musicxml`/`.mxl` since it has no file type for them; files are validated after picking, with specific hints for `.mscz`/`.mid`/`.pdf`/`.sib`. **Link** (prompt; GitHub `blob` URLs → raw, Dropbox → `dl=1`; CORS failures explained). Drag-and-drop on desktop. Imported songs go to **My songs** (`library.js`, IndexedDB, stored as raw XML and re-parsed on load); ✕ removes. The old single `resonate.sing.customXml` localStorage song is migrated once.
+
+**Entry bar:** the count-in, clicks, lane and Listen start at the bar containing the first sung note (`entryIdx`/`entryT`), so songs with an instrumental intro (e.g. art songs) don't make you wait through it. `songT0` is offset so song time stays absolute.
 
 **Frame timing:** `frameT = songT − ANALYSIS_LAG − latency`, where `latency = outputLatency (or baseLatency) + INPUT_LATENCY (20 ms)` — the singer follows what they hear late, the mic hears them late, and a pitch frame lags its audio.
 
 **Grading (`gradeNote`):** frames inside the note's slot, skipping the first `min(GRACE_MAX 120 ms, 25%)` for scoops/late entries. Voiced < `MIN_VOICED` (35%) → *missed*. Else median octave-folded deviation: ≤25¢ good, ≤50¢ close (ok), else off (shows the note you sang). `hit` = share of the slot's frames voiced and within 50¢; the take's % = duration-weighted mean `hit`. Notes after Stop are *unsung* (not counted). Octave sung is reported (8vb/8va). Graded live as each slot passes.
 
 **Display:** lane with the "now" line at 30%; score notes as bars with lyrics; your pitch drawn octave-shifted next to the current target (green within 50¢, red outside). Karaoke lyric line above (current syllable yellow, graded syllables coloured). Chips per score note. After a take: % + counts, drag the lane to review, tap a chip to seek; Play modes Voice / Melody / Both (voice is shifted by the recording latency so it lines up with the score). **Listen** plays the melody with the lane + lyrics, no mic.
+
+Tested scores: the bundled Amazing Grace (SATB hymn), Schumann *Dichterliebe* No. 1 (voice + piano, German, long intro — from the OpenSheetMusicDisplay test data), Saltarello `.mxl` (instrumental, no lyrics → note names in the lyric line).
 
 **Future:** a start-point selector (sing from a later line), latency calibration (Bluetooth headphones add 150–250 ms the browser may not report), rhythm/timing scoring.
 

@@ -11,7 +11,17 @@ export const DEFAULT_TEMPO = 90;
 export async function readScoreFile(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK"
-  return isZip ? xmlFromMxl(bytes) : new TextDecoder().decode(bytes);
+  return isZip ? xmlFromMxl(bytes) : decodeText(bytes);
+}
+
+// UTF-8 by default; UTF-16 (some exporters, e.g. Finale) by BOM or by the
+// tell-tale zero bytes of "<?xml" in UTF-16.
+function decodeText(bytes) {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder("utf-16le").decode(bytes);
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder("utf-16be").decode(bytes);
+  if (bytes[0] === 0x3c && bytes[1] === 0x00) return new TextDecoder("utf-16le").decode(bytes);
+  if (bytes[0] === 0x00 && bytes[1] === 0x3c) return new TextDecoder("utf-16be").decode(bytes);
+  return new TextDecoder().decode(bytes);
 }
 
 export function parseMusicXml(xmlText, fallbackName = "Untitled") {
@@ -234,6 +244,7 @@ async function xmlFromMxl(bytes) {
   const container = entries.find((e) => e.name === "META-INF/container.xml");
   if (container) {
     const c = new DOMParser().parseFromString(await unzipEntry(bytes, container), "application/xml");
+    if (c.querySelector("parsererror")) throw new Error("Corrupt .mxl (bad container.xml)");
     path = c.querySelector("rootfile")?.getAttribute("full-path") || null;
   }
   const entry =
@@ -273,9 +284,9 @@ async function unzipEntry(bytes, e) {
   const lp = e.localOffset;
   const start = lp + 30 + dv.getUint16(lp + 26, true) + dv.getUint16(lp + 28, true);
   const data = bytes.subarray(start, start + e.compSize);
-  if (e.method === 0) return new TextDecoder().decode(data);
+  if (e.method === 0) return decodeText(data);
   if (e.method !== 8) throw new Error("Unsupported .mxl compression");
   if (typeof DecompressionStream === "undefined") throw new Error("This browser can't open .mxl — use uncompressed .musicxml");
   const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-  return new TextDecoder().decode(await new Response(stream).arrayBuffer());
+  return decodeText(new Uint8Array(await new Response(stream).arrayBuffer()));
 }
