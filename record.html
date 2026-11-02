@@ -182,6 +182,34 @@
       #song-error { font-size: 0.8rem; color: #ff8a9a; }
       #song-error[hidden] { display: none; }
       .transcript-left { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+      #playbar { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; margin-top: -0.25rem; }
+      #playbar[hidden] { display: none; }
+      #play {
+        font: inherit;
+        font-size: 0.85rem;
+        font-weight: 600;
+        padding: 0.4rem 0.9rem;
+        border-radius: 999px;
+        border: 0;
+        color: #0f0f1e;
+        background: rgb(120,200,255);
+        cursor: pointer;
+        min-width: 5.5rem;
+      }
+      #play[data-playing="true"] { background: #fff; }
+      .seg { display: inline-flex; border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; overflow: hidden; }
+      .seg button {
+        font: inherit;
+        font-size: 0.75rem;
+        padding: 0.35rem 0.6rem;
+        border: 0;
+        background: transparent;
+        color: rgba(255,255,255,0.65);
+        cursor: pointer;
+      }
+      .seg button[hidden] { display: none; }
+      .seg button:disabled { opacity: 0.3; cursor: default; }
+      .seg button[data-active="true"] { background: rgba(120,200,255,0.3); color: #fff; }
       #tabs { display: inline-flex; border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; overflow: hidden; }
       #tabs[hidden] { display: none; }
       #tabs button {
@@ -230,7 +258,7 @@
         <h1>Record</h1>
       </div>
       <div class="header-right mono">
-        <span id="version">v16</span>
+        <span id="version">v17</span>
         <span id="status">idle</span>
       </div>
     </header>
@@ -257,6 +285,15 @@
         </div>
       </section>
       <canvas id="roll"></canvas>
+      <section id="playbar" hidden>
+        <button id="play" type="button">▶ Play</button>
+        <span id="play-modes" class="seg" role="group" aria-label="Playback">
+          <button type="button" data-mode="voice" title="Your recording">Voice</button>
+          <button type="button" data-mode="notes" title="A tone for each detected note">Notes</button>
+          <button type="button" data-mode="both" title="Your recording + detected notes">Both</button>
+          <button type="button" data-mode="score" title="Your recording + the score's correct notes on your timing" hidden>Score</button>
+        </span>
+      </section>
       <section id="transcript-wrap">
         <div class="transcript-head mono">
           <span class="transcript-left">
