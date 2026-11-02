@@ -818,7 +818,7 @@ async function finishCapture() {
 }
 
 // --- Playback ---------------------------------------------------------------
-// voice = the recording; notes = a tone per detected note; both = voice + notes;
+// voice = the recording; notes = a piano note per detected note; both = voice + notes;
 // score = voice + the score's correct notes on your timing (needs a song).
 
 function midiToFreq(m) {
@@ -839,6 +839,56 @@ function synthNotes(mode) {
   return out;
 }
 
+// Piano: Salamander Grand Piano samples (CC-BY 3.0, see piano/README.md),
+// one every minor third from A1 to C7; each note uses the nearest sample,
+// pitch-shifted by playbackRate (≤ 1.5 semitones, inaudible as a shift).
+const PIANO_SAMPLES = ["A1", ...[2, 3, 4, 5, 6].flatMap((o) => ["C", "Ds", "Fs", "A"].map((n) => n + o)), "C7"];
+const PIANO_ONSET = 0.012; // samples start ~12 ms in (recording + encoder delay)
+const PIANO_RELEASE = 0.12; // damper time constant when a note ends
+let piano = null; // { ac, keys: [midi], buffers: Map<midi, AudioBuffer> }
+let pianoLoading = null;
+
+function sampleMidi(name) {
+  const pc = { C: 0, Ds: 3, Fs: 6, A: 9 }[name.slice(0, -1)];
+  return (Number(name.slice(-1)) + 1) * 12 + pc;
+}
+
+function loadPiano(ac) {
+  if (piano && piano.ac === ac) return Promise.resolve(piano);
+  if (pianoLoading) return pianoLoading;
+  pianoLoading = Promise.all(
+    PIANO_SAMPLES.map(async (name) => {
+      const res = await fetch(`piano/${name}.mp3`);
+      if (!res.ok) throw new Error(`piano sample ${name}: ${res.status}`);
+      return [sampleMidi(name), await ac.decodeAudioData(await res.arrayBuffer())];
+    }),
+  )
+    .then((entries) => {
+      piano = { ac, keys: entries.map((e) => e[0]).sort((a, b) => a - b), buffers: new Map(entries) };
+      return piano;
+    })
+    .finally(() => { pianoLoading = null; });
+  return pianoLoading;
+}
+
+function playPiano(ac, when, dur, midi, level) {
+  let key = piano.keys[0];
+  for (const k of piano.keys) if (Math.abs(k - midi) < Math.abs(key - midi)) key = k;
+  const src = ac.createBufferSource();
+  src.buffer = piano.buffers.get(key);
+  src.playbackRate.value = 2 ** ((midi - key) / 12);
+  const g = ac.createGain();
+  const end = when + Math.max(0.12, dur);
+  g.gain.setValueAtTime(level, when);
+  g.gain.setTargetAtTime(0, end, PIANO_RELEASE);
+  src.connect(g);
+  g.connect(ac.destination);
+  src.start(when, PIANO_ONSET);
+  src.stop(end + PIANO_RELEASE * 6);
+  playNodes.push(src);
+}
+
+// Fallback if the piano samples can't load.
 function playTone(ac, when, dur, midi, level) {
   const f = midiToFreq(midi);
   const o1 = ac.createOscillator();
@@ -880,10 +930,26 @@ async function startPlayback(from) {
   if (!playCtx || playCtx.state === "closed") playCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (playCtx.state === "suspended") await playCtx.resume();
   const ac = playCtx;
+  const mode = effectiveMode();
+  let usePiano = false;
+  if (mode !== "voice") {
+    try {
+      if (!piano || piano.ac !== ac) {
+        playBtn.textContent = "Loading…";
+        playBtn.disabled = true;
+      }
+      await loadPiano(ac);
+      usePiano = true;
+    } catch (err) {
+      console.warn("Piano samples unavailable, using a plain tone", err);
+    } finally {
+      playBtn.disabled = false;
+    }
+    if (playing) return; // another play started while loading
+  }
   from = Math.max(0, Math.min(from, duration));
   if (from >= duration - 0.05) from = 0;
   const start = ac.currentTime + 0.08;
-  const mode = effectiveMode();
 
   const withVoice = mode !== "notes";
   if (withVoice) {
@@ -901,12 +967,13 @@ async function startPlayback(from) {
     playNodes.push(src);
   }
   if (mode !== "voice") {
-    const level = withVoice ? 0.16 : 0.3;
+    const level = usePiano ? (withVoice ? 0.9 : 1.6) : withVoice ? 0.16 : 0.3;
+    const note = usePiano ? playPiano : playTone;
     for (const n of synthNotes(mode === "score" ? "score" : "notes")) {
       const s0 = n.start - SYNTH_LAG, e0 = n.end - SYNTH_LAG;
       if (e0 <= from) continue;
       const st = Math.max(s0, from);
-      playTone(ac, start + (st - from), e0 - st, n.midi, level);
+      note(ac, start + (st - from), e0 - st, n.midi, level);
     }
   }
 
