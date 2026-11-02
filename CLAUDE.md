@@ -9,7 +9,10 @@ Push to `main` → `.github/workflows/deploy.yml` publishes `public/` to the `gh
 ## Pages
 
 - `index.html` + `app.js` — the tuner (hold a note, see note/cents/volume/waveform). Header has a **Record** link.
-- `record.html` + `record.js` — record mode: record a sung phrase, see a live piano-roll of pitch with detected notes, then a transcript of notes (name, duration, cents). Self-contained (its own copy of YIN) so it can't break the tuner.
+- `record.html` + `record.js` (ES module) — record mode: record a sung phrase, see a live piano-roll of pitch with detected notes, then a transcript of notes (name, duration, cents). Self-contained (its own copy of YIN) so it can't break the tuner.
+  - `musicxml.js` — MusicXML parser (`.musicxml`/`.xml`, and zipped `.mxl` via a tiny zip reader + `DecompressionStream`).
+  - `align.js` — rhythm-agnostic alignment of sung notes to the score melody.
+  - `songs/` — bundled sample scores (see `songs/README.md` for licensing). Add to `SAMPLES` in `record.js` and an `<option>` in `record.html`.
 
 ## Run (local, optional)
 
@@ -82,4 +85,14 @@ Maps RMS → bar width via `(dB + 55) * 2`, clamped 0–100%. Roughly −55 dB e
 
 ## Record mode note segmentation (`public/record.js`)
 
-Per frame: YIN pitch (same settings as the tuner) → median over `SMOOTH_MS` (100 ms). A note continues while the smoothed pitch stays within 50¢ of the note's median; it splits when the pitch sits >50¢ away for `SPLIT_MS` (80 ms), and ends on an unvoiced gap ≥ `GAP_MS` (70 ms). Notes shorter than `MIN_NOTE_MS` (80 ms) are dropped. Voicing also requires the RMS of the newest `TAIL_SAMPLES` (1024, ~21 ms) to pass `MIN_RMS` — the full 4096-sample window smears short gaps, which otherwise merges repeated same-pitch notes. No beat grid yet; times are seconds.
+Per frame: YIN pitch (same settings as the tuner) → median over `SMOOTH_MS` (100 ms). A note continues while the smoothed pitch stays within 50¢ of the note's median; it splits when the pitch sits >50¢ away for `SPLIT_MS` (80 ms), and ends on an unvoiced gap ≥ `GAP_MS` (70 ms). Notes shorter than `MIN_NOTE_MS` (60 ms) are dropped. Voicing also requires the RMS of the newest `TAIL_SAMPLES` (1024, ~21 ms) to pass `MIN_RMS` — the full 4096-sample window smears short gaps, which otherwise merges repeated same-pitch notes. No beat grid yet; times are seconds.
+
+## Song mode (MusicXML scoring)
+
+Song picker on the record page: a bundled sample, or *Load MusicXML…* (parsed score is cached in `localStorage` under `resonate.customSong`).
+
+**Parsing (`musicxml.js`):** picks the part+voice with the most lyric syllables (the sung melody — e.g. the soprano in an SATB hymn), keeps the highest note of chords, skips grace/cue notes, merges ties, drops rests (but remembers them as phrase breaks). Each note carries lyrics per verse; a note with no syllable after a sung one is a melisma continuation (shown as `‿`). Title falls back to the largest-font `<credit-words>` (MuseScore puts it there).
+
+**Alignment (`align.js`):** edit-distance DP over (sung note, score note) with moves match / split (one score note sung as two) / merge (one sung note covering repeated or legato notes) / miss / extra. Pitch compared modulo the octave (singing an octave off is fine; shown as ↑8/↓8). Free start and end in the score, so singing any stretch (e.g. just the chorus) works. *Any key* searches 12 transpositions; with *As written*, if another key fits far better the summary suggests switching. Grades: ≤25¢ good, ≤50¢ ok, else off (wrong note, a dashed ghost marks the target on the piano roll); unsung notes inside the sung stretch are *missed*. Costs: `MISS`, `SPLIT_PEN`, `MERGE_PEN`, `pitchCost`, `extraCost` at the top of `align.js`. Re-aligns live whenever a note closes, and on song/verse/key change.
+
+**Known limits:** fast ornaments (~180 ms notes) sometimes aren't segmented and show as missed; no rhythm scoring yet.

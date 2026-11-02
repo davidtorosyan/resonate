@@ -1,5 +1,10 @@
 // Record mode: capture a sung phrase and transcribe it into discrete notes.
 // Self-contained on purpose — the tuner page (app.js) is untouched.
+// With a song (MusicXML) loaded, the take is aligned to the score's melody
+// (rhythm ignored, octave-tolerant) and each note is graded against it.
+
+import { parseMusicXml, loadScoreFile, notesForVerse } from "./musicxml.js";
+import { alignTake } from "./align.js";
 
 const canvas = document.getElementById("roll");
 const ctx = canvas.getContext("2d");
@@ -12,6 +17,24 @@ const transcriptEl = document.getElementById("transcript");
 const noteCountEl = document.getElementById("note-count");
 const copyBtn = document.getElementById("copy");
 const accBtn = document.getElementById("accidentals");
+const songSelect = document.getElementById("song-select");
+const verseSelect = document.getElementById("verse-select");
+const keySelect = document.getElementById("key-select");
+const fileInput = document.getElementById("file-input");
+const tabsEl = document.getElementById("tabs");
+const songErrEl = document.getElementById("song-error");
+
+const SAMPLES = { "amazing-grace": { title: "Amazing Grace", url: "songs/amazing-grace.musicxml" } };
+const SONG_KEY = "resonate.song";       // selected song id
+const CUSTOM_KEY = "resonate.customSong"; // parsed custom score (JSON)
+const VERSE_KEY = "resonate.verse";
+const KEYMODE_KEY = "resonate.keyMode";
+
+// --- Song state ---------------------------------------------------------------
+let score = null;     // parsed score
+let targets = null;   // notes for the chosen verse
+let alignment = null; // result of alignTake for the current take
+let tab = "score";    // "score" | "notes" (bottom panel, when a song is loaded)
 
 // --- Tunables -------------------------------------------------------------
 const MIN_RMS = 0.012;      // loudness gate (same as tuner)
@@ -22,7 +45,7 @@ const SMOOTH_MS = 100;      // median window for the live pitch used to segment
 const SPLIT_MS = 80;        // pitch must sit >50¢ off the current note this long to start a new note
 const GAP_MS = 70;          // unvoiced gap this long ends the current note
 const TAIL_SAMPLES = 1024;  // voicing gate looks at only the newest ~21 ms, so gaps between repeated notes register
-const MIN_NOTE_MS = 80;     // shorter notes are dropped as glitches
+const MIN_NOTE_MS = 60;     // shorter notes are dropped as glitches (fast melisma notes come out ~80 ms)
 const PX_PER_SEC = 110;     // horizontal zoom of the piano roll
 const GUTTER = 38;          // left gutter for note labels (CSS px)
 
@@ -133,6 +156,7 @@ function closeCurrent() {
     } else {
       segments.push(cur);
     }
+    realign();
     renderTranscript();
   }
   cur = null;
@@ -208,7 +232,17 @@ const TUNE_COLORS = {
   good: ["rgba(74,222,128,0.55)", "rgba(74,222,128,0.9)"],
   ok: ["rgba(166,79,255,0.55)", "rgba(166,79,255,0.95)"],
   off: ["rgba(255,111,111,0.5)", "rgba(255,111,111,0.9)"],
+  extra: ["rgba(255,255,255,0.1)", "rgba(255,255,255,0.35)"],
 };
+
+// With a song: colour a sung note by how it matched its score note.
+function segStyle(i, s) {
+  if (!alignment || s.live || i >= alignment.segTo.length) return { tune: tuneOf(s.cents) };
+  const j = alignment.segTo[i];
+  if (j < 0) return { tune: "extra" };
+  const r = alignment.notes[j];
+  return { tune: r.status === "unsung" || r.status === "missed" ? "extra" : r.status, j, r, first: r.segs[0] === i };
+}
 
 function visibleSpan(w) {
   return (w - GUTTER) / PX_PER_SEC;
@@ -274,8 +308,34 @@ function render() {
   all.forEach((s, i) => {
     const x0 = xOf(s.start), x1 = xOf(s.end);
     if (x1 < GUTTER || x0 > w) return;
-    const [fill, stroke] = TUNE_COLORS[tuneOf(s.cents)];
+    const st = segStyle(i, s);
+    const [fill, stroke] = TUNE_COLORS[st.tune];
     const y = yOf(s.note);
+    // Missed pitch: dashed ghost where the score note was (in the sung octave).
+    if (st.r && st.r.status === "off" && st.r.main === i) {
+      const gm = targets[st.j].midi + alignment.transpose + 12 * st.r.octave;
+      if (gm >= rangeLo && gm <= rangeHi) {
+        ctx.save();
+        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = "rgba(255,255,255,0.75)";
+        ctx.lineWidth = 1.2;
+        roundRect(x0, yOf(gm) - barH / 2, Math.max(2, x1 - x0), barH, Math.min(5, barH / 2));
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+    // Lyric syllable above the bar.
+    if (st.r && st.first) {
+      const syl = sylLabel(targets[st.j]);
+      if (syl) {
+        ctx.save();
+        ctx.font = "italic 600 12px system-ui, sans-serif";
+        ctx.fillStyle = "rgba(255,230,160,0.95)";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(syl, x0, y - barH / 2 - 2);
+        ctx.restore();
+      }
+    }
     ctx.fillStyle = fill;
     ctx.strokeStyle = i === selected ? "#fff" : stroke;
     ctx.lineWidth = i === selected ? 2 : 1;
@@ -345,7 +405,83 @@ function centsLabel(c) {
   return `${c > 0 ? "+" : c < 0 ? "" : "±"}${c}¢`;
 }
 
+function sylLabel(tn) {
+  if (tn.melisma) return "";
+  return tn.syllabic === "begin" || tn.syllabic === "middle" ? `${tn.text}-` : tn.text;
+}
+
+// Pitch to show for a score note: written pitch, shifted if "any key" moved it.
+function targetMidi(j) {
+  return targets[j].midi + (alignment ? alignment.transpose : 0);
+}
+
+function realign() {
+  alignment = null;
+  if (!targets || !segments.length) return;
+  const sung = segments.map((s) => ({ midi: s.note + s.cents / 100, dur: s.end - s.start }));
+  const anyKey = keySelect.value === "any";
+  alignment = alignTake(sung, targets, { anyKey });
+  // Sang in another key with "As written" on? Suggest switching.
+  if (!anyKey) {
+    const alt = alignTake(sung, targets, { anyKey: true });
+    const hits = (a) => a.summary.good + a.summary.ok;
+    if (alt.transpose !== 0 && hits(alt) >= hits(alignment) * 1.5 + 3) alignment.keyHint = alt.transpose;
+  }
+}
+
 function renderTranscript() {
+  tabsEl.hidden = !targets;
+  for (const b of tabsEl.querySelectorAll("button")) b.dataset.active = b.dataset.tab === tab ? "true" : "false";
+  if (targets && tab === "score") renderScoreChips();
+  else renderNoteChips();
+  copyBtn.disabled = recording || segments.length === 0;
+}
+
+function renderScoreChips() {
+  transcriptEl.textContent = "";
+  let focus = null;
+  targets.forEach((tn, j) => {
+    if (tn.restBefore && j > 0) {
+      const br = document.createElement("span");
+      br.className = "phrase-break";
+      transcriptEl.appendChild(br);
+    }
+    const r = alignment ? alignment.notes[j] : null;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "note-chip score-chip mono";
+    b.dataset.tune = r ? r.status : "pending";
+    b.dataset.selected = r && r.segs.includes(selected) ? "true" : "false";
+    b.innerHTML = `<i></i><b></b><small></small>`;
+    b.querySelector("i").textContent = tn.melisma ? "‿" : sylLabel(tn);
+    b.querySelector("b").textContent = noteName(targetMidi(j));
+    let res = "";
+    if (r && (r.status === "good" || r.status === "ok")) res = `✓ ${centsLabel(Math.round(r.dev * 100))}`;
+    else if (r && r.status === "off") res = noteName(Math.round(r.sungMidi));
+    else if (r && r.status === "missed") res = "missed";
+    if (r && r.octave && r.status !== "missed" && r.status !== "unsung") res += r.octave > 0 ? " ↑8" : " ↓8";
+    b.querySelector("small").textContent = res || "\u00a0";
+    if (r && r.segs.length) b.addEventListener("click", () => selectSegment(r.main ?? r.segs[0]));
+    transcriptEl.appendChild(b);
+    if (alignment && j === alignment.end) focus = b;
+  });
+  noteCountEl.textContent = alignment ? summaryText(alignment) : `${score.title.toUpperCase()} · ${targets.length} NOTES`;
+  if (recording && focus) focus.scrollIntoView({ block: "nearest" });
+}
+
+function summaryText(a) {
+  const s = a.summary;
+  const hit = s.good + s.ok;
+  let t = `${hit}/${s.total} ON PITCH`;
+  if (s.off) t += ` · ${s.off} OFF`;
+  if (s.missed) t += ` · ${s.missed} MISSED`;
+  const k = (x) => (x > 6 ? `${x - 12}` : `+${x}`);
+  if (a.transpose) t += ` · KEY ${k(a.transpose)}`;
+  if (a.keyHint) t += ` · SOUNDS LIKE KEY ${k(a.keyHint)} — TRY "ANY KEY"`;
+  return t;
+}
+
+function renderNoteChips() {
   transcriptEl.textContent = "";
   segments.forEach((s, i) => {
     const b = document.createElement("button");
@@ -360,7 +496,6 @@ function renderTranscript() {
     transcriptEl.appendChild(b);
   });
   noteCountEl.textContent = segments.length ? `NOTES · ${segments.length}` : "NOTES";
-  copyBtn.disabled = recording || segments.length === 0;
   if (recording) transcriptEl.scrollTop = transcriptEl.scrollHeight;
 }
 
@@ -374,6 +509,19 @@ function selectSegment(i) {
   }
   renderTranscript();
   render();
+}
+
+// Big readout after a take: score result with a song, else the note count.
+function showTakeResult() {
+  updateLive();
+  if (alignment) {
+    const s = alignment.summary;
+    liveNoteEl.textContent = `${s.good + s.ok}/${s.total}`;
+    liveNoteEl.dataset.active = "true";
+    liveCentsEl.textContent = "on pitch";
+  } else if (segments.length) {
+    liveNoteEl.textContent = `${segments.length} notes`;
+  }
 }
 
 function updateLive() {
@@ -446,6 +594,7 @@ async function startRecording() {
     liveMidi = null;
     duration = 0;
     selected = -1;
+    alignment = null;
     rangeLo = 48;
     rangeHi = 72;
     hasPitch = false;
@@ -474,6 +623,7 @@ async function stopRecording() {
   rafId = null;
   if (recording) closeCurrent();
   recording = false;
+  realign();
   if (stream) stream.getTracks().forEach((t) => t.stop());
   if (source) try { source.disconnect(); } catch {}
   if (audioCtx) try { await audioCtx.close(); } catch {}
@@ -489,9 +639,9 @@ async function stopRecording() {
   // Start the review at the beginning of the take.
   scrollT = 0;
   updateLive();
-  liveNoteEl.textContent = segments.length ? `${segments.length} notes` : "—";
-  liveNoteEl.dataset.active = "false";
+  showTakeResult();
   renderTranscript();
+  transcriptEl.scrollTop = 0;
   render();
 }
 
@@ -534,15 +684,29 @@ accBtn.addEventListener("click", () => {
   accBtn.textContent = useFlats ? "♭ → ♯" : "♯ → ♭";
   renderTranscript();
   updateLive();
-  if (!recording && segments.length) liveNoteEl.textContent = `${segments.length} notes`;
+  if (!recording) showTakeResult();
   render();
 });
 accBtn.textContent = useFlats ? "♭ → ♯" : "♯ → ♭";
 
 copyBtn.addEventListener("click", async () => {
-  const text = segments
-    .map((s) => `${noteName(s.note)} ${(s.end - s.start).toFixed(2)}s ${centsLabel(s.cents)}`)
-    .join("\n");
+  const text = targets && tab === "score" && alignment
+    ? targets
+        .map((tn, j) => {
+          const r = alignment.notes[j];
+          if (r.status === "unsung") return null;
+          const syl = tn.melisma ? "~" : sylLabel(tn);
+          const res =
+            r.status === "missed" ? "missed"
+            : r.status === "off" ? `sang ${noteName(Math.round(r.sungMidi))}`
+            : `ok ${centsLabel(Math.round(r.dev * 100))}`;
+          return `${syl}\t${noteName(targetMidi(j))}\t${res}`;
+        })
+        .filter(Boolean)
+        .join("\n")
+    : segments
+        .map((s) => `${noteName(s.note)} ${(s.end - s.start).toFixed(2)}s ${centsLabel(s.cents)}`)
+        .join("\n");
   try {
     await navigator.clipboard.writeText(text);
     copyBtn.textContent = "Copied";
@@ -557,5 +721,132 @@ if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
   statusEl.textContent = "mic API unavailable — open over HTTPS";
 }
 
+// --- Song selection ---------------------------------------------------------------
+
+function store(key, val) {
+  try { val === null ? localStorage.removeItem(key) : localStorage.setItem(key, val); } catch {}
+}
+function recall(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function setScore(sc) {
+  score = sc;
+  songErrEl.hidden = true;
+  if (!sc) {
+    targets = null;
+    alignment = null;
+    verseSelect.hidden = true;
+    keySelect.hidden = true;
+    if (!recording) showTakeResult();
+    renderTranscript();
+    render();
+    return;
+  }
+  verseSelect.textContent = "";
+  for (const v of sc.verses) verseSelect.add(new Option(`Verse ${v}`, v));
+  const saved = recall(VERSE_KEY);
+  if (saved && sc.verses.includes(saved)) verseSelect.value = saved;
+  verseSelect.hidden = sc.verses.length < 2;
+  keySelect.hidden = false;
+  // Spell notes the way the score's key signature does.
+  if (sc.fifths !== 0) {
+    useFlats = sc.fifths < 0;
+    accBtn.textContent = useFlats ? "♭ → ♯" : "♯ → ♭";
+  }
+  applyVerse();
+}
+
+function applyVerse() {
+  targets = notesForVerse(score, verseSelect.value || score.verses[0] || "1");
+  tab = "score";
+  realign();
+  if (!recording) showTakeResult();
+  renderTranscript();
+  render();
+}
+
+function setCustomOption(title) {
+  let opt = songSelect.querySelector('option[value="custom"]');
+  if (!opt) {
+    opt = new Option("", "custom");
+    songSelect.insertBefore(opt, songSelect.querySelector('option[value="load"]'));
+  }
+  opt.textContent = title;
+}
+
+let songValue = "";
+async function selectSong(id) {
+  if (id === "load") {
+    songSelect.value = songValue;
+    fileInput.click();
+    return;
+  }
+  songValue = id;
+  songSelect.value = id;
+  store(SONG_KEY, id);
+  try {
+    if (!id) return setScore(null);
+    if (SAMPLES[id]) {
+      const res = await fetch(SAMPLES[id].url);
+      if (!res.ok) throw new Error(`couldn't load (${res.status})`);
+      const sc = parseMusicXml(await res.text(), SAMPLES[id].title);
+      sc.title = SAMPLES[id].title;
+      return setScore(sc);
+    }
+    if (id === "custom") return setScore(JSON.parse(recall(CUSTOM_KEY)));
+  } catch (err) {
+    console.error(err);
+    showSongError(err.message);
+  }
+}
+
+function showSongError(msg) {
+  songErrEl.textContent = `Couldn't load song: ${msg}`;
+  songErrEl.hidden = false;
+}
+
+fileInput.addEventListener("change", async () => {
+  const file = fileInput.files[0];
+  fileInput.value = "";
+  if (!file) return;
+  try {
+    const sc = await loadScoreFile(file);
+    store(CUSTOM_KEY, JSON.stringify(sc));
+    setCustomOption(sc.title);
+    store(VERSE_KEY, null);
+    await selectSong("custom");
+  } catch (err) {
+    console.error(err);
+    showSongError(err.message);
+  }
+});
+
+songSelect.addEventListener("change", () => selectSong(songSelect.value));
+verseSelect.addEventListener("change", () => {
+  store(VERSE_KEY, verseSelect.value);
+  applyVerse();
+});
+keySelect.addEventListener("change", () => {
+  store(KEYMODE_KEY, keySelect.value);
+  realign();
+  if (!recording) showTakeResult();
+  renderTranscript();
+  render();
+});
+tabsEl.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-tab]");
+  if (!b) return;
+  tab = b.dataset.tab;
+  renderTranscript();
+});
+
+keySelect.value = recall(KEYMODE_KEY) === "any" ? "any" : "written";
+try {
+  const custom = JSON.parse(recall(CUSTOM_KEY));
+  if (custom?.title) setCustomOption(custom.title);
+} catch {}
+const savedSong = recall(SONG_KEY);
 renderTranscript();
 render();
+selectSong(savedSong === null ? "amazing-grace" : savedSong === "custom" && !recall(CUSTOM_KEY) ? "" : savedSong);
