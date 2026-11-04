@@ -80,10 +80,13 @@ function restoreTempo(doc, log, changes) {
 }
 
 // Octave clefs (a G or F clef with a small 8 below or above, e.g. the bass clef of a low voice):
-// Audiveris reads the 8 on most systems of a part but can miss one (an 8 merged with the system
-// barline). In a single-staff part where most clefs of a kind carry the octave, a plain one of
-// the same kind is the same clef with its 8 missed: give it the octave and move its notes
-// (written as sounding pitch) by that octave, up to the next clef.
+// Audiveris's evidence for the 8 is weak (the classifier grades octave clefs ~0.1), so whether it
+// finds it on a given system depends on the exact pixels: on an iPhone half of Hades' systems in
+// "Hey, Little Songbird" came out with a plain bass clef, an octave high. A singer's staff doesn't
+// switch between a clef and its octave variant, so in a single-staff part where the octave was
+// found on at least 2 systems, and on at least a third of that clef's systems, the plain ones
+// are the same clef with the 8 missed: they get the octave and their notes (written as sounding
+// pitch) move by it, up to the next clef. The 8 has never been found on a plain clef in testing.
 function unifyOctaveClefs(doc, changes) {
   for (const part of doc.querySelectorAll("score-partwise > part")) {
     const measures = [...part.querySelectorAll(":scope > measure")];
@@ -101,7 +104,7 @@ function unifyOctaveClefs(doc, changes) {
       for (const oct of [-1, 1]) {
         const withOct = same.filter((c) => c.oct === oct).length;
         const plain = same.filter((c) => c.oct === 0);
-        if (!plain.length || withOct < 2 || withOct < 2 * plain.length) continue;
+        if (!plain.length || withOct < 2 || 2 * withOct < plain.length) continue;
         let moved = 0;
         for (const c of plain) {
           let coc = c.el.querySelector("clef-octave-change");
@@ -117,7 +120,7 @@ function unifyOctaveClefs(doc, changes) {
           }
         }
         changes.push(`part ${part.getAttribute("id")}: ${plain.length} ${kind} clef${plain.length > 1 ? "s" : ""} without its 8 ` +
-          `(the other ${withOct} have it): ${moved} notes moved ${oct < 0 ? "down" : "up"} an octave`);
+          `(${withOct} have it): ${moved} notes moved ${oct < 0 ? "down" : "up"} an octave`);
       }
     }
   }
