@@ -33,11 +33,12 @@ export async function renderPdf(data, { pdfjsBase, dpi = DPI, onPage } = {}) {
     await page.render({ canvasContext: ctx, canvas, viewport }).promise;
     const rgba = ctx.getImageData(0, 0, width, height).data;
     const gray = new Uint8Array(width * height);
-    // Pure black & white at 50% coverage. pdf.js anti-aliases; Audiveris's own PDF
-    // path renders without anti-aliasing, and on gray glyph edges it recognizes far
-    // fewer lyrics (measured: 15% vs 44% of syllables on the test score; notes unaffected).
+    // Pure black & white. pdf.js anti-aliases, and on gray glyph edges Tesseract
+    // recognizes far fewer lyrics. Edge pixels darker than ~80% white count as ink:
+    // slightly bold glyphs OCR best (lyric syllables on the test scores, cut 128 → 200:
+    // 87% → 98%, 93% → 96%, 92% → 93%, 100% → 100%; notes identical).
     for (let p = 0, q = 0; p < gray.length; p++, q += 4) {
-      gray[p] = rgba[q] * 299 + rgba[q + 1] * 587 + rgba[q + 2] * 114 < 128000 ? 0 : 255;
+      gray[p] = rgba[q] * 299 + rgba[q + 1] * 587 + rgba[q + 2] * 114 < 200000 ? 0 : 255;
     }
     page.cleanup();
     const staves = countStaves(gray, width, height);
