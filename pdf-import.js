@@ -4,6 +4,7 @@
 
 import { readScoreFile, parseMusicXml } from "./musicxml.js";
 import { addSong } from "./library.js";
+import { fixOmrScore } from "./omr/fixscore.js";
 
 const $ = (id) => document.getElementById(id);
 const chooseBtn = $("choose");
@@ -16,7 +17,7 @@ let timer = null;
 let lastFraction = 0;
 let sheetStart = { sheet: 0, at: 0 };
 let sheetTimes = [];
-let mxlBytes = null;
+let finalXml = null;
 let baseName = "song";
 
 const STEP_LABELS = {
@@ -156,15 +157,16 @@ async function run(file) {
   try {
     const omr = await import("./omr/omr.js");
     const res = await omr.convertPdf(file, { onProgress, onLog: appendLog });
-    mxlBytes = res.mxl;
 
     setStep("save");
     $("stage").textContent = "Saving to My songs";
-    const xml = await readScoreFile(new File([res.mxl], `${baseName}.mxl`));
+    const fixed = fixOmrScore(await readScoreFile(new File([res.mxl], `${baseName}.mxl`)), res.log);
+    for (const c of fixed.changes) appendLog(`[fix] ${c}`);
+    const xml = fixed.xml;
     // Page 1's credits (title) are gone when the first music page failed; don't take page 2's.
     const firstFailed = res.failed.some((f) => f.sheet === 1);
     const title = firstFailed ? baseName : pickTitle(xml, baseName);
-    const finalXml = setTitle(xml, title);
+    finalXml = setTitle(xml, title);
     const score = parseMusicXml(finalXml, title);
     const id = await addSong(score.title, finalXml);
     try { localStorage.setItem("resonate.sing.song", id); localStorage.removeItem("resonate.sing.verse"); } catch {}
@@ -203,10 +205,10 @@ fileInput.addEventListener("change", () => {
   if (f) run(f);
 });
 $("download").addEventListener("click", () => {
-  if (!mxlBytes) return;
+  if (!finalXml) return;
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([mxlBytes], { type: "application/vnd.recordare.musicxml" }));
-  a.download = `${baseName}.mxl`;
+  a.href = URL.createObjectURL(new Blob([finalXml], { type: "application/vnd.recordare.musicxml+xml" }));
+  a.download = `${baseName}.musicxml`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 });
@@ -232,4 +234,4 @@ const testPdf = new URLSearchParams(location.search).get("pdf");
 if (testPdf) {
   fetch(testPdf).then((r) => r.blob()).then((b) => run(new File([b], testPdf.split("/").pop())));
 }
-window.resonateDebug = () => ({ running, lastFraction, sheetTimes, hasResult: !!mxlBytes });
+window.resonateDebug = () => ({ running, lastFraction, sheetTimes, hasResult: !!finalXml });

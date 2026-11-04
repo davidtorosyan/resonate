@@ -70,13 +70,19 @@ export async function convertPdf(input, { onProgress, onLog } = {}) {
   const data = new Uint8Array(input instanceof ArrayBuffer ? input : await input.arrayBuffer());
   const pages = await renderPdf(data, {
     pdfjsBase: `${BASE}pdfjs`,
-    onPage: (i, n, staves) => {
-      addLog(`page ${i}/${n}: ${staves} staves`);
+    onPage: (i, n, staves, blank) => {
+      addLog(`page ${i}/${n}: ${staves} staves${blank ? ' (blank)' : ''}`);
       onProgress?.({ phase: 'pages', page: i, pages: n, fraction: i / n });
     },
   });
   const music = pages.filter((p) => p.staves >= 1);
-  if (!music.length) throw new Error('No music staves found in this PDF.');
+  if (!music.length) {
+    const blank = pages.every((p) => p.blank);
+    throw new Error(blank
+      ? "This PDF's pages came out blank here (an image format the page renderer couldn't decode?) — " +
+        'send the log (Details → Copy log) so it can be fixed.'
+      : 'No music staves found in this PDF — is it sheet music? Scanned pages need to be reasonably sharp.');
+  }
   const tiff = buildTiff(music);
   pages.length = 0; // free the rendered pages
 
