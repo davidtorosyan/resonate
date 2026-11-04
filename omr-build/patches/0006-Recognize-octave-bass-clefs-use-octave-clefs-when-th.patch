@@ -1,0 +1,221 @@
+From 4edd40b91134e6799b9e1bb71afecfa5bd01e1ab Mon Sep 17 00:00:00 2001
+From: Resonate web port <dave.torosyan@gmail.com>
+Date: Wed, 4 Nov 2026 18:28:56 +0000
+Subject: [PATCH 6/6] Recognize octave bass clefs; use octave clefs when the 8
+ is there
+
+Vocal scores for low voices write the bass part with a bass clef that has
+a small 8 below (sounding an octave lower), e.g. Hades in "Hey, Little
+Songbird". F_CLEF_8VA/8VB were left out of the clefs looked for at the
+start of a staff ("reported to be extremely rare"), so such a part came
+out an octave too high.
+
+- F_CLEF_8VA and F_CLEF_8VB are now header clef candidates.
+- The classifier is weak on octave clefs: on a bass clef with an 8 below,
+  the plain clef alone grades ~0.8 and the clef + 8 glyph as F_CLEF_8VB
+  only 0.05-0.3, so the plain clef always won. But octave candidates only
+  show up when the 8 is there (none on 22 plain bass clefs of a piano
+  score). So when the classifier proposes the octave variant of the chosen
+  G or F clef for a glyph extending past it by at least half an interline
+  (below for 8vb, above for 8va), that variant is used, with the plain
+  clef's grade. Logged as "Staff#N F_CLEF_8VB with an 8 below".
+
+Test scan: 20 of 21 low-voice staves now get F_CLEF_8VB (the last one's 8
+touches the system barline). Other test scores: identical output.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ETLv1TPifmmSkv1DUf9mXN
+---
+ .../audiveris/omr/sheet/clef/ClefBuilder.java | 104 +++++++++++++++++-
+ 1 file changed, 102 insertions(+), 2 deletions(-)
+
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/clef/ClefBuilder.java b/app/src/main/java/org/audiveris/omr/sheet/clef/ClefBuilder.java
+index 00f766d..8012f6a 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/clef/ClefBuilder.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/clef/ClefBuilder.java
+@@ -36,6 +36,8 @@ import org.audiveris.omr.glyph.Shape;
+ import static org.audiveris.omr.glyph.Shape.C_CLEF;
+ import static org.audiveris.omr.glyph.Shape.F_CLEF;
+ import static org.audiveris.omr.glyph.Shape.G_CLEF;
++import static org.audiveris.omr.glyph.Shape.F_CLEF_8VA;
++import static org.audiveris.omr.glyph.Shape.F_CLEF_8VB;
+ import static org.audiveris.omr.glyph.Shape.G_CLEF_8VA;
+ import static org.audiveris.omr.glyph.Shape.G_CLEF_8VB;
+ import static org.audiveris.omr.glyph.Shape.PERCUSSION_CLEF;
+@@ -106,17 +108,26 @@ public class ClefBuilder
+ 
+     /**
+      * All possible clef symbols at beginning of staff: all but small clefs.
+-     * Octave bass clefs are reported to be extremely
+-     * <a href="http://en.wikipedia.org/wiki/Clef#Octave_clefs">rare</a>.
++     * Octave bass clefs are rare in general, but not in vocal scores for low voices
++     * (a bass clef with an 8 below sounds an octave lower).
+      */
+     private static final EnumSet<Shape> HEADER_CLEF_SHAPES = EnumSet.of(
+             F_CLEF,
++            F_CLEF_8VA,
++            F_CLEF_8VB,
+             G_CLEF,
+             G_CLEF_8VA,
+             G_CLEF_8VB,
+             C_CLEF,
+             PERCUSSION_CLEF);
+ 
++    /** Octave variants of the G and F clefs. */
++    private static final EnumSet<Shape> OCTAVE_CLEF_SHAPES = EnumSet.of(
++            F_CLEF_8VA,
++            F_CLEF_8VB,
++            G_CLEF_8VA,
++            G_CLEF_8VB);
++
+     /**
+      * All possible clef symbols on a 1-line staff.
+      */
+@@ -153,6 +164,9 @@ public class ClefBuilder
+     /** Inner clef area. */
+     private Rectangle innerRect;
+ 
++    /** Best octave clef candidate per shape (8va / 8vb), see {@link #checkOctaveClefs}. */
++    private final Map<Shape, ClefInter> octaveCandidates = new EnumMap<>(Shape.class);
++
+     /** Shape classifier to use. */
+     private final Classifier classifier = ShapeClassifier.getInstance();
+ 
+@@ -243,6 +257,7 @@ public class ClefBuilder
+ 
+         // Best inter per clef kind
+         Map<ClefKind, ClefInter> bestMap = new EnumMap<>(ClefKind.class);
++        octaveCandidates.clear();
+ 
+         for (Set<Glyph> set : sets) {
+             // Use only the subgraph for this set
+@@ -254,6 +269,8 @@ public class ClefBuilder
+             logger.debug("Staff#{} clef parts:{} trials:{}", staff.getId(), set.size(), trials);
+         }
+ 
++        checkOctaveClefs(bestMap);
++
+         // Discard poor candidates as much as possible
+         if (bestMap.size() > 1) {
+             purgeClefs(bestMap);
+@@ -262,6 +279,69 @@ public class ClefBuilder
+         return bestMap;
+     }
+ 
++    //------------------//
++    // checkOctaveClefs //
++    //------------------//
++    /**
++     * Turn a plain G or F clef into its octave variant when there is evidence of the little 8.
++     * <p>
++     * The classifier is weak on octave clefs (rare in training): on a bass clef with an 8 below,
++     * the plain F_CLEF on the clef part alone grades about 0.8, while F_CLEF_8VB on the whole
++     * clef + 8 glyph grades only 0.05 to 0.3, so a plain clef wins and the whole staff comes out
++     * an octave too high. But octave candidates appear only when that extra 8 is there: so if the
++     * classifier proposed the octave variant of the chosen clef for a glyph that extends past it
++     * (below for 8vb, above for 8va) by at least half an interline, we use that variant, with the
++     * grade of the plain clef (the clef itself is not in doubt).
++     *
++     * @param bestMap best clef per kind, modified in place
++     */
++    private void checkOctaveClefs (Map<ClefKind, ClefInter> bestMap)
++    {
++        for (Map.Entry<ClefKind, ClefInter> entry : bestMap.entrySet()) {
++            final ClefInter plain = entry.getValue();
++            final Shape[] variants = switch (plain.getShape()) {
++                case F_CLEF -> new Shape[] { F_CLEF_8VB, F_CLEF_8VA };
++                case G_CLEF -> new Shape[] { G_CLEF_8VB, G_CLEF_8VA };
++                default -> new Shape[0];
++            };
++
++            for (Shape variant : variants) {
++                final ClefInter octave = octaveCandidates.get(variant);
++
++                if ((octave == null) || (octave.getGlyph() == null)) {
++                    continue;
++                }
++
++                final Rectangle pb = plain.getBounds();
++                final Rectangle ob = octave.getBounds();
++                final boolean below = (variant == F_CLEF_8VB) || (variant == G_CLEF_8VB);
++                final int extension = below ? (ob.y + ob.height) - (pb.y + pb.height) : pb.y - ob.y;
++                final int xMid = pb.x + (pb.width / 2);
++
++                if ((extension >= params.minOctaveExtension) && (ob.x <= xMid)
++                        && ((ob.x + ob.width) >= xMid)) {
++                    final ClefInter inter = ClefInter.createValid(
++                            octave.getGlyph(),
++                            variant,
++                            plain.getGrade(),
++                            staff);
++
++                    if (inter != null) {
++                        logger.info(
++                                "Staff#{} {} with an 8 {} (octave candidate grade {})",
++                                staff.getId(),
++                                variant,
++                                below ? "below" : "above",
++                                String.format("%.2f", octave.getGrade()));
++                        entry.setValue(inter);
++
++                        break;
++                    }
++                }
++            }
++        }
++    }
++
+     //--------------//
+     // getInnerRect //
+     //--------------//
+@@ -576,6 +656,19 @@ public class ClefBuilder
+ 
+                 if (clefShapes.contains(shape)) {
+                     final double grade = Grades.intrinsicRatio * eval.grade;
++
++                    if (OCTAVE_CLEF_SHAPES.contains(shape)) {
++                        final ClefInter best = octaveCandidates.get(shape);
++
++                        if ((best == null) || (best.getGrade() < grade)) {
++                            final ClefInter inter = ClefInter.createValid(glyph, shape, grade, staff);
++
++                            if (inter != null) {
++                                octaveCandidates.put(shape, inter);
++                            }
++                        }
++                    }
++
+                     ClefKind kind = ClefInter.kindOf(glyph.getCenter2D(), shape, staff);
+                     ClefInter bestInter = bestMap.get(kind);
+ 
+@@ -728,6 +821,10 @@ public class ClefBuilder
+                 1.0,
+                 "Minimum weight for clef glyph");
+ 
++        private final Scale.Fraction minOctaveExtension = new Scale.Fraction(
++                0.5,
++                "Minimum extension of an octave clef glyph past the plain clef (the 8)");
++
+         private final Constant.Integer maxEvalRank = new Constant.Integer(
+                 "none",
+                 3,
+@@ -769,6 +866,8 @@ public class ClefBuilder
+ 
+         final int minGlyphWeight;
+ 
++        final int minOctaveExtension;
++
+         Parameters (Scale scale,
+                     int staffSpecific)
+         {
+@@ -793,6 +892,7 @@ public class ClefBuilder
+                 maxPartGap = specific.toPixelsDouble(constants.maxPartGap);
+                 maxGlyphHeight = specific.toPixelsDouble(constants.maxGlyphHeight);
+                 minGlyphWeight = specific.toPixels(constants.minGlyphWeight);
++                minOctaveExtension = specific.toPixels(constants.minOctaveExtension);
+             }
+         }
+     }
+-- 
+2.43.0
+

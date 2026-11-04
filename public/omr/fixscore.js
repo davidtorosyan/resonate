@@ -12,6 +12,7 @@ export function fixOmrScore(xml, log = []) {
   const changes = [];
   foldSparseVerses(doc, changes);
   restoreTempo(doc, log, changes);
+  unifyOctaveClefs(doc, changes);
   return { xml: changes.length ? new XMLSerializer().serializeToString(doc) : xml, changes };
 }
 
@@ -75,4 +76,48 @@ function restoreTempo(doc, log, changes) {
   const first = measure.querySelector(":scope > note, :scope > backup, :scope > forward, :scope > direction");
   measure.insertBefore(direction, first);
   changes.push(`tempo ♩ = ${bpm} restored from the engine log (the note symbol wasn't read)`);
+}
+
+// Octave clefs (a G or F clef with a small 8 below or above, e.g. the bass clef of a low voice):
+// Audiveris reads the 8 on most systems of a part but can miss one (an 8 merged with the system
+// barline). In a single-staff part where most clefs of a kind carry the octave, a plain one of
+// the same kind is the same clef with its 8 missed: give it the octave and move its notes
+// (written as sounding pitch) by that octave, up to the next clef.
+function unifyOctaveClefs(doc, changes) {
+  for (const part of doc.querySelectorAll("score-partwise > part")) {
+    const measures = [...part.querySelectorAll(":scope > measure")];
+    if (measures.some((m) => Number(m.querySelector(":scope > attributes > staves")?.textContent || 1) > 1)) continue;
+    const clefs = [];
+    measures.forEach((m, mi) => {
+      for (const c of m.querySelectorAll(":scope > attributes > clef")) {
+        clefs.push({ el: c, mi, kind: `${c.querySelector("sign")?.textContent}${c.querySelector("line")?.textContent}`,
+          oct: Number(c.querySelector("clef-octave-change")?.textContent || 0) });
+      }
+    });
+    for (const kind of new Set(clefs.map((c) => c.kind))) {
+      if (!/^[GF]/.test(kind)) continue;
+      const same = clefs.filter((c) => c.kind === kind);
+      for (const oct of [-1, 1]) {
+        const withOct = same.filter((c) => c.oct === oct).length;
+        const plain = same.filter((c) => c.oct === 0);
+        if (!plain.length || withOct < 2 || withOct < 2 * plain.length) continue;
+        let moved = 0;
+        for (const c of plain) {
+          let coc = c.el.querySelector("clef-octave-change");
+          if (!coc) { coc = doc.createElement("clef-octave-change"); c.el.append(coc); }
+          coc.textContent = String(oct);
+          const next = clefs.find((d) => d.mi > c.mi);
+          const end = next ? next.mi : measures.length;
+          for (let mi = c.mi; mi < end; mi++) {
+            for (const o of measures[mi].querySelectorAll(":scope > note > pitch > octave")) {
+              o.textContent = String(Number(o.textContent) + oct);
+              moved++;
+            }
+          }
+        }
+        changes.push(`part ${part.getAttribute("id")}: ${plain.length} ${kind} clef${plain.length > 1 ? "s" : ""} without its 8 ` +
+          `(the other ${withOct} have it): ${moved} notes moved ${oct < 0 ? "down" : "up"} an octave`);
+      }
+    }
+  }
 }

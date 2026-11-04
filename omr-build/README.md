@@ -40,6 +40,13 @@ fatal too, rather than recognizing with a blank clef. (3) `-Daudiveris.fonts.dir
 user's browser run where every sheet died at HEADERS on a 0×0 clef image (FreeType returned empty outlines; not reproduced in
 Chromium or WebKitGTK). Healthy output is byte-identical.
 
+`0006` — **Octave clefs.** A bass clef with a small 8 below (low voices, e.g. Hades in *Hadestown*) was never
+recognized: `F_CLEF_8VA/8VB` were left out of the clefs looked for at a staff start, and the classifier grades octave
+clefs far below the plain clef anyway. They're now candidates, and when the classifier proposes the octave variant of the
+chosen G or F clef for a glyph that extends at least half an interline past it (the 8), that variant is used with the
+plain clef's grade. Test scan: 20 of 21 low-voice staves (the 21st's 8 is merged with the barline; the page side fixes
+it). Other test scores: identical output.
+
 `build.sh` applies the patches with `git am --keep-cr`: the upstream sources are CRLF.
 
 ## StripVolatile (applied to every jar)
