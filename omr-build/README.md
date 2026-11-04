@@ -44,11 +44,22 @@ Chromium or WebKitGTK). Healthy output is byte-identical.
 
 ## StripVolatile (applied to every jar)
 
+Two rewrites, both invisible to Java semantics (details in the file's header):
+
+**2-D primitive arrays.** CheerpJ 4.2's JIT miscompiles hot code that allocates a 2-D primitive array in one shot
+(`multianewarray`, e.g. `new double[m][n]`) and fills it element by element: after ~70 calls the results are wrong.
+Jama's `Matrix.getArrayCopy` does exactly that, so the circle fits behind slur and tie detection failed and pages 2+ had
+no slurs or ties at all. Every such allocation (178 sites across the jars) becomes a call to a generated
+`cheerpjfix/Arrays2D` helper that allocates the rows one by one. Verified natively under `-Xverify:all` with identical
+output. CheerpJ 5.0 doesn't have the bug.
+
+**Volatile/final flags.**
+
 CheerpJ's runtime lacks the `Unsafe` natives behind *reflective* access to `volatile` (and, once made
 accessible, `final`) fields of type boolean/byte/short/char/float, which JAXB uses for book storage and
 MusicXML export. CheerpJ runs all Java threads on one JavaScript thread, so `StripVolatile.java` (JDK 25
 `java.lang.classfile`) clears `ACC_VOLATILE` on such fields and `ACC_FINAL` on such *instance* fields,
-touching nothing else. Verified natively: identical MusicXML before/after.
+and nothing else about fields. Verified natively: identical MusicXML before/after.
 
 ## Runtime settings (in `public/omr/omr.js`)
 
