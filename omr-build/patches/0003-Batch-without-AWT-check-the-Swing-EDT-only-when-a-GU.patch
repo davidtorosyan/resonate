@@ -1,7 +1,7 @@
 From 126801513c9cabd68545656a859b0fa83b790935 Mon Sep 17 00:00:00 2001
 From: Resonate web port <dave.torosyan@gmail.com>
 Date: Wed, 4 Nov 2026 02:40:20 +0000
-Subject: [PATCH 3/4] Batch without AWT: check the Swing EDT only when a GUI
+Subject: [PATCH 3/5] Batch without AWT: check the Swing EDT only when a GUI
  exists (CheerpJ Web Worker has no display)
 
 ---

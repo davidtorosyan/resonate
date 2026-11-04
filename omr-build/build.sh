@@ -17,7 +17,7 @@ export PATH="$JAVA_HOME/bin:$PATH"
 rm -rf "$WORK" && mkdir -p "$WORK"
 git clone --quiet "$UPSTREAM" "$WORK/audiveris"
 git -C "$WORK/audiveris" checkout --quiet "$BASE"
-git -C "$WORK/audiveris" -c user.name=build -c user.email=build@localhost am --quiet "$HERE"/patches/*.patch
+git -C "$WORK/audiveris" -c user.name=build -c user.email=build@localhost am --quiet --keep-cr "$HERE"/patches/*.patch   # sources are CRLF
 
 # -PtheMinJavaVersion=17 makes the build compile with --release 17 (see patch 0001).
 (cd "$WORK/audiveris" && ./gradlew --no-daemon -q -PtheMinJavaVersion=17 :app:installDist -x test)
@@ -36,3 +36,8 @@ for jar in "$WORK/audiveris/app/build/install/app/lib/"*.jar; do
   java "$HERE/StripVolatile.java" "$jar" "$OUT/$(basename "$jar")" | tail -1
 done
 echo "jars in $OUT: $(ls "$OUT" | wc -l)"
+
+# The music font, served next to the jars: omr-worker.js hands it to Java in memory
+# (audiveris.fonts.dir=/str, patch 0005) instead of a temp copy in IndexedDB.
+mkdir -p "$OUT/../fonts"
+cp "$WORK/audiveris/app/res/Bravura.otf" "$OUT/../fonts/"

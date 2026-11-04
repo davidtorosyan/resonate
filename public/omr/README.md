@@ -8,6 +8,7 @@ Used by `pdf-import.html`. Everything runs client-side:
 | CheerpJ | WebAssembly JVM that runs the jars, loaded from `cjrtnc.leaningtech.com` | CheerpJ Community Edition — free for personal and non-business use |
 | `tesseract/` | [tesseract.js-core](https://github.com/naptha/tesseract.js-core) 6.1.2 (Tesseract OCR compiled to WebAssembly, with the legacy engine Audiveris needs) | Apache-2.0 |
 | `tessdata/eng.traineddata.gz` | Tesseract English model, tessdata 4.1.0 (legacy + LSTM) | Apache-2.0 |
+| `fonts/Bravura.otf` | [Bravura](https://github.com/steinbergmedia/bravura) music font (Steinberg), the copy Audiveris ships in `res/`; handed to Java in memory | SIL Open Font License 1.1 (license text embedded in the font) |
 | `pdfjs/` | [pdf.js](https://github.com/mozilla/pdf.js) 6.5.438 | Apache-2.0 |
 | `omr.js`, `omr-worker.js`, `ocr-engine.js`, `pdfprep.js` | glue (this repo) | — |
 

@@ -1,0 +1,1614 @@
+From 7298ef69f04650089e2401a5829e170547036afa Mon Sep 17 00:00:00 2001
+From: Resonate web port <dave.torosyan@gmail.com>
+Date: Wed, 4 Nov 2026 06:00:35 +0000
+Subject: [PATCH 5/5] Batch robustness: export the sheets that succeeded, fail
+ loudly on an unusable music font
+
+A browser user's conversion failed on every sheet at HEADERS with
+"IllegalArgumentException: Width (0) and height (0) cannot be <= 0": the
+Bravura font was created (family Bravura) but glyph outlines came back
+empty, so ShapeSymbol.buildImage allocated a 0x0 image. And since a single
+failed sheet fails the whole transcription, nothing was exported.
+
+Partial results, in batch:
+- SheetStub remembers the step that failed (getFailedStep; null when the
+  failure, Errors included, occurred before any step). Book logs one stable
+  line per failed sheet, "Sheet#N failed at STEP: reason" (STEP is "?" when
+  unknown; wrapper exceptions skipped; a step timeout reads "timeout after N
+  seconds") and discards the sheet: flagged invalid but, unlike a sheet with
+  no music, skipped without breaking the score. An Error raised on the
+  calling thread, or an OutOfMemoryError anywhere, is reported the same way
+  and stops the processing of the other sheets.
+- Book.transcribe goes on with the other sheets when every sheet either
+  reached the last step or was discarded, logging "Partial transcription:
+  K of N sheets, without failed sheets [#..]", followed by "Partial
+  transcription: first sheet failed, title/tempo/time signature may be
+  missing" when the first sheet is among them (score header data generally
+  comes from it). Scores are rebuilt, so the export stays a single movement
+  ("exported to <path>.mxl" as before). Discarded sheets are not processed
+  again. No export when no sheet succeeded, nor when a music font was found
+  unusable (even if only the last sheet failed).
+- Book.updateScores links a sheet to its nearest non-discarded neighbors,
+  so the sheets after a discarded one see the same preceding page as if
+  the discarded sheet were absent from the input.
+- Voices.refineScore never connects slurs, ties or voices across a
+  discarded sheet (whether it had music or was removed for having none).
+- Consequently a sheet without staves no longer prevents the export of the
+  other sheets. SheetStub.decideOnRemoval keeps its reason in the exception
+  ("Sheet removed: Too few staff filaments: 0 ...").
+
+Music font:
+- OmrFont.createFont logs creation failures at WARN with the exception (was
+  DEBUG), makes a second attempt, and warns when a platform font replaces a
+  custom font. New system property audiveris.fonts.dir: a folder whose font
+  files are read in place with Font.createFont(int, File), e.g. "/str" in the
+  browser, so that no temporary font copy goes to java.io.tmpdir (IndexedDB
+  under CheerpJ). The font cache is a concurrent map (fonts are cached and
+  evicted by any processing thread).
+- MusicFont checks every font of a new size before use and caching: the
+  expected family, then glyphs. The first time for a family, every code
+  point its Symbols define (156 for Bravura: clefs incl. small/8va/8vb,
+  heads, flags, rests, accidentals, dynamics, time digits...) must map to a
+  glyph with a non-empty outline (the bounds symbol layouts use); later
+  sizes check the glyphs of key shapes only (clefs, heads, accidentals,
+  quarter rest, flag). The key glyphs must also paint pixels in an ARGB
+  image, as symbol images are built. Natively the startup check takes 35-55
+  ms, a new size 3-4 ms (20-30 ms at 200+ pt), 6 sizes for a 6-page score.
+- An unusable font is created again, once per family (and then from the
+  application resources, not from audiveris.fonts.dir). If still unusable,
+  the family is flagged and MusicFont logs one ERROR line, which is the
+  marker of an unusable music font:
+    ERROR [] MusicFont ... | Music font Bravura unusable: 1 of 156 glyphs
+    have no outline: F_CLEF U+E062 at 64pt (family=Bravura name=Bravura
+    glyphs=3693)
+  listing the failing glyphs (shape and code point, up to 20 per kind:
+  "have no outline", "are missing", "key glyphs paint no pixel"). In batch,
+  an UnusableFontException follows; in the GUI the font is used as is.
+- MusicFont.checkMusicFont, run at batch start, checks the default family:
+  if unusable, Main runs no batch task (exit status 1, no sheet processed).
+- In batch, ShapeSymbol.buildImage no longer allocates a 0x0 image: empty
+  symbol bounds flag the font as unusable (same ERROR line if first, e.g.
+  "Music font Bravura unusable: no outline for F_CLEF U+E062 at 80pt"), and
+  so does a symbol image with no pixel when computing a clef centroid; no
+  silent default. The sheet is logged "Sheet#N failed at STEP: Music font
+  Bravura unusable: ..." and the book stops: no export. In the GUI, a
+  warning and no image (or the box center), as before.
+
+No change on healthy input: the MusicXML exported for the four test scores
+is byte-identical to the previous build.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ETLv1TPifmmSkv1DUf9mXN
+---
+ app/src/main/java/org/audiveris/omr/Main.java |   6 +-
+ .../java/org/audiveris/omr/sheet/Book.java    | 201 ++++++-
+ .../org/audiveris/omr/sheet/SheetStub.java    |  70 ++-
+ .../audiveris/omr/sheet/rhythm/Voices.java    |  31 ++
+ .../audiveris/omr/ui/symbol/MusicFont.java    | 511 +++++++++++++++++-
+ .../org/audiveris/omr/ui/symbol/OmrFont.java  | 149 ++++-
+ .../audiveris/omr/ui/symbol/ShapeSymbol.java  |  61 ++-
+ 7 files changed, 965 insertions(+), 64 deletions(-)
+
+diff --git a/app/src/main/java/org/audiveris/omr/Main.java b/app/src/main/java/org/audiveris/omr/Main.java
+index 7a82efd..4eb5054 100644
+--- a/app/src/main/java/org/audiveris/omr/Main.java
++++ b/app/src/main/java/org/audiveris/omr/Main.java
+@@ -272,11 +272,11 @@ public class Main
+                 Languages.getInstance().checkSupport();
+             }
+ 
+-            // Check MusicFont is loaded
+-            MusicFont.checkMusicFont();
++            // Check MusicFont is loaded (no transcription can succeed without it)
++            final boolean musicFontOk = MusicFont.checkMusicFont();
+ 
+             // Run the required tasks, if any (and remember if at least one task failed)
+-            final boolean failure = runBatchTasks();
++            final boolean failure = !musicFontOk || runBatchTasks();
+ 
+             // At this point all tasks have completed (except timeout...)
+             // So shutdown gracefully the executors
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/Book.java b/app/src/main/java/org/audiveris/omr/sheet/Book.java
+index bfbeda9..00fedd8 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/Book.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/Book.java
+@@ -50,11 +50,13 @@ import org.audiveris.omr.sheet.ui.SheetResultPainter;
+ import org.audiveris.omr.sheet.ui.StubsController;
+ import org.audiveris.omr.step.OmrStep;
+ import org.audiveris.omr.step.ProcessingCancellationException;
++import org.audiveris.omr.step.StepException;
+ import org.audiveris.omr.step.StepPause;
+ import org.audiveris.omr.step.ui.StepMonitoring;
+ import org.audiveris.omr.ui.Colors;
+ import static org.audiveris.omr.ui.action.AdvancedTopics.swapProcessedSheets;
+ import org.audiveris.omr.ui.symbol.MusicFamily;
++import org.audiveris.omr.ui.symbol.MusicFont;
+ import org.audiveris.omr.ui.symbol.TextFamily;
+ import org.audiveris.omr.util.FileUtil;
+ import org.audiveris.omr.util.Jaxb;
+@@ -95,6 +97,7 @@ import java.util.SortedSet;
+ import java.util.concurrent.Callable;
+ import java.util.concurrent.ExecutionException;
+ import java.util.concurrent.Future;
++import java.util.concurrent.TimeoutException;
+ import java.util.concurrent.locks.Lock;
+ import java.util.concurrent.locks.ReentrantLock;
+ 
+@@ -521,6 +524,10 @@ public class Book
+ 
+         // Group provided sheets pages into scores
+         for (SheetStub stub : stubs) {
++            if (stub.isDiscarded()) {
++                continue; // A stub discarded after a failure in batch is just skipped
++            }
++
+             // An invalid or not-selected or not-yet-processed stub triggers a score break
+             if (!validSelectedStubs.contains(stub) || stub.getPageRefs().isEmpty()) {
+                 score = null;
+@@ -862,6 +869,31 @@ public class Book
+         return parameters.musicFamily;
+     }
+ 
++    //-----------------//
++    // getNeighborStub //
++    //-----------------//
++    /**
++     * Report the nearest stub before or after the provided stub number, skipping the stubs
++     * discarded after a failure in batch.
++     *
++     * @param number the provided stub number
++     * @param dir    -1 for before, +1 for after
++     * @return the neighbor stub, or null if none
++     */
++    private SheetStub getNeighborStub (int number,
++                                       int dir)
++    {
++        for (int num = number + dir; (num >= 1) && (num <= stubs.size()); num += dir) {
++            final SheetStub stub = getStub(num);
++
++            if (!stub.isDiscarded()) {
++                return stub;
++            }
++        }
++
++        return null;
++    }
++
+     //----------------------//
+     // getOcrLanguagesParam //
+     //----------------------//
+@@ -1913,9 +1945,18 @@ public class Book
+                                   final List<SheetStub> theStubs,
+                                   final boolean swap)
+     {
++        // Stubs discarded after a failure in batch are not processed again
++        final List<SheetStub> stubsToProcess = new ArrayList<>(theStubs);
++        stubsToProcess.removeIf(SheetStub::isDiscarded);
++
+         try {
+-            logger.debug("reachStep {} force:{} stubs:{} swap:{}", target, force, theStubs, swap);
+-            final OmrStep least = getLeastStep(theStubs);
++            logger.debug(
++                    "reachStep {} force:{} stubs:{} swap:{}",
++                    target,
++                    force,
++                    stubsToProcess,
++                    swap);
++            final OmrStep least = getLeastStep(stubsToProcess);
+ 
+             if (!force) {
+                 // Check against the least advanced step performed across all sheets concerned
+@@ -1930,10 +1971,11 @@ public class Book
+                     "Book reaching {}{} on sheets:{}",
+                     target,
+                     force ? " force" : "",
+-                    ids(theStubs));
++                    ids(stubsToProcess));
+ 
+             try {
+                 boolean someFailure = false;
++                boolean stop = false; // True when no other stub should be processed
+                 StepMonitoring.notifyStart();
+ 
+                 if (isMultiSheet() && constants.processAllStubsInParallel.isSet()
+@@ -1953,7 +1995,7 @@ public class Book
+                         logger.info("Initial book processing until {}", maxStep);
+                     }
+ 
+-                    for (final SheetStub stub : theStubs) {
++                    for (final SheetStub stub : stubsToProcess) {
+                         tasks.add( () -> {
+                             LogUtil.start(stub);
+ 
+@@ -1976,7 +2018,9 @@ public class Book
+                         List<Future<Boolean>> futures = OmrExecutors.getCachedLowExecutor()
+                                 .invokeAll(tasks);
+ 
+-                        for (Future<Boolean> future : futures) {
++                        for (int i = 0; i < futures.size(); i++) {
++                            final Future<Boolean> future = futures.get(i);
++
+                             try {
+                                 if (!future.get()) {
+                                     someFailure = true;
+@@ -1987,6 +2031,7 @@ public class Book
+                                 } else {
+                                     logger.warn("Future exception", ex);
+                                     someFailure = true;
++                                    stop |= sheetFailed(stubsToProcess.get(i), ex);
+                                 }
+                             }
+                         }
+@@ -1996,11 +2041,15 @@ public class Book
+                     }
+ 
+                     // Final session?
+-                    if (target.compareTo(OmrStep.lastParallel()) > 0) {
++                    if (!stop && (target.compareTo(OmrStep.lastParallel()) > 0)) {
+                         logger.info("Final book processing until {}", target);
+ 
+                         // Final processing, one stub after the other
+-                        for (SheetStub stub : theStubs) {
++                        for (SheetStub stub : stubsToProcess) {
++                            if (stub.isDiscarded()) {
++                                continue; // Failed during initial session
++                            }
++
+                             LogUtil.start(stub);
+ 
+                             try {
+@@ -2010,11 +2059,15 @@ public class Book
+                                 // Stop processing for the other stubs
+                                 logger.info("Book processing stopped by user.");
+                                 break;
+-                            } catch (Exception ex) {
+-                                // Exception raised on stub
++                            } catch (Throwable ex) {
++                                // Exception (or error) raised on stub
+                                 // Let processing continue for the other stubs
+                                 logger.warn("Error processing stub");
+                                 someFailure = true;
++
++                                if (sheetFailed(stub, ex)) {
++                                    break; // Unusable music font, error: stop processing
++                                }
+                             } finally {
+                                 stub.printWatch(false);
+                                 if (swap) {
+@@ -2028,7 +2081,7 @@ public class Book
+                     }
+                 } else {
+                     // Process one stub after the other
+-                    for (SheetStub stub : theStubs) {
++                    for (SheetStub stub : stubsToProcess) {
+                         LogUtil.start(stub);
+ 
+                         try {
+@@ -2038,11 +2091,15 @@ public class Book
+                             // Stop processing for the other stubs
+                             logger.info("Book processing stopped by user.");
+                             break;
+-                        } catch (Exception ex) {
+-                            // Exception raised on stub
++                        } catch (Throwable ex) {
++                            // Exception (or error) raised on stub
+                             // Let processing continue for the other stubs
+                             logger.warn("Error processing stub {}", ex.getMessage(), ex);
+                             someFailure = true;
++
++                            if (sheetFailed(stub, ex)) {
++                                break; // Unusable music font, error: stop processing
++                            }
+                         } finally {
+                             stub.printWatch(false);
+                             if (swap) {
+@@ -2402,6 +2459,64 @@ public class Book
+         this.version = version;
+     }
+ 
++    //-------------//
++    // sheetFailed //
++    //-------------//
++    /**
++     * Report the processing failure of a sheet, in a stable one-line format
++     * ("Sheet#N failed at STEP: reason"), and in batch discard the sheet so that the book can
++     * still be transcribed from its other sheets.
++     *
++     * @param stub the failed sheet stub
++     * @param ex   the exception (or error) raised
++     * @return true if no other sheet should be processed: the music font is unusable, memory
++     *         is exhausted, or an error was raised on the calling thread
++     */
++    private boolean sheetFailed (SheetStub stub,
++                                 Throwable ex)
++    {
++        Throwable cause = ex;
++
++        for (Throwable t = ex; t != null; t = t.getCause()) {
++            if ((t instanceof MusicFont.UnusableFontException) || (t instanceof OutOfMemoryError)) {
++                cause = t;
++                break;
++            }
++        }
++
++        // Skip the exceptions that merely wrap another one (executors, system tasks, timeout)
++        while ((cause.getCause() != null) && ((cause instanceof ExecutionException)
++                || Objects.equals(cause.getMessage(), cause.getCause().toString()))) {
++            cause = cause.getCause();
++        }
++
++        final String reason;
++
++        if (cause instanceof TimeoutException) {
++            reason = "timeout after " + Main.getSheetStepTimeOut() + " seconds";
++        } else if (((cause instanceof StepException)
++                || (cause instanceof MusicFont.UnusableFontException))
++                && (cause.getMessage() != null)) {
++            reason = cause.getMessage();
++        } else {
++            reason = cause.toString();
++        }
++
++        final OmrStep step = stub.getFailedStep();
++        logger.warn(
++                "Sheet#{} failed at {}: {}",
++                stub.getNumber(),
++                (step != null) ? step : "?",
++                reason.replaceAll("\\s+", " ").trim());
++
++        if (OMR.gui == null) {
++            stub.discard();
++        }
++
++        return (ex instanceof Error) || (cause instanceof MusicFont.UnusableFontException)
++                || (cause instanceof OutOfMemoryError);
++    }
++
+     //------//
+     // size //
+     //------//
+@@ -2613,6 +2728,10 @@ public class Book
+     /**
+      * Convenient method to perform all needed transcription steps on selected valid sheets
+      * of this book and building the book score(s).
++     * <p>
++     * In batch, if some sheets have failed (and thus been discarded) while all the other sheets
++     * have been successfully processed, the transcription goes on with these other sheets,
++     * unless the music font has been found unusable.
+      *
+      * @param theStubs  the valid selected stubs
+      * @param theScores (output) the collection of scores to populate
+@@ -2625,6 +2744,46 @@ public class Book
+     {
+         boolean ok = reachBookStep(OmrStep.last(), false, theStubs, swap);
+ 
++        // With an unusable music font, no transcription at all (not even a partial one),
++        // even if some step code caught the font exception and went on
++        if ((OMR.gui == null) && MusicFont.hasUnusableFamily()) {
++            ok = false;
++        } else if (!ok && (OMR.gui == null)) {
++            final List<SheetStub> succeeded = new ArrayList<>();
++            final List<SheetStub> discarded = new ArrayList<>();
++            boolean partial = true;
++
++            for (SheetStub stub : theStubs) {
++                if (stub.isDiscarded()) {
++                    discarded.add(stub);
++                } else if (stub.isDone(OmrStep.last())) {
++                    succeeded.add(stub);
++                } else {
++                    partial = false; // Processing did not complete on this stub
++                    break;
++                }
++            }
++
++            if (partial && !succeeded.isEmpty() && !discarded.isEmpty()) {
++                logger.warn(
++                        "Partial transcription: {} of {} sheets, without failed sheets {}",
++                        succeeded.size(),
++                        theStubs.size(),
++                        ids(discarded));
++
++                if (theStubs.get(0).isDiscarded()) {
++                    // Score header data is generally found on the first sheet
++                    logger.warn(
++                            "Partial transcription: first sheet failed,"
++                                    + " title/tempo/time signature may be missing");
++                }
++
++                theStubs = succeeded;
++                theScores.clear(); // To be rebuilt, now that failed stubs no longer break scores
++                ok = true;
++            }
++        }
++
+         if (ok) {
+             if (theScores.isEmpty()) {
+                 createScores(theStubs, theScores);
+@@ -2671,14 +2830,12 @@ public class Book
+                 // Extend score if possible
+                 if (i == 0) {
+                     // Check with last page of previous sheet stub if any
+-                    if (stubNumber > 1) {
+-                        final SheetStub stubAbove = getStub(stubNumber - 1);
++                    final SheetStub stubAbove = getNeighborStub(stubNumber, -1);
+ 
+-                        if (getValidSelectedStubs().contains(stubAbove)) {
+-                            final PageRef refAbove = stubAbove.getLastPageRef();
+-                            if (refAbove != null) {
+-                                score = scoreOf(refAbove);
+-                            }
++                    if ((stubAbove != null) && getValidSelectedStubs().contains(stubAbove)) {
++                        final PageRef refAbove = stubAbove.getLastPageRef();
++                        if (refAbove != null) {
++                            score = scoreOf(refAbove);
+                         }
+                     }
+ 
+@@ -2700,10 +2857,10 @@ public class Book
+         }
+ 
+         // 3- Merge with following score if applicable
+-        if ((score != null) && stubNumber < stubs.size()) {
+-            final SheetStub stubBelow = getStub(stubNumber + 1);
++        if (score != null) {
++            final SheetStub stubBelow = getNeighborStub(stubNumber, +1);
+ 
+-            if (getValidSelectedStubs().contains(stubBelow)) {
++            if ((stubBelow != null) && getValidSelectedStubs().contains(stubBelow)) {
+                 final PageRef refBelow = stubBelow.getFirstPageRef();
+ 
+                 if ((refBelow != null) && !refBelow.isMovementStart()) {
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/SheetStub.java b/app/src/main/java/org/audiveris/omr/sheet/SheetStub.java
+index a548e6a..d5f29b5 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/SheetStub.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/SheetStub.java
+@@ -191,6 +191,15 @@ public class SheetStub
+     /** The step being performed on the sheet. */
+     private volatile OmrStep currentStep;
+ 
++    /** The step on which the latest processing of this sheet failed, if any. */
++    private volatile OmrStep failedStep;
++
++    /**
++     * Has this sheet been discarded, after a processing failure in batch.
++     * Unlike a sheet with no music, a discarded sheet does not break the score it belongs to.
++     */
++    private volatile boolean discarded;
++
+     /** Has this sheet been modified, WRT its persisted data. */
+     private volatile boolean modified = false;
+ 
+@@ -408,7 +417,8 @@ public class SheetStub
+             throw new StepException("Dummy decision");
+         }
+ 
+-        logger.warn(msg.replaceAll(WellKnowns.LINE_SEPARATOR, " "));
++        final String reason = msg.replaceAll(WellKnowns.LINE_SEPARATOR, " ");
++        logger.warn(reason);
+ 
+         if (OMR.gui != null) {
+             StubsController.invokeSelect(this);
+@@ -420,13 +430,32 @@ public class SheetStub
+ 
+             if (book.isMultiSheet()) {
+                 close();
+-                throw new StepException("Sheet removed");
++                throw new StepException("Sheet removed: " + reason);
+             } else {
+-                throw new StepException("Sheet ignored");
++                throw new StepException("Sheet ignored: " + reason);
+             }
+         }
+     }
+ 
++    //---------//
++    // discard //
++    //---------//
++    /**
++     * Discard this sheet after a processing failure in batch, so that the book can still be
++     * transcribed from its other sheets.
++     * <p>
++     * The sheet is flagged as invalid (if not already done) but, unlike a sheet with no music,
++     * it does not break the score it belongs to.
++     */
++    public void discard ()
++    {
++        discarded = true;
++
++        if (isValid()) {
++            invalidate();
++        }
++    }
++
+     //---------//
+     // display //
+     //---------//
+@@ -546,6 +575,8 @@ public class SheetStub
+         doneSteps.clear();
+         pageRefs.clear();
+         invalid = false;
++        discarded = false;
++        failedStep = null;
+         sheet = null;
+ 
+         if (assembly != null) {
+@@ -652,6 +683,20 @@ public class SheetStub
+         return currentStep;
+     }
+ 
++    //---------------//
++    // getFailedStep //
++    //---------------//
++    /**
++     * Report the step on which the latest processing of this sheet failed, if any.
++     *
++     * @return the failed step, or null if no step failed (or if the failure occurred before
++     *         any step was started)
++     */
++    public OmrStep getFailedStep ()
++    {
++        return failedStep;
++    }
++
+     //-----------------//
+     // getFirstPageRef //
+     //-----------------//
+@@ -1194,6 +1239,19 @@ public class SheetStub
+         logger.info("Sheet {} flagged as invalid.", getId());
+     }
+ 
++    //-------------//
++    // isDiscarded //
++    //-------------//
++    /**
++     * Report whether this sheet has been discarded after a processing failure in batch.
++     *
++     * @return true if discarded
++     */
++    public boolean isDiscarded ()
++    {
++        return discarded;
++    }
++
+     //--------//
+     // isDone //
+     //--------//
+@@ -1365,9 +1423,11 @@ public class SheetStub
+         final StubsController ctrl = (OMR.gui != null) ? StubsController.getInstance() : null;
+         final StopWatch watch = new StopWatch("reachStep " + target);
+         boolean ok = false;
++        OmrStep current = null; // The step being processed, if any
+ 
+         getLock().lock(); // Wait for completion of early processing if any
+         logger.debug("reachStep obtained lock on {}", this);
++        failedStep = null;
+ 
+         try {
+             final OmrStep latestStep = getLatestStep();
+@@ -1399,6 +1459,7 @@ public class SheetStub
+                     throw new StepPause("Pause required");
+                 }
+ 
++                current = step;
+                 watch.start(step.name());
+                 StepMonitoring.notifyMsg(step.toString());
+                 logger.debug("reachStep {} towards {}", step, target);
+@@ -1410,6 +1471,9 @@ public class SheetStub
+             logger.info("Processing paused.");
+             ok = true;
+             throw sp;
++        } catch (Throwable ex) {
++            failedStep = current; // Null if failed before any step
++            throw ex;
+         } finally {
+             StepMonitoring.notifyStop();
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/rhythm/Voices.java b/app/src/main/java/org/audiveris/omr/sheet/rhythm/Voices.java
+index 1bb36a3..0431b5d 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/rhythm/Voices.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/rhythm/Voices.java
+@@ -258,6 +258,31 @@ public abstract class Voices
+         return null;
+     }
+ 
++    //------------------//
++    // isSheetDiscarded //
++    //------------------//
++    /**
++     * Tell whether a sheet, located between the provided sheets, has been discarded
++     * (after a processing failure in batch).
++     *
++     * @param book       the containing book
++     * @param prevNumber number of the preceding sheet in score
++     * @param stub       the current sheet
++     * @return true if some sheet is missing between the two sheets
++     */
++    private static boolean isSheetDiscarded (Book book,
++                                             int prevNumber,
++                                             SheetStub stub)
++    {
++        for (int num = prevNumber + 1; num < stub.getNumber(); num++) {
++            if (book.getStub(num).isDiscarded()) {
++                return true;
++            }
++        }
++
++        return false;
++    }
++
+     //------------//
+     // refinePage //
+     //------------//
+@@ -339,6 +364,7 @@ public abstract class Voices
+ 
+         int modifs = 0;
+         SystemInfo prevSystem = null; // Last system of preceding page, if any
++        int prevNumber = 0; // Sheet number of preceding page, if any
+ 
+         for (Page page : score.getPages()) {
+             final SheetStub stub = page.getSheet().getStub();
+@@ -347,6 +373,10 @@ public abstract class Voices
+                 continue;
+             }
+ 
++            if ((prevSystem != null) && isSheetDiscarded(score.getBook(), prevNumber, stub)) {
++                prevSystem = null; // No connection across a sheet missing in score
++            }
++
+             if (prevSystem != null) {
+                 for (LogicalPart logicalPart : score.getLogicalParts()) {
+                     // Check tied voices from same logicalPart in previous page
+@@ -398,6 +428,7 @@ public abstract class Voices
+             }
+ 
+             prevSystem = page.getLastSystem();
++            prevNumber = stub.getNumber();
+         }
+ 
+         return modifs;
+diff --git a/app/src/main/java/org/audiveris/omr/ui/symbol/MusicFont.java b/app/src/main/java/org/audiveris/omr/ui/symbol/MusicFont.java
+index e458b46..23544cc 100644
+--- a/app/src/main/java/org/audiveris/omr/ui/symbol/MusicFont.java
++++ b/app/src/main/java/org/audiveris/omr/ui/symbol/MusicFont.java
+@@ -21,6 +21,7 @@
+ // </editor-fold>
+ package org.audiveris.omr.ui.symbol;
+ 
++import org.audiveris.omr.OMR;
+ import org.audiveris.omr.constant.Constant;
+ import org.audiveris.omr.constant.ConstantSet;
+ import org.audiveris.omr.glyph.Shape;
+@@ -38,11 +39,25 @@ import org.slf4j.LoggerFactory;
+ 
+ import java.awt.Dimension;
+ import java.awt.Font;
++import java.awt.Graphics2D;
++import java.awt.Rectangle;
++import java.awt.RenderingHints;
++import java.awt.font.GlyphVector;
+ import java.awt.font.TextLayout;
+ import java.awt.geom.AffineTransform;
+ import java.awt.geom.Rectangle2D;
+ import java.awt.image.BufferedImage;
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.Collections;
++import java.util.EnumMap;
++import java.util.EnumSet;
++import java.util.List;
++import java.util.Map;
+ import java.util.Objects;
++import java.util.Set;
++import java.util.SortedMap;
++import java.util.TreeMap;
+ 
+ /**
+  * Class <code>MusicFont</code> allows the use of proper music font family and size.
+@@ -101,6 +116,38 @@ public class MusicFont
+             constants.defaultMusicFamily,
+             Param.GLOBAL_SCOPE);
+ 
++    /**
++     * Music families found unusable, with the description of the problem.
++     * Also used as the lock for checking and creating fonts again.
++     */
++    private static final Map<MusicFamily, String> unusableFamilies = new EnumMap<>(
++            MusicFamily.class);
++
++    /** Fonts created again, per music family (a family font is created again only once). */
++    private static final Map<MusicFamily, Font> recreatedFonts = new EnumMap<>(MusicFamily.class);
++
++    /** Music families whose glyphs have all been checked. */
++    private static final Set<MusicFamily> checkedFamilies = Collections.synchronizedSet(
++            EnumSet.noneOf(MusicFamily.class));
++
++    /** Shapes whose glyphs are checked, and painted, for every new font size. */
++    private static final Shape[] KEY_SHAPES = new Shape[]
++    {
++        Shape.G_CLEF,
++        Shape.F_CLEF,
++        Shape.C_CLEF,
++        Shape.NOTEHEAD_BLACK,
++        Shape.NOTEHEAD_VOID,
++        Shape.WHOLE_NOTE,
++        Shape.SHARP,
++        Shape.FLAT,
++        Shape.NATURAL,
++        Shape.QUARTER_REST,
++        Shape.FLAG_1 };
++
++    /** Maximum number of failing glyphs listed in a problem description. */
++    private static final int MAX_LISTED_GLYPHS = 20;
++
+     //~ Instance fields ----------------------------------------------------------------------------
+ 
+     /**
+@@ -501,8 +548,131 @@ public class MusicFont
+         return layoutShapeByCode(symbol.getShape(), fat);
+     }
+ 
++    //----------//
++    // unusable //
++    //----------//
++    /**
++     * Report that a symbol cannot be rendered with this font (in batch), because its glyphs
++     * have no outline or paint no pixel.
++     * <p>
++     * The music family that provides the symbol glyphs is flagged as unusable
++     * (see {@link #checkFont}).
++     *
++     * @param shape   the symbol shape
++     * @param failure what failed, such as "no outline"
++     * @return the exception to throw
++     */
++    public UnusableFontException unusable (Shape shape,
++                                           String failure)
++    {
++        // Family that provides the shape codes, if any
++        MusicFont font = this;
++        int[] codes = musicFamily.getSymbols().getCode(shape);
++
++        while ((codes == null) && (font.getBackup() != null)) {
++            font = font.getBackup();
++            codes = font.musicFamily.getSymbols().getCode(shape);
++        }
++
++        final StringBuilder sb = new StringBuilder(failure).append(" for ").append(shape);
++
++        if (codes != null) {
++            for (int code : codes) {
++                sb.append(' ').append(toUnicode(code));
++            }
++        }
++
++        sb.append(" at ").append(getSize()).append("pt");
++
++        final String problem = sb.toString();
++        flagUnusable(font.musicFamily, problem);
++
++        return new UnusableFontException(
++                "Music font " + font.musicFamily + " unusable: " + problem);
++    }
++
+     //~ Static Methods -----------------------------------------------------------------------------
+ 
++    //-----------//
++    // checkFont //
++    //-----------//
++    /**
++     * Check that a newly allocated font of the provided music family can be used.
++     * <p>
++     * The first font checked for a family is checked on all the glyphs used by the family
++     * symbols, the fonts of other sizes on the glyphs of a few key shapes (see
++     * {@link #findProblem}).
++     * <p>
++     * If the font is not usable, the font is created again, once per family.
++     * If the font is still not usable, the family is flagged as unusable, with one ERROR line
++     * "Music font FAMILY unusable: PROBLEM" and, in batch, an {@link UnusableFontException} is
++     * thrown, rather than letting recognition go on with missing or wrong music symbols.
++     *
++     * @param family the music family
++     * @param font   the font just retrieved for this family
++     * @param size   the font point size
++     * @return the font to use
++     * @throws UnusableFontException if the font is not usable (in batch)
++     */
++    private static Font checkFont (MusicFamily family,
++                                   Font font,
++                                   int size)
++    {
++        String problem = findProblem(family, font);
++
++        if (problem == null) {
++            return font;
++        }
++
++        synchronized (unusableFamilies) {
++            if (!unusableFamilies.containsKey(family)) {
++                final Font recreated = recreatedFonts.get(family);
++
++                if (recreated == null) {
++                    // A new font instance means new font data and a new glyph rasterizer
++                    logger.warn(
++                            "Music font {} not usable at size {} ({}), creating it again",
++                            family,
++                            size,
++                            problem);
++                    evictFont(family.getFontName(), family.getFileName());
++
++                    final Font again = getFont(
++                            family.getFontName(),
++                            family.getFileName(),
++                            Font.PLAIN,
++                            size);
++                    recreatedFonts.put(family, again);
++                    problem = findProblem(family, again);
++
++                    if (problem == null) {
++                        logger.info("Music font {} created again successfully", family);
++
++                        return again;
++                    }
++                } else {
++                    // Already created again (by another thread perhaps): check at this size
++                    final Font again = (recreated.getSize() == size) ? recreated
++                            : recreated.deriveFont((float) size);
++                    problem = findProblem(family, again);
++
++                    if (problem == null) {
++                        return again;
++                    }
++                }
++
++                flagUnusable(family, problem);
++            }
++
++            if (OMR.gui != null) {
++                return font; // Interactive mode: the font is used as it is
++            }
++
++            throw new UnusableFontException(
++                    "Music font " + family + " unusable: " + unusableFamilies.get(family));
++        }
++    }
++
+     //----------------//
+     // checkMusicFont //
+     //----------------//
+@@ -515,6 +685,13 @@ public class MusicFont
+     {
+         populateAllSymbols();
+ 
++        // Make sure the default music font can be used (all its glyphs are checked)
++        try {
++            getBaseFont(getDefaultMusicFamily(), DEFAULT_INTERLINE);
++        } catch (UnusableFontException ex) {
++            return false; // Already logged
++        }
++
+         //        if (baseMusicFont.getFamily().equals("Dialog")) {
+         //            String msg = FONT_NAME + " font not found." + " Please install " + FONT_NAME;
+         //            logger.error(msg);
+@@ -529,6 +706,154 @@ public class MusicFont
+         return true;
+     }
+ 
++    //-------------//
++    // findProblem //
++    //-------------//
++    /**
++     * Check whether the provided font can be used for the music family: right family, and
++     * glyphs that exist, have an outline and paint pixels (a failing glyph rasterizer reports
++     * empty bounds or paints nothing).
++     * <p>
++     * The first font checked for a family is checked on all the glyphs used by the family
++     * symbols, the fonts of other sizes on the glyphs of a few key shapes.
++     * The glyphs of key shapes are also painted.
++     *
++     * @param family the music family
++     * @param font   the font to check
++     * @return null if OK, otherwise the description of the problem
++     */
++    private static String findProblem (MusicFamily family,
++                                       Font font)
++    {
++        final String fontDesc = " at " + font.getSize() + "pt (family=" + font.getFamily()
++                + " name=" + font.getFontName() + " glyphs=" + font.getNumGlyphs() + ")";
++
++        if (!isExpectedFamily(family, font)) {
++            return "font file could not be loaded" + fontDesc;
++        }
++
++        if (font.getSize2D() <= 0) {
++            return null; // Nothing to check
++        }
++
++        final long start = System.nanoTime();
++        final boolean all = !checkedFamilies.contains(family);
++        final SortedMap<Integer, Shape> codes = getGlyphCodes(
++                family,
++                all ? Shape.values() : KEY_SHAPES);
++        final List<Integer> failed = new ArrayList<>();
++
++        // Glyphs that exist, in one glyph vector (one glyph per char)
++        final List<String> missing = new ArrayList<>();
++        final StringBuilder chars = new StringBuilder();
++
++        for (Map.Entry<Integer, Shape> entry : codes.entrySet()) {
++            if (font.canDisplay(entry.getKey())) {
++                chars.appendCodePoint(entry.getKey());
++            } else {
++                failed.add(entry.getKey());
++                missing.add(entry.getValue() + " " + toUnicode(entry.getKey()));
++            }
++        }
++
++        // Glyphs with an outline (the glyph bounds used by symbol layouts)
++        final List<String> empty = new ArrayList<>();
++        final GlyphVector vector = font.createGlyphVector(frc, chars.toString());
++
++        for (int i = 0, code; i < chars.length(); i += Character.charCount(code)) {
++            code = chars.codePointAt(i);
++
++            if (vector.getGlyphVisualBounds(i).getBounds2D().isEmpty()) {
++                failed.add(code);
++                empty.add(codes.get(code) + " " + toUnicode(code));
++            }
++        }
++
++        // Glyphs that paint pixels, for the key shapes
++        final List<String> blank = new ArrayList<>();
++        int painted = 0;
++
++        for (Shape shape : KEY_SHAPES) {
++            final int[] shapeCodes = family.getSymbols().getCode(shape);
++
++            if ((shapeCodes == null) || Arrays.stream(shapeCodes).anyMatch(failed::contains)) {
++                continue;
++            }
++
++            painted++;
++
++            if (!paintsPixels(font, getString(shapeCodes))) {
++                final StringBuilder sb = new StringBuilder(shape.toString());
++
++                for (int code : shapeCodes) {
++                    sb.append(' ').append(toUnicode(code));
++                }
++
++                blank.add(sb.toString());
++            }
++        }
++
++        if (missing.isEmpty() && empty.isEmpty() && blank.isEmpty()) {
++            final long millis = (System.nanoTime() - start) / 1_000_000;
++
++            if (all) {
++                checkedFamilies.add(family);
++                logger.info(
++                        "Music font {}: {} glyphs checked in {} ms",
++                        family,
++                        codes.size(),
++                        millis);
++            } else {
++                logger.debug(
++                        "Music font {} at {}pt checked in {} ms",
++                        family,
++                        font.getSize(),
++                        millis);
++            }
++
++            return null;
++        }
++
++        final List<String> problems = new ArrayList<>();
++
++        if (!empty.isEmpty()) {
++            problems.add(listGlyphs(empty, codes.size() + " glyphs have no outline"));
++        }
++
++        if (!missing.isEmpty()) {
++            problems.add(listGlyphs(missing, codes.size() + " glyphs are missing"));
++        }
++
++        if (!blank.isEmpty()) {
++            problems.add(listGlyphs(blank, painted + " key glyphs paint no pixel"));
++        }
++
++        return String.join("; ", problems) + fontDesc;
++    }
++
++    //--------------//
++    // flagUnusable //
++    //--------------//
++    /**
++     * Flag a music family as unusable.
++     * <p>
++     * The first problem found for the family is logged as one ERROR line
++     * "Music font FAMILY unusable: PROBLEM".
++     *
++     * @param family  the unusable music family
++     * @param problem the description of the problem
++     */
++    private static void flagUnusable (MusicFamily family,
++                                      String problem)
++    {
++        synchronized (unusableFamilies) {
++            if (!unusableFamilies.containsKey(family)) {
++                unusableFamilies.put(family, problem);
++                logger.error("Music font {} unusable: {}", family, problem);
++            }
++        }
++    }
++
+     //-------------//
+     // getBaseFont //
+     //-------------//
+@@ -588,6 +913,36 @@ public class MusicFont
+         return defaultMusicParam.getValue();
+     }
+ 
++    //---------------//
++    // getGlyphCodes //
++    //---------------//
++    /**
++     * Report the code points (except spaces) used by the music family for the provided shapes.
++     *
++     * @param family the music family
++     * @param shapes the shapes to consider
++     * @return the code points, each with the first shape that uses it
++     */
++    private static SortedMap<Integer, Shape> getGlyphCodes (MusicFamily family,
++                                                            Shape[] shapes)
++    {
++        final SortedMap<Integer, Shape> map = new TreeMap<>();
++
++        for (Shape shape : shapes) {
++            final int[] codes = family.getSymbols().getCode(shape);
++
++            if (codes != null) {
++                for (int code : codes) {
++                    if (!Character.isWhitespace(code) && !Character.isSpaceChar(code)) {
++                        map.putIfAbsent(code, shape);
++                    }
++                }
++            }
++        }
++
++        return map;
++    }
++
+     //-------------//
+     // getHeadFont //
+     //-------------//
+@@ -638,22 +993,29 @@ public class MusicFont
+     //--------------//
+     /**
+      * Report the music font for the chosen family and properly scaled by point size.
++     * <p>
++     * A font of a new size is checked before use and cached.
+      *
+      * @param family font family
+      * @param size   point size value (perhaps different from 4 * staffInterline)
+      * @return properly scaled music font
++     * @throws UnusableFontException if the font is not usable (in batch)
+      */
+     public static MusicFont getMusicFont (MusicFamily family,
+                                           int size)
+     {
+-        Font font = getFont(family.getFontName(), family.getFileName(), Font.PLAIN, size);
++        final Font cached = getCachedFont(family.getFontName(), size);
+ 
+-        if (!(font instanceof MusicFont)) {
+-            font = new MusicFont(font);
+-            cacheFont(font);
++        if (cached instanceof MusicFont musicFont) {
++            return musicFont;
+         }
+ 
+-        return (MusicFont) font;
++        // Font just created, or derived from another size
++        final Font font = getFont(family.getFontName(), family.getFileName(), Font.PLAIN, size);
++        final MusicFont musicFont = new MusicFont(checkFont(family, font, size));
++        cacheFont(musicFont);
++
++        return musicFont;
+     }
+ 
+     //-----------//
+@@ -674,6 +1036,110 @@ public class MusicFont
+         return new String(codes, 0, codes.length);
+     }
+ 
++    //-------------------//
++    // hasUnusableFamily //
++    //-------------------//
++    /**
++     * Tell whether a music family has been found unusable.
++     *
++     * @return true if so
++     */
++    public static boolean hasUnusableFamily ()
++    {
++        synchronized (unusableFamilies) {
++            return !unusableFamilies.isEmpty();
++        }
++    }
++
++    //------------------//
++    // isExpectedFamily //
++    //------------------//
++    /**
++     * Tell whether the font belongs to the expected music family.
++     * A font file that could not be loaded is replaced by a platform font of another family.
++     *
++     * @param family the expected music family
++     * @param font   the font to check
++     * @return true if OK
++     */
++    private static boolean isExpectedFamily (MusicFamily family,
++                                             Font font)
++    {
++        final String fontFamily = font.getFamily().replaceAll(" ", "");
++
++        return fontFamily.equalsIgnoreCase(family.name())
++                || fontFamily.equalsIgnoreCase(family.getFontName());
++    }
++
++    //------------//
++    // listGlyphs //
++    //------------//
++    /**
++     * Format a list of failing glyphs, limited to the first ones.
++     *
++     * @param glyphs the failing glyphs
++     * @param what   what failed, such as "156 glyphs have no outline"
++     * @return "K of WHAT: GLYPH, GLYPH, ..."
++     */
++    private static String listGlyphs (List<String> glyphs,
++                                      String what)
++    {
++        final StringBuilder sb = new StringBuilder();
++        sb.append(glyphs.size()).append(" of ").append(what).append(": ");
++        sb.append(String.join(", ", glyphs.subList(0, Math.min(glyphs.size(), MAX_LISTED_GLYPHS))));
++
++        if (glyphs.size() > MAX_LISTED_GLYPHS) {
++            sb.append(", ... (").append(glyphs.size() - MAX_LISTED_GLYPHS).append(" more)");
++        }
++
++        return sb.toString();
++    }
++
++    //--------------//
++    // paintsPixels //
++    //--------------//
++    /**
++     * Tell whether the provided string paints some pixels, when drawn as a symbol image.
++     *
++     * @param font the font to use
++     * @param str  the string to paint
++     * @return true if some pixel is painted, or if the string is too small to tell
++     */
++    private static boolean paintsPixels (Font font,
++                                         String str)
++    {
++        final TextLayout layout = new TextLayout(str, font, frc);
++        final Rectangle rect = layout.getBounds().getBounds();
++
++        if ((rect.width < 2) || (rect.height < 2)) {
++            return true; // Too small to tell
++        }
++
++        final BufferedImage img = new BufferedImage(
++                rect.width,
++                rect.height,
++                BufferedImage.TYPE_INT_ARGB);
++        final Graphics2D g = img.createGraphics();
++
++        try {
++            g.setColor(defaultImageColor);
++            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
++            layout.draw(g, -rect.x, -rect.y);
++        } finally {
++            g.dispose();
++        }
++
++        final int[] pixels = img.getRGB(0, 0, rect.width, rect.height, null, 0, rect.width);
++
++        for (int pixel : pixels) {
++            if ((pixel >>> 24) != 0) {
++                return true; // Non-transparent pixel
++            }
++        }
++
++        return false;
++    }
++
+     //--------------------//
+     // populateAllSymbols //
+     //--------------------//
+@@ -687,6 +1153,20 @@ public class MusicFont
+         }
+     }
+ 
++    //-----------//
++    // toUnicode //
++    //-----------//
++    /**
++     * Report the Unicode notation of a code point.
++     *
++     * @param code the code point
++     * @return "U+XXXX"
++     */
++    private static String toUnicode (int code)
++    {
++        return String.format("U+%04X", code);
++    }
++
+     //~ Inner Classes ------------------------------------------------------------------------------
+ 
+     //-----------//
+@@ -704,4 +1184,25 @@ public class MusicFont
+                 1.0, // Was 1.1,
+                 "Ratio applied on font size for better head rendering");
+     }
++
++    //-----------------------//
++    // UnusableFontException //
++    //-----------------------//
++    /**
++     * Exception raised in batch when a music font cannot be used: its font file could not be
++     * loaded, or some glyphs are missing, have no outline or paint no pixel.
++     */
++    public static class UnusableFontException
++            extends IllegalStateException
++    {
++        /**
++         * Create an UnusableFontException.
++         *
++         * @param message the problem description
++         */
++        public UnusableFontException (String message)
++        {
++            super(message);
++        }
++    }
+ }
+diff --git a/app/src/main/java/org/audiveris/omr/ui/symbol/OmrFont.java b/app/src/main/java/org/audiveris/omr/ui/symbol/OmrFont.java
+index ef4983a..758fe8a 100644
+--- a/app/src/main/java/org/audiveris/omr/ui/symbol/OmrFont.java
++++ b/app/src/main/java/org/audiveris/omr/ui/symbol/OmrFont.java
+@@ -44,14 +44,15 @@ import java.awt.font.TextLayout;
+ import java.awt.geom.AffineTransform;
+ import java.awt.geom.Point2D;
+ import java.awt.geom.Rectangle2D;
++import java.io.File;
+ import java.io.IOException;
+ import java.io.InputStream;
+-import java.net.MalformedURLException;
+ import java.net.URL;
+ import java.util.ConcurrentModificationException;
+-import java.util.HashMap;
+ import java.util.Map;
+ import java.util.Objects;
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
+ 
+ /**
+  * Class <code>OmrFont</code> is meant to simplify the use of rendering symbols when using a
+@@ -102,8 +103,19 @@ public abstract class OmrFont
+      * <p>
+      * Only the PLAIN style is cached.
+      * If a different style is desired, the caller must derive it from the cached plain one.
++     * <p>
++     * Concurrent maps, since fonts are retrieved, cached and evicted by any processing thread.
++     */
++    private static final Map<String, Map<Integer, Font>> fontCache = new ConcurrentHashMap<>();
++
++    /**
++     * Name of the system property that may point to a folder of font files (such as
++     * "Bravura.otf"), to be read in place rather than copied from the application resources.
+      */
+-    private static final Map<String, Map<Integer, Font>> fontCache = new HashMap<>();
++    public static final String FONTS_DIR_PROPERTY = "audiveris.fonts.dir";
++
++    /** Names of the font files whose copy in the fonts folder must no longer be used. */
++    private static final Set<String> skippedFontsDirFiles = ConcurrentHashMap.newKeySet();
+ 
+     //~ Constructors -------------------------------------------------------------------------------
+ 
+@@ -263,13 +275,72 @@ public abstract class OmrFont
+     {
+         final String key = font.getName().replaceAll(" ", "");
+         logger.debug("Caching font: {} key:{}", font, key);
+-        Map<Integer, Font> sizeMap = fontCache.get(key);
++        fontCache.computeIfAbsent(key, k -> new ConcurrentHashMap<>()).put(font.getSize(), font);
++    }
+ 
+-        if (sizeMap == null) {
+-            fontCache.put(key, sizeMap = new HashMap<>());
++    //------------------//
++    // createCustomFont //
++    //------------------//
++    /**
++     * Create a font out of its font file, read from the fonts folder if any, otherwise
++     * from the application resources.
++     * <p>
++     * <code>Font.createFont(int, InputStream)</code> must copy the font data to a temporary file,
++     * while a font file in the fonts folder (see {@link #FONTS_DIR_PROPERTY}) is used in place.
++     * In a browser, notably, the temporary folder is a persistent storage.
++     *
++     * @param fontName font name (e.g. "Finale Jazz")
++     * @param fileName file name (e.g. "FinaleJazz.otf")
++     * @return the created font (with a point size of 1), or null if failed
++     */
++    private static Font createCustomFont (String fontName,
++                                          String fileName)
++    {
++        final String fontsDir = System.getProperty(FONTS_DIR_PROPERTY);
++
++        if ((fontsDir != null) && !skippedFontsDirFiles.contains(fileName)) {
++            final File file = new File(fontsDir, fileName);
++
++            if (file.isFile()) {
++                try {
++                    final Font font = Font.createFont(Font.TRUETYPE_FONT, file);
++                    logger.info("Font {} read from {}", fontName, file);
++
++                    return font;
++                } catch (FontFormatException | IOException | RuntimeException ex) {
++                    logger.warn(
++                            "Could not create font {} from {} {}",
++                            fontName,
++                            file,
++                            ex.toString(),
++                            ex);
++                }
++            }
++        }
++
++        // Font file in application resources, with one more attempt if needed
++        for (int attempt = 1; attempt <= 2; attempt++) {
++            try {
++                final URL url = UriUtil.toURI(WellKnowns.RES_URI, fileName).toURL();
++                logger.debug("Font url={}", url);
++
++                try (InputStream input = url.openStream()) {
++                    logger.debug("Found file {}", fileName);
++
++                    return Font.createFont(Font.TRUETYPE_FONT, input);
++                }
++            } catch (FontFormatException | IOException | RuntimeException ex) {
++                logger.warn(
++                        "Could not create font {} from {} (attempt {}) {}",
++                        fontName,
++                        fileName,
++                        attempt,
++                        ex.toString(),
++                        ex);
++            }
+         }
+ 
+-        sizeMap.put(font.getSize(), font);
++        return null;
+     }
+ 
+     //------------//
+@@ -299,36 +370,52 @@ public abstract class OmrFont
+ 
+         // First, lookup our own fonts (defined in "res" folder)
+         if (fileName != null) {
+-            try {
+-                final URL url = UriUtil.toURI(WellKnowns.RES_URI, fileName).toURL();
+-                logger.debug("Font url={}", url);
++            final Font created = createCustomFont(fontName, fileName);
+ 
+-                try (InputStream input = url.openStream()) {
+-                    logger.debug("Found file {}", fileName);
+-                    final Font font = Font.createFont(Font.TRUETYPE_FONT, input).deriveFont(
+-                            (float) size);
+-                    cacheFont(font);
++            if (created != null) {
++                final Font font = created.deriveFont((float) size);
++                cacheFont(font);
+ 
+-                    final boolean added = ge.registerFont(font);
+-                    logger.debug("Created custom font: {} added:{}", font, added);
++                final boolean added = ge.registerFont(font);
++                logger.debug("Created custom font: {} added:{}", font, added);
+ 
+-                    return font;
+-                } catch (FontFormatException | IOException ex) {
+-                    logger.debug("Could not create custom font: {} " + ex, fileName);
+-                }
+-            } catch (MalformedURLException ex) {
+-                logger.warn("MalformedURLException", ex);
++                return font;
+             }
+         }
+ 
+         // Finally, try a platform font
+         final Font font = new Font(fontName, Font.PLAIN, size);
+         cacheFont(font);
+-        logger.debug("Using platform font: {}", font.getFamily());
++
++        if (fileName != null) {
++            logger.warn("Font {} replaced by platform font {}", fontName, font.getFamily());
++        } else {
++            logger.debug("Using platform font: {}", font.getFamily());
++        }
+ 
+         return font;
+     }
+ 
++    //-----------//
++    // evictFont //
++    //-----------//
++    /**
++     * Forget all the cached instances of a font, so that the next request creates the font
++     * again, from the application resources rather than from the fonts folder.
++     *
++     * @param fontName font name (e.g. "Finale Jazz")
++     * @param fileName file name (e.g. "FinaleJazz.otf"), if any
++     */
++    protected static void evictFont (String fontName,
++                                     String fileName)
++    {
++        fontCache.remove(fontName.replaceAll(" ", ""));
++
++        if (fileName != null) {
++            skippedFontsDirFiles.add(fileName);
++        }
++    }
++
+     //---------------//
+     // getCachedFont //
+     //---------------//
+@@ -339,8 +426,8 @@ public abstract class OmrFont
+      * @param size     desired font point size
+      * @return the cached font or null
+      */
+-    private static Font getCachedFont (String fontName,
+-                                       int size)
++    protected static Font getCachedFont (String fontName,
++                                         int size)
+     {
+         final String key = fontName.replaceAll(" ", "");
+         final Map<Integer, Font> sizeMap = fontCache.get(key);
+@@ -369,12 +456,14 @@ public abstract class OmrFont
+         final String key = fontName.replaceAll(" ", "");
+         final Map<Integer, Font> sizeMap = fontCache.get(key);
+ 
+-        if (sizeMap == null || sizeMap.isEmpty()) {
+-            logger.debug("Null or empty sizeMap for {}", key);
+-            return null;
++        if (sizeMap != null) {
++            for (Font font : sizeMap.values()) {
++                return font;
++            }
+         }
+ 
+-        return sizeMap.entrySet().iterator().next().getValue();
++        logger.debug("Null or empty sizeMap for {}", key);
++        return null;
+     }
+ 
+     //---------//
+diff --git a/app/src/main/java/org/audiveris/omr/ui/symbol/ShapeSymbol.java b/app/src/main/java/org/audiveris/omr/ui/symbol/ShapeSymbol.java
+index 88ed1be..2c00a42 100644
+--- a/app/src/main/java/org/audiveris/omr/ui/symbol/ShapeSymbol.java
++++ b/app/src/main/java/org/audiveris/omr/ui/symbol/ShapeSymbol.java
+@@ -21,6 +21,7 @@
+ // </editor-fold>
+ package org.audiveris.omr.ui.symbol;
+ 
++import org.audiveris.omr.OMR;
+ import static org.audiveris.omr.classifier.SampleRepository.STANDARD_INTERLINE;
+ import org.audiveris.omr.glyph.Shape;
+ import org.audiveris.omr.math.PointUtil;
+@@ -191,6 +192,7 @@ public class ShapeSymbol
+      * @param font        properly-scaled font (for interline and zoom)
+      * @param curveStroke optional stroke for slurs, wedges and endings, or null
+      * @return the image built, or null if failed
++     * @throws MusicFont.UnusableFontException in batch, if the symbol has no outline
+      */
+     public SymbolImage buildImage (MusicFont font,
+                                    Stroke curveStroke)
+@@ -200,6 +202,22 @@ public class ShapeSymbol
+ 
+         // Allocate image of proper size
+         Rectangle intRect = p.rect.getBounds();
++
++        if (intRect.isEmpty()) {
++            // No glyph outline: the music font is not usable
++            if (OMR.gui == null) {
++                throw font.unusable(shape, "no outline");
++            }
++
++            logger.warn(
++                    "No image for {} with font {} {}: empty symbol bounds",
++                    shape,
++                    font.getFontName(),
++                    font.getSize());
++
++            return null;
++        }
++
+         SymbolImage img = new SymbolImage(
+                 intRect.width,
+                 intRect.height,
+@@ -229,6 +247,11 @@ public class ShapeSymbol
+             computeImage();
+         }
+ 
++        if (image == null) {
++            noCentroid("no image");
++            return;
++        }
++
+         double xBar = 0;
+         double yBar = 0;
+         double weight = 0;
+@@ -246,6 +269,11 @@ public class ShapeSymbol
+             }
+         }
+ 
++        if (weight == 0) {
++            noCentroid("no pixel");
++            return;
++        }
++
+         xBar /= weight;
+         yBar /= weight;
+ 
+@@ -267,7 +295,8 @@ public class ShapeSymbol
+         final int interline = isTiny ? TINY_INTERLINE : STANDARD_INTERLINE;
+         final MusicFont font = MusicFont.getBaseFont(musicFamily, interline);
+         image = buildImage(font);
+-        dimension = new Dimension(image.getWidth(), image.getHeight());
++        dimension = (image != null) ? new Dimension(image.getWidth(), image.getHeight())
++                : new Dimension(0, 0);
+     }
+ 
+     //------------------------//
+@@ -644,6 +673,36 @@ public class ShapeSymbol
+         return isDecorated;
+     }
+ 
++    //------------//
++    // noCentroid //
++    //------------//
++    /**
++     * Handle a symbol image with no pixel to compute the centroid from.
++     * <p>
++     * In batch, the music font is not usable: an exception is thrown.
++     * In interactive mode, the center of the symbol box is used.
++     *
++     * @param failure what failed, such as "no pixel"
++     * @throws MusicFont.UnusableFontException in batch
++     */
++    private void noCentroid (String failure)
++    {
++        final int interline = isTiny ? TINY_INTERLINE : STANDARD_INTERLINE;
++        final MusicFont font = MusicFont.getBaseFont(musicFamily, interline);
++
++        if (OMR.gui == null) {
++            throw font.unusable(shape, failure);
++        }
++
++        logger.warn(
++                "No centroid for {} with font {} {}: {}, using center of box",
++                shape,
++                font.getFontName(),
++                font.getSize(),
++                failure);
++        centroidOffset = new Point2D.Double(0, 0);
++    }
++
+     //-------//
+     // paint //
+     //-------//
+-- 
+2.43.0
+

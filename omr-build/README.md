@@ -29,6 +29,19 @@ words skip the font-size check, a glued dash run is not counted in a word's font
 (slur pieces read as letters) are dropped instead of their line, and a dash on the syllables' baseline becomes an
 extender instead of a hyphen. Test score: lyric syllables 44% → 87%, notes unchanged.
 
+`0005` — **Batch robustness.** (1) One failed sheet no longer throws away the book: each failure is logged as
+`Sheet#N failed at STEP: reason`, the sheet is discarded (no slurs/ties/voices linked across it), and the remaining sheets are
+exported (`Partial transcription: K of N sheets, without failed sheets [#..]`; an extra warning when it's the first sheet,
+which carries the title, tempo and time signature). (2) The music font must actually work: at startup every glyph the family
+uses is checked (outline bounds, plus pixels for a few key glyphs); a bad font is recreated once from the jar, otherwise one
+ERROR line `Music font Bravura unusable: …` names the failing glyphs and nothing is exported — an empty glyph found mid-run is
+fatal too, rather than recognizing with a blank clef. (3) `-Daudiveris.fonts.dir=DIR` reads font files in place
+(`Font.createFont(File)`), so the browser can hand Bravura over in memory instead of a temp copy in IndexedDB. Prompted by a
+user's browser run where every sheet died at HEADERS on a 0×0 clef image (FreeType returned empty outlines; not reproduced in
+Chromium or WebKitGTK). Healthy output is byte-identical.
+
+`build.sh` applies the patches with `git am --keep-cr`: the upstream sources are CRLF.
+
 ## StripVolatile (applied to every jar)
 
 CheerpJ's runtime lacks the `Unsafe` natives behind *reflective* access to `volatile` (and, once made

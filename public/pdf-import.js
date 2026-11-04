@@ -51,10 +51,13 @@ function tick() {
   $("elapsed").textContent = `elapsed ${fmt((performance.now() - t0) / 1000)}`;
 }
 
+// The first lines (browser/device) are kept when the log is trimmed: they're what
+// makes a pasted failure report diagnosable.
+let logHead = "";
 function appendLog(line) {
   const log = $("log");
   log.textContent += line + "\n";
-  if (log.textContent.length > 400000) log.textContent = log.textContent.slice(-300000);
+  if (log.textContent.length > 400000) log.textContent = logHead + "…\n" + log.textContent.slice(-300000);
   if ($("log-wrap").open) log.scrollTop = log.scrollHeight;
 }
 
@@ -144,6 +147,12 @@ async function run(file) {
     }
   });
 
+  const mem = navigator.deviceMemory ? `${navigator.deviceMemory} GB RAM` : "RAM unknown";
+  logHead = `Resonate ${$("version").textContent} · ${new Date().toISOString()}\n` +
+    `${navigator.userAgent}\n${navigator.hardwareConcurrency || "?"} CPU threads · ${mem} · ` +
+    `PDF ${(file.size / 1e6).toFixed(1)} MB\n`;
+  appendLog(logHead.trimEnd());
+
   try {
     const omr = await import("./omr/omr.js");
     const res = await omr.convertPdf(file, { onProgress, onLog: appendLog });
@@ -152,7 +161,9 @@ async function run(file) {
     setStep("save");
     $("stage").textContent = "Saving to My songs";
     const xml = await readScoreFile(new File([res.mxl], `${baseName}.mxl`));
-    const title = pickTitle(xml, baseName);
+    // Page 1's credits (title) are gone when the first music page failed; don't take page 2's.
+    const firstFailed = res.failed.some((f) => f.sheet === 1);
+    const title = firstFailed ? baseName : pickTitle(xml, baseName);
     const finalXml = setTitle(xml, title);
     const score = parseMusicXml(finalXml, title);
     const id = await addSong(score.title, finalXml);
@@ -163,9 +174,18 @@ async function run(file) {
     $("progress").hidden = true;
     $("result").hidden = false;
     $("result-title").textContent = `“${score.title}”`;
+    const read = res.pages.filter((p) => !res.failed.some((f) => f.page === p));
     $("result-detail").textContent =
       `${score.notes.length} melody notes, ${lyrics} with lyrics${score.verses.length > 1 ? ` (${score.verses.length} verses)` : ""}, ` +
-      `from ${res.pages.length} page${res.pages.length === 1 ? "" : "s"} (${res.pages.join(", ")}) in ${fmt((performance.now() - t0) / 1000)}. Saved to My songs.`;
+      `from ${read.length} page${read.length === 1 ? "" : "s"} (${read.join(", ")}) in ${fmt((performance.now() - t0) / 1000)}. Saved to My songs.`;
+    if (res.failed.length) {
+      const pages = res.failed.map((f) => f.page);
+      $("result-missing").hidden = false;
+      $("result-missing").textContent =
+        `Couldn't read page${pages.length === 1 ? "" : "s"} ${pages.join(", ")}, so ${pages.length === 1 ? "it's" : "they're"} ` +
+        "left out of the song" + (firstFailed ? " (the title, tempo and time signature come from the first page, so they may be off)" : "") +
+        ". Details → Copy log says why.";
+    }
   } catch (err) {
     fail(err);
   } finally {
@@ -189,6 +209,18 @@ $("download").addEventListener("click", () => {
   a.download = `${baseName}.mxl`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+});
+$("copy-log").addEventListener("click", async () => {
+  const btn = $("copy-log");
+  try {
+    await navigator.clipboard.writeText($("log").textContent);
+    btn.textContent = "Copied";
+  } catch {
+    // No clipboard permission: select the text so a long-press / Ctrl+C copies it.
+    getSelection().selectAllChildren($("log"));
+    btn.textContent = "Selected — copy it";
+  }
+  setTimeout(() => { btn.textContent = "Copy log"; }, 2500);
 });
 for (const b of document.querySelectorAll(".again")) b.addEventListener("click", () => location.reload());
 window.addEventListener("beforeunload", (e) => {
