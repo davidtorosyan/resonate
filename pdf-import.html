@@ -52,6 +52,7 @@
       .card p { margin: 0.35rem 0; line-height: 1.45; font-size: 0.92rem; opacity: 0.85; }
       .warn { border-color: rgba(255,200,90,0.35); background: rgba(255,200,90,0.06); }
       .warn h2 { color: #ffd58a; }
+      .missing { color: #ffd58a; font-size: 0.88rem; }
       .big-btn {
         font: inherit;
         font-size: 1.05rem;
@@ -118,7 +119,7 @@
         <a class="nav-link" href="tools.html">Tools</a>
         <a class="nav-link" href="sing.html">Sing</a>
       </div>
-      <span id="version" class="mono">v22</span>
+      <span id="version" class="mono">v23</span>
     </header>
     <main>
       <section class="card">
@@ -160,6 +161,7 @@
       <section id="result" class="card" hidden>
         <div id="result-title"></div>
         <p id="result-detail"></p>
+        <p id="result-missing" class="missing" hidden></p>
         <div class="row" style="margin-top:0.8rem">
           <a id="sing-it" class="big-btn" href="sing.html" style="text-align:center;text-decoration:none">Sing it</a>
         </div>
@@ -183,6 +185,7 @@
       <details id="log-wrap" hidden>
         <summary>Details (engine log)</summary>
         <pre id="log" class="mono"></pre>
+        <div class="row"><button id="copy-log" class="ghost" type="button">Copy log</button></div>
       </details>
     </main>
     <script type="module" src="pdf-import.js"></script>

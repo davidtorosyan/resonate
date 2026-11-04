@@ -55,7 +55,9 @@ function progressTracker(sheetCount, onProgress) {
 
 /**
  * Convert a PDF (File/Blob/ArrayBuffer) to MusicXML with Audiveris.
- * Returns { mxl: Uint8Array (zipped MusicXML), pages: [kept page numbers], log: string[] }.
+ * Returns { mxl: Uint8Array (zipped MusicXML), pages: [kept page numbers],
+ *           failed: [{ sheet, page, step, reason }] (pages Audiveris gave up on; the rest is in mxl),
+ *           log: string[] }.
  */
 export async function convertPdf(input, { onProgress, onLog } = {}) {
   if (started) throw new Error('Audiveris already ran in this page — reload to convert another file.');
@@ -94,8 +96,42 @@ export async function convertPdf(input, { onProgress, onLog } = {}) {
       worker.onerror = (e) => reject(new Error(e.message || 'the recognition engine crashed'));
       worker.postMessage({ type: 'run', base: BASE, classpath, tiff: tiff.buffer }, [tiff.buffer]);
     });
-    return { mxl, pages: music.map((p) => p.index), log };
+    const pageOf = (sheet) => music[sheet - 1]?.index ?? sheet;
+    // Belt and braces: Audiveris exports nothing once its music font proved unusable.
+    if (log.some((l) => /Music font \S+ unusable/.test(l))) throw new Error('music font unusable');
+    return { mxl, pages: music.map((p) => p.index), failed: failedSheets(log, pageOf), log };
+  } catch (err) {
+    throw explain(err, log, (sheet) => music[sheet - 1]?.index ?? sheet);
   } finally {
     worker.terminate();
   }
+}
+
+// --- Failures, from Audiveris's log (see omr-build/patches/0005) -----------------------
+//   "Sheet#3 failed at HEADS: <reason>"  → that page is left out, the others are exported
+//   "Music font Bravura unusable: ..."    → nothing can be recognized in this browser
+function failedSheets(log, pageOf) {
+  const out = [];
+  for (const line of log) {
+    const m = /\bSheet#(\d+) failed at ([A-Z_]+|\?): (.*)$/.exec(line);
+    if (m && !out.some((f) => f.sheet === +m[1])) {
+      out.push({ sheet: +m[1], page: pageOf(+m[1]), step: m[2], reason: m[3].trim() });
+    }
+  }
+  return out;
+}
+
+function explain(err, log, pageOf) {
+  if (log.some((l) => /Music font \S+ unusable/.test(l))) {
+    return new Error("The recognition engine couldn't draw music symbols in this browser (its music " +
+      "font failed to load), so it can't read the score. Reload and try again; if it keeps happening, " +
+      "try another browser, and send the log (Details → Copy log) so this can be fixed.");
+  }
+  const failed = failedSheets(log, pageOf);
+  if (failed.length && /without producing MusicXML/.test(err.message)) {
+    const f = failed[0];
+    return new Error(`Audiveris couldn't read any page (page ${f.page} stopped at ${f.step}: ${f.reason}). ` +
+      "Details → Copy log has the full story.");
+  }
+  return err;
 }
