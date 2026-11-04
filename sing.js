@@ -526,17 +526,30 @@ function renderLive() {
 
 let sylEls = new Map();
 
-function sylText(n) {
+// Does the syllable on note i continue into the next sung syllable? Only when it
+// says so (begin/middle) AND the next syllable agrees (middle/end) — OCR'd scores
+// sometimes tag a whole word as "begin", which would glue it to the next word.
+function joinsNext(i) {
+  const n = notes[i];
+  if (n.syllabic !== "begin" && n.syllabic !== "middle") return false;
+  for (let j = i + 1; j < notes.length; j++) {
+    if (notes[j].melisma || !notes[j].text) continue;
+    return notes[j].syllabic === "middle" || notes[j].syllabic === "end";
+  }
+  return false;
+}
+
+function sylText(n, i) {
   if (n.melisma) return "";
   if (!score.verses.length) return noteName(n.midi) + " "; // no lyrics: show the notes
-  return n.text + (n.syllabic === "begin" || n.syllabic === "middle" ? "" : " ");
+  return n.text + (joinsNext(i) ? "" : " ");
 }
 
 function lineHtml(li, el, keep) {
   el.textContent = "";
   if (li < 0 || li >= lines.length) return;
   for (const i of lines[li]) {
-    const t = sylText(notes[i]);
+    const t = sylText(notes[i], i);
     if (!t) continue;
     const span = document.createElement("span");
     span.className = "syl";
@@ -587,7 +600,7 @@ function makeChip(j) {
     b.className = "chip mono";
     b.dataset.tune = g ? g.status : "";
     b.innerHTML = "<i></i><b></b><small></small>";
-    b.querySelector("i").textContent = n.melisma ? "‿" : n.text + (n.syllabic === "begin" || n.syllabic === "middle" ? "-" : "");
+    b.querySelector("i").textContent = n.melisma ? "‿" : n.text + (joinsNext(j) ? "-" : "");
     b.querySelector("b").textContent = noteName(n.midi);
     let res = "";
     if (g?.status === "good" || g?.status === "ok") res = `✓ ${centsLabel(Math.round(g.dev * 100))}`;
@@ -743,7 +756,7 @@ function renderLane() {
       ctx.textBaseline = "top";
       ctx.textAlign = "left";
       ctx.fillStyle = j === cur && session ? "#ffe6a0" : "rgba(255,230,160,0.8)";
-      ctx.fillText(n.text + (n.syllabic === "begin" || n.syllabic === "middle" ? "-" : ""), x0, y + barH / 2 + 2);
+      ctx.fillText(n.text + (joinsNext(j) ? "-" : ""), x0, y + barH / 2 + 2);
     }
   });
 

@@ -1,0 +1,137 @@
+// PDF → music pages → multi-page TIFF, for Audiveris.
+//
+// Audiveris fails a whole book when any sheet has no staves (title pages,
+// lyric sheets), so pages are rendered with pdf.js and only pages with staves
+// are kept, binarized (see renderPdf), and packed into one uncompressed 8-bit
+// gray TIFF, which Audiveris reads as one sheet per page.
+
+export const DPI = 300;
+
+let pdfjs = null;
+async function loadPdfjs(base) {
+  if (!pdfjs) {
+    pdfjs = await import(`${base}/pdf.min.mjs`);
+    pdfjs.GlobalWorkerOptions.workerSrc = `${base}/pdf.worker.min.mjs`;
+  }
+  return pdfjs;
+}
+
+// Render every page; returns [{ index, width, height, gray: Uint8Array, staves }].
+export async function renderPdf(data, { pdfjsBase, dpi = DPI, onPage } = {}) {
+  const lib = await loadPdfjs(pdfjsBase);
+  const task = lib.getDocument({ data });
+  const doc = await task.promise;
+  const pages = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const viewport = page.getViewport({ scale: dpi / 72 });
+    const width = Math.round(viewport.width), height = Math.round(viewport.height);
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, width, height);
+    await page.render({ canvasContext: ctx, canvas, viewport }).promise;
+    const rgba = ctx.getImageData(0, 0, width, height).data;
+    const gray = new Uint8Array(width * height);
+    // Pure black & white at 50% coverage. pdf.js anti-aliases; Audiveris's own PDF
+    // path renders without anti-aliasing, and on gray glyph edges it recognizes far
+    // fewer lyrics (measured: 15% vs 44% of syllables on the test score; notes unaffected).
+    for (let p = 0, q = 0; p < gray.length; p++, q += 4) {
+      gray[p] = rgba[q] * 299 + rgba[q + 1] * 587 + rgba[q + 2] * 114 < 128000 ? 0 : 255;
+    }
+    page.cleanup();
+    const staves = countStaves(gray, width, height);
+    pages.push({ index: i, width, height, gray, staves });
+    onPage?.(i, doc.numPages, staves);
+  }
+  await task.destroy();
+  return pages;
+}
+
+// Count 5-line staves: rows containing a long horizontal dark run are
+// candidate staff lines; staves are 5 of them with near-equal spacing.
+export function countStaves(gray, width, height) {
+  const minRun = width * 0.3;
+  const lineRows = [];
+  for (let y = 0; y < height; y++) {
+    let run = 0, best = 0, gap = 0;
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      if (gray[row + x] < 140) { run += gap + 1; gap = 0; if (run > best) best = run; }
+      else if (run > 0 && gap < 2) gap++;   // tolerate tiny breaks
+      else { run = 0; gap = 0; }
+    }
+    if (best >= minRun) lineRows.push(y);
+  }
+  // Merge adjacent rows into lines (centre y).
+  const lines = [];
+  for (let k = 0; k < lineRows.length; ) {
+    let j = k;
+    while (j + 1 < lineRows.length && lineRows[j + 1] - lineRows[j] <= 1) j++;
+    if (lineRows[j] - lineRows[k] < 8) lines.push((lineRows[k] + lineRows[j]) / 2);
+    k = j + 1;
+  }
+  // Greedy 5-line groups with consistent spacing (6..60 px at 300 dpi).
+  let staves = 0;
+  for (let i = 0; i + 4 < lines.length; ) {
+    const gaps = [1, 2, 3, 4].map((d) => lines[i + d] - lines[i + d - 1]);
+    const mean = gaps.reduce((a, b) => a + b) / 4;
+    if (mean >= 6 && mean <= 60 && gaps.every((g) => Math.abs(g - mean) <= Math.max(2, mean * 0.2))) {
+      staves++;
+      i += 5;
+    } else i++;
+  }
+  return staves;
+}
+
+// Multi-page TIFF: little-endian, 8-bit gray (BlackIsZero), uncompressed, one strip per page.
+export function buildTiff(pages, dpi = DPI) {
+  const TAGS = 13;
+  const ifdSize = 2 + TAGS * 12 + 4;
+  const extra = 16; // two RATIONALs (x/y resolution)
+  let size = 8;
+  for (const p of pages) size += ifdSize + extra + p.gray.length + (p.gray.length & 1);
+  const buf = new ArrayBuffer(size);
+  const dv = new DataView(buf);
+  const u8 = new Uint8Array(buf);
+  dv.setUint16(0, 0x4949, true); // "II"
+  dv.setUint16(2, 42, true);
+  let off = 8;
+  dv.setUint32(4, off, true);
+  pages.forEach((p, n) => {
+    const ifd = off;
+    const rational = ifd + ifdSize;
+    const data = rational + extra;
+    const next = n + 1 < pages.length ? data + p.gray.length + (p.gray.length & 1) : 0;
+    const tags = [
+      [254, 4, 1, 2],                 // NewSubfileType: page of a multi-page image
+      [256, 4, 1, p.width],           // ImageWidth
+      [257, 4, 1, p.height],          // ImageLength
+      [258, 3, 1, 8],                 // BitsPerSample
+      [259, 3, 1, 1],                 // Compression: none
+      [262, 3, 1, 1],                 // Photometric: BlackIsZero
+      [273, 4, 1, data],              // StripOffsets
+      [277, 3, 1, 1],                 // SamplesPerPixel
+      [278, 4, 1, p.height],          // RowsPerStrip
+      [279, 4, 1, p.gray.length],     // StripByteCounts
+      [282, 5, 1, rational],          // XResolution
+      [283, 5, 1, rational + 8],      // YResolution
+      [296, 3, 1, 2],                 // ResolutionUnit: inch
+    ];
+    dv.setUint16(ifd, TAGS, true);
+    tags.forEach(([tag, type, count, value], i) => {
+      const e = ifd + 2 + i * 12;
+      dv.setUint16(e, tag, true);
+      dv.setUint16(e + 2, type, true);
+      dv.setUint32(e + 4, count, true);
+      if (type === 3) dv.setUint16(e + 8, value, true);
+      else dv.setUint32(e + 8, value, true);
+    });
+    dv.setUint32(ifd + 2 + TAGS * 12, next, true);
+    dv.setUint32(rational, dpi, true); dv.setUint32(rational + 4, 1, true);
+    dv.setUint32(rational + 8, dpi, true); dv.setUint32(rational + 12, 1, true);
+    u8.set(p.gray, data);
+    off = next;
+  });
+  return u8;
+}

@@ -138,7 +138,8 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
         const t = [...ly.querySelectorAll("text")].map((x) => x.textContent)
           .reduce((acc, x) => (acc ? acc + (/^['’]/.test(x) ? "" : " ") + x : x), "");
         // Drop verse numbers ("1. "), and old-style spaced contractions ("I 'm").
-        const clean = t.replace(/^\s*\d+\.\s*/, "").replace(/(\w)\s(['’](?:m|s|t|ll|re|ve|d)\b)/g, "$1$2").trim();
+        // NFKC turns typographic ligatures (common in OCR'd scores: "ﬁ") into plain letters.
+        const clean = t.normalize("NFKC").replace(/^\s*\d+\.\s*/, "").replace(/(\w)\s(['’](?:m|s|t|ll|re|ve|d)\b)/g, "$1$2").trim();
         if (!clean) continue;
         verses[num] = { text: clean, syllabic: text(ly.querySelector("syllabic")) || "single" };
         verseSet.add(num);
