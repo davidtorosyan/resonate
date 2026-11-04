@@ -11,6 +11,9 @@ Push to `main` → `.github/workflows/deploy.yml` publishes `public/` to the `gh
 - `index.html` + `app.js` — the tuner (hold a note, see note/cents/volume/waveform). Classic script with its own YIN — deliberately untouched by the other pages. Header links to Record and Sing.
 - `record.html` + `record.js` — free singing: live piano roll, transcript of detected notes, playback (voice / notes on piano / both).
 - `sing.html` + `sing.js` — karaoke against a MusicXML song: the score sets the clock, you sing along, each note is graded in its own time slot.
+- `tools.html` — Tools menu (debug/experimental): links to tools + a device-capability check. Every page's header links here.
+- `pdf-import.html` + `pdf-import.js` — **PDF → Song**: runs Audiveris (Java OMR) in the browser via CheerpJ and saves the MusicXML to My songs (see "In-browser OMR" below).
+- `omr/` — the in-browser OMR engine (`omr.js` page side, `omr-worker.js` + `ocr-engine.js` in a Web Worker, `pdfprep.js`, jars, WebAssembly Tesseract, pdf.js). Built from `/omr-build` (not published).
 - Shared ES modules used by record + sing:
   - `pitch.js` — `openMic()` (mic with processing off, AnalyserNode, `read()` → `{rms, db, midi}`) and the YIN detector. Same algorithm/settings as `app.js`.
   - `music.js` — note names, `fold` (octave-free semitone difference), `median`, `centsLabel`.
@@ -36,7 +39,7 @@ Server prints both HTTP (port 3000) and HTTPS (port 3443) URLs for localhost and
 
 ## Version marker
 
-`index.html` shows a `v<N>` badge in the top-right of the header (`#version`, purple). It exists so you can confirm a frontend change actually reached the phone — bump the number, refresh, check the badge. To bump: edit the `<span id="version">` line in **all three** pages — `index.html`, `record.html`, `sing.html` (keep them equal). If the badge doesn't change after a refresh, the phone is serving a cached `index.html` — hard-refresh / pull-to-refresh.
+`index.html` shows a `v<N>` badge in the top-right of the header (`#version`, purple). It exists so you can confirm a frontend change actually reached the phone — bump the number, refresh, check the badge. To bump: edit the `<span id="version">` line in **every** page — `index.html`, `record.html`, `sing.html`, `tools.html`, `pdf-import.html` (keep them equal). If the badge doesn't change after a refresh, the phone is serving a cached `index.html` — hard-refresh / pull-to-refresh.
 
 ## Stack
 
@@ -121,3 +124,22 @@ Tested scores: the bundled Amazing Grace (SATB hymn), Schumann *Dichterliebe* No
 The take clock is `mic.ac.currentTime - ctxT0` (not `performance.now()`), so pitch frames and captured audio share one timebase. `recorder-worklet.js` posts the audio-clock time of its first sample plus `Float32Array` chunks; on stop they're stitched into `voice` (peak-normalised gain). Modes: **Voice** (recording), **Notes** (a piano note per detected note), **Both**. Piano notes are shifted earlier by `ANALYSIS_LAG` (50 ms) because a pitch frame describes the trailing 85 ms window — measured lag is ~47 ms. Tap the roll or a chip to move the play cursor. iOS: `navigator.audioSession.type` is set to `playback` for playback (speaker, ignores silent switch) and `play-and-record` before the mic opens. `window.resonateDebug()` (record and sing pages) exposes state for automated tests. Record takes auto-stop at `MAX_TAKE_SEC` (300 s).
 
 Piano: `public/piano/` holds Salamander Grand Piano samples (CC-BY 3.0, attribution in `piano/README.md`), one every minor third A1–C7, trimmed to 3 s mono 64 kbps (~530 KB total). Lazy-loaded and decoded once per AudioContext (`piano.js`); each note uses the nearest sample pitch-shifted via `playbackRate`, starts `ONSET` (12 ms) into the file, and is damped with `RELEASE` when the note ends. Pitch of every sample verified against its name (all within normal piano stretch tuning).
+
+## In-browser OMR (PDF → Song)
+
+Audiveris (Java 25 upstream) runs unmodified-in-spirit inside **CheerpJ 4.2** (WebAssembly JVM, loaded from Leaning Technologies' CDN, Community Edition = personal use). Details in `public/omr/README.md` and `omr-build/README.md`; the short version:
+
+- **Build** (`omr-build/build.sh`): upstream commit `7a36078` + `omr-build/patches/` → compiled with `--release 17` (CheerpJ 4.2 runs ≤ Java 17) → every jar through `StripVolatile.java` → `public/omr/lib/`. Patch 0001 = Java 17 port (pattern switches etc.), 0002 = browser runtime (WebOCR, HOME fallback, web-safe thread pool), 0003 = no AWT in batch (EDT checks only with a GUI).
+- **Runs in a Web Worker** (`omr-worker.js` hosts CheerpJ + Audiveris + the OCR engine): on the main thread CheerpJ froze the page for up to 11 s at a time. The page side (`omr.js`) renders the PDF and transfers the TIFF.
+- **CheerpJ gaps worked around:** no env vars (`user.home=/files`), no GTK/JNA (`sun.java2d.uiScale=1`), no AWT display in a worker (patch 0003), `SynchronousQueue` (VarHandle natives) → `LinkedBlockingQueue` pool under `audiveris.web=true`, reflective access to volatile/final boolean/byte/short/char/float fields (Unsafe natives) → StripVolatile. Java 21 was not available in 4.2; CheerpJ 5.0 (Oct 2026) adds 21/25 — worth trying later.
+- **OCR:** `WebOCR.recognizeGray` is a Java `native` implemented in JS (`omr-worker.js` passes it to `cheerpjInit({natives})`); it calls `ocr-engine.js` in the same worker, which drives tesseract.js-core's WebAssembly Tesseract exactly like Audiveris's `TesseractOrder` (legacy engine — needed for word font attributes — PSM 3/6, `SetSourceResolution(70)`, baselines, symbol boxes). Returns URI-encoded tab-separated records.
+- **Input:** `pdfprep.js` renders pages with pdf.js at 300 dpi, keeps pages with ≥1 five-line staff (a staff-less page makes Audiveris fail the whole book), packs them into one gray multi-page TIFF → `/str/score.tif`.
+- **Title:** Audiveris's `movement-title` is often OCR noise; `pdf-import.js` uses the largest-font page-1 `<credit-words>` (else the file name) and rewrites `movement-title` before saving.
+- **Jars:** GUI-only libraries are not shipped (itext, jfreechart, github-api, jackson, jgoodies, commonmark, jna — `SKIP` in build.sh / `JARS` in omr.js): CheerpJ reads each classpath jar's index (~0.4 MB) up front. Verified identical output without them.
+- **Rendering:** pages are binarized at 50% (pdf.js anti-aliasing cut lyric recognition from ~44% to ~15% of syllables).
+- **Exit:** `omr.js` reads the `.mxl` as soon as Audiveris logs "exported to …" (CheerpJ threads parked in a queue don't wake on interrupt, so executor shutdown would sit out its grace delay; `graceDelay=1` too).
+- **Accuracy on the test score** (vs a 3-way reconciled hand transcription, 311 sung notes): notes 100% found, pitch 99.7%, rhythm 100%, lyric syllables ~37–46% (Audiveris drops whole lyric runs, natively too). Audiveris also drops "rhythm-slash" multi-bar rests, and repeats aren't expanded by the Sing page.
+- **First-run download** ≈ 60 MB (CheerpJ runtime ~24 MB from its CDN, jars ~18 MB, OCR ~16 MB); ~6 min for 6 pages in desktop Chromium.
+- **One conversion per page load** (Audiveris global state); "Convert another" reloads.
+- **Speed:** ~1 min/page in desktop Chromium once warm; phones slower. Step timeout raised to 2 h.
+- **Never commit test scores** (e.g. the user's licensed Musicnotes PDF) — test from outside the repo (`/home/user/sitetest` symlinks `public/` as `/resonate/`).

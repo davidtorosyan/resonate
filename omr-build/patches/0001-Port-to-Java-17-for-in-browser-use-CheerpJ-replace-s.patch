@@ -1,0 +1,1494 @@
+From 1d93930bd05b8f5b806514a8914591dc6cb40d63 Mon Sep 17 00:00:00 2001
+From: Resonate web port <dave.torosyan@gmail.com>
+Date: Wed, 4 Nov 2026 01:28:21 +0000
+Subject: [PATCH 1/3] Port to Java 17 for in-browser use (CheerpJ): replace
+ switch patterns, case null, qualified enum labels, getFirst
+
+---
+ .../org/audiveris/omr/constant/UnitModel.java |  21 +-
+ .../audiveris/omr/constant/UnitTreeTable.java |  19 +-
+ .../org/audiveris/omr/glyph/ShapeSet.java     |   5 +-
+ .../org/audiveris/omr/image/Template.java     |  14 +-
+ .../audiveris/omr/sheet/key/KeyBuilder.java   |   6 +-
+ .../omr/sheet/note/NoteHeadsBuilder.java      |   8 +-
+ .../audiveris/omr/sheet/rhythm/Measure.java   |  95 ++++---
+ .../omr/sheet/rhythm/RhythmsStep.java         |  93 +++----
+ .../omr/sheet/rhythm/SlotsRetriever.java      |   9 +-
+ .../audiveris/omr/sheet/symbol/LinksStep.java |  34 +--
+ .../omr/sheet/ui/BinarizationBoard.java       |  31 +--
+ .../audiveris/omr/sheet/ui/BinaryBoard.java   |  30 +-
+ .../audiveris/omr/sheet/ui/ObjectEditor.java  |   6 +-
+ .../audiveris/omr/sheet/ui/SheetEditor.java   |   6 +-
+ .../omr/sig/inter/AbstractNumberInter.java    |   6 +-
+ .../omr/sig/inter/AbstractTimeInter.java      |  12 +-
+ .../omr/sig/inter/BeatUnitInter.java          |  18 +-
+ .../omr/sig/inter/ChordNameInter.java         |   6 +-
+ .../audiveris/omr/sig/inter/FermataInter.java |  16 +-
+ .../omr/sig/inter/MetronomeInter.java         |   2 +-
+ .../omr/sig/inter/OctaveShiftInter.java       |  14 +-
+ .../omr/sig/inter/SentenceInter.java          |   6 +-
+ .../org/audiveris/omr/sig/ui/InterBoard.java  | 262 ++++++++----------
+ .../org/audiveris/omr/sig/ui/ShapeBoard.java  |  13 +-
+ .../java/org/audiveris/omr/step/PageStep.java | 143 +++++-----
+ .../org/audiveris/omr/text/TextBuilder.java   |  17 +-
+ .../org/audiveris/omr/ui/AboutAction.java     |  24 +-
+ .../src/main/groovy/audiveris-commons.gradle  |   8 +
+ javac.20261104_012256.args                    |  10 +
+ 29 files changed, 472 insertions(+), 462 deletions(-)
+ create mode 100644 javac.20261104_012256.args
+
+diff --git a/app/src/main/java/org/audiveris/omr/constant/UnitModel.java b/app/src/main/java/org/audiveris/omr/constant/UnitModel.java
+index 3997714..fa38f29 100644
+--- a/app/src/main/java/org/audiveris/omr/constant/UnitModel.java
++++ b/app/src/main/java/org/audiveris/omr/constant/UnitModel.java
+@@ -243,19 +243,14 @@ public class UnitModel
+                             Scale scale = stub.getSheet().getScale();
+ 
+                             if (scale != null) {
+-                                switch (constant) {
+-                                    case Scale.Fraction fraction -> {
+-                                        return String.format(
+-                                                "%.1f",
+-                                                scale.toPixelsDouble(fraction));
+-                                    }
+-                                    case Scale.LineFraction lineFraction -> {
+-                                        return scale.toPixels(lineFraction);
+-                                    }
+-                                    case Scale.AreaFraction areaFraction -> {
+-                                        return scale.toPixels(areaFraction);
+-                                    }
+-                                    default -> {}
++                                if (constant instanceof Scale.Fraction fraction) {
++                                    return String.format(
++                                            "%.1f",
++                                            scale.toPixelsDouble(fraction));
++                                } else if (constant instanceof Scale.LineFraction lineFraction) {
++                                    return scale.toPixels(lineFraction);
++                                } else if (constant instanceof Scale.AreaFraction areaFraction) {
++                                    return scale.toPixels(areaFraction);
+                                 }
+                             }
+                         } else {
+diff --git a/app/src/main/java/org/audiveris/omr/constant/UnitTreeTable.java b/app/src/main/java/org/audiveris/omr/constant/UnitTreeTable.java
+index a6bcadf..bba6b4f 100644
+--- a/app/src/main/java/org/audiveris/omr/constant/UnitTreeTable.java
++++ b/app/src/main/java/org/audiveris/omr/constant/UnitTreeTable.java
+@@ -37,6 +37,7 @@ import java.util.ArrayList;
+ import java.util.Collection;
+ import java.util.Collections;
+ import java.util.List;
++import java.util.Objects;
+ 
+ import javax.swing.JComponent;
+ import javax.swing.JTable;
+@@ -298,16 +299,14 @@ public class UnitTreeTable
+         final List<TreePath> paths = new ArrayList<>();
+ 
+         for (Object object : matches) {
+-            switch (object) {
+-                case Constant constant -> {
+-                    TreePath path = getPath(constant, constant.getQualifiedName());
+-                    paths.add(path);
+-                }
+-                case Node node -> {
+-                    TreePath path = getPath(node, node.getName());
+-                    paths.add(path);
+-                }
+-                default -> {}
++            Objects.requireNonNull(object);
++
++            if (object instanceof Constant constant) {
++                TreePath path = getPath(constant, constant.getQualifiedName());
++                paths.add(path);
++            } else if (object instanceof Node node) {
++                TreePath path = getPath(node, node.getName());
++                paths.add(path);
+             }
+         }
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/glyph/ShapeSet.java b/app/src/main/java/org/audiveris/omr/glyph/ShapeSet.java
+index 210e46d..cd2dedf 100644
+--- a/app/src/main/java/org/audiveris/omr/glyph/ShapeSet.java
++++ b/app/src/main/java/org/audiveris/omr/glyph/ShapeSet.java
+@@ -932,8 +932,11 @@ public class ShapeSet
+     //-------------//
+     public static List<Shape> getMotifSet (HeadMotif motif)
+     {
++        if (motif == null) {
++            return null;
++        }
++
+         return switch (motif) {
+-            case null -> null;
+             case oval -> HeadsOval;
+             case small -> HeadsOvalSmall;
+             case cross -> HeadsCross;
+diff --git a/app/src/main/java/org/audiveris/omr/image/Template.java b/app/src/main/java/org/audiveris/omr/image/Template.java
+index eda0a76..c814b2f 100644
+--- a/app/src/main/java/org/audiveris/omr/image/Template.java
++++ b/app/src/main/java/org/audiveris/omr/image/Template.java
+@@ -33,6 +33,7 @@ import org.audiveris.omr.sheet.Scale;
+ import org.audiveris.omr.sheet.Scale.InterlineScale;
+ import org.audiveris.omr.ui.symbol.MusicFamily;
+ import org.audiveris.omr.util.ByteUtil;
++import org.audiveris.omr.util.HorizontalSide;
+ 
+ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+@@ -478,13 +479,18 @@ public class Template
+         final Point2D offset = offsets.get(anchor);
+ 
+         // We have to round abscissa in symmetrical manner around slim rectangle
+-        return switch (anchor.hSide()) {
++        final HorizontalSide hSide = anchor.hSide();
++
++        if (hSide == null) {
++            return new Point(
++                    (int) Math.round(offset.getX() - 0.5),
++                    (int) Math.round(offset.getY() - 0.5));
++        }
++
++        return switch (hSide) {
+             case LEFT -> new Point(
+                     (int) Math.round(offset.getX() - 0.5 - 0.001),
+                     (int) Math.round(offset.getY() - 0.5));
+-            case null -> new Point(
+-                    (int) Math.round(offset.getX() - 0.5),
+-                    (int) Math.round(offset.getY() - 0.5));
+             case RIGHT -> new Point(
+                     (int) Math.round(offset.getX() - 0.5 + 0.001),
+                     (int) Math.round(offset.getY() - 0.5));
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/key/KeyBuilder.java b/app/src/main/java/org/audiveris/omr/sheet/key/KeyBuilder.java
+index 92f822a..5df6a5f 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/key/KeyBuilder.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/key/KeyBuilder.java
+@@ -1947,10 +1947,14 @@ public class KeyBuilder
+                 return 0;
+             }
+ 
++            if (keyShape == null) {
++                return 0;
++            }
++
+             return switch (keyShape) {
+                 case SHARP -> roi.size();
+                 case FLAT -> -roi.size();
+-                case null, default -> 0;
++                default -> 0;
+             };
+         }
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/note/NoteHeadsBuilder.java b/app/src/main/java/org/audiveris/omr/sheet/note/NoteHeadsBuilder.java
+index b6d0d34..0f90827 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/note/NoteHeadsBuilder.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/note/NoteHeadsBuilder.java
+@@ -706,8 +706,7 @@ public class NoteHeadsBuilder
+                 return false;
+             }
+ 
+-            switch (inter) {
+-            case AbstractVerticalInter vertical -> {
++            if (inter instanceof AbstractVerticalInter vertical) {
+                 // We may have a stem mistaken for a thin barline or a thin connector
+                 // So, check bar/connector width vs max stem width
+                 final int width = (int) Math.floor(vertical.getWidth());
+@@ -715,13 +714,10 @@ public class NoteHeadsBuilder
+                 if (width <= scale.getMaxStem()) {
+                     return false;
+                 }
+-            }
+-            case AbstractBeamInter beam -> {
++            } else if (inter instanceof AbstractBeamInter beam) {
+                 // Keep any beam if part of a beam group with at least one long beam
+                 return beam.getGroup().hasLongBeam(params.minBeamWidth);
+             }
+-            default -> {}
+-            }
+ 
+             return true;
+         });
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/rhythm/Measure.java b/app/src/main/java/org/audiveris/omr/sheet/rhythm/Measure.java
+index d00ccf5..36caaae 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/rhythm/Measure.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/rhythm/Measure.java
+@@ -393,35 +393,40 @@ public class Measure
+             logger.info("VIP {} addInter {}", this, inter);
+         }
+ 
+-        switch (inter) {
+-            case ClefInter clefInter -> {
+-                final ClefInter clef = clefInter;
++        if (inter instanceof ClefInter clefInter) {
++            final ClefInter clef = clefInter;
+ 
+-                if (!clefs.contains(clef)) {
+-                    clefs.add(clef);
++            if (!clefs.contains(clef)) {
++                clefs.add(clef);
+ 
+-                    if ((clefs.size() > 1) && (clef.getCenter() != null)) {
+-                        Collections.sort(clefs, Inters.byFullCenterAbscissa);
+-                    }
++                if ((clefs.size() > 1) && (clef.getCenter() != null)) {
++                    Collections.sort(clefs, Inters.byFullCenterAbscissa);
+                 }
+             }
+-            case KeyInter keyInter -> keys.add(keyInter);
+-            case AbstractTimeInter abstractTimeInter -> timeSigs.add(abstractTimeInter);
+-            case RehearsalInter rehearsalInter -> rehearsals.add(rehearsalInter);
+-            case AbstractChordInter chord -> {
+-                chord.setMeasure(this);
+-
+-                switch (chord) {
+-                    case HeadChordInter headChordInter -> headChords.add(headChordInter);
+-                    case RestChordInter restChordInter -> restChords.add(restChordInter);
+-                    default -> {}
+-                }
++        } else if (inter instanceof KeyInter keyInter) {
++            keys.add(keyInter);
++        } else if (inter instanceof AbstractTimeInter abstractTimeInter) {
++            timeSigs.add(abstractTimeInter);
++        } else if (inter instanceof RehearsalInter rehearsalInter) {
++            rehearsals.add(rehearsalInter);
++        } else if (inter instanceof AbstractChordInter chord) {
++            chord.setMeasure(this);
++
++            if (chord instanceof HeadChordInter headChordInter) {
++                headChords.add(headChordInter);
++            } else if (chord instanceof RestChordInter restChordInter) {
++                restChords.add(restChordInter);
+             }
+-            case FlagInter flagInter -> flags.add(flagInter);
+-            case TupletInter tupletInter -> tuplets.add(tupletInter);
+-            case AugmentationDotInter augmentationDotInter -> augDots.add(augmentationDotInter);
+-            case MeasureRepeatInter measureRepeat -> repeatSigns.add(measureRepeat);
+-            default -> logger.error("Attempt to use addInter() with {}", inter);
++        } else if (inter instanceof FlagInter flagInter) {
++            flags.add(flagInter);
++        } else if (inter instanceof TupletInter tupletInter) {
++            tuplets.add(tupletInter);
++        } else if (inter instanceof AugmentationDotInter augmentationDotInter) {
++            augDots.add(augmentationDotInter);
++        } else if (inter instanceof MeasureRepeatInter measureRepeat) {
++            repeatSigns.add(measureRepeat);
++        } else {
++            logger.error("Attempt to use addInter() with {}", inter);
+         }
+     }
+ 
+@@ -1835,24 +1840,30 @@ public class Measure
+             logger.info("VIP removeInter {} from {}", inter, this);
+         }
+ 
+-        switch (inter) {
+-            case ClefInter clefInter -> clefs.remove(clefInter);
+-            case KeyInter keyInter -> keys.remove(keyInter);
+-            case AbstractTimeInter abstractTimeInter -> timeSigs.remove(abstractTimeInter);
+-            case RehearsalInter rehearsalInter -> rehearsals.remove(rehearsalInter);
+-            case HeadChordInter headChordInter -> {
+-                headChords.remove(headChordInter);
+-                removeVoiceChord(headChordInter);
+-            }
+-            case RestChordInter restChordInter -> {
+-                restChords.remove(restChordInter);
+-                removeVoiceChord(restChordInter);
+-            }
+-            case FlagInter flagInter -> flags.remove(flagInter);
+-            case TupletInter tupletInter -> tuplets.remove(tupletInter);
+-            case AugmentationDotInter augmentationDotInter -> augDots.remove(augmentationDotInter);
+-            case MeasureRepeatInter repeatSign -> repeatSigns.remove(repeatSign);
+-            default -> logger.error("Attempt to use removeInter() with {}", inter);
++        if (inter instanceof ClefInter clefInter) {
++            clefs.remove(clefInter);
++        } else if (inter instanceof KeyInter keyInter) {
++            keys.remove(keyInter);
++        } else if (inter instanceof AbstractTimeInter abstractTimeInter) {
++            timeSigs.remove(abstractTimeInter);
++        } else if (inter instanceof RehearsalInter rehearsalInter) {
++            rehearsals.remove(rehearsalInter);
++        } else if (inter instanceof HeadChordInter headChordInter) {
++            headChords.remove(headChordInter);
++            removeVoiceChord(headChordInter);
++        } else if (inter instanceof RestChordInter restChordInter) {
++            restChords.remove(restChordInter);
++            removeVoiceChord(restChordInter);
++        } else if (inter instanceof FlagInter flagInter) {
++            flags.remove(flagInter);
++        } else if (inter instanceof TupletInter tupletInter) {
++            tuplets.remove(tupletInter);
++        } else if (inter instanceof AugmentationDotInter augmentationDotInter) {
++            augDots.remove(augmentationDotInter);
++        } else if (inter instanceof MeasureRepeatInter repeatSign) {
++            repeatSigns.remove(repeatSign);
++        } else {
++            logger.error("Attempt to use removeInter() with {}", inter);
+         }
+     }
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/rhythm/RhythmsStep.java b/app/src/main/java/org/audiveris/omr/sheet/rhythm/RhythmsStep.java
+index 7034afa..08bf2c5 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/rhythm/RhythmsStep.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/rhythm/RhythmsStep.java
+@@ -79,6 +79,7 @@ import java.awt.Point;
+ import java.util.Collection;
+ import java.util.HashSet;
+ import java.util.LinkedHashSet;
++import java.util.Objects;
+ import java.util.Set;
+ 
+ /**
+@@ -244,63 +245,55 @@ public class RhythmsStep
+         final Impact impact = new Impact();
+ 
+         for (UITask task : seq.getTasks()) {
+-            switch (task) {
+-                case InterTask interTask -> {
+-                    final Inter inter = interTask.getInter();
+-                    final Class classe = inter.getClass();
+-
+-                    if (isImpactedBy(classe, forPage)) {
+-                        // Reprocess the whole page
+-                        impact.add(inter.getSig().getSystem().getPage());
+-                    } else if (isImpactedBy(classe, forStack)) {
+-                        // Reprocess just the stack
+-                        final Point center = inter.getCenter();
+-
+-                        if (center != null) {
+-                            final MeasureStack stack = sig.getSystem().getStackAt(center);
+-                            impact.add(stack);
+-
+-                            if (inter instanceof BarlineInter
+-                                    || inter instanceof StaffBarlineInter) {
+-                                if ((task instanceof RemovalTask && (opKind == OpKind.UNDO))
+-                                        || (task instanceof AdditionTask
+-                                                && (opKind != OpKind.UNDO))) {
+-                                    // Add next stack as well
+-                                    impact.add(stack.getNextSibling());
+-                                }
+-                            }
+-                        }
+-                    }
+-                }
++            Objects.requireNonNull(task);
+ 
+-                case StackTask stackTask -> {
+-                    // Reprocess the stack
+-                    final MeasureStack stack = stackTask.getStack();
+-                    final Class classe = stack.getClass();
+-
+-                    if (isImpactedBy(classe, forStack)) {
+-                        impact.add(stack);
+-                    }
+-                }
++            if (task instanceof InterTask interTask) {
++                final Inter inter = interTask.getInter();
++                final Class classe = inter.getClass();
+ 
+-                case PageTask pageTask -> // Reprocess the page
+-                        impact.add(pageTask.getPage());
++                if (isImpactedBy(classe, forPage)) {
++                    // Reprocess the whole page
++                    impact.add(inter.getSig().getSystem().getPage());
++                } else if (isImpactedBy(classe, forStack)) {
++                    // Reprocess just the stack
++                    final Point center = inter.getCenter();
+ 
+-                case SystemMergeTask systemMergeTask -> // Reprocess the system page
+-                        impact.add(systemMergeTask.getSystem().getPage());
+-
+-                case RelationTask relationTask -> {
+-                    final Relation relation = relationTask.getRelation();
+-                    final Class classe = relation.getClass();
++                    if (center != null) {
++                        final MeasureStack stack = sig.getSystem().getStackAt(center);
++                        impact.add(stack);
+ 
+-                    if (isImpactedBy(classe, forStack)) {
+-                        final SystemInfo system = sig.getSystem();
+-                        impact.add(system.getStackAt(relationTask.getSource().getCenter()));
+-                        impact.add(system.getStackAt(relationTask.getTarget().getCenter()));
++                        if (inter instanceof BarlineInter
++                                || inter instanceof StaffBarlineInter) {
++                            if ((task instanceof RemovalTask && (opKind == OpKind.UNDO))
++                                    || (task instanceof AdditionTask
++                                            && (opKind != OpKind.UNDO))) {
++                                // Add next stack as well
++                                impact.add(stack.getNextSibling());
++                            }
++                        }
+                     }
+                 }
++            } else if (task instanceof StackTask stackTask) {
++                // Reprocess the stack
++                final MeasureStack stack = stackTask.getStack();
++                final Class classe = stack.getClass();
+ 
+-                default -> {}
++                if (isImpactedBy(classe, forStack)) {
++                    impact.add(stack);
++                }
++            } else if (task instanceof PageTask pageTask) { // Reprocess the page
++                impact.add(pageTask.getPage());
++            } else if (task instanceof SystemMergeTask systemMergeTask) { // Reprocess the system page
++                impact.add(systemMergeTask.getSystem().getPage());
++            } else if (task instanceof RelationTask relationTask) {
++                final Relation relation = relationTask.getRelation();
++                final Class classe = relation.getClass();
++
++                if (isImpactedBy(classe, forStack)) {
++                    final SystemInfo system = sig.getSystem();
++                    impact.add(system.getStackAt(relationTask.getSource().getCenter()));
++                    impact.add(system.getStackAt(relationTask.getTarget().getCenter()));
++                }
+             }
+         }
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/rhythm/SlotsRetriever.java b/app/src/main/java/org/audiveris/omr/sheet/rhythm/SlotsRetriever.java
+index f2e7c49..ed282e8 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/rhythm/SlotsRetriever.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/rhythm/SlotsRetriever.java
+@@ -126,8 +126,13 @@ public class SlotsRetriever
+             return 0;
+         }
+ 
+-        return switch (getRel(c1, c2)) {
+-            case null -> 0;
++        final Rel rel = getRel(c1, c2);
++
++        if (rel == null) {
++            return 0;
++        }
++
++        return switch (rel) {
+             case BEFORE -> -1;
+             case AFTER -> 1;
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/symbol/LinksStep.java b/app/src/main/java/org/audiveris/omr/sheet/symbol/LinksStep.java
+index 30fb8ad..d23ca2f 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/symbol/LinksStep.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/symbol/LinksStep.java
+@@ -173,27 +173,23 @@ public class LinksStep
+                 if (isImpactedBy(inter.getClass(), forTexts)) {
+                     final SystemInfo system = inter.getSig().getSystem();
+ 
+-                    switch (inter) {
+-                        case LyricItemInter item -> {
+-                            if ((opKind != OpKind.UNDO) && task instanceof AdditionTask) {
+-                                final int profile = Math.max(
+-                                        item.getProfile(),
+-                                        system.getProfile());
+-                                item.mapToChord(profile);
+-                            }
++                    if (inter instanceof LyricItemInter item) {
++                        if ((opKind != OpKind.UNDO) && task instanceof AdditionTask) {
++                            final int profile = Math.max(
++                                    item.getProfile(),
++                                    system.getProfile());
++                            item.mapToChord(profile);
+                         }
+-                        case SentenceInter sentence -> {
+-                            if ((opKind != OpKind.UNDO) && task instanceof AdditionTask) {
+-                                sentence.link(system);
+-                            } else if (task instanceof SentenceRoleTask roleTask) {
+-                                sentence.unlink(
+-                                        (opKind == OpKind.UNDO) //
+-                                                ? roleTask.getNewRole()
+-                                                : roleTask.getOldRole());
+-                                sentence.link(system);
+-                            }
++                    } else if (inter instanceof SentenceInter sentence) {
++                        if ((opKind != OpKind.UNDO) && task instanceof AdditionTask) {
++                            sentence.link(system);
++                        } else if (task instanceof SentenceRoleTask roleTask) {
++                            sentence.unlink(
++                                    (opKind == OpKind.UNDO) //
++                                            ? roleTask.getNewRole()
++                                            : roleTask.getOldRole());
++                            sentence.link(system);
+                         }
+-                        default -> {}
+                     }
+                 }
+             }
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/ui/BinarizationBoard.java b/app/src/main/java/org/audiveris/omr/sheet/ui/BinarizationBoard.java
+index 5ce8eb3..4c1d861 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/ui/BinarizationBoard.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/ui/BinarizationBoard.java
+@@ -57,6 +57,7 @@ import java.awt.Component;
+ import java.awt.Container;
+ import java.awt.event.ActionEvent;
+ import java.awt.event.ActionListener;
++import java.util.Objects;
+ 
+ import javax.swing.AbstractAction;
+ import javax.swing.ButtonGroup;
+@@ -457,27 +458,25 @@ public class BinarizationBoard
+      */
+     private void initializeInputValues (FilterDescriptor desc)
+     {
+-        switch (desc) {
+-            case AdaptiveDescriptor ad -> {
+-                adaptiveMeanValue.setValue(ad.meanCoeff);
+-                adaptiveStdDevValue.setValue(ad.stdDevCoeff);
+-                adaptiveFilterRadioButton.getField().setSelected(true);
++        Objects.requireNonNull(desc);
+ 
+-                globalThresholdValue.setValue(GlobalDescriptor.getDefaultThreshold());
++        if (desc instanceof AdaptiveDescriptor ad) {
++            adaptiveMeanValue.setValue(ad.meanCoeff);
++            adaptiveStdDevValue.setValue(ad.stdDevCoeff);
++            adaptiveFilterRadioButton.getField().setSelected(true);
+ 
+-                showAdaptiveFilterInput();
++            globalThresholdValue.setValue(GlobalDescriptor.getDefaultThreshold());
+ 
+-            }
+-            case GlobalDescriptor gd -> {
+-                globalThresholdValue.setValue(gd.threshold);
+-                globalFilterRadioButton.getField().setSelected(true);
++            showAdaptiveFilterInput();
+ 
+-                adaptiveMeanValue.setValue(AdaptiveDescriptor.getDefaultMeanCoeff());
+-                adaptiveStdDevValue.setValue(AdaptiveDescriptor.getDefaultStdDevCoeff());
++        } else if (desc instanceof GlobalDescriptor gd) {
++            globalThresholdValue.setValue(gd.threshold);
++            globalFilterRadioButton.getField().setSelected(true);
+ 
+-                showGlobalFilterInput();
+-            }
+-            default -> {}
++            adaptiveMeanValue.setValue(AdaptiveDescriptor.getDefaultMeanCoeff());
++            adaptiveStdDevValue.setValue(AdaptiveDescriptor.getDefaultStdDevCoeff());
++
++            showGlobalFilterInput();
+         }
+     }
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/ui/BinaryBoard.java b/app/src/main/java/org/audiveris/omr/sheet/ui/BinaryBoard.java
+index 5f8ab5a..4484957 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/ui/BinaryBoard.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/ui/BinaryBoard.java
+@@ -209,24 +209,22 @@ public class BinaryBoard
+ 
+         Double thresholdValue = null;
+ 
+-        switch (filter) {
+-            case AdaptiveFilter adpFilter -> {
+-                final PixelFilter.Context context = adpFilter.getContext(rect.x, rect.y);
+-
+-                if (context != null) {
+-                    if (context instanceof AdaptiveContext ctx) {
+-                        mean.setValue(ctx.mean);
+-                        stdDev.setValue(ctx.standardDeviation);
+-                    } else {
+-                        mean.setText("");
+-                        stdDev.setText("");
+-                    }
+-
+-                    thresholdValue = context.threshold;
++        if (filter instanceof AdaptiveFilter adpFilter) {
++            final PixelFilter.Context context = adpFilter.getContext(rect.x, rect.y);
++
++            if (context != null) {
++                if (context instanceof AdaptiveContext ctx) {
++                    mean.setValue(ctx.mean);
++                    stdDev.setValue(ctx.standardDeviation);
++                } else {
++                    mean.setText("");
++                    stdDev.setText("");
+                 }
++
++                thresholdValue = context.threshold;
+             }
+-            case GlobalFilter gblFilter -> thresholdValue = Double.valueOf(gblFilter.threshold);
+-            default -> {}
++        } else if (filter instanceof GlobalFilter gblFilter) {
++            thresholdValue = Double.valueOf(gblFilter.threshold);
+         }
+ 
+         if (thresholdValue == null) {
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/ui/ObjectEditor.java b/app/src/main/java/org/audiveris/omr/sheet/ui/ObjectEditor.java
+index 0e0ca4f..9383f3a 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/ui/ObjectEditor.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/ui/ObjectEditor.java
+@@ -257,6 +257,10 @@ public abstract class ObjectEditor
+     {
+         boolean active = false;
+ 
++        if (movement == null) {
++            return active;
++        }
++
+         switch (movement) {
+             case PRESSING -> {
+                 // Drag must start within a handle vicinity
+@@ -316,7 +320,7 @@ public abstract class ObjectEditor
+                 active = true;
+             }
+ 
+-            case null, default -> {}
++            default -> {}
+         }
+ 
+         return active;
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/ui/SheetEditor.java b/app/src/main/java/org/audiveris/omr/sheet/ui/SheetEditor.java
+index 79ec290..7ecf48c 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/ui/SheetEditor.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/ui/SheetEditor.java
+@@ -864,6 +864,10 @@ public class SheetEditor
+         private void processRelationVector (Point pt,
+                                             MouseMovement movement)
+         {
++            if (movement == null) {
++                return;
++            }
++
+             switch (movement) {
+                 case PRESSING -> relationVector = tryVector(pt); // Starting vector, perhaps null
+                 case DRAGGING -> {
+@@ -877,7 +881,7 @@ public class SheetEditor
+                         relationVector = null; // This is the end
+                     }
+                 }
+-                case null, default -> {}
++                default -> {}
+             }
+         }
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/AbstractNumberInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/AbstractNumberInter.java
+index c30ec3e..07c7aad 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/AbstractNumberInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/AbstractNumberInter.java
+@@ -261,6 +261,10 @@ public abstract class AbstractNumberInter
+      */
+     public static Integer valueOf (Shape shape)
+     {
++        if (shape == null) {
++            return null;
++        }
++
+         return switch (shape) {
+             case NUMBER_CUSTOM, TIME_ZERO -> 0;
+             case TIME_ONE -> 1;
+@@ -274,7 +278,7 @@ public abstract class AbstractNumberInter
+             case TIME_NINE -> 9;
+             case TIME_TWELVE -> 12;
+             case TIME_SIXTEEN -> 16;
+-            case null, default -> null;
++            default -> null;
+         };
+     }
+ }
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/AbstractTimeInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/AbstractTimeInter.java
+index 85d08cd..9027df2 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/AbstractTimeInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/AbstractTimeInter.java
+@@ -422,10 +422,14 @@ public abstract class AbstractTimeInter
+      */
+     public static TimeRational rationalOf (OmrShape omrShape)
+     {
++        if (omrShape == null) {
++            return null;
++        }
++
+         return switch (omrShape) {
+             case timeSigCommon -> new TimeRational(4, 4);
+             case timeSigCutCommon -> new TimeRational(2, 2);
+-            case null, default -> null;
++            default -> null;
+         };
+     }
+ 
+@@ -440,6 +444,10 @@ public abstract class AbstractTimeInter
+      */
+     public static TimeRational rationalOf (Shape shape)
+     {
++        if (shape == null) {
++            return null;
++        }
++
+         return switch (shape) {
+             case COMMON_TIME, TIME_FOUR_FOUR -> new TimeRational(4, 4);
+             case CUT_TIME, TIME_TWO_TWO -> new TimeRational(2, 2);
+@@ -450,7 +458,7 @@ public abstract class AbstractTimeInter
+             case TIME_THREE_EIGHT -> new TimeRational(3, 8);
+             case TIME_SIX_EIGHT -> new TimeRational(6, 8);
+             case TIME_TWELVE_EIGHT -> new TimeRational(12, 8);
+-            case null, default -> null;
++            default -> null;
+         };
+     }
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/BeatUnitInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/BeatUnitInter.java
+index 323cd37..dad8042 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/BeatUnitInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/BeatUnitInter.java
+@@ -309,15 +309,15 @@ public class BeatUnitInter
+             Objects.requireNonNull(shape, "Null shape value");
+ 
+             return switch (shape) {
+-                case Shape.METRO_WHOLE -> Note.WHOLE;
+-                case Shape.METRO_HALF -> Note.HALF;
+-                case Shape.METRO_QUARTER -> Note.QUARTER;
+-                case Shape.METRO_EIGHTH -> Note.EIGHTH;
+-                case Shape.METRO_SIXTEENTH -> Note.SIXTEENTH;
+-                case Shape.METRO_DOTTED_HALF -> Note.DOTTED_HALF;
+-                case Shape.METRO_DOTTED_QUARTER -> Note.DOTTED_QUARTER;
+-                case Shape.METRO_DOTTED_EIGHTH -> Note.DOTTED_EIGHTH;
+-                case Shape.METRO_DOTTED_SIXTEENTH -> Note.DOTTED_SIXTEENTH;
++                case METRO_WHOLE -> Note.WHOLE;
++                case METRO_HALF -> Note.HALF;
++                case METRO_QUARTER -> Note.QUARTER;
++                case METRO_EIGHTH -> Note.EIGHTH;
++                case METRO_SIXTEENTH -> Note.SIXTEENTH;
++                case METRO_DOTTED_HALF -> Note.DOTTED_HALF;
++                case METRO_DOTTED_QUARTER -> Note.DOTTED_QUARTER;
++                case METRO_DOTTED_EIGHTH -> Note.DOTTED_EIGHTH;
++                case METRO_DOTTED_SIXTEENTH -> Note.DOTTED_SIXTEENTH;
+                 default -> null;
+             };
+         }
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/ChordNameInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/ChordNameInter.java
+index e5e46e0..9680f11 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/ChordNameInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/ChordNameInter.java
+@@ -706,11 +706,15 @@ public class ChordNameInter
+          */
+         private static Integer toAlter (String str)
+         {
++            if (str == null) {
++                return null;
++            }
++
+             return switch (str) {
+                 case SHARP, "#" -> 1;
+                 case FLAT, "b" -> -1;
+                 case "" -> 0;
+-                case null, default -> null;
++                default -> null;
+             };
+         }
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/FermataInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/FermataInter.java
+index abfa072..764960a 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/FermataInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/FermataInter.java
+@@ -130,16 +130,12 @@ public class FermataInter
+             for (Relation rel : sig.getRelations(this, Containment.class)) {
+                 if (sig.getEdgeSource(rel) == this) {
+                     final Inter member = sig.getOppositeInter(this, rel);
+-                    switch (member) {
+-                        case FermataArcInter fermataArcInter -> {
+-                            arc = fermataArcInter;
+-                            arcRel = rel;
+-                        }
+-                        case FermataDotInter fermataDotInter -> {
+-                            dot = fermataDotInter;
+-                            dotRel = rel;
+-                        }
+-                        default -> {}
++                    if (member instanceof FermataArcInter fermataArcInter) {
++                        arc = fermataArcInter;
++                        arcRel = rel;
++                    } else if (member instanceof FermataDotInter fermataDotInter) {
++                        dot = fermataDotInter;
++                        dotRel = rel;
+                     }
+                 }
+             }
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/MetronomeInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/MetronomeInter.java
+index b7f0cf3..4b118c8 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/MetronomeInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/MetronomeInter.java
+@@ -803,7 +803,7 @@ public class MetronomeInter
+         MeasureStack stack = system.getStackAt(center);
+ 
+         if (stack == null) {
+-            stack = system.getStacks().getFirst();
++            stack = system.getStacks().get(0);
+         }
+ 
+         final AbstractChordInter chord = stack.getStandardChordBelow(center, null);
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/OctaveShiftInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/OctaveShiftInter.java
+index e8cd5fd..577e26f 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/OctaveShiftInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/OctaveShiftInter.java
+@@ -495,9 +495,12 @@ public class OctaveShiftInter
+      */
+     public OctaveShiftInter getExtension (HorizontalSide side)
+     {
+-        return switch (side) {
+-            case null -> throw new NullPointerException(
++        if (side == null) {
++            throw new NullPointerException(
+                     "No side provided for OctaveShift getExtension");
++        }
++
++        return switch (side) {
+             case LEFT -> leftExtension;
+             case RIGHT -> rightExtension;
+         };
+@@ -810,9 +813,12 @@ public class OctaveShiftInter
+     public void setExtension (HorizontalSide side,
+                               OctaveShiftInter other)
+     {
+-        switch (side) {
+-            case null -> throw new NullPointerException(
++        if (side == null) {
++            throw new NullPointerException(
+                     "No side provided for OctaveShift setExtension");
++        }
++
++        switch (side) {
+             case LEFT -> leftExtension = other;
+             case RIGHT -> rightExtension = other;
+         }
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/SentenceInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/SentenceInter.java
+index f99037a..169615d 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/SentenceInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/SentenceInter.java
+@@ -655,8 +655,12 @@ public class SentenceInter
+                 logger.info("VIP unlink for {}", this);
+             }
+ 
++            if (oldRole == null) {
++                logger.info("Null old role for {}", this);
++                return;
++            }
++
+             switch (oldRole) {
+-                case null -> logger.info("Null old role for {}", this);
+                 default -> {}
+ 
+                 case Lyrics -> getMembers().forEach(
+diff --git a/app/src/main/java/org/audiveris/omr/sig/ui/InterBoard.java b/app/src/main/java/org/audiveris/omr/sig/ui/InterBoard.java
+index bd7fc9d..9c87f3e 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/ui/InterBoard.java
++++ b/app/src/main/java/org/audiveris/omr/sig/ui/InterBoard.java
+@@ -496,111 +496,95 @@ public class InterBoard
+                     inter.isRemoved() ? resources.getString("deassign.Action.deleted")
+                             : resources.getString("deassign.Action.text"));
+ 
+-            switch (inter) {
+-                case BeatUnitInter beatUnit -> {
+-                    selfUpdatingText = true;
++            if (inter instanceof BeatUnitInter beatUnit) {
++                selfUpdatingText = true;
+ 
+-                    // The text field is replaced by a JTextPane
+-                    musicPane.setText(beatUnit.getValue());
+-                    musicPane.setVisible(true);
+-                    musicPane.setEnabled(true);
++                // The text field is replaced by a JTextPane
++                musicPane.setText(beatUnit.getValue());
++                musicPane.setVisible(true);
++                musicPane.setEnabled(true);
+ 
+-                    selfUpdatingText = false;
+-                }
++                selfUpdatingText = false;
++            } else if (inter instanceof WordInter word) {
++                selfUpdatingText = true;
+ 
+-                case WordInter word -> {
+-                    selfUpdatingText = true;
++                textField.setText(word.getValue());
++                textField.setEnabled(true);
++                textField.setVisible(true);
+ 
+-                    textField.setText(word.getValue());
+-                    textField.setEnabled(true);
+-                    textField.setVisible(true);
++                fontAttributes.setText(word.getFontInfo().getAttributesSpec());
++                fontAttributes.setVisible(true);
+ 
+-                    fontAttributes.setText(word.getFontInfo().getAttributesSpec());
+-                    fontAttributes.setVisible(true);
++                selfUpdatingText = false;
++            } else if (inter instanceof MetronomeInter metronome) {
++                selfUpdatingText = true;
+ 
+-                    selfUpdatingText = false;
+-                }
+-
+-                case MetronomeInter metronome -> {
+-                    selfUpdatingText = true;
+-
+-                    // The text field is replaced by a JTextPane
+-                    musicPane.setText(metronome.getDisplayValue());
+-                    musicPane.setVisible(true);
+-                    musicPane.setEnabled(true);
+-
+-                    selfUpdatingText = false;
+-                }
++                // The text field is replaced by a JTextPane
++                musicPane.setText(metronome.getDisplayValue());
++                musicPane.setVisible(true);
++                musicPane.setEnabled(true);
+ 
+-                case SentenceInter sentence -> {
+-                    selfUpdatingText = true;
++                selfUpdatingText = false;
++            } else if (inter instanceof SentenceInter sentence) {
++                selfUpdatingText = true;
+ 
+-                    textField.setText(sentence.getValue());
+-                    textField.setVisible(true);
++                textField.setText(sentence.getValue());
++                textField.setVisible(true);
+ 
+-                    roleCombo.setSelectedItem(sentence.getRole());
+-                    roleCombo.setVisible(true);
+-                    roleCombo.setEnabled(true);
++                roleCombo.setSelectedItem(sentence.getRole());
++                roleCombo.setVisible(true);
++                roleCombo.setEnabled(true);
+ 
+-                    fontAttributes.setText(sentence.getMeanFont().getAttributesSpec());
+-                    fontAttributes.setVisible(true);
++                fontAttributes.setText(sentence.getMeanFont().getAttributesSpec());
++                fontAttributes.setVisible(true);
+ 
+-                    if (sentence instanceof LyricLineInter lyric) {
+-                        verse.setVisible(true);
+-                        verse.setValue(lyric.getNumber());
++                if (sentence instanceof LyricLineInter lyric) {
++                    verse.setVisible(true);
++                    verse.setValue(lyric.getNumber());
+ 
+-                        final boolean isAbove = lyric.getStaff().isPointAbove(inter.getCenter());
+-                        aboveBelow.setText(resources.getString(isAbove ? "above" : "below"));
+-                        aboveBelow.setVisible(true);
++                    final boolean isAbove = lyric.getStaff().isPointAbove(inter.getCenter());
++                    aboveBelow.setText(resources.getString(isAbove ? "above" : "below"));
++                    aboveBelow.setVisible(true);
+ 
+-                        final LyricItemInter firstNormalItem = lyric.getFirstNormalItem();
++                    final LyricItemInter firstNormalItem = lyric.getFirstNormalItem();
+ 
+-                        if (firstNormalItem != null) {
+-                            final HeadChordInter firstChord = firstNormalItem.getHeadChord();
++                    if (firstNormalItem != null) {
++                        final HeadChordInter firstChord = firstNormalItem.getHeadChord();
+ 
+-                            if (firstChord != null) {
+-                                final Voice theVoice = firstChord.getVoice();
++                        if (firstChord != null) {
++                            final Voice theVoice = firstChord.getVoice();
+ 
+-                                if (theVoice != null) {
+-                                    voice.setVisible(true);
+-                                    voice.setValue(theVoice.getId());
+-                                }
++                            if (theVoice != null) {
++                                voice.setVisible(true);
++                                voice.setValue(theVoice.getId());
+                             }
+                         }
+                     }
+-
+-                    selfUpdatingText = false;
+                 }
+ 
+-                case AbstractNumberInter number -> {
+-                    if (number.getShape() == Shape.NUMBER_CUSTOM) {
+-                        selfUpdatingText = true;
+-
+-                        custom.setText(number.getValue().toString());
+-                        custom.setEnabled(true);
+-                        custom.setVisible(true);
+-
+-                        selfUpdatingText = false;
+-                    }
+-                }
+-
+-                case TimeCustomInter timeCustomInter -> {
++                selfUpdatingText = false;
++            } else if (inter instanceof AbstractNumberInter number) {
++                if (number.getShape() == Shape.NUMBER_CUSTOM) {
+                     selfUpdatingText = true;
+ 
+-                    custom.setText(timeCustomInter.getTimeRational().toString());
++                    custom.setText(number.getValue().toString());
+                     custom.setEnabled(true);
+                     custom.setVisible(true);
+ 
+                     selfUpdatingText = false;
+                 }
+-
+-                case SlurInter slur -> {
+-                    tie.getField().setSelected(slur.isTie());
+-                    tie.setEnabled(true);
+-                    tie.setVisible(true);
+-                }
+-
+-                default -> {}
++            } else if (inter instanceof TimeCustomInter timeCustomInter) {
++                selfUpdatingText = true;
++
++                custom.setText(timeCustomInter.getTimeRational().toString());
++                custom.setEnabled(true);
++                custom.setVisible(true);
++
++                selfUpdatingText = false;
++            } else if (inter instanceof SlurInter slur) {
++                tie.getField().setSelected(slur.isTie());
++                tie.setEnabled(true);
++                tie.setVisible(true);
+             }
+ 
+             edit.getField().setSelected(sheet.getSheetEditor().isEditing(inter));
+@@ -790,89 +774,75 @@ public class InterBoard
+                 }
+             }
+ 
+-            switch (inter) {
+-                case null -> {}
+-
+-                case BeatUnitInter beatUnit -> {
+-                    // Any change, including note symbol insertion
+-                    final String newValue = musicPane.getText().trim();
++            if (inter == null) {
++                // Nothing
++            } else if (inter instanceof BeatUnitInter beatUnit) {
++                // Any change, including note symbol insertion
++                final String newValue = musicPane.getText().trim();
+ 
+-                    if (!beatUnit.getValue().equals(newValue)) {
+-                        logger.debug("beatUnit newValue=\"{}\"", newValue);
+-                        sheet.getInterController().changeWord(beatUnit, newValue);
+-                    }
++                if (!beatUnit.getValue().equals(newValue)) {
++                    logger.debug("beatUnit newValue=\"{}\"", newValue);
++                    sheet.getInterController().changeWord(beatUnit, newValue);
+                 }
++            } else if (inter instanceof WordInter word) {
++                // Change text value?
++                final String newValue = textField.getText().trim();
+ 
+-                case WordInter word -> {
+-                    // Change text value?
+-                    final String newValue = textField.getText().trim();
+-
+-                    if (!newValue.equals(word.getValue())) {
+-                        logger.debug("Word=\"{}\"", newValue);
+-                        sheet.getInterController().changeWord(word, newValue);
+-                    }
++                if (!newValue.equals(word.getValue())) {
++                    logger.debug("Word=\"{}\"", newValue);
++                    sheet.getInterController().changeWord(word, newValue);
+                 }
+-
+-                case MetronomeInter metro -> {
+-                    // Any change, including note symbol insertion
+-                    final String newValue = musicPane.getText().trim();
+-
+-                    if (!metro.getValue().equals(newValue)) {
+-                        logger.debug("metro newValue=\"{}\"", newValue);
+-                        final List<WordInter> newWords = metro.setValue(newValue);
+-                        if (newWords != null) {
+-                            sheet.getInterController().changeMetronome(metro, newWords);
+-                        }
++            } else if (inter instanceof MetronomeInter metro) {
++                // Any change, including note symbol insertion
++                final String newValue = musicPane.getText().trim();
++
++                if (!metro.getValue().equals(newValue)) {
++                    logger.debug("metro newValue=\"{}\"", newValue);
++                    final List<WordInter> newWords = metro.setValue(newValue);
++                    if (newWords != null) {
++                        sheet.getInterController().changeMetronome(metro, newWords);
+                     }
+                 }
+-
+-                case SentenceInter sentence -> {
+-                    // Change sentence role?
+-                    final TextRole newRole = roleCombo.getSelectedItem();
+-
+-                    if (newRole != sentence.getRole()) {
+-                        logger.debug(
+-                                "Sentence=\"{}\" Role={}",
+-                                textField.getText().trim(),
+-                                newRole);
+-                        sheet.getInterController().changeSentence(sentence, newRole);
+-                    }
++            } else if (inter instanceof SentenceInter sentence) {
++                // Change sentence role?
++                final TextRole newRole = roleCombo.getSelectedItem();
++
++                if (newRole != sentence.getRole()) {
++                    logger.debug(
++                            "Sentence=\"{}\" Role={}",
++                            textField.getText().trim(),
++                            newRole);
++                    sheet.getInterController().changeSentence(sentence, newRole);
+                 }
++            } else if (inter instanceof AbstractNumberInter number) {
++                if (number.getShape() == Shape.NUMBER_CUSTOM) {
++                    try {
++                        // Change custom value?
++                        Integer newValue = Integer.decode(custom.getText());
+ 
+-                case AbstractNumberInter number -> {
+-                    if (number.getShape() == Shape.NUMBER_CUSTOM) {
+-                        try {
+-                            // Change custom value?
+-                            Integer newValue = Integer.decode(custom.getText());
+-
+-                            if (!newValue.equals(number.getValue())) {
+-                                logger.debug("Custom={}", newValue);
++                        if (!newValue.equals(number.getValue())) {
++                            logger.debug("Custom={}", newValue);
+ 
+-                                sheet.getInterController().changeNumber(number, newValue);
+-                            }
+-                        } catch (NumberFormatException ex) {
+-                            logger.warn("Illegal integer value {}", ex.toString());
+-                            custom.getField().requestFocusInWindow();
++                            sheet.getInterController().changeNumber(number, newValue);
+                         }
++                    } catch (NumberFormatException ex) {
++                        logger.warn("Illegal integer value {}", ex.toString());
++                        custom.getField().requestFocusInWindow();
+                     }
+                 }
+-
+-                case TimeCustomInter timeCustom -> {
+-                    try {
+-                        // Change custom time?
+-                        TimeRational newTime = TimeRational.decode(custom.getText());
+-
+-                        if (!newTime.equals(timeCustom.getTimeRational())) {
+-                            logger.debug("Custom={}", newTime);
+-                            sheet.getInterController().changeTime(timeCustom, newTime);
+-                        }
+-                    } catch (Exception ex) {
+-                        logger.warn("Illegal time combo value {}", ex.toString());
+-                        custom.getField().requestFocusInWindow();
++            } else if (inter instanceof TimeCustomInter timeCustom) {
++                try {
++                    // Change custom time?
++                    TimeRational newTime = TimeRational.decode(custom.getText());
++
++                    if (!newTime.equals(timeCustom.getTimeRational())) {
++                        logger.debug("Custom={}", newTime);
++                        sheet.getInterController().changeTime(timeCustom, newTime);
+                     }
++                } catch (Exception ex) {
++                    logger.warn("Illegal time combo value {}", ex.toString());
++                    custom.getField().requestFocusInWindow();
+                 }
+-
+-                default -> {}
+             }
+         }
+     }
+diff --git a/app/src/main/java/org/audiveris/omr/sig/ui/ShapeBoard.java b/app/src/main/java/org/audiveris/omr/sig/ui/ShapeBoard.java
+index fd4723f..f129142 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/ui/ShapeBoard.java
++++ b/app/src/main/java/org/audiveris/omr/sig/ui/ShapeBoard.java
+@@ -917,10 +917,10 @@ public class ShapeBoard
+     private void updatePanel (Panel panel)
+     {
+         for (Component comp : panel.getComponents()) {
+-            switch (comp) {
+-                case ShapeButton shapeButton -> shapeButton.update();
+-                case Panel p -> updatePanel(p); // Recursively
+-                default -> {}
++            if (comp instanceof ShapeButton shapeButton) {
++                shapeButton.update();
++            } else if (comp instanceof Panel p) {
++                updatePanel(p); // Recursively
+             }
+         }
+     }
+@@ -1396,8 +1396,11 @@ public class ShapeBoard
+         private int headRow (HeadMotif motif,
+                              Shape shape)
+         {
++            if (motif == null) {
++                return ShapeSet.Playings.contains(shape) ? 15 : 13;
++            }
++
+             return switch (motif) {
+-                case null -> ShapeSet.Playings.contains(shape) ? 15 : 13;
+                 case oval -> 1;
+                 case small -> 3;
+                 case cross -> 5;
+diff --git a/app/src/main/java/org/audiveris/omr/step/PageStep.java b/app/src/main/java/org/audiveris/omr/step/PageStep.java
+index 47a32ce..ad76362 100644
+--- a/app/src/main/java/org/audiveris/omr/step/PageStep.java
++++ b/app/src/main/java/org/audiveris/omr/step/PageStep.java
+@@ -81,6 +81,7 @@ import java.util.LinkedHashMap;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Map.Entry;
++import java.util.Objects;
+ import java.util.Set;
+ 
+ /**
+@@ -267,102 +268,86 @@ public class PageStep
+         final Map<Page, Impact> map = new LinkedHashMap<>();
+ 
+         for (UITask task : seq.getTasks()) {
+-            switch (task) {
+-                case InterTask interTask -> {
+-                    final Inter inter = interTask.getInter();
+-                    final Page page = inter.getSig().getSystem().getPage();
+-                    final Impact impact = getImpact(map, page);
+-                    final Class classe = inter.getClass();
+-
+-                    if (isImpactedBy(classe, forParts)) {
+-                        switch (inter) {
+-                            case SentenceInter sentenceInter -> {
+-                                if (sentenceInter.getRole() == TextRole.PartName) {
+-                                    impact.onParts = true;
+-                                }
+-                            }
+-
+-                            case WordInter wordInter -> {
+-                                final SentenceInter sentence = (SentenceInter) wordInter
+-                                        .getEnsemble();
+-                                if (sentence != null && sentence.getRole() == TextRole.PartName) {
+-                                    impact.onParts = true;
+-                                }
+-                            }
+-
+-                            default -> impact.onParts = true;
++            Objects.requireNonNull(task);
++
++            if (task instanceof InterTask interTask) {
++                final Inter inter = interTask.getInter();
++                final Page page = inter.getSig().getSystem().getPage();
++                final Impact impact = getImpact(map, page);
++                final Class classe = inter.getClass();
++
++                if (isImpactedBy(classe, forParts)) {
++                    if (inter instanceof SentenceInter sentenceInter) {
++                        if (sentenceInter.getRole() == TextRole.PartName) {
++                            impact.onParts = true;
+                         }
+-                    }
+-
+-                    if (isImpactedBy(classe, forSlurs)) {
+-                        impact.onSlurs = true;
+-                    }
+-
+-                    if (isImpactedBy(classe, forLyrics)) {
+-                        impact.onLyrics = true;
+-                    }
+-
+-                    if (isImpactedBy(classe, forVoices)) {
+-                        impact.onVoices = true;
+-                        impact.onMeasures = true; // Since measure specials can depend on voices
+-                    }
+-
+-                    if (isImpactedBy(classe, forMeasures)) {
+-                        impact.onMeasures = true;
++                    } else if (inter instanceof WordInter wordInter) {
++                        final SentenceInter sentence = (SentenceInter) wordInter
++                                .getEnsemble();
++                        if (sentence != null && sentence.getRole() == TextRole.PartName) {
++                            impact.onParts = true;
++                        }
++                    } else {
++                        impact.onParts = true;
+                     }
+                 }
+ 
+-                case StackTask stackTask -> {
+-                    final MeasureStack stack = stackTask.getStack();
+-                    final Class classe = stack.getClass();
+-                    final Page page = stack.getSystem().getPage();
+-                    final Impact impact = getImpact(map, page);
++                if (isImpactedBy(classe, forSlurs)) {
++                    impact.onSlurs = true;
++                }
+ 
+-                    if (isImpactedBy(classe, forVoices)) {
+-                        impact.onVoices = true;
+-                    }
++                if (isImpactedBy(classe, forLyrics)) {
++                    impact.onLyrics = true;
+                 }
+ 
+-                case PageTask pageTask -> {
+-                    final Page page = pageTask.getPage();
+-                    final Impact impact = getImpact(map, page);
+-                    impact.onParts = true; // Safer
+-                    impact.onMeasures = true;
+-                    impact.onSlurs = true;
++                if (isImpactedBy(classe, forVoices)) {
+                     impact.onVoices = true;
++                    impact.onMeasures = true; // Since measure specials can depend on voices
+                 }
+ 
+-                case SystemMergeTask systemMergeTask -> {
+-                    final Page page = systemMergeTask.getSystem().getPage();
+-                    final Impact impact = getImpact(map, page);
+-                    impact.onParts = true;
++                if (isImpactedBy(classe, forMeasures)) {
+                     impact.onMeasures = true;
+-                    impact.onVoices = true;
+                 }
++            } else if (task instanceof StackTask stackTask) {
++                final MeasureStack stack = stackTask.getStack();
++                final Class classe = stack.getClass();
++                final Page page = stack.getSystem().getPage();
++                final Impact impact = getImpact(map, page);
+ 
+-                case RelationTask relationTask -> {
+-                    final Page page = sig.getSystem().getPage();
+-                    final Impact impact = getImpact(map, page);
+-                    final Relation relation = relationTask.getRelation();
+-                    final Class classe = relation.getClass();
+-
+-                    if (isImpactedBy(classe, forVoices)) {
+-                        impact.onVoices = true;
+-                    }
+-
+-                    if (isImpactedBy(classe, forSlurs)) {
+-                        impact.onSlurs = true;
+-                    }
++                if (isImpactedBy(classe, forVoices)) {
++                    impact.onVoices = true;
+                 }
+-
+-                case ConnectionTask connectionTask -> {
+-                    final Page page = connectionTask.getPage();
+-                    final Impact impact = getImpact(map, page);
++            } else if (task instanceof PageTask pageTask) {
++                final Page page = pageTask.getPage();
++                final Impact impact = getImpact(map, page);
++                impact.onParts = true; // Safer
++                impact.onMeasures = true;
++                impact.onSlurs = true;
++                impact.onVoices = true;
++            } else if (task instanceof SystemMergeTask systemMergeTask) {
++                final Page page = systemMergeTask.getSystem().getPage();
++                final Impact impact = getImpact(map, page);
++                impact.onParts = true;
++                impact.onMeasures = true;
++                impact.onVoices = true;
++            } else if (task instanceof RelationTask relationTask) {
++                final Page page = sig.getSystem().getPage();
++                final Impact impact = getImpact(map, page);
++                final Relation relation = relationTask.getRelation();
++                final Class classe = relation.getClass();
++
++                if (isImpactedBy(classe, forVoices)) {
+                     impact.onVoices = true;
+-                    impact.onSlurs = true;
+                 }
+ 
+-                default -> {}
++                if (isImpactedBy(classe, forSlurs)) {
++                    impact.onSlurs = true;
++                }
++            } else if (task instanceof ConnectionTask connectionTask) {
++                final Page page = connectionTask.getPage();
++                final Impact impact = getImpact(map, page);
++                impact.onVoices = true;
++                impact.onSlurs = true;
+             }
+         }
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/text/TextBuilder.java b/app/src/main/java/org/audiveris/omr/text/TextBuilder.java
+index f022060..640b1bc 100644
+--- a/app/src/main/java/org/audiveris/omr/text/TextBuilder.java
++++ b/app/src/main/java/org/audiveris/omr/text/TextBuilder.java
+@@ -471,13 +471,16 @@ public class TextBuilder
+     private void guessRole (TextLine line)
+     {
+         try {
+-            line.setRole(switch (shape) {
+-                case null -> TextRole.guess(line, system, true, true); // Engine mode
+-                case LYRICS -> TextRole.Lyrics;
+-                case METRONOME -> TextRole.Metronome;
+-                case TEXT -> TextRole.guess(line, system, false, false);
+-                default -> null; // To keep the compiler happy.
+-            });
++            if (shape == null) {
++                line.setRole(TextRole.guess(line, system, true, true)); // Engine mode
++            } else {
++                line.setRole(switch (shape) {
++                    case LYRICS -> TextRole.Lyrics;
++                    case METRONOME -> TextRole.Metronome;
++                    case TEXT -> TextRole.guess(line, system, false, false);
++                    default -> null; // To keep the compiler happy.
++                });
++            }
+         } catch (Exception ex) {
+             logger.warn("Error in guessRole for {} {}", line, ex.toString(), ex);
+         }
+diff --git a/app/src/main/java/org/audiveris/omr/ui/AboutAction.java b/app/src/main/java/org/audiveris/omr/ui/AboutAction.java
+index 6052244..d5bf01c 100644
+--- a/app/src/main/java/org/audiveris/omr/ui/AboutAction.java
++++ b/app/src/main/java/org/audiveris/omr/ui/AboutAction.java
+@@ -282,21 +282,17 @@ public class AboutAction
+         final StringBuilder sb = new StringBuilder();
+ 
+         for (Component comp : aboutBox.getComponents()) {
+-            switch (comp) {
+-                case JLabel label -> {
+-                    final String text = label.getText();
+-                    sb.append(text);
+-                    sb.append(text.endsWith(":") ? " " : WellKnowns.LINE_SEPARATOR);
++            if (comp instanceof JLabel label) {
++                final String text = label.getText();
++                sb.append(text);
++                sb.append(text.endsWith(":") ? " " : WellKnowns.LINE_SEPARATOR);
++            } else if (comp instanceof JEditorPane pane) {
++                if (pane == Topic.home.comp) {
++                    sb.append(resources.getString("Application.homepage"));
++                } else if (pane == Topic.project.comp) {
++                    sb.append(resources.getString("Application.projectpage"));
+                 }
+-                case JEditorPane pane -> {
+-                    if (pane == Topic.home.comp) {
+-                        sb.append(resources.getString("Application.homepage"));
+-                    } else if (pane == Topic.project.comp) {
+-                        sb.append(resources.getString("Application.projectpage"));
+-                    }
+-                    sb.append(WellKnowns.LINE_SEPARATOR);
+-                }
+-                default -> {}
++                sb.append(WellKnowns.LINE_SEPARATOR);
+             }
+         }
+ 
+diff --git a/buildSrc/src/main/groovy/audiveris-commons.gradle b/buildSrc/src/main/groovy/audiveris-commons.gradle
+index b1e4ba7..871a757 100644
+--- a/buildSrc/src/main/groovy/audiveris-commons.gradle
++++ b/buildSrc/src/main/groovy/audiveris-commons.gradle
+@@ -82,3 +82,11 @@ logger.info("theMinJavaVersion: {}", theMinJavaVersion)
+ java {
+     sourceCompatibility = JavaLanguageVersion.of(theMinJavaVersion)
+ }
++
++// Web build (CheerpJ runs Java <= 17): compile against the real Java 17 API,
++// not just Java 17 syntax, so newer library calls fail at compile time.
++if (theMinJavaVersion as int < 21) {
++    tasks.withType(JavaCompile).configureEach {
++        options.release = theMinJavaVersion as int
++    }
++}
+diff --git a/javac.20261104_012256.args b/javac.20261104_012256.args
+new file mode 100644
+index 0000000..6fff6a9
+--- /dev/null
++++ b/javac.20261104_012256.args
+@@ -0,0 +1,10 @@
++--release
++17
++-proc:none
++-Xmaxerrs
++1000
++-d
++/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/cni
++-sourcepath
++app/src/main/java
++app/src/main/java/org/audiveris/omr/sig/inter/ChordNameInter.java
+-- 
+2.43.0
+

@@ -1,0 +1,98 @@
+From 126801513c9cabd68545656a859b0fa83b790935 Mon Sep 17 00:00:00 2001
+From: Resonate web port <dave.torosyan@gmail.com>
+Date: Wed, 4 Nov 2026 02:40:20 +0000
+Subject: [PATCH 3/3] Batch without AWT: check the Swing EDT only when a GUI
+ exists (CheerpJ Web Worker has no display)
+
+---
+ .../java/org/audiveris/omr/log/LogUtil.java   | 25 ++++++++++++++++---
+ .../org/audiveris/omr/sheet/SheetStub.java    |  2 +-
+ 2 files changed, 22 insertions(+), 5 deletions(-)
+
+diff --git a/app/src/main/java/org/audiveris/omr/log/LogUtil.java b/app/src/main/java/org/audiveris/omr/log/LogUtil.java
+index 1929eb1..10b6865 100644
+--- a/app/src/main/java/org/audiveris/omr/log/LogUtil.java
++++ b/app/src/main/java/org/audiveris/omr/log/LogUtil.java
+@@ -21,6 +21,7 @@
+ // </editor-fold>
+ package org.audiveris.omr.log;
+ 
++import org.audiveris.omr.OMR;
+ import org.audiveris.omr.WellKnowns;
+ import org.audiveris.omr.sheet.Book;
+ import org.audiveris.omr.sheet.SheetStub;
+@@ -322,6 +323,22 @@ public abstract class LogUtil
+ 
+     //-------//
+     // start //
++    //-------//
++    // onEdt //
++    //-------//
++    /**
++     * Tell whether we are on the Swing event dispatch thread.
++     * <p>
++     * Without a GUI there is no such thread, and asking would initialize the AWT toolkit,
++     * which needs a display that in-browser (CheerpJ Web Worker) execution does not have.
++     *
++     * @return true if on EDT
++     */
++    private static boolean onEdt ()
++    {
++        return (OMR.gui != null) && SwingUtilities.isEventDispatchThread();
++    }
++
+     //-------//
+     /**
+      * In the calling thread, start log annotation with book ID.
+@@ -330,7 +347,7 @@ public abstract class LogUtil
+      */
+     public static void start (Book book)
+     {
+-        if (!SwingUtilities.isEventDispatchThread()) {
++        if (!onEdt()) {
+             String str = book.getAlias();
+ 
+             if (str == null) {
+@@ -353,7 +370,7 @@ public abstract class LogUtil
+     {
+         start(stub.getBook());
+ 
+-        if (!SwingUtilities.isEventDispatchThread()) {
++        if (!onEdt()) {
+             MDC.put(SHEET, stub.getNum());
+         }
+     }
+@@ -368,7 +385,7 @@ public abstract class LogUtil
+     {
+         stopStub();
+ 
+-        if (!SwingUtilities.isEventDispatchThread()) {
++        if (!onEdt()) {
+             MDC.remove(BOOK);
+         }
+     }
+@@ -381,7 +398,7 @@ public abstract class LogUtil
+      */
+     public static void stopStub ()
+     {
+-        if (!SwingUtilities.isEventDispatchThread()) {
++        if (!onEdt()) {
+             MDC.remove(SHEET);
+         }
+     }
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/SheetStub.java b/app/src/main/java/org/audiveris/omr/sheet/SheetStub.java
+index 2d1fbff..a548e6a 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/SheetStub.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/SheetStub.java
+@@ -955,7 +955,7 @@ public class SheetStub
+             }
+ 
+             // LOAD already performed: unmarshall from book file
+-            if (SwingUtilities.isEventDispatchThread()) {
++            if ((OMR.gui != null) && SwingUtilities.isEventDispatchThread()) {
+                 logger.warn("XXX Unmarshalling .omr file on EDT XXXX");
+             }
+ 
+-- 
+2.43.0
+

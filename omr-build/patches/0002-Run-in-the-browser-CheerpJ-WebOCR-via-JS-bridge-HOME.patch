@@ -1,0 +1,642 @@
+From 191bcd6d8327266d10bd7f6a5672a4440b8371e7 Mon Sep 17 00:00:00 2001
+From: Resonate web port <dave.torosyan@gmail.com>
+Date: Wed, 4 Nov 2026 02:07:40 +0000
+Subject: [PATCH 2/3] Run in the browser (CheerpJ): WebOCR via JS bridge, HOME
+ fallback, web-safe cached pool
+
+---
+ app/src/main/java/org/audiveris/omr/Main.java |   9 +-
+ .../java/org/audiveris/omr/WellKnowns.java    |  25 +-
+ .../java/org/audiveris/omr/text/OcrUtil.java  |   4 +-
+ .../org/audiveris/omr/text/TextBuilder.java   |   3 +-
+ .../java/org/audiveris/omr/text/TextLine.java |   3 +-
+ .../org/audiveris/omr/text/web/WebOCR.java    | 440 ++++++++++++++++++
+ .../org/audiveris/omr/util/OmrExecutors.java  |  16 +
+ 7 files changed, 492 insertions(+), 8 deletions(-)
+ create mode 100644 app/src/main/java/org/audiveris/omr/text/web/WebOCR.java
+
+diff --git a/app/src/main/java/org/audiveris/omr/Main.java b/app/src/main/java/org/audiveris/omr/Main.java
+index a076f34..7a82efd 100644
+--- a/app/src/main/java/org/audiveris/omr/Main.java
++++ b/app/src/main/java/org/audiveris/omr/Main.java
+@@ -28,7 +28,9 @@ import org.audiveris.omr.constant.ConstantManager;
+ import org.audiveris.omr.constant.ConstantSet;
+ import org.audiveris.omr.log.LogUtil;
+ import org.audiveris.omr.sheet.BookManager;
++import org.audiveris.omr.text.OcrUtil;
+ import org.audiveris.omr.text.tesseract.Languages;
++import org.audiveris.omr.text.web.WebOCR;
+ import org.audiveris.omr.text.tesseract.TesseractOCR;
+ import org.audiveris.omr.ui.MainGui;
+ import org.audiveris.omr.ui.symbol.MusicFont;
+@@ -263,7 +265,12 @@ public class Main
+             ///Versions.considerPolling();
+ 
+             // Check OCR languages
+-            Languages.getInstance().checkSupport();
++            if (WebOCR.isRequested()) {
++                logger.info("OCR: {} {}", OcrUtil.getOcr().identify(),
++                        OcrUtil.getOcr().getSupportedLanguages());
++            } else {
++                Languages.getInstance().checkSupport();
++            }
+ 
+             // Check MusicFont is loaded
+             MusicFont.checkMusicFont();
+diff --git a/app/src/main/java/org/audiveris/omr/WellKnowns.java b/app/src/main/java/org/audiveris/omr/WellKnowns.java
+index 3ee77ca..c138a72 100644
+--- a/app/src/main/java/org/audiveris/omr/WellKnowns.java
++++ b/app/src/main/java/org/audiveris/omr/WellKnowns.java
+@@ -396,6 +396,27 @@ public abstract class WellKnowns
+         }
+     }
+ 
++    //------------//
++    // homeFolder //
++    //------------//
++    /**
++     * The user home folder: HOME environment variable, else the "user.home" property.
++     * <p>
++     * The fallback matters for in-browser JVMs (CheerpJ) which have no environment.
++     *
++     * @return the home folder path, or null
++     */
++    private static String homeFolder ()
++    {
++        final String env = System.getenv("HOME");
++
++        if (env != null) {
++            return env;
++        }
++
++        return System.getProperty("user.home");
++    }
++
+     //-------------------//
+     // getFolderForLinux //
+     //-------------------//
+@@ -416,7 +437,7 @@ public abstract class WellKnowns
+         }
+ 
+         // Fall back using home
+-        final String home = System.getenv("HOME");
++        final String home = homeFolder();
+ 
+         if (home == null) {
+             printError("HOME environment variable is not set");
+@@ -436,7 +457,7 @@ public abstract class WellKnowns
+     //-----------------//
+     private static Path getFolderForMac (FolderKind kind)
+     {
+-        final String home = System.getenv("HOME");
++        final String home = homeFolder();
+ 
+         if (home == null) {
+             printError("HOME environment variable is not set");
+diff --git a/app/src/main/java/org/audiveris/omr/text/OcrUtil.java b/app/src/main/java/org/audiveris/omr/text/OcrUtil.java
+index 2d8925f..3cde032 100644
+--- a/app/src/main/java/org/audiveris/omr/text/OcrUtil.java
++++ b/app/src/main/java/org/audiveris/omr/text/OcrUtil.java
+@@ -26,6 +26,7 @@ import org.audiveris.omr.constant.ConstantSet;
+ import org.audiveris.omr.sheet.Sheet;
+ import org.audiveris.omr.text.OCR.LayoutMode;
+ import org.audiveris.omr.text.tesseract.TesseractOCR;
++import org.audiveris.omr.text.web.WebOCR;
+ 
+ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+@@ -51,7 +52,8 @@ public abstract class OcrUtil
+     private static final Logger logger = LoggerFactory.getLogger(OcrUtil.class);
+ 
+     /** The related OCR. */
+-    private static final OCR ocr = TesseractOCR.getInstance();
++    private static final OCR ocr = WebOCR.isRequested() ? WebOCR.getInstance()
++            : TesseractOCR.getInstance();
+ 
+     //~ Constructors -------------------------------------------------------------------------------
+     /** Not meant to be instantiated. */
+diff --git a/app/src/main/java/org/audiveris/omr/text/TextBuilder.java b/app/src/main/java/org/audiveris/omr/text/TextBuilder.java
+index 640b1bc..3a09dc1 100644
+--- a/app/src/main/java/org/audiveris/omr/text/TextBuilder.java
++++ b/app/src/main/java/org/audiveris/omr/text/TextBuilder.java
+@@ -54,7 +54,6 @@ import org.audiveris.omr.sig.inter.WordInter;
+ import static org.audiveris.omr.text.TextRole.ChordName;
+ import static org.audiveris.omr.text.TextRole.Lyrics;
+ import static org.audiveris.omr.text.TextRole.Metronome;
+-import org.audiveris.omr.text.tesseract.TesseractOCR;
+ import org.audiveris.omr.util.Navigable;
+ import org.audiveris.omr.util.Pair;
+ import org.audiveris.omr.util.StopWatch;
+@@ -1382,7 +1381,7 @@ public class TextBuilder
+      */
+     public static boolean isMainlyItalic (TextLine line)
+     {
+-        final double minConfidence = TesseractOCR.getInstance().getMinConfidence();
++        final double minConfidence = OcrUtil.getOcr().getMinConfidence();
+         int reliableWords = 0;
+         int italicWords = 0;
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/text/TextLine.java b/app/src/main/java/org/audiveris/omr/text/TextLine.java
+index aa43d07..57578bf 100644
+--- a/app/src/main/java/org/audiveris/omr/text/TextLine.java
++++ b/app/src/main/java/org/audiveris/omr/text/TextLine.java
+@@ -30,7 +30,6 @@ import org.audiveris.omr.sheet.Sheet;
+ import org.audiveris.omr.sheet.Skew;
+ import org.audiveris.omr.sig.inter.ChordNameInter;
+ import org.audiveris.omr.text.WordScanner.OcrScanner;
+-import org.audiveris.omr.text.tesseract.TesseractOCR;
+ import org.audiveris.omr.util.VerticalSide;
+ 
+ import org.slf4j.Logger;
+@@ -182,7 +181,7 @@ public class TextLine
+         }
+ 
+         // Check global line confidence
+-        final double minConfidence = TesseractOCR.getInstance().getMinConfidence();
++        final double minConfidence = OcrUtil.getOcr().getMinConfidence();
+         Double conf = getConfidence();
+ 
+         if ((conf == null) || conf.isNaN() || (conf < minConfidence)) {
+diff --git a/app/src/main/java/org/audiveris/omr/text/web/WebOCR.java b/app/src/main/java/org/audiveris/omr/text/web/WebOCR.java
+new file mode 100644
+index 0000000..bd5ebdf
+--- /dev/null
++++ b/app/src/main/java/org/audiveris/omr/text/web/WebOCR.java
+@@ -0,0 +1,440 @@
++//------------------------------------------------------------------------------------------------//
++//                                                                                                //
++//                                          W e b O C R                                           //
++//                                                                                                //
++//------------------------------------------------------------------------------------------------//
++// <editor-fold defaultstate="collapsed" desc="hdr">
++//
++//  Copyright © 2026 Resonate web port of Audiveris (AGPL-3.0, like Audiveris itself).
++//
++//  This program is free software: you can redistribute it and/or modify it under the terms of the
++//  GNU Affero General Public License as published by the Free Software Foundation, either version
++//  3 of the License, or (at your option) any later version.
++//
++//  This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++//  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++//  See the GNU Affero General Public License for more details.
++//
++//  You should have received a copy of the GNU Affero General Public License along with this
++//  program.  If not, see <http://www.gnu.org/licenses/>.
++//------------------------------------------------------------------------------------------------//
++// </editor-fold>
++package org.audiveris.omr.text.web;
++
++import org.audiveris.omr.constant.Constant;
++import org.audiveris.omr.constant.ConstantSet;
++import org.audiveris.omr.sheet.Sheet;
++import org.audiveris.omr.text.FontInfo;
++import org.audiveris.omr.text.OCR;
++import org.audiveris.omr.text.TextChar;
++import org.audiveris.omr.text.TextLine;
++import org.audiveris.omr.text.TextWord;
++
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++
++import java.awt.Graphics2D;
++import java.awt.Point;
++import java.awt.Rectangle;
++import java.awt.geom.Line2D;
++import java.awt.geom.Rectangle2D;
++import java.awt.image.BufferedImage;
++import java.awt.image.DataBufferByte;
++import java.net.URLDecoder;
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.List;
++import java.util.SortedSet;
++import java.util.TreeSet;
++
++/**
++ * Class <code>WebOCR</code> is an OCR implementation for in-browser execution (CheerpJ),
++ * where the native Tesseract library cannot be loaded.
++ * <p>
++ * The recognition itself is delegated to a JavaScript implementation of the
++ * {@link #recognizeGray} native method, backed by the WebAssembly build of the very same
++ * Tesseract engine (tesseract.js-core), used in legacy mode like {@code TesseractOrder} does.
++ * <p>
++ * The JavaScript side returns one record per line of text:
++ * <ul>
++ * <li><code>L</code>: start of a text line</li>
++ * <li><code>W x y w h conf bold italic underlined mono serif smallcaps pointSize
++ * bx1 by1 bx2 by2 text</code>: a word (baseline coordinates are "-" when unknown)</li>
++ * <li><code>S x y w h text</code>: a symbol of the current word</li>
++ * </ul>
++ * Fields are tab-separated and texts are URI-encoded (UTF-8).
++ * Words without font information are not sent, as {@code TesseractOrder} skips them.
++ * <p>
++ * Selected by system property <code>audiveris.ocr=web</code>, with supported languages listed in
++ * <code>audiveris.ocr.languages</code> (default "eng", '+'-separated).
++ *
++ * @author Resonate web port
++ */
++public class WebOCR
++        implements OCR
++{
++    //~ Static fields/initializers -----------------------------------------------------------------
++
++    private static final Constants constants = new Constants();
++
++    private static final Logger logger = LoggerFactory.getLogger(WebOCR.class);
++
++    /** System property to select this OCR implementation. */
++    public static final String PROPERTY = "audiveris.ocr";
++
++    /** System property listing the languages provided by the JavaScript side. */
++    public static final String LANGUAGES_PROPERTY = "audiveris.ocr.languages";
++
++    /** Tesseract page segmentation mode: automatic page segmentation, no OSD. */
++    private static final int PSM_AUTO = 3;
++
++    /** Tesseract page segmentation mode: single uniform block of text. */
++    private static final int PSM_SINGLE_BLOCK = 6;
++
++    private static volatile WebOCR INSTANCE;
++
++    //~ Instance fields ----------------------------------------------------------------------------
++
++    /** Languages available on the JavaScript side. */
++    private final SortedSet<String> languages = new TreeSet<>();
++
++    //~ Constructors -------------------------------------------------------------------------------
++
++    private WebOCR ()
++    {
++        final String langs = System.getProperty(LANGUAGES_PROPERTY, "eng");
++
++        for (String lang : langs.split("\\+")) {
++            if (!lang.isBlank()) {
++                languages.add(lang.trim());
++            }
++        }
++    }
++
++    //~ Methods ------------------------------------------------------------------------------------
++
++    @Override
++    public SortedSet<String> getSupportedLanguages ()
++    {
++        return Collections.unmodifiableSortedSet(languages);
++    }
++
++    @Override
++    public double getMinConfidence ()
++    {
++        return constants.minConfidence.getValue();
++    }
++
++    @Override
++    public String identify ()
++    {
++        return "Tesseract (WebAssembly, legacy engine)";
++    }
++
++    @Override
++    public boolean isAvailable ()
++    {
++        return true;
++    }
++
++    //-------//
++    // parse //
++    //-------//
++    /**
++     * Build the TextLine / TextWord / TextChar hierarchy out of the JavaScript records,
++     * like TesseractOrder.getLines() does out of the Tesseract result iterator.
++     */
++    private List<TextLine> parse (Sheet sheet,
++                                  String records)
++    {
++        final List<TextLine> lines = new ArrayList<>();
++        TextLine line = null;
++        TextWord word = null;
++
++        for (String record : records.split("\n")) {
++            if (record.isEmpty()) {
++                continue;
++            }
++
++            final String[] f = record.split("\t", -1);
++
++            switch (f[0]) {
++            case "L" -> {
++                line = new TextLine(sheet);
++                lines.add(line);
++                word = null;
++            }
++
++            case "W" -> {
++                if (line == null) {
++                    line = new TextLine(sheet);
++                    lines.add(line);
++                }
++
++                final FontInfo fontInfo = new FontInfo(
++                        bool(f[6]),
++                        bool(f[7]),
++                        bool(f[8]),
++                        bool(f[9]),
++                        bool(f[10]),
++                        bool(f[11]),
++                        Integer.parseInt(f[12]),
++                        null); // No fontName is provided, as in TesseractOrder
++                final Line2D baseline = "-".equals(f[13]) ? null
++                        : new Line2D.Double(
++                                Integer.parseInt(f[13]),
++                                Integer.parseInt(f[14]),
++                                Integer.parseInt(f[15]),
++                                Integer.parseInt(f[16]));
++                word = new TextWord(
++                        sheet,
++                        rect(f, 1),
++                        decode(f[17]),
++                        baseline,
++                        Double.parseDouble(f[5]) / 100.0,
++                        fontInfo,
++                        line);
++                line.appendWord(word);
++            }
++
++            case "S" -> {
++                if (word != null) {
++                    wordAddChars(word, rect(f, 1), decode(f[5]));
++                }
++            }
++
++            default -> logger.warn("Unexpected OCR record: {}", record);
++            }
++        }
++
++        lines.removeIf(l -> l.getValue().isBlank());
++
++        return lines;
++    }
++
++    //-----------//
++    // recognize //
++    //-----------//
++    @Override
++    public List<TextLine> recognize (Sheet sheet,
++                                     BufferedImage image,
++                                     Point topLeft,
++                                     String langSpec,
++                                     LayoutMode layoutMode,
++                                     String label)
++    {
++        try {
++            final int width = image.getWidth();
++            final int height = image.getHeight();
++            final int psm = constants.forceSingleBlock.isSet() ? PSM_SINGLE_BLOCK
++                    : ((layoutMode == LayoutMode.MULTI_BLOCK) ? PSM_AUTO : PSM_SINGLE_BLOCK);
++            final long start = System.currentTimeMillis();
++            final String records = recognizeGray(
++                    toGray(image),
++                    width,
++                    height,
++                    langSpec,
++                    psm,
++                    constants.typicalImageResolution.getValue());
++
++            if (records == null) {
++                return null;
++            }
++
++            final List<TextLine> lines = parse(sheet, records);
++            logger.debug(
++                    "WebOCR {} {}x{} psm:{} -> {} lines in {} ms",
++                    label,
++                    width,
++                    height,
++                    psm,
++                    lines.size(),
++                    System.currentTimeMillis() - start);
++
++            if (topLeft != null) {
++                // Translate topLeft-relative coordinates to origin-relative ones
++                for (TextLine line : lines) {
++                    line.translate(topLeft.x, topLeft.y);
++                }
++            }
++
++            return lines;
++        } catch (Throwable ex) {
++            logger.warn("WebOCR error on {}: {}", label, ex.toString());
++
++            return null;
++        }
++    }
++
++    //----------//
++    // supports //
++    //----------//
++    @Override
++    public boolean supports (String langSpec)
++    {
++        if (langSpec == null || langSpec.isBlank()) {
++            return false;
++        }
++
++        for (String lang : langSpec.split("\\+")) {
++            if (!languages.contains(lang.trim())) {
++                return false;
++            }
++        }
++
++        return true;
++    }
++
++    /**
++     * Add TextChar(s) to the provided word, splitting multi-char symbols evenly
++     * (same as TesseractOrder.wordAddChars).
++     */
++    private void wordAddChars (TextWord word,
++                               Rectangle bounds,
++                               String value)
++    {
++        final int len = value.length();
++
++        if (len == 1) {
++            word.addChar(new TextChar(bounds, value)); // Normal case
++        } else {
++            final double meanCharWidth = (double) bounds.width / len;
++
++            for (int i = 0; i < len; i++) {
++                final Rectangle cb = new Rectangle2D.Double(
++                        bounds.x + (i * meanCharWidth),
++                        bounds.y,
++                        meanCharWidth,
++                        bounds.height).getBounds();
++                word.addChar(new TextChar(cb, value.substring(i, i + 1)));
++            }
++        }
++    }
++
++    //~ Static Methods -----------------------------------------------------------------------------
++
++    private static boolean bool (String s)
++    {
++        return "1".equals(s);
++    }
++
++    private static String decode (String s)
++    {
++        return URLDecoder.decode(s, StandardCharsets.UTF_8);
++    }
++
++    //-------------//
++    // getInstance //
++    //-------------//
++    /**
++     * Report the singleton.
++     *
++     * @return the WebOCR instance
++     */
++    public static WebOCR getInstance ()
++    {
++        if (INSTANCE == null) {
++            synchronized (WebOCR.class) {
++                if (INSTANCE == null) {
++                    INSTANCE = new WebOCR();
++                }
++            }
++        }
++
++        return INSTANCE;
++    }
++
++    //-------------//
++    // isRequested //
++    //-------------//
++    /**
++     * Tell whether the web OCR has been selected (system property audiveris.ocr=web).
++     *
++     * @return true if so
++     */
++    public static boolean isRequested ()
++    {
++        return "web".equalsIgnoreCase(System.getProperty(PROPERTY));
++    }
++
++    private static Rectangle rect (String[] f,
++                                   int from)
++    {
++        return new Rectangle(
++                Integer.parseInt(f[from]),
++                Integer.parseInt(f[from + 1]),
++                Integer.parseInt(f[from + 2]),
++                Integer.parseInt(f[from + 3]));
++    }
++
++    /**
++     * Implemented in JavaScript (CheerpJ native): recognize an 8-bit gray image.
++     *
++     * @param gray     pixels, row-major, width * height bytes
++     * @param width    image width
++     * @param height   image height
++     * @param langSpec Tesseract language specification, like "eng" or "eng+deu"
++     * @param psm      Tesseract page segmentation mode
++     * @param dpi      source resolution to declare (-1 to leave unset)
++     * @return the records described in the class documentation, or null on failure
++     */
++    private static native String recognizeGray (byte[] gray,
++                                                int width,
++                                                int height,
++                                                String langSpec,
++                                                int psm,
++                                                int dpi);
++
++    //--------//
++    // toGray //
++    //--------//
++    /**
++     * Report the image pixels as 8-bit gray, row-major, without padding.
++     */
++    private static byte[] toGray (BufferedImage image)
++    {
++        final int width = image.getWidth();
++        final int height = image.getHeight();
++
++        if (image.getType() == BufferedImage.TYPE_BYTE_GRAY
++                && image.getRaster().getDataBuffer() instanceof DataBufferByte dbb
++                && dbb.getNumBanks() == 1
++                && dbb.getOffset() == 0
++                && dbb.getData().length == width * height
++                && image.getRaster().getSampleModelTranslateX() == 0
++                && image.getRaster().getSampleModelTranslateY() == 0) {
++            return dbb.getData();
++        }
++
++        final BufferedImage gray = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_GRAY);
++        final Graphics2D g = gray.createGraphics();
++        g.drawImage(image, 0, 0, null);
++        g.dispose();
++
++        return ((DataBufferByte) gray.getRaster().getDataBuffer()).getData();
++    }
++
++    //~ Inner Classes ------------------------------------------------------------------------------
++
++    //-----------//
++    // Constants //
++    //-----------//
++    private static class Constants
++            extends ConstantSet
++    {
++        private final Constant.Double minConfidence = new Constant.Double(
++                "0..1",
++                0.65,
++                "Minimum confidence for OCR validity");
++
++        private final Constant.Boolean forceSingleBlock = new Constant.Boolean(
++                false,
++                "Should we force OCR to use PSM_SINGLE_BLOCK rather than PSM_AUTO?");
++
++        private final Constant.Integer typicalImageResolution = new Constant.Integer(
++                "dpi",
++                70,
++                "Typical image resolution in DPI (disabled when set to -1)");
++    }
++}
+diff --git a/app/src/main/java/org/audiveris/omr/util/OmrExecutors.java b/app/src/main/java/org/audiveris/omr/util/OmrExecutors.java
+index 1248a62..f99d677 100644
+--- a/app/src/main/java/org/audiveris/omr/util/OmrExecutors.java
++++ b/app/src/main/java/org/audiveris/omr/util/OmrExecutors.java
+@@ -33,6 +33,8 @@ import java.util.Arrays;
+ import java.util.Collection;
+ import java.util.concurrent.ExecutorService;
+ import java.util.concurrent.Executors;
++import java.util.concurrent.ThreadPoolExecutor;
++import java.util.concurrent.LinkedBlockingQueue;
+ import java.util.concurrent.ThreadFactory;
+ import java.util.concurrent.TimeUnit;
+ import java.util.concurrent.atomic.AtomicInteger;
+@@ -202,6 +204,20 @@ public class OmrExecutors
+         @Override
+         protected ExecutorService createPool ()
+         {
++            if (Boolean.getBoolean("audiveris.web")) {
++                // In-browser JVM (CheerpJ): SynchronousQueue, used by cached thread pools,
++                // relies on VarHandle natives that are not available there.
++                // Use a fixed pool on a LinkedBlockingQueue instead, large enough for tasks
++                // of this pool that wait on other tasks of the same pool.
++                return new ThreadPoolExecutor(
++                        32,
++                        32,
++                        0L,
++                        TimeUnit.MILLISECONDS,
++                        new LinkedBlockingQueue<>(),
++                        new Factory(getName(), Thread.MIN_PRIORITY, 0));
++            }
++
+             return Executors.newCachedThreadPool(new Factory(getName(), Thread.MIN_PRIORITY, 0));
+         }
+ 
+-- 
+2.43.0
+
