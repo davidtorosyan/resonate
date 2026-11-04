@@ -119,7 +119,7 @@ function unifyOctaveClefs(doc, changes) {
             }
           }
         }
-        changes.push(`part ${part.getAttribute("id")}: ${plain.length} ${kind} clef${plain.length > 1 ? "s" : ""} without its 8 ` +
+        changes.push(`part ${part.getAttribute("id")}: ${plain.length} ${kind} clef${plain.length > 1 ? "s" : ""} without the 8 ` +
           `(${withOct} have it): ${moved} notes moved ${oct < 0 ? "down" : "up"} an octave`);
       }
     }
