@@ -13,6 +13,7 @@ export function fixOmrScore(xml, log = []) {
   foldSparseVerses(doc, changes);
   restoreTempo(doc, log, changes);
   unifyOctaveClefs(doc, changes);
+  markUnmarkedTuplets(doc, changes);
   return { xml: changes.length ? new XMLSerializer().serializeToString(doc) : xml, changes };
 }
 
@@ -120,4 +121,87 @@ function unifyOctaveClefs(doc, changes) {
       }
     }
   }
+}
+
+// Unmarked tuplets. Audiveris only knows "3" and "6" tuplet signs, and misses some of those, so
+// a voice can end up longer than its measure: 4 quarters of a quadruplet in 3/4 ("I'm a bu-sy",
+// the 4th of which patch 0007 now keeps instead of dropping it with its syllable), or 3 eighths of
+// a triplet whose "3" wasn't read ("give me a"). When a voice is too long by exactly the duration d
+// of a run of k >= 3 consecutive equal elements (notes or rests) of duration d, that run is a
+// k:(k-1) tuplet: its elements share k-1 slots (durations scaled, <time-modification> added).
+// Divisions are multiplied by k in that measure so durations stay whole, and restored after it.
+function markUnmarkedTuplets(doc, changes) {
+  const kids = (el, name) => [...el.children].filter((c) => c.nodeName === name);
+  const val = (el, name) => { const c = el && kids(el, name)[0]; return c ? Number(c.textContent) : null; };
+  const voiceOf = (n) => kids(n, "voice")[0]?.textContent || "1";
+  for (const part of doc.querySelectorAll("score-partwise > part")) {
+    let divisions = 1, beats = 4, beatType = 4;
+    const measures = kids(part, "measure");
+    measures.forEach((measure, mi) => {
+      for (const at of kids(measure, "attributes")) {
+        divisions = val(at, "divisions") ?? divisions;
+        const time = kids(at, "time")[0];
+        if (time) { beats = val(time, "beats") ?? beats; beatType = val(time, "beat-type") ?? beatType; }
+      }
+      const expected = (beats * 4 / beatType) * divisions;
+      const notes = kids(measure, "note").filter((n) => !kids(n, "grace").length);
+      for (const v of new Set(notes.map(voiceOf))) {
+        const lead = notes.filter((n) => voiceOf(n) === v && !kids(n, "chord").length);
+        const total = lead.reduce((t, n) => t + (val(n, "duration") || 0), 0);
+        const excess = total - expected;
+        if (excess <= 0 || lead.some((n) => kids(n, "time-modification").length)) continue;
+        // Longest run of consecutive elements lasting exactly the excess.
+        let best = null;
+        for (let i = 0; i < lead.length; ) {
+          let j = i;
+          while (j < lead.length && val(lead[j], "duration") === excess) j++;
+          if (j - i >= 3 && (!best || j - i > best[1] - best[0])) best = [i, j];
+          i = j > i ? j : i + 1;
+        }
+        if (!best) continue;
+        const k = best[1] - best[0];
+        const run = new Set(lead.slice(best[0], best[1]));
+        // Scale every duration of the measure by k; run elements (and their chord notes) get excess*(k-1).
+        for (const el of measure.querySelectorAll(":scope > note > duration, :scope > backup > duration, :scope > forward > duration")) {
+          el.textContent = String(Number(el.textContent) * k);
+        }
+        let owner = null;
+        for (const x of kids(measure, "note")) {
+          if (voiceOf(x) !== v) continue;
+          if (!kids(x, "chord").length) owner = x;
+          if (!run.has(owner)) continue;
+          kids(x, "duration")[0].textContent = String(excess * (k - 1));
+          const tm = doc.createElement("time-modification");
+          const a = doc.createElement("actual-notes"); a.textContent = String(k);
+          const b = doc.createElement("normal-notes"); b.textContent = String(k - 1);
+          tm.append(a, b);
+          const after = [...x.children].filter((c) => ["type", "dot", "accidental"].includes(c.nodeName)).pop();
+          after ? after.after(tm) : x.append(tm);
+        }
+        // A backup that went back over the whole (too long) voice now goes back over the measure.
+        for (const bk of kids(measure, "backup")) {
+          if (val(bk, "duration") === total * k) kids(bk, "duration")[0].textContent = String(expected * k);
+        }
+        setDivisions(doc, measure, divisions * k);
+        const next = measures[mi + 1];
+        if (next && !next.querySelector(":scope > attributes > divisions")) setDivisions(doc, next, divisions);
+        const words = [...run].map((n) => n.querySelector("lyric > text")?.textContent || (kids(n, "rest").length ? "rest" : "~"));
+        changes.push(`part ${part.getAttribute("id")} measure ${measure.getAttribute("number")}: ` +
+          `${k} in the time of ${k - 1} (${words.join(" ")})`);
+        break; // one per measure (divisions now changed)
+      }
+    });
+  }
+}
+
+function setDivisions(doc, measure, value) {
+  let at = [...measure.children].find((c) => c.nodeName === "attributes");
+  if (!at) {
+    at = doc.createElement("attributes");
+    const first = [...measure.children].find((c) => !["print"].includes(c.nodeName));
+    measure.insertBefore(at, first || null);
+  }
+  let dv = [...at.children].find((c) => c.nodeName === "divisions");
+  if (!dv) { dv = doc.createElement("divisions"); at.insertBefore(dv, at.firstChild); }
+  dv.textContent = String(value);
 }
