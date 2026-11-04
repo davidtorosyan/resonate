@@ -69,9 +69,18 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
   let restPending = false;
   let measureStart = 0;
 
+  // Measures that start a new system or page (the <print> marks usually sit in the first part).
+  const lineStarts = new Set();
+  for (const part of new Set([parts[0], best.part])) {
+    for (const m of part.querySelectorAll(':scope > measure')) {
+      if (m.querySelector(':scope > print[new-system="yes"], :scope > print[new-page="yes"]')) lineStarts.add(m.getAttribute("number"));
+    }
+  }
+
   for (const measure of best.part.querySelectorAll(":scope > measure")) {
     const mNum = measure.getAttribute("number");
     measures.push(measureStart);
+    let lineStart = lineStarts.has(mNum); // until this measure's first melody note
     // Track the position across every voice (backup/forward) so the
     // measure's length — and so every note's onset — is right.
     let pos = 0, maxPos = 0, lastStart = 0;
@@ -149,8 +158,21 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
       if (tieTypes.includes("stop") && last && last.midi === midi && last.tieOpen) {
         last.dur += dur;
         last.tieOpen = tieTypes.includes("start");
+        lineStart = false;
         continue;
       }
+      // A tie split by a line or page break is often lost by sheet-music recognition
+      // (Audiveris doesn't join the two halves of the curve across pages): the line's
+      // first note then repeats the last sung note, with no syllable of its own and no
+      // rest between. Treat that as the tie it almost always is.
+      if (lineStart && last && last.midi === midi && !restPending && !Object.keys(verses).length &&
+          Object.keys(last.verses).length && Math.abs(last.onset + last.dur - onset) < 1e-6) {
+        last.dur += dur;
+        last.tieOpen = tieTypes.includes("start");
+        lineStart = false;
+        continue;
+      }
+      lineStart = false;
       notes.push({ midi, onset, dur, measure: mNum, verses, restBefore: restPending, tieOpen: tieTypes.includes("start") });
       restPending = false;
     }
