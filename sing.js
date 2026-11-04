@@ -8,6 +8,7 @@ import { openMic, ANALYSIS_LAG } from "./pitch.js";
 import { startCapture, playVoice } from "./capture.js";
 import { loadPiano, pianoReady, playPiano, playClick } from "./piano.js";
 import { listSongs, getSong, addSong, removeSong, persistent } from "./library.js";
+import { fixOmrScore } from "./omr/fixscore.js";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -168,10 +169,25 @@ async function selectSong(id) {
     }
     const song = await getSong(id);
     if (!song) throw new Error("that song is no longer saved");
-    return setScore(parseMusicXml(song.xml, song.title));
+    return setScore(parseMusicXml(cleanXml(song.xml), song.title));
   } catch (err) {
     console.error(err);
     showMsg(`Couldn't load song: ${err.message}`, "error");
+  }
+}
+
+// Songs converted from PDF (Audiveris) get the OMR clean-ups again on load, so songs saved by an
+// older version benefit from newer fixes without converting again (the clean-ups leave an
+// already-clean score unchanged).
+function cleanXml(xml) {
+  if (!/<software>\s*Audiveris/.test(xml.slice(0, 4000))) return xml;
+  try {
+    const { xml: fixed, changes } = fixOmrScore(xml);
+    if (changes.length) console.info("OMR clean-ups on load:", changes);
+    return fixed;
+  } catch (err) {
+    console.warn("OMR clean-ups failed", err);
+    return xml;
   }
 }
 
@@ -927,7 +943,8 @@ saveBtn.addEventListener("click", async () => {
     } else {
       const song = await getSong(id);
       if (!song) throw new Error("that song is no longer saved");
-      ({ xml, title } = song);
+      xml = cleanXml(song.xml);
+      title = song.title;
     }
   } catch (err) {
     return showMsg(`Couldn't read the song: ${err.message}`, "error");
