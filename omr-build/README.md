@@ -22,6 +22,13 @@ too. Verified natively: same MusicXML as the Java 25 build.
 which initializes the AWT toolkit; inside a Web Worker CheerpJ has no display, so that crashed. They now only ask
 when a GUI exists (`OMR.gui != null`).
 
+`0004` — **Lyrics with extender lines.** Not browser-specific: a fix to Audiveris itself. OCR reads a melisma
+extender (`pain____`) as a very wide word, whose width made the computed font size huge, and `TextLine` then
+threw away the *whole* OCR line before lyrics were built (half the syllables of the test score). Now dash-only
+words skip the font-size check, a glued dash run is not counted in a word's font size, other oversized words
+(slur pieces read as letters) are dropped instead of their line, and a dash on the syllables' baseline becomes an
+extender instead of a hyphen. Test score: lyric syllables 44% → 87%, notes unchanged.
+
 ## StripVolatile (applied to every jar)
 
 CheerpJ's runtime lacks the `Unsafe` natives behind *reflective* access to `volatile` (and, once made

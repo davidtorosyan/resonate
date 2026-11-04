@@ -1,0 +1,450 @@
+From 56d3d733d1112310ed67c153a933635a994b77e1 Mon Sep 17 00:00:00 2001
+From: Resonate web port <dave.torosyan@gmail.com>
+Date: Wed, 4 Nov 2026 04:14:40 +0000
+Subject: [PATCH 4/4] Keep lyric lines that contain extender lines (melisma
+ underscores)
+
+OCR reads a lyric extender line ("pain____") as one wide word or as a
+word glued to the syllable. Its width made OmrFont.computeSize report a
+huge font, TextLine.checkValidity then rejected the WHOLE raw OCR line
+before lyrics were built, and every syllable on that line was lost.
+
+- TextWord: dash-only words (-, _, en/em dash) are recognized; the font
+  of a word with a glued leading/trailing dash run is measured on its
+  core characters only.
+- TextLine: dash-only words are exempt from the font-size check; other
+  too-big words (slur or tie pieces read as letters) are dropped from the
+  line instead of the line itself, as long as at least 3 text words
+  remain and at most 25% of the words are dropped.
+- LyricItemInter: a one-char dash sitting on the baseline of the
+  neighboring syllables is an extender (Extension), not a hyphen (mid
+  x-height); a syllable followed by an extender is anchored a quarter of
+  its width from its left side, since melisma syllables are left-aligned.
+
+Measured on a 6-page pop vocal score: lyric syllables recognized 44% ->
+87%, notes/pitch/rhythm unchanged; synthetic hymn/folk scores unchanged
+or better.
+---
+ .../omr/sig/inter/LyricItemInter.java         | 114 +++++++++++++++++
+ .../java/org/audiveris/omr/text/TextLine.java |  64 ++++++++--
+ .../java/org/audiveris/omr/text/TextWord.java | 116 +++++++++++++++++-
+ 3 files changed, 280 insertions(+), 14 deletions(-)
+
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/LyricItemInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/LyricItemInter.java
+index e6e3d7c..a44f8fb 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/LyricItemInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/LyricItemInter.java
+@@ -140,6 +140,10 @@ public class LyricItemInter
+         super(textWord, Shape.LYRICS);
+ 
+         itemKind = inferItemKind(value);
++
++        if ((itemKind == LyricItemKind.Hyphen) && isExtensionLine(textWord)) {
++            itemKind = LyricItemKind.Extension;
++        }
+     }
+ 
+     /**
+@@ -291,6 +295,14 @@ public class LyricItemInter
+      */
+     private double getReferenceAbscissa ()
+     {
++        // A syllable followed by an extender line (melisma) is usually left-aligned with its
++        // note rather than centered on it, so we shift the reference towards the item left side.
++        if (isFollowedByExtension()) {
++            final Rectangle box = getBounds();
++
++            return box.x + (box.width / 4.0);
++        }
++
+         return getCenter().x;
+     }
+ 
+@@ -745,6 +757,100 @@ public class LyricItemInter
+         }
+     }
+ 
++    //-----------------//
++    // isExtensionLine //
++    //-----------------//
++    /**
++     * Check whether the provided one-char dash word is an extender line rather than a hyphen.
++     * <p>
++     * OCR reads both as '-', '_', en dash or em dash. But a hyphen lies around mid x-height,
++     * while an extender line lies on the baseline of the neighboring words.
++     *
++     * @param word the dash word
++     * @return true if word looks like an extender line
++     */
++    private static boolean isExtensionLine (TextWord word)
++    {
++        final Rectangle box = word.getBounds();
++
++        if ((box == null) || (word.getSheet() == null) || (word.getSheet().getScale() == null)) {
++            return false;
++        }
++
++        final Scale scale = word.getSheet().getScale();
++
++        // Baseline of nearest words with letters or digits, on left and on right
++        TextWord left = null;
++        TextWord right = null;
++
++        if (word.getTextLine() != null) {
++            final double xMid = box.getCenterX();
++
++            for (TextWord w : word.getTextLine().getWords()) {
++                if ((w == word) || (w.getBaseline() == null) || (w.getBounds() == null)
++                        || w.getValue().codePoints().noneMatch(Character::isLetterOrDigit)) {
++                    continue;
++                }
++
++                final Rectangle wb = w.getBounds();
++
++                if (wb.getCenterX() < xMid) {
++                    if ((left == null) || (wb.x > left.getBounds().x)) {
++                        left = w;
++                    }
++                } else if ((right == null) || (wb.x < right.getBounds().x)) {
++                    right = w;
++                }
++            }
++        }
++
++        final double baseY;
++
++        if ((left != null) || (right != null)) {
++            baseY = (left == null) ? right.getBaseline().getY1()
++                    : ((right == null) ? left.getBaseline().getY2()
++                            : (left.getBaseline().getY2() + right.getBaseline().getY1()) / 2);
++        } else {
++            // No text around, use dash own baseline but require some length
++            final Line2D base = word.getBaseline();
++
++            if ((base == null) || (box.width < scale.toPixels(constants.minExtensionWidth))) {
++                return false;
++            }
++
++            baseY = (base.getY1() + base.getY2()) / 2;
++        }
++
++        final double rise = baseY - (box.y + box.height - 1); // Height of dash bottom above base
++
++        return rise <= scale.toPixelsDouble(constants.maxExtensionRise);
++    }
++
++    //-----------------------//
++    // isFollowedByExtension //
++    //-----------------------//
++    /**
++     * Report whether this syllable is directly followed by an extension item in its line.
++     *
++     * @return true if so
++     */
++    private boolean isFollowedByExtension ()
++    {
++        if ((itemKind != LyricItemKind.Syllable) || (getEnsemble() == null)) {
++            return false;
++        }
++
++        final List<? extends Inter> items = getEnsemble().getMembers();
++        final int index = items.indexOf(this);
++
++        if ((index == -1) || (index == (items.size() - 1))) {
++            return false;
++        }
++
++        return (items.get(index + 1) instanceof LyricItemInter next)
++                && (next.itemKind == LyricItemKind.Extension);
++    }
++
+     //-------------//
+     // isSeparator //
+     //-------------//
+@@ -770,6 +876,14 @@ public class LyricItemInter
+         private final Scale.Fraction maxItemDx = new Scale.Fraction(
+                 3,
+                 "Maximum horizontal distance between a note and its lyric item");
++
++        private final Scale.Fraction minExtensionWidth = new Scale.Fraction(
++                0.8,
++                "Minimum width for an isolated extender line (hyphens are shorter)");
++
++        private final Scale.Fraction maxExtensionRise = new Scale.Fraction(
++                0.2,
++                "Maximum height of extender line above baseline (hyphens are higher)");
+     }
+ 
+     //~ Enumerations -------------------------------------------------------------------------------
+diff --git a/app/src/main/java/org/audiveris/omr/text/TextLine.java b/app/src/main/java/org/audiveris/omr/text/TextLine.java
+index 57578bf..4ac2349 100644
+--- a/app/src/main/java/org/audiveris/omr/text/TextLine.java
++++ b/app/src/main/java/org/audiveris/omr/text/TextLine.java
+@@ -189,8 +189,22 @@ public class TextLine
+         }
+ 
+         // Check font size
+-        if (!isValidFontSize(inSheetHeader)) {
+-            return "invalid-font-size";
++        final List<TextWord> tooBig = getTooBigWords(inSheetHeader);
++
++        if (!tooBig.isEmpty()) {
++            // A few oversized words (such as a slur or tie piece read as a letter) should not
++            // kill a line otherwise made of enough valid words: we just discard these words.
++            final long textCount = getWords().stream().filter(
++                    w -> !tooBig.contains(w) && hasLetterOrDigit(w)).count();
++
++            if ((textCount < constants.minTextWordsToKeepLine.getValue())
++                    || (tooBig.size() > (constants.maxTooBigWordRatio.getValue()
++                            * getWords().size()))) {
++                return "invalid-font-size";
++            }
++
++            logger.debug("   removed too big words {} from {}", tooBig, this);
++            removeWords(tooBig);
+         }
+ 
+         return null; // OK
+@@ -600,39 +614,54 @@ public class TextLine
+         return processed;
+     }
+ 
+-    //-----------------//
+-    // isValidFontSize //
+-    //-----------------//
++    //----------------//
++    // getTooBigWords //
++    //----------------//
+     /**
+-     * Check whether all words in the provided line have a valid font size.
++     * Report the words in this line that have a too big font size.
+      * <p>
+-     * We just check if no word has a too big font size.
++     * Dash-only words (lyrics hyphens and extender lines, which can be very long) say nothing
++     * about font size, so they are not checked if the line contains some letter or digit.
+      *
+      * @param inSheetHeader true if line is located above sheet first staff, to allow title font
+-     * @return true if valid
++     * @return the too big words, perhaps empty
+      */
+-    private boolean isValidFontSize (boolean inSheetHeader)
++    private List<TextWord> getTooBigWords (boolean inSheetHeader)
+     {
+         // Heuristic: Allow large font only before sheet first staff
+         final Scale scale = sheet.getScale();
+         final int maxFontSize = inSheetHeader ? scale.toPixels(constants.maxTitleFontSize)
+                 : scale.toPixels(constants.maxFontSize);
++        final boolean hasText = getWords().stream().anyMatch(TextLine::hasLetterOrDigit);
++        final List<TextWord> tooBig = new ArrayList<>();
+ 
+         for (TextWord word : getWords()) {
++            if (hasText && word.isDashOnly()) {
++                continue;
++            }
++
+             final FontInfo fontInfo = word.getFontInfo();
+ 
+             if (fontInfo.pointSize > maxFontSize) {
+                 logger.debug(
+-                        "   too big font {} vs {} on {}",
++                        "   too big font {} vs {} for {} on {}",
+                         fontInfo.pointSize,
+                         maxFontSize,
++                        word.getValue(),
+                         this);
+-
+-                return false;
++                tooBig.add(word);
+             }
+         }
+ 
+-        return true;
++        return tooBig;
++    }
++
++    //------------------//
++    // hasLetterOrDigit //
++    //------------------//
++    private static boolean hasLetterOrDigit (TextWord word)
++    {
++        return word.getValue().codePoints().anyMatch(Character::isLetterOrDigit);
+     }
+ 
+     //--------------------//
+@@ -904,6 +933,15 @@ public class TextLine
+     private static class Constants
+             extends ConstantSet
+     {
++        private final Constant.Integer minTextWordsToKeepLine = new Constant.Integer(
++                "words",
++                3,
++                "Minimum count of valid text words to keep a line with too big words");
++
++        private final Constant.Ratio maxTooBigWordRatio = new Constant.Ratio(
++                0.25,
++                "Maximum ratio of too big words to keep a line (without them)");
++
+         private final Scale.Fraction maxFontSize = new Scale.Fraction(
+                 5.0,
+                 "Maximum font size with respect to interline");
+diff --git a/app/src/main/java/org/audiveris/omr/text/TextWord.java b/app/src/main/java/org/audiveris/omr/text/TextWord.java
+index 149f6c5..df39e9f 100644
+--- a/app/src/main/java/org/audiveris/omr/text/TextWord.java
++++ b/app/src/main/java/org/audiveris/omr/text/TextWord.java
+@@ -70,6 +70,9 @@ public class TextWord
+     /** Abnormal characters. */
+     private static final int[] ABNORMAL_CHARS = new int[] { 0x005C }; // \
+ 
++    /** Dash-like characters: hyphen, low line, en dash, em dash. */
++    private static final String DASH_CHARS = "-_\u2013\u2014";
++
+     /** Regexp for one-letter words. */
+     private static final Pattern ONE_LETTER_WORDS = compileRegexp(constants.oneLetterWordRegexp);
+ 
+@@ -144,6 +147,10 @@ public class TextWord
+         for (TextChar ch : chars) {
+             this.chars.add(ch);
+         }
++
++        if ((fontInfo != null) && (getCoreChars() != null)) {
++            this.fontInfo = measureFont(fontInfo);
++        }
+     }
+ 
+     /**
+@@ -249,10 +256,36 @@ public class TextWord
+      */
+     public void adjustFont ()
+     {
+-        fontInfo = fontInfo.adjustedTextFont(value, getBounds());
++        fontInfo = measureFont(fontInfo);
+         textLine.invalidateCache();
+     }
+ 
++    //-------------//
++    // measureFont //
++    //-------------//
++    /**
++     * Report the font adjusted to word value and bounds.
++     * <p>
++     * A lyrics extender line glued to a word (as in "pain_") is not text:
++     * its width would inflate the computed font size, so we measure the word without it.
++     *
++     * @param info the font info to adjust
++     * @return the adjusted font info
++     */
++    private FontInfo measureFont (FontInfo info)
++    {
++        final List<TextChar> core = getCoreChars();
++
++        if (core != null) {
++            final StringBuilder sb = new StringBuilder();
++            core.forEach(ch -> sb.append(ch.getValue()));
++
++            return info.adjustedTextFont(sb.toString(), boundsOf(core));
++        }
++
++        return info.adjustedTextFont(value, getBounds());
++    }
++
+     //---------------//
+     // checkValidity //
+     //---------------//
+@@ -515,6 +548,47 @@ public class TextWord
+         return subWords;
+     }
+ 
++    //--------------//
++    // getCoreChars //
++    //--------------//
++    /**
++     * Report the word chars without any leading or trailing dash-like chars,
++     * if the word has such chars as well as other chars.
++     *
++     * @return the core chars, or null if there is nothing to strip or nothing would remain
++     */
++    private List<TextChar> getCoreChars ()
++    {
++        if (chars.isEmpty()) {
++            return null;
++        }
++
++        // Check chars are consistent with word value
++        final StringBuilder sb = new StringBuilder();
++        chars.forEach(ch -> sb.append(ch.getValue()));
++
++        if (!sb.toString().equals(value)) {
++            return null;
++        }
++
++        int first = 0;
++        int last = chars.size() - 1;
++
++        while ((first <= last) && isDash(chars.get(first).getValue())) {
++            first++;
++        }
++
++        while ((last >= first) && isDash(chars.get(last).getValue())) {
++            last--;
++        }
++
++        if ((first > last) || ((first == 0) && (last == chars.size() - 1))) {
++            return null;
++        }
++
++        return chars.subList(first, last + 1);
++    }
++
+     //-------------//
+     // getTextLine //
+     //-------------//
+@@ -582,6 +656,46 @@ public class TextWord
+         return DASHED_WORDS.matcher(value).matches();
+     }
+ 
++    //------------//
++    // isDashOnly //
++    //------------//
++    /**
++     * Report whether the word is made of dash-like characters only
++     * (hyphen, low line, en dash, em dash), such as a lyrics hyphen or extender line.
++     * <p>
++     * The width of such a word is not related to any font size.
++     *
++     * @return true if dash-only
++     */
++    public boolean isDashOnly ()
++    {
++        return isDash(value);
++    }
++
++    //--------//
++    // isDash //
++    //--------//
++    /**
++     * Report whether the provided string is not empty and made of dash-like chars only.
++     *
++     * @param str the string to check
++     * @return true if so
++     */
++    public static boolean isDash (String str)
++    {
++        if ((str == null) || str.isEmpty()) {
++            return false;
++        }
++
++        for (int i = 0; i < str.length(); i++) {
++            if (DASH_CHARS.indexOf(str.charAt(i)) == -1) {
++                return false;
++            }
++        }
++
++        return true;
++    }
++
+     /**
+      * @param adjusted the adjusted to set
+      */
+-- 
+2.43.0
+
