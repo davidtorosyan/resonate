@@ -1,7 +1,7 @@
 From 7298ef69f04650089e2401a5829e170547036afa Mon Sep 17 00:00:00 2001
 From: Resonate web port <dave.torosyan@gmail.com>
 Date: Wed, 4 Nov 2026 06:00:35 +0000
-Subject: [PATCH 5/6] Batch robustness: export the sheets that succeeded, fail
+Subject: [PATCH 5/7] Batch robustness: export the sheets that succeeded, fail
  loudly on an unusable music font
 
 A browser user's conversion failed on every sheet at HEADERS with

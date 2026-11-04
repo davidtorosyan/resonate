@@ -1,7 +1,7 @@
 From 191bcd6d8327266d10bd7f6a5672a4440b8371e7 Mon Sep 17 00:00:00 2001
 From: Resonate web port <dave.torosyan@gmail.com>
 Date: Wed, 4 Nov 2026 02:07:40 +0000
-Subject: [PATCH 2/6] Run in the browser (CheerpJ): WebOCR via JS bridge, HOME
+Subject: [PATCH 2/7] Run in the browser (CheerpJ): WebOCR via JS bridge, HOME
  fallback, web-safe cached pool
 
 ---

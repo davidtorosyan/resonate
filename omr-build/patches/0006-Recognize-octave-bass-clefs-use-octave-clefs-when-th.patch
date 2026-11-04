@@ -1,7 +1,7 @@
 From 4edd40b91134e6799b9e1bb71afecfa5bd01e1ab Mon Sep 17 00:00:00 2001
 From: Resonate web port <dave.torosyan@gmail.com>
 Date: Wed, 4 Nov 2026 18:28:56 +0000
-Subject: [PATCH 6/6] Recognize octave bass clefs; use octave clefs when the 8
+Subject: [PATCH 6/7] Recognize octave bass clefs; use octave clefs when the 8
  is there
 
 Vocal scores for low voices write the bass part with a bass clef that has

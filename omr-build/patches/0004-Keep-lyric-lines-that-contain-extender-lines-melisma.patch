@@ -1,7 +1,7 @@
 From 56d3d733d1112310ed67c153a933635a994b77e1 Mon Sep 17 00:00:00 2001
 From: Resonate web port <dave.torosyan@gmail.com>
 Date: Wed, 4 Nov 2026 04:14:40 +0000
-Subject: [PATCH 4/6] Keep lyric lines that contain extender lines (melisma
+Subject: [PATCH 4/7] Keep lyric lines that contain extender lines (melisma
  underscores)
 
 OCR reads a lyric extender line ("pain____") as one wide word or as a

@@ -47,6 +47,12 @@ chosen G or F clef for a glyph that extends at least half an interline past it (
 plain clef's grade. Test scan: 20 of 21 low-voice staves (the 21st's 8 is merged with the barline; the page side fixes
 it). Other test scores: identical output.
 
+`0007` — **Unmarked tuplets.** Audiveris only knows "3" and "6" tuplet signs. In a quadruplet (four quarters in 3/4 under a
+bracketed 4) the 4th chord got no time slot and was left out of the export with its lyric syllable. A chord that comes
+after a same-staff voice of chords of its duration, filling the measure exactly, is now appended to that voice; the
+measure ends one chord too long, and the page side (`public/omr/fixscore.js`) turns it into a 4:3 tuplet. Only chords that
+used to be dropped are affected.
+
 `build.sh` applies the patches with `git am --keep-cr`: the upstream sources are CRLF.
 
 ## StripVolatile (applied to every jar)

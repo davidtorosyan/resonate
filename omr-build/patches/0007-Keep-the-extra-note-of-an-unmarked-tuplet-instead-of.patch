@@ -1,0 +1,123 @@
+From ee4efe43e0f036c240b63c57f6fcf666dfa8f666 Mon Sep 17 00:00:00 2001
+From: Resonate web port <dave.torosyan@gmail.com>
+Date: Wed, 4 Nov 2026 19:19:58 +0000
+Subject: [PATCH 7/7] Keep the extra note of an unmarked tuplet instead of
+ dropping it
+
+Audiveris only knows "3" and "6" tuplet signs. A quadruplet in 3/4 (four
+quarters under a bracketed 4, e.g. "I'm a bu-sy" in "Hey, Little
+Songbird") overflows its measure, the 4th chord gets no time slot
+("No timeOffset for ..."), and it was left out of the export along with
+its lyric syllable.
+
+When such a chord comes after, on the same staff, a voice made only of
+chords of its duration that fills the measure exactly, it is now
+appended to that voice (logged "kept after full voice#N ... unmarked
+tuplet?"). The measure then holds one chord too many, which a consumer
+can read as an unmarked tuplet (Resonate turns it into 4:3).
+
+Only chords that used to be dropped are affected: on the test scan, the
+5 dropped vocal notes are kept; scores with no such chords export
+exactly as before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ETLv1TPifmmSkv1DUf9mXN
+---
+ .../omr/sheet/rhythm/MeasureRhythm.java       | 74 +++++++++++++++++++
+ 1 file changed, 74 insertions(+)
+
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/rhythm/MeasureRhythm.java b/app/src/main/java/org/audiveris/omr/sheet/rhythm/MeasureRhythm.java
+index c3bae0d..d31593d 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/rhythm/MeasureRhythm.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/rhythm/MeasureRhythm.java
+@@ -1041,6 +1041,10 @@ public class MeasureRhythm
+                                 }
+                             }
+ 
++                            if (appendToFullVoice(ch, voice)) {
++                                continue;
++                            }
++
+                             logger.info("{} No timeOffset for {}", measure, ch);
+                         }
+                     }
+@@ -1048,6 +1052,76 @@ public class MeasureRhythm
+             }
+         }
+ 
++        //-------------------//
++        // appendToFullVoice //
++        //-------------------//
++        /**
++         * Try to keep a chord that fits no time slot because its measure is already full.
++         * <p>
++         * Typical case: a quadruplet (4 quarters in a 3/4 measure) whose "4" sign is not
++         * recognized (only 3 and 6 tuplets are supported): the 4th chord gets no time slot and
++         * used to be dropped, with its lyric. If the chord comes after, on the same staff, a voice
++         * made only of chords of its duration that fills the measure exactly, it is appended to
++         * that voice. The measure then holds one chord too many, which a consumer can read as an
++         * unmarked tuplet.
++         *
++         * @param ch       the chord without time offset
++         * @param newVoice the voice just created for it
++         * @return true if appended
++         */
++        private boolean appendToFullVoice (AbstractChordInter ch,
++                                           Voice newVoice)
++        {
++            final Rational duration = ch.getDuration();
++            final Rational expected = measure.getStack().getExpectedDuration();
++
++            if ((duration == null) || (expected == null)) {
++                return false;
++            }
++
++            for (Voice voice : measure.getVoices()) {
++                final List<AbstractChordInter> chords = voice.getChords();
++
++                if ((voice == newVoice) || (chords == null) || chords.isEmpty()) {
++                    continue;
++                }
++
++                final AbstractChordInter last = chords.get(chords.size() - 1);
++
++                if ((last.getTopStaff() != ch.getTopStaff())
++                        || (last.getCenter().x >= ch.getCenter().x)
++                        || !expected.equals(last.getEndTime())) {
++                    continue;
++                }
++
++                boolean sameDurations = true;
++
++                for (AbstractChordInter c : chords) {
++                    if (!duration.equals(c.getDuration())) {
++                        sameDurations = false;
++
++                        break;
++                    }
++                }
++
++                if (sameDurations) {
++                    measure.removeVoices(Collections.singleton(newVoice));
++                    ch.setVoice(voice);
++                    ch.setTimeOffset(expected);
++                    logger.info(
++                            "{} {} kept after full voice#{} ({} chords): unmarked tuplet?",
++                            measure,
++                            ch,
++                            voice.getId(),
++                            chords.size());
++
++                    return true;
++                }
++            }
++
++            return false;
++        }
++
+         //------------//
+         // deltaRatio //
+         //------------//
+-- 
+2.43.0
+
