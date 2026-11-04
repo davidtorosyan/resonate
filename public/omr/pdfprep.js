@@ -16,10 +16,17 @@ async function loadPdfjs(base) {
   return pdfjs;
 }
 
-// Render every page; returns [{ index, width, height, gray: Uint8Array, staves }].
+// Render every page; returns [{ index, width, height, gray: Uint8Array, staves, blank }].
 export async function renderPdf(data, { pdfjsBase, dpi = DPI, onPage } = {}) {
   const lib = await loadPdfjs(pdfjsBase);
-  const task = lib.getDocument({ data });
+  // Decoders for scanned pages (JBIG2, JPEG 2000) and color profiles are WebAssembly
+  // modules pdf.js loads on demand; standard fonts are for PDFs that don't embed them.
+  const task = lib.getDocument({
+    data,
+    wasmUrl: `${pdfjsBase}/wasm/`,
+    standardFontDataUrl: `${pdfjsBase}/standard_fonts/`,
+    iccUrl: `${pdfjsBase}/iccs/`,
+  });
   const doc = await task.promise;
   const pages = [];
   for (let i = 1; i <= doc.numPages; i++) {
@@ -41,9 +48,14 @@ export async function renderPdf(data, { pdfjsBase, dpi = DPI, onPage } = {}) {
       gray[p] = rgba[q] * 299 + rgba[q + 1] * 587 + rgba[q + 2] * 114 < 200000 ? 0 : 255;
     }
     page.cleanup();
+    canvas.width = canvas.height = 0; // free the 35 MB backing store now (iOS caps total canvas memory)
     const staves = countStaves(gray, width, height);
-    pages.push({ index: i, width, height, gray, staves });
-    onPage?.(i, doc.numPages, staves);
+    let ink = 0;
+    for (let p = 0; p < gray.length; p += 97) if (!gray[p]) ink++;
+    // < 0.5% ink: (almost) nothing drawn — e.g. an undecodable scan under a footer line
+    const blank = ink * 97 < gray.length * 0.005;
+    pages.push({ index: i, width, height, gray, staves, blank });
+    onPage?.(i, doc.numPages, staves, blank);
   }
   await task.destroy();
   return pages;
@@ -86,6 +98,8 @@ export function countStaves(gray, width, height) {
 }
 
 // Multi-page TIFF: little-endian, 8-bit gray (BlackIsZero), uncompressed, one strip per page.
+// Each page's pixels are released (page.gray = null) once copied, so the peak memory is about
+// one TIFF rather than pages + TIFF (~9 MB per page at 300 dpi; it matters on phones).
 export function buildTiff(pages, dpi = DPI) {
   const TAGS = 13;
   const ifdSize = 2 + TAGS * 12 + 4;
@@ -132,6 +146,7 @@ export function buildTiff(pages, dpi = DPI) {
     dv.setUint32(rational, dpi, true); dv.setUint32(rational + 4, 1, true);
     dv.setUint32(rational + 8, dpi, true); dv.setUint32(rational + 12, 1, true);
     u8.set(p.gray, data);
+    p.gray = null;
     off = next;
   });
   return u8;

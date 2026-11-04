@@ -10,6 +10,8 @@ Used by `pdf-import.html`. Everything runs client-side:
 | `tessdata/eng.traineddata.gz` | Tesseract English model, tessdata 4.1.0 (legacy + LSTM) | Apache-2.0 |
 | `fonts/Bravura.otf` | [Bravura](https://github.com/steinbergmedia/bravura) music font (Steinberg), the copy Audiveris ships in `res/`; handed to Java in memory | SIL Open Font License 1.1 (license text embedded in the font) |
 | `pdfjs/` | [pdf.js](https://github.com/mozilla/pdf.js) 6.5.438 | Apache-2.0 |
+| `pdfjs/wasm/` | pdf.js's image decoders for scanned PDFs, loaded on demand: JBIG2 (from PDFium), JPEG 2000 (OpenJPEG), color profiles (qcms), with JS fallbacks | BSD-3-Clause (PDFium), BSD-2-Clause (OpenJPEG), MIT (qcms); license files alongside |
+| `pdfjs/standard_fonts/`, `pdfjs/iccs/` | pdf.js's substitutes for PDF fonts that aren't embedded (Foxit, Liberation) and its default CMYK profile | BSD-3-Clause (Foxit/PDFium), SIL OFL 1.1 (Liberation), CC0 (ICC); license files alongside |
 | `omr.js`, `omr-worker.js`, `ocr-engine.js`, `pdfprep.js` | glue (this repo) | — |
 
 **Source for the Audiveris build** (AGPL §13): upstream commit `7a36078` plus
