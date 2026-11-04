@@ -23,6 +23,7 @@ const songMsgEl = $("song-msg");
 const openFileBtn = $("open-file");
 const openLinkBtn = $("open-link");
 const removeBtn = $("remove-song");
+const saveBtn = $("save-song");
 const mySongsEl = $("my-songs");
 const dropEl = $("drop");
 const lyricNowEl = $("lyric-now");
@@ -661,7 +662,7 @@ function updateButtons() {
     b.disabled = b.dataset.mode !== "melody" && !take?.voice;
     b.dataset.active = b.dataset.mode === playMode ? "true" : "false";
   }
-  for (const el of [songSelect, verseSelect, keySelect, tempoSelect, guideSelect, openFileBtn, openLinkBtn, removeBtn]) el.disabled = kind === "sing";
+  for (const el of [songSelect, verseSelect, keySelect, tempoSelect, guideSelect, openFileBtn, openLinkBtn, removeBtn, saveBtn]) el.disabled = kind === "sing";
   canvas.dataset.pannable = session ? "false" : "true";
 }
 
@@ -911,6 +912,43 @@ removeBtn.addEventListener("click", async () => {
   await refreshLibrary();
   showMsg(`Removed “${title}”.`);
   await selectSong("amazing-grace");
+});
+
+// Download the current song's MusicXML (as stored: for PDF imports, the cleaned-up score).
+// On phones the share sheet is friendlier (Save to Files, AirDrop, another app); elsewhere a
+// plain download.
+saveBtn.addEventListener("click", async () => {
+  const id = songSelect.value;
+  let xml, title;
+  try {
+    if (SAMPLES[id]) {
+      xml = await (await fetch(SAMPLES[id].url)).text();
+      title = SAMPLES[id].title;
+    } else {
+      const song = await getSong(id);
+      if (!song) throw new Error("that song is no longer saved");
+      ({ xml, title } = song);
+    }
+  } catch (err) {
+    return showMsg(`Couldn't read the song: ${err.message}`, "error");
+  }
+  const name = `${(title || "song").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim() || "song"}.musicxml`;
+  const file = new File([xml], name, { type: "application/xml" });
+  if (matchMedia("(pointer: coarse)").matches && navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: name });
+      return;
+    } catch (err) {
+      if (err.name === "AbortError") return; // closed the share sheet
+    }
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(file);
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 });
 
 // Drag and drop a file anywhere on the page (desktop).
