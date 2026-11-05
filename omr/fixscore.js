@@ -12,9 +12,40 @@ export function fixOmrScore(xml, log = []) {
   const changes = [];
   foldSparseVerses(doc, changes);
   restoreTempo(doc, log, changes);
+  unifyKeySignatures(doc, changes);
   unifyOctaveClefs(doc, changes);
   markUnmarkedTuplets(doc, changes);
   return { xml: changes.length ? new XMLSerializer().serializeToString(doc) : xml, changes };
+}
+
+// Several scores ("movements") Audiveris exported from one PDF, joined in order into one:
+// each part gets the next score's measures for the same part id (else the same position),
+// renumbered; a part missing from a score gets empty measures so the parts stay aligned.
+// Credits, part list and defaults are the first score's. A song is one piece; Audiveris
+// starts a new movement at an indented system (a Coda), which the engine now turns off,
+// but music must never be dropped if it happens anyway.
+export function joinMovements(xmls) {
+  if (xmls.length < 2) return xmls[0];
+  const docs = xmls.map((x) => new DOMParser().parseFromString(x, "application/xml"));
+  if (docs.some((d) => d.querySelector("parsererror"))) return xmls[0];
+  const base = docs[0];
+  const measuresOf = (part) => [...part.children].filter((c) => c.nodeName === "measure");
+  const baseParts = [...base.querySelectorAll("score-partwise > part")];
+  for (const d of docs.slice(1)) {
+    const parts = [...d.querySelectorAll("score-partwise > part")];
+    const add = Math.max(0, ...parts.map((p) => measuresOf(p).length));
+    baseParts.forEach((bp, i) => {
+      const src = parts.find((p) => p.getAttribute("id") === bp.getAttribute("id")) || parts[i];
+      const ms = src ? measuresOf(src) : [];
+      let n = measuresOf(bp).length;
+      for (let k = 0; k < add; k++) {
+        const m = ms[k] ? base.importNode(ms[k], true) : base.createElement("measure");
+        m.setAttribute("number", String(++n));
+        bp.append(m);
+      }
+    });
+  }
+  return new XMLSerializer().serializeToString(base);
 }
 
 // Lyric lines that hold only a few syllables are OCR artifacts:
@@ -77,6 +108,123 @@ function restoreTempo(doc, log, changes) {
   const first = measure.querySelector(":scope > note, :scope > backup, :scope > forward, :scope > direction");
   measure.insertBefore(direction, first);
   changes.push(`tempo ♩ = ${bpm} restored from the engine log (the note symbol wasn't read)`);
+}
+
+// Missed key signatures. On small staves Audiveris often doesn't find a system's key
+// signature (Wichita Lineman, in F: the voice had none for its first 12 measures and the
+// key flipped between F and C every system, in voice and piano alike), and then writes
+// that system in C — every B♭ becomes a B. A key reading of "none" is the usual miss, so
+// when the readings (one per part per system) are mostly one key and parts disagree
+// within a system, each system gets the key its staves read (majority of the non-zero
+// readings; none → the previous system's, the first ones → the first key read), and the
+// notes of re-keyed measures are respelled: no printed accidental → the key's alteration;
+// printed accidentals, notes after one in the same measure, and tied continuations keep
+// theirs. Scores whose parts agree system by system are left alone (real key changes).
+const KEY_SHARPS = "FCGDAEB", KEY_FLATS = "BEADGCF";
+const keyAlter = (fifths, step) =>
+  fifths > 0 && KEY_SHARPS.indexOf(step) < fifths ? 1 : fifths < 0 && KEY_FLATS.indexOf(step) < -fifths ? -1 : 0;
+
+function unifyKeySignatures(doc, changes) {
+  const kids = (el, name) => [...el.children].filter((c) => c.nodeName === name);
+  // Transposing instruments (a B♭ part) have their own key on every system: left out.
+  const parts = [...doc.querySelectorAll("score-partwise > part")]
+    .filter((p) => !p.querySelector(":scope > measure > attributes > transpose"))
+    .map((p) => kids(p, "measure"));
+  if (!parts.length || !parts[0].length) return;
+  const count = Math.min(...parts.map((m) => m.length));
+  // System starts: measure 0 and any measure (of any part) printed on a new system or page.
+  const starts = [0];
+  for (let i = 1; i < count; i++) {
+    if (parts.some((ms) => ms[i].querySelector(':scope > print[new-system="yes"], :scope > print[new-page="yes"]'))) starts.push(i);
+  }
+  const sysOf = (i) => { let s = 0; while (s + 1 < starts.length && starts[s + 1] <= i) s++; return s; };
+  const keyIn = (m) => {
+    const k = m.querySelector(":scope > attributes > key > fifths");
+    return k ? Number(k.textContent) : null;
+  };
+  // Each part's key in force at each measure, as written (none yet = 0).
+  const old = parts.map((ms) => {
+    let k = 0;
+    return ms.slice(0, count).map((m) => (k = keyIn(m) ?? k));
+  });
+  const readings = starts.map((i) => old.map((ks) => ks[i]));
+  const all = readings.flat();
+  const nonzero = all.filter((k) => k !== 0);
+  if (nonzero.length < 2 || nonzero.length < 0.25 * all.length) return; // a song in C, or a stray reading
+  const disagree = parts.length > 1
+    ? readings.some((r) => new Set(r).size > 1)
+    : readings.some((r, s) => r[0] === 0 && readings.slice(0, s).some((x) => x[0]) && readings.slice(s + 1).some((x) => x[0])) ||
+      nonzero.length >= 0.5 * all.length;
+  if (!disagree) return;
+  // Resolve each system's key.
+  const resolved = readings.map((r) => {
+    const counts = new Map();
+    for (const k of r) if (k !== 0) counts.set(k, (counts.get(k) || 0) + 1);
+    return counts.size ? [...counts].sort((a, b) => b[1] - a[1])[0][0] : null;
+  });
+  for (let s = 1; s < resolved.length; s++) if (resolved[s] === null) resolved[s] = resolved[s - 1];
+  const first = resolved.find((k) => k !== null);
+  for (let s = 0; s < resolved.length; s++) if (resolved[s] === null) resolved[s] = first;
+  const target = (i) => resolved[sysOf(i)];
+  if (old.every((ks) => ks.every((k, i) => k === target(i)))) return;
+
+  let notesFixed = 0, systemsFixed = new Set();
+  parts.forEach((ms, p) => {
+    let prevTarget = null;
+    const tieAlter = new Map(); // staff|step|octave → alter of the last tie start
+    ms.slice(0, count).forEach((m, i) => {
+      const t = target(i);
+      // Key elements: one where the resolved key starts or changes, none elsewhere.
+      for (const k of m.querySelectorAll(":scope > attributes > key")) k.remove();
+      if (t !== prevTarget) setKey(doc, m, t);
+      prevTarget = t;
+      const fix = old[p][i] !== t;
+      if (fix) systemsFixed.add(sysOf(i));
+      const carried = new Set(); // staff|step|octave with a printed accidental earlier in the measure
+      for (const n of kids(m, "note")) {
+        const pitch = kids(n, "pitch")[0];
+        if (!pitch) continue;
+        const step = kids(pitch, "step")[0]?.textContent;
+        const octave = kids(pitch, "octave")[0]?.textContent;
+        const where = `${kids(n, "staff")[0]?.textContent || "1"}|${step}|${octave}`;
+        const tied = kids(n, "tie").map((x) => x.getAttribute("type"));
+        let alterEl = kids(pitch, "alter")[0];
+        let alter = alterEl ? Number(alterEl.textContent) : 0;
+        if (kids(n, "accidental").length) carried.add(where);
+        else if (fix && !carried.has(where)) {
+          const want = tied.includes("stop") && tieAlter.has(where) ? tieAlter.get(where) : keyAlter(t, step);
+          if (want !== alter) {
+            if (!want) alterEl?.remove();
+            else {
+              if (!alterEl) { alterEl = doc.createElement("alter"); pitch.insertBefore(alterEl, kids(pitch, "octave")[0] || null); }
+              alterEl.textContent = String(want);
+            }
+            alter = want;
+            notesFixed++;
+          }
+        }
+        if (tied.includes("start")) tieAlter.set(where, alter);
+      }
+    });
+  });
+  const names = [...new Set(resolved)].map((k) => (k ? `${Math.abs(k)} ${k > 0 ? "sharp" : "flat"}${Math.abs(k) > 1 ? "s" : ""}` : "no sharps or flats"));
+  changes.push(`key signature ${names.join(" / ")}: missed on ${systemsFixed.size} of ${starts.length} systems, ${notesFixed} notes respelled`);
+}
+
+// Put <key><fifths>f</fifths></key> in a measure's <attributes> (made if needed), after
+// <divisions> as MusicXML orders them.
+function setKey(doc, measure, fifths) {
+  let at = [...measure.children].find((c) => c.nodeName === "attributes");
+  if (!at) {
+    at = doc.createElement("attributes");
+    measure.insertBefore(at, [...measure.children].find((c) => c.nodeName !== "print") || null);
+  }
+  const key = doc.createElement("key");
+  const f = doc.createElement("fifths");
+  f.textContent = String(fifths);
+  key.append(f);
+  const after = [...at.children].filter((c) => ["footnote", "level", "divisions"].includes(c.nodeName)).pop();
+  at.insertBefore(key, after ? after.nextSibling : at.firstChild);
 }
 
 // Octave clefs (a G or F clef with a small 8 below or above, e.g. the bass clef of a low voice):

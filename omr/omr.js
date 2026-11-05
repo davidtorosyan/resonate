@@ -3,7 +3,7 @@
 // WebAssembly build of Tesseract (ocr-engine.js) in the same worker.
 //
 //   const omr = await import('./omr/omr.js');
-//   const { mxl, title, log } = await omr.convertPdf(file, { onProgress });
+//   const { mxls, title, log } = await omr.convertPdf(file, { onProgress });
 //
 // The page must not run two conversions: Audiveris keeps global state, so the
 // tool page reloads itself between conversions (everything is cached by then).
@@ -53,10 +53,30 @@ function progressTracker(sheetCount, onProgress) {
   };
 }
 
+// The song's title from the PDF's own text (exact, unlike OCR): the largest line on the
+// pages up to the first one with music (a title page, then the first page's heading),
+// skipping the publisher's lines and music drawn with a font. ALL-CAPS → Title Case.
+const NOT_TITLE = /authori[sz]ed for use|musicnotes|copyright|©|\(c\)|all rights|unauthori[sz]ed|international|published|license|licence|words and music|music by|lyrics by|arranged|^from[:\s]|^by\b|^\d+$|moderately|tempo|^page\b/i;
+export function pdfTitle(pages, firstMusic) {
+  let best = null;
+  for (const p of pages) {
+    if (p.index > firstMusic) break;
+    for (const l of p.lines || []) {
+      // Words, not music: the notation itself is often drawn with a font ("{} mf", "Ï Ï").
+      if (l.text.length > 80 || !/\p{L}{3}/u.test(l.text) || !/^[\p{L}\p{N}\s'’",.!?&:()\-–—]+$/u.test(l.text) || NOT_TITLE.test(l.text)) continue;
+      if (!best || l.size > best.size) best = l;
+    }
+  }
+  if (!best) return null;
+  const t = best.text.replace(/^["“”']+|["“”']+$/g, "").trim();
+  return t === t.toUpperCase() ? t.toLowerCase().replace(/(^|[\s(-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase()) : t;
+}
+
 /**
  * Convert a PDF (File/Blob/ArrayBuffer) to MusicXML with Audiveris.
- * Returns { mxl: Uint8Array (zipped MusicXML), pages: [kept page numbers],
- *           failed: [{ sheet, page, step, reason }] (pages Audiveris gave up on; the rest is in mxl),
+ * Returns { mxls: [Uint8Array] (zipped MusicXML: one score, or several if Audiveris split the
+ *           book into movements), pages: [kept page numbers], title: the PDF's own title text or null,
+ *           failed: [{ sheet, page, step, reason }] (pages Audiveris gave up on; the rest is in mxls),
  *           log: string[] }.
  */
 export async function convertPdf(input, { onProgress, onLog } = {}) {
@@ -83,6 +103,8 @@ export async function convertPdf(input, { onProgress, onLog } = {}) {
         'send the log (Details → Copy log) so it can be fixed.'
       : 'No music staves found in this PDF — is it sheet music? Scanned pages need to be reasonably sharp.');
   }
+  const title = pdfTitle(pages, music[0].index);
+  if (title) addLog(`title from the PDF's text: ${title}`);
   const tiff = buildTiff(music);
   pages.length = 0; // free the rendered pages
 
@@ -92,11 +114,11 @@ export async function convertPdf(input, { onProgress, onLog } = {}) {
   const classpath = JARS.map((j) => `/app${new URL(`lib/${j}`, BASE).pathname}`).join(':');
   const worker = new Worker(`${BASE}omr-worker.js`);
   try {
-    const mxl = await new Promise((resolve, reject) => {
+    const mxls = await new Promise((resolve, reject) => {
       worker.onmessage = (e) => {
         const m = e.data;
         if (m.type === 'log') { addLog(m.line); track(m.line); }
-        else if (m.type === 'done') resolve(new Uint8Array(m.mxl));
+        else if (m.type === 'done') resolve(m.mxls.map((b) => new Uint8Array(b)));
         else if (m.type === 'error') reject(new Error(m.message));
       };
       worker.onerror = (e) => reject(new Error(e.message || 'the recognition engine crashed'));
@@ -105,7 +127,8 @@ export async function convertPdf(input, { onProgress, onLog } = {}) {
     const pageOf = (sheet) => music[sheet - 1]?.index ?? sheet;
     // Belt and braces: Audiveris exports nothing once its music font proved unusable.
     if (log.some((l) => /Music font \S+ unusable/.test(l))) throw new Error('music font unusable');
-    return { mxl, pages: music.map((p) => p.index), failed: failedSheets(log, pageOf), log };
+    if (mxls.length > 1) addLog(`[engine] ${mxls.length} scores exported (movements); they're joined in order`);
+    return { mxls, pages: music.map((p) => p.index), title, failed: failedSheets(log, pageOf), log };
   } catch (err) {
     throw explain(err, log, (sheet) => music[sheet - 1]?.index ?? sheet);
   } finally {
