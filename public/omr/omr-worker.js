@@ -3,7 +3,7 @@
 // Audiveris, plus the WebAssembly Tesseract it calls back into for OCR.
 //
 // in:  { type: 'run', base, classpath, tiff: ArrayBuffer, sheetStepTimeOut }
-// out: { type: 'log', line } … then { type: 'done', mxl: ArrayBuffer } | { type: 'error', message }
+// out: { type: 'log', line } … then { type: 'done', mxls: [ArrayBuffer] } | { type: 'error', message }
 
 const CHEERPJ = 'https://cjrtnc.leaningtech.com/4.2/loader.js';
 let started = false;
@@ -59,17 +59,28 @@ async function run(job) {
   importScripts(CHEERPJ);
 
   // Java's System.out/err arrive through console.log/error. Audiveris logs
-  // "Score X exported to /path.mxl" once the file is written: read it then,
-  // rather than waiting for Java to exit (parked CheerpJ threads don't wake on
-  // interrupt, so executor shutdown would sit out its grace delay).
-  let exportedPath = null, onExported;
+  // "Exporting sheet(s): [#1#2]" before writing a score and "Score X exported to
+  // /path.mxl" once it's written: read the files then, rather than waiting for Java to
+  // exit (parked CheerpJ threads don't wake on interrupt, so executor shutdown would sit
+  // out its grace delay). A book can come out as several scores ("movements") — the
+  // indentation switch below prevents the usual cause — so every one is collected: done
+  // when no export is pending and either the book is closed or 2 s pass without another.
+  const exportedPaths = [];
+  let pending = 0, settle = null, onExported;
   const exported = new Promise((resolve) => { onExported = resolve; });
   const tap = (orig) => (...args) => {
     const line = args.join(' ').trimEnd();
     if (line) {
       log(line);
+      if (/Exporting sheet\(s\)/.test(line)) { pending++; clearTimeout(settle); }
       const m = /exported to (\S+\.mxl)\s*$/.exec(line);
-      if (m) { exportedPath = m[1]; onExported(); }
+      if (m) {
+        exportedPaths.push(m[1]);
+        pending = Math.max(0, pending - 1);
+        clearTimeout(settle);
+        if (!pending) settle = setTimeout(onExported, 2000);
+      }
+      if (exportedPaths.length && !pending && /Book stored|Closing \{Score/.test(line)) onExported();
     }
     orig.apply(console, args);
   };
@@ -118,13 +129,17 @@ async function run(job) {
     '-constant', `org.audiveris.omr.Main.sheetStepTimeOut=${job.sheetStepTimeOut || 7200}`,
     '-constant', 'org.audiveris.omr.util.OmrExecutors.useParallelism=false', // one JS thread anyway
     '-constant', 'org.audiveris.omr.util.OmrExecutors.graceDelay=1',
+    // One PDF is one song: don't start a new score ("movement") at an indented system —
+    // a Coda's indented first line made Wichita Lineman come out as two scores.
+    '-constant', 'org.audiveris.omr.sheet.ProcessingSwitches.indentations=false',
     '/str/score.tif');
   await Promise.race([main, exported]);
   await new Promise((r) => setTimeout(r, 300));
 
-  let blob = null;
-  try { blob = await cjFileBlob(exportedPath || `${out}/score.mxl`); } catch {}
-  if (!blob) throw new Error('Audiveris finished without producing MusicXML — see the log for details.');
-  const mxl = await blob.arrayBuffer();
-  post({ type: 'done', mxl }, [mxl]);
+  const mxls = [];
+  for (const path of exportedPaths.length ? exportedPaths : [`${out}/score.mxl`]) {
+    try { mxls.push(await (await cjFileBlob(path)).arrayBuffer()); } catch {}
+  }
+  if (!mxls.length) throw new Error('Audiveris finished without producing MusicXML — see the log for details.');
+  post({ type: 'done', mxls }, mxls);
 }

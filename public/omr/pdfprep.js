@@ -16,7 +16,8 @@ async function loadPdfjs(base) {
   return pdfjs;
 }
 
-// Render every page; returns [{ index, width, height, gray: Uint8Array, staves, blank }].
+// Render every page; returns [{ index, width, height, gray: Uint8Array, staves, blank, lines }]
+// (lines: the page's largest text lines, from its text layer — empty for scans).
 export async function renderPdf(data, { pdfjsBase, dpi = DPI, onPage } = {}) {
   const lib = await loadPdfjs(pdfjsBase);
   // Decoders for scanned pages (JBIG2, JPEG 2000) and color profiles are WebAssembly
@@ -47,6 +48,8 @@ export async function renderPdf(data, { pdfjsBase, dpi = DPI, onPage } = {}) {
     for (let p = 0, q = 0; p < gray.length; p++, q += 4) {
       gray[p] = rgba[q] * 299 + rgba[q + 1] * 587 + rgba[q + 2] * 114 < 200000 ? 0 : 255;
     }
+    let lines = [];
+    try { lines = textLines(await page.getTextContent()); } catch {}
     page.cleanup();
     canvas.width = canvas.height = 0; // free the 35 MB backing store now (iOS caps total canvas memory)
     const staves = countStaves(gray, width, height);
@@ -54,11 +57,31 @@ export async function renderPdf(data, { pdfjsBase, dpi = DPI, onPage } = {}) {
     for (let p = 0; p < gray.length; p += 97) if (!gray[p]) ink++;
     // < 0.5% ink: (almost) nothing drawn — e.g. an undecodable scan under a footer line
     const blank = ink * 97 < gray.length * 0.005;
-    pages.push({ index: i, width, height, gray, staves, blank });
+    pages.push({ index: i, width, height, gray, staves, blank, lines });
     onPage?.(i, doc.numPages, staves, blank);
   }
   await task.destroy();
   return pages;
+}
+
+// A page's text (vector PDFs carry it; scans don't) as lines — items sharing a baseline,
+// in reading order — with their font size (pt), largest first, at most 8.
+export function textLines(content) {
+  const rows = [];
+  for (const it of content.items || []) {
+    const str = (it.str || "").trim();
+    if (!str || !it.transform) continue;
+    const size = Math.hypot(it.transform[2], it.transform[3]) || it.height || 0;
+    const x = it.transform[4], y = it.transform[5];
+    let row = rows.find((r) => Math.abs(r.y - y) < Math.max(2, size * 0.3));
+    if (!row) rows.push((row = { y, size: 0, items: [] }));
+    row.items.push({ x, str });
+    row.size = Math.max(row.size, size);
+  }
+  return rows
+    .map((r) => ({ text: r.items.sort((a, b) => a.x - b.x).map((i) => i.str).join(" ").replace(/\s+/g, " ").trim(), size: Math.round(r.size * 10) / 10 }))
+    .sort((a, b) => b.size - a.size)
+    .slice(0, 8);
 }
 
 // Count 5-line staves: rows containing a long horizontal dark run are

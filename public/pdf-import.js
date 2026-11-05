@@ -4,7 +4,7 @@
 
 import { readScoreFile, parseMusicXml } from "./musicxml.js";
 import { addSong } from "./library.js";
-import { fixOmrScore } from "./omr/fixscore.js";
+import { fixOmrScore, joinMovements } from "./omr/fixscore.js";
 
 const $ = (id) => document.getElementById(id);
 const chooseBtn = $("choose");
@@ -96,8 +96,31 @@ function onProgress(p) {
   }
 }
 
-// The score's visual title: the largest-font credit on the first page. Audiveris's
-// movement-title is often OCR noise; fall back to the PDF's file name.
+// The title, best source first: the PDF's own text (exact; vector PDFs only), the file
+// name (Musicnotes-style "Wichita_Lineman_-_F_Major_-_MN0305807" → "Wichita Lineman"),
+// then the largest-font text Audiveris read on the first page (OCR: often a footer like
+// "Authorized for use by: …" or a chord name, so it's only used when the file name says
+// nothing), else the bare file name.
+const NOT_TITLE = /authori[sz]ed for use|musicnotes|copyright|©|all rights|international|published|words and music|^by\b/i;
+const GENERIC_NAME = /^(scan(ned)?|score|document|doc|img|image|page|untitled|sheet ?music|music|download|file|song)?[\s\d_\-().]*$/i;
+
+function cleanFileName(name) {
+  return name
+    .replace(/_+/g, " ")
+    .replace(/\s+-\s+[A-G][b#♭♯]?\s*(major|minor|maj|min)\b.*$/i, "")
+    .replace(/\s*-?\s*\bMN\d{5,}\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function chooseTitle(res, xml, firstFailed) {
+  if (res.title) return res.title;
+  const file = cleanFileName(baseName);
+  if (file && !GENERIC_NAME.test(file)) return file;
+  return (!firstFailed && pickTitle(xml, null)) || file || baseName;
+}
+
+// The largest-font credit Audiveris read on the first page, if it looks like words.
 function pickTitle(xml, fallback) {
   const doc = new DOMParser().parseFromString(xml, "application/xml");
   let best = null, size = 0;
@@ -106,7 +129,7 @@ function pickTitle(xml, fallback) {
     for (const w of c.querySelectorAll("credit-words")) {
       const t = (w.textContent || "").trim();
       const s = parseFloat(w.getAttribute("font-size")) || 0;
-      if (s > size && /[A-Za-z]{2}/.test(t) && t.length >= 3 && t.length <= 80) { size = s; best = t; }
+      if (s > size && /[A-Za-z]{3}/.test(t) && !/\d/.test(t) && !NOT_TITLE.test(t) && t.length >= 3 && t.length <= 80) { size = s; best = t; }
     }
   }
   return best || fallback;
@@ -160,12 +183,16 @@ async function run(file) {
 
     setStep("save");
     $("stage").textContent = "Saving to My songs";
-    const fixed = fixOmrScore(await readScoreFile(new File([res.mxl], `${baseName}.mxl`)), res.log);
+    const xmls = [];
+    for (const [i, b] of res.mxls.entries()) xmls.push(await readScoreFile(new File([b], `${baseName}-${i + 1}.mxl`)));
+    const joined = joinMovements(xmls);
+    if (xmls.length > 1) appendLog(`[fix] ${xmls.length} scores (movements) joined into one`);
+    const fixed = fixOmrScore(joined, res.log);
     for (const c of fixed.changes) appendLog(`[fix] ${c}`);
     const xml = fixed.xml;
     // Page 1's credits (title) are gone when the first music page failed; don't take page 2's.
     const firstFailed = res.failed.some((f) => f.sheet === 1);
-    const title = firstFailed ? baseName : pickTitle(xml, baseName);
+    const title = chooseTitle(res, xml, firstFailed);
     finalXml = setTitle(xml, title);
     const score = parseMusicXml(finalXml, title);
     const id = await addSong(score.title, finalXml);
