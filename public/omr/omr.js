@@ -53,23 +53,36 @@ function progressTracker(sheetCount, onProgress) {
   };
 }
 
-// The song's title from the PDF's own text (exact, unlike OCR): the largest line on the
-// pages up to the first one with music (a title page, then the first page's heading),
-// skipping the publisher's lines and music drawn with a font. ALL-CAPS → Title Case.
-const NOT_TITLE = /authori[sz]ed for use|musicnotes|copyright|©|\(c\)|all rights|unauthori[sz]ed|international|published|license|licence|words and music|music by|lyrics by|arranged|^from[:\s]|^by\b|^\d+$|moderately|tempo|^page\b/i;
+// The song's title from the PDF's own text (exact, unlike OCR): on the pages up to the
+// first one with music (a title page, then the first page's heading), the largest line
+// that is real words — the notation itself is often drawn with a font ("{} mf", "Ï Ï") —
+// and not a publisher's line ("Authorized for use by", ©, "Words and Music by"). It must
+// be about as large as the largest words on its page: when the real title is rejected,
+// a smaller credit line isn't taken instead (null → the file name). An ALL-CAPS heading
+// takes the same words' mixed-case spelling from elsewhere (a title page), else Title Case.
+const NOT_TITLE = /authori[sz]ed for use|musicnotes|copyright|©|\(c\)\s*\d|all rights reserved|unauthori[sz]ed|published (by|under)|words and music|music by|lyrics by|arranged by/i;
+const WORDS = /^[\p{L}\p{N}\s'’",.!?&:()\-–—]+$/u;
 export function pdfTitle(pages, firstMusic) {
   let best = null;
+  const seen = [];
   for (const p of pages) {
     if (p.index > firstMusic) break;
-    for (const l of p.lines || []) {
-      // Words, not music: the notation itself is often drawn with a font ("{} mf", "Ï Ï").
-      if (l.text.length > 80 || !/\p{L}{3}/u.test(l.text) || !/^[\p{L}\p{N}\s'’",.!?&:()\-–—]+$/u.test(l.text) || NOT_TITLE.test(l.text)) continue;
+    const words = (p.lines || []).filter((l) => l.text.length <= 80 && /\p{L}{2}/u.test(l.text) && WORDS.test(l.text));
+    seen.push(...words);
+    const top = Math.max(0, ...words.map((l) => l.size));
+    for (const l of words) {
+      if (NOT_TITLE.test(l.text) || l.size < 0.85 * top) continue;
       if (!best || l.size > best.size) best = l;
     }
   }
   if (!best) return null;
   const t = best.text.replace(/^["“”']+|["“”']+$/g, "").trim();
-  return t === t.toUpperCase() ? t.toLowerCase().replace(/(^|[\s(-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase()) : t;
+  if (t !== t.toUpperCase()) return t;
+  const key = (x) => x.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const mixed = seen.find((l) => l.text !== l.text.toUpperCase() && key(l.text) === key(t));
+  if (mixed) return mixed.text.trim();
+  if (/^\p{L}{1,5}[!.]?$/u.test(t)) return t; // "SOS", "YMCA", "ABC": keep a short one as printed
+  return t.toLowerCase().replace(/(^|[\s(-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
 }
 
 /**

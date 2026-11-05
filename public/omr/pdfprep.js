@@ -65,7 +65,8 @@ export async function renderPdf(data, { pdfjsBase, dpi = DPI, onPage } = {}) {
 }
 
 // A page's text (vector PDFs carry it; scans don't) as lines — items sharing a baseline,
-// in reading order — with their font size (pt), largest first, at most 8.
+// in reading order — with their font size (pt): the 8 largest that are words (music drawn
+// with a font, "{} mf", "Ï Ï", would otherwise crowd out the heading).
 export function textLines(content) {
   const rows = [];
   for (const it of content.items || []) {
@@ -80,6 +81,7 @@ export function textLines(content) {
   }
   return rows
     .map((r) => ({ text: r.items.sort((a, b) => a.x - b.x).map((i) => i.str).join(" ").replace(/\s+/g, " ").trim(), size: Math.round(r.size * 10) / 10 }))
+    .filter((l) => l.text.length <= 80 && /\p{L}{2}/u.test(l.text) && /^[\p{L}\p{N}\s'’",.!?&:()\-–—]+$/u.test(l.text))
     .sort((a, b) => b.size - a.size)
     .slice(0, 8);
 }
