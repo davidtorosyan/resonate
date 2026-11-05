@@ -494,21 +494,41 @@ function draw() {
   statusEl.textContent = `${audioCtx.sampleRate} Hz · ${db.toFixed(0)} dB`;
 }
 
-async function start() {
-  try {
-    button.disabled = true;
-    statusEl.textContent = "requesting mic…";
+// iOS keeps a page's audio-session type for the whole tab, so after the Sing or Voice
+// page set it to "playback" (loud speaker for the piano) getUserMedia here failed with no
+// prompt. Capture needs "play-and-record"; set it first, like pitch.js openMic().
+const setAudioSession = (type) => { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {} };
+let startGen = 0; // a newer Start (or Stop) makes an older, still-pending one stand down
 
-    stream = await navigator.mediaDevices.getUserMedia({
+async function start() {
+  const gen = ++startGen;
+  button.disabled = true;
+  statusEl.textContent = "requesting mic…";
+  setAudioSession("play-and-record");
+  // If the mic never answers, don't leave the button dead: let Start be tapped again.
+  // (A late answer to this attempt still starts it, unless Start was tapped again.)
+  const watchdog = setTimeout(() => {
+    if (gen !== startGen || button.dataset.recording === "true") return;
+    button.disabled = false;
+    statusEl.textContent = "mic not answering — tap Start again, or reload the page";
+  }, 8000);
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
       },
     });
-
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === "suspended") await audioCtx.resume();
+    const ac = gen === startGen ? new (window.AudioContext || window.webkitAudioContext)() : null;
+    if (ac && ac.state !== "running") await Promise.race([ac.resume(), new Promise((r) => setTimeout(r, 1500))]);
+    if (gen !== startGen) {
+      s.getTracks().forEach((t) => t.stop());
+      if (ac) ac.close().catch(() => {});
+      return;
+    }
+    stream = s;
+    audioCtx = ac;
 
     source = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser();
@@ -536,14 +556,20 @@ async function start() {
 
     if (!rafId) draw();
   } catch (err) {
-    button.disabled = false;
-    statusEl.textContent = `mic error: ${err.name || err.message}`;
+    if (gen !== startGen) return;
     console.error(err);
     await stop();
+    // After stop(), which resets the status to "idle" (that used to hide every mic error).
+    statusEl.textContent = err.name === "NotAllowedError"
+      ? "mic blocked — allow it for this site (Safari: aA → Website Settings)"
+      : `mic error: ${err.name || err.message} — try again, or reload the page`;
+  } finally {
+    clearTimeout(watchdog);
   }
 }
 
 async function stop() {
+  startGen++;
   closeCalModal();
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
@@ -564,7 +590,9 @@ async function stop() {
   offNoteSince = 0;
   button.textContent = "Start";
   button.dataset.recording = "false";
+  button.disabled = !navigator.mediaDevices?.getUserMedia;
   statusEl.textContent = "idle";
+  setAudioSession("auto");
   updatePitchDisplay();
   setMeterState("idle");
   volumeFillEl.style.width = "0%";
@@ -585,6 +613,11 @@ document.addEventListener("visibilitychange", async () => {
     await stop();
     statusEl.textContent = "auto-stopped (backgrounded)";
   }
+});
+// Leaving the page: give the tab's audio session back (iOS keeps it across pages).
+window.addEventListener("pagehide", () => {
+  if (button.dataset.recording === "true") stop();
+  setAudioSession("auto");
 });
 
 // The volume readout (the "VOL" gear) is the calibration entry point.

@@ -586,6 +586,14 @@ document.addEventListener("visibilitychange", () => {
     showMsg("Stopped (the page went to the background) — nothing changed.", "error");
   }
 });
+// Leaving the page: stop a test and give the tab's audio session back. iOS keeps its type
+// across pages, and a "playback" left behind kept the Tuner's microphone from starting.
+window.addEventListener("pagehide", () => {
+  if (run) stopRun();
+  if (playCtx) playCtx.close().catch(() => {});
+  playCtx = null;
+  setSession("auto");
+});
 if (!navigator.mediaDevices?.getUserMedia) statusEl.textContent = "mic API unavailable — open over HTTPS";
 
 render();

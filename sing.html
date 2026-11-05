@@ -123,6 +123,20 @@
       #score-pct { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; min-width: 3.2ch; }
       #score-pct:empty { display: none; }
       #summary { font-size: 0.68rem; letter-spacing: 0.08em; color: rgba(255,255,255,0.55); flex: 1; min-width: 0; }
+      /* The note you're singing (Pitch on, or during a take), against the practice target. */
+      #you { display: inline-flex; align-items: center; gap: 0.4rem; flex: 0 0 auto; }
+      #you[hidden] { display: none; }
+      #you-note { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; min-width: 2.4ch; text-align: right; }
+      #you[data-state="good"] #you-note { color: #4ade80; }
+      #you[data-state="ok"] #you-note { color: #c49bff; }
+      #you[data-state="off"] #you-note { color: #ff6f6f; }
+      #you[data-state="hear"] #you-note { color: #ffe6a0; }
+      #you[data-state="wait"] #you-note { opacity: 0.35; }
+      .you-detail { display: flex; flex-direction: column; font-size: 0.68rem; line-height: 1.3; color: rgba(255,255,255,0.7); min-width: 4.6rem; }
+      #you[data-state="good"] #you-vs { color: #4ade80; }
+      #you[data-state="ok"] #you-vs { color: #c49bff; }
+      #you[data-state="off"] #you-vs { color: #ff8a9a; }
+      #monitor[aria-pressed="true"] { background: rgba(74,222,128,0.16); border-color: rgba(74,222,128,0.6); }
       #playbar { display: flex; align-items: center; gap: 0.5rem; }
       #playbar[hidden] { display: none; }
       #play {
@@ -231,7 +245,7 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v41</span>
+        <span id="version">v42</span>
         <span id="status">idle</span>
       </div>
     </header>
@@ -270,6 +284,11 @@
         <div class="results-head">
           <span id="score-pct"></span>
           <span id="summary" class="mono"></span>
+          <span id="you" hidden>
+            <b id="you-note"></b>
+            <span class="you-detail mono"><span id="you-cents"></span><span id="you-vs"></span></span>
+          </span>
+          <button id="monitor" class="tool-btn" type="button" aria-pressed="false" title="Show the note you're singing (uses the microphone)">🎤 Pitch</button>
         </div>
         <div id="playbar" hidden>
           <button id="play" type="button">▶ Play</button>

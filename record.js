@@ -561,6 +561,15 @@ playModesEl.addEventListener("click", (e) => {
   else updatePlayUI();
 });
 
+// Leaving the page: give the tab's audio session back. iOS keeps its type across pages,
+// and a "playback" left behind kept the Tuner's microphone from starting.
+window.addEventListener("pagehide", () => {
+  if (playing) stopPlayback();
+  if (playCtx) playCtx.close().catch(() => {});
+  playCtx = null;
+  try { if (navigator.audioSession) navigator.audioSession.type = "auto"; } catch {}
+});
+
 document.addEventListener("visibilitychange", async () => {
   if (document.hidden && playing) stopPlayback();
   if (document.hidden && recording) {
