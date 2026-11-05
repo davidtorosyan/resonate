@@ -91,6 +91,16 @@ export function holdPiano(ac, piano, when, midi, level, { sustain = true } = {})
       at = Math.max(at, ac.currentTime);
       if (at >= releasedAt) return;
       releasedAt = at;
+      if (at <= when) {
+        // Called off before it started: silence it outright (cancelling its starting levels
+        // alone would leave the gains at their default, full volume, for an instant).
+        for (const p of parts) {
+          p.gain.cancelScheduledValues(0);
+          p.gain.setValueAtTime(0, ac.currentTime);
+          try { p.src.stop(when); } catch {}
+        }
+        return;
+      }
       for (const p of parts) {
         p.gain.cancelScheduledValues(at);
         p.gain.setTargetAtTime(0, at, tc);

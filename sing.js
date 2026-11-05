@@ -980,6 +980,19 @@ function onPointerUp(e) {
 window.addEventListener("pointerup", onPointerUp);
 window.addEventListener("pointercancel", (e) => cancelKey(e.pointerId));
 chipsEl.addEventListener("scroll", () => { lastChipScroll = performance.now(); }, { passive: true });
+
+// Start the audio on the first tap or key anywhere (but not the Sing button, or while
+// singing), so even the first chip press sounds on touch-down. The context only resumes:
+// the audio session is left alone (not "playback"), so other apps' music isn't stopped
+// before a note actually plays. The piano starts loading too.
+function unlockPlay(e) {
+  if (!e.isTrusted || session?.kind === "sing" || e.target.closest?.("#sing")) return;
+  for (const t of ["pointerup", "keydown"]) document.removeEventListener(t, unlockPlay, true);
+  if (!playCtx || playCtx.state === "closed") playCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (playCtx.state !== "running") playCtx.resume().catch(() => {});
+  loadPiano(playCtx).catch(() => {});
+}
+for (const t of ["pointerup", "keydown"]) document.addEventListener(t, unlockPlay, true);
 window.addEventListener("blur", stopKeys);
 
 function renderSummary() {
