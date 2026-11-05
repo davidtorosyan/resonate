@@ -118,11 +118,12 @@
       }
       #lane[data-pannable="true"] { cursor: grab; touch-action: none; }
 
-      #results { flex: 0 0 auto; display: flex; flex-direction: column; gap: 0.4rem; }
-      .results-head { display: flex; align-items: center; gap: 0.6rem; }
+      #results { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+      .results-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.6rem; }
       #score-pct { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; min-width: 3.2ch; }
       #score-pct:empty { display: none; }
-      #summary { font-size: 0.68rem; letter-spacing: 0.08em; color: rgba(255,255,255,0.55); flex: 1; min-width: 0; }
+      #summary { font-size: 0.68rem; letter-spacing: 0.08em; color: rgba(255,255,255,0.55); flex: 1 1 9rem; min-width: 0; }
+      .live { display: inline-flex; align-items: center; gap: 0.6rem; margin-left: auto; } /* wraps to its own line when the row is narrow */
       /* The note you're singing (Pitch on, or during a take), against the practice target. */
       #you { display: inline-flex; align-items: center; gap: 0.4rem; flex: 0 0 auto; }
       #you[hidden] { display: none; }
@@ -170,6 +171,8 @@
         flex-wrap: wrap;
         gap: 0.3rem;
         max-height: 18vh;
+        min-height: 2.6rem; /* shrinks (it scrolls) rather than run under the footer on a short screen */
+        flex: 0 1 auto;
         overflow-y: auto;
         align-content: flex-start;
       }
@@ -245,7 +248,7 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v42</span>
+        <span id="version">v43</span>
         <span id="status">idle</span>
       </div>
     </header>
@@ -284,11 +287,13 @@
         <div class="results-head">
           <span id="score-pct"></span>
           <span id="summary" class="mono"></span>
-          <span id="you" hidden>
-            <b id="you-note"></b>
-            <span class="you-detail mono"><span id="you-cents"></span><span id="you-vs"></span></span>
+          <span class="live">
+            <span id="you" hidden>
+              <b id="you-note"></b>
+              <span class="you-detail mono"><span id="you-cents"></span><span id="you-vs"></span></span>
+            </span>
+            <button id="monitor" class="tool-btn" type="button" aria-pressed="false" title="Show the note you're singing (uses the microphone)">🎤 Pitch</button>
           </span>
-          <button id="monitor" class="tool-btn" type="button" aria-pressed="false" title="Show the note you're singing (uses the microphone)">🎤 Pitch</button>
         </div>
         <div id="playbar" hidden>
           <button id="play" type="button">▶ Play</button>
