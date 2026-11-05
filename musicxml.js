@@ -192,21 +192,23 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
     title, partName, fifths: fifths ?? 0, mode, tempo: tempo ?? DEFAULT_TEMPO, tempoFromScore: tempo !== null,
     beats: beats ?? 4, beatType: beatType ?? 4, verses, measures, length: measureStart, notes,
   };
-  const order = performanceOrder(readStructure(parts, melodyMeasures.length), notes);
-  return order ? unfold(score, order) : score;
+  const played = performanceOrder(readStructure(parts, melodyMeasures.length), notes);
+  return played ? unfold(score, played) : score;
 }
 
 // --- Repeats, endings and jumps -------------------------------------------------
 // The Sing page follows a song the way it's performed: repeats taken, 1st/2nd endings,
 // D.S./D.C. (al Coda / al Fine) — each pass through a repeated section singing its own
-// verse (pass 2 → verse 2, when that section has a verse 2; else the latest verse it has).
+// verse (pass 2 → verse 2 where it has words for it, else the latest verse it has).
 
 // Per measure (index): { forward, backward, times, endingStart: [numbers], endingStop,
-// segno, codaSign, toCoda, codaTarget, ds, dc, fine }, from every part (sheet-music
-// recognition may put a sign on only some of them).
+// segno, codaSign, toCoda, codaTarget, ds, dc, fine }. Barlines and directions come from
+// every part (recognition may put a sign on only some); ending brackets only from the top
+// part — they're drawn above the system, and sheet-music recognition reads piano "8va"
+// lines as endings on lower staves.
 function readStructure(parts, count) {
   const marks = Array.from({ length: count }, () => ({}));
-  for (const part of parts) {
+  parts.forEach((part, pi) => {
     [...part.querySelectorAll(":scope > measure")].slice(0, count).forEach((m, i) => {
       const mk = marks[i];
       for (const bl of m.querySelectorAll(":scope > barline")) {
@@ -217,13 +219,11 @@ function readStructure(parts, count) {
           mk.backward = true;
           mk.times = Math.max(mk.times || 0, Number(rep.getAttribute("times")) || 0);
         }
-        const end = bl.querySelector(":scope > ending");
+        const end = pi === 0 && bl.querySelector(":scope > ending");
         if (end) {
           const type = end.getAttribute("type");
-          if (type === "start") {
-            const nums = (end.getAttribute("number") || "").split(/[,\s.]+/).map(Number).filter((n) => n > 0);
-            mk.endingStart = nums.length ? nums : [1];
-          } else if (type === "stop" || type === "discontinue") mk.endingStop = true;
+          if (type === "start") mk.endingStart = endingNumbers(end.getAttribute("number") || "");
+          else if (type === "stop" || type === "discontinue") mk.endingStop = true;
         }
       }
       for (const d of m.querySelectorAll(":scope > direction")) {
@@ -244,24 +244,39 @@ function readStructure(parts, count) {
         if (snd.hasAttribute("fine")) mk.fine = true;
       }
     });
-  }
+  });
   return marks;
 }
 
-// The measure indexes in performance order, or null when that's just the written order.
-// Repeats go back to the last forward repeat (or the start, or just after the previous
-// repeat); a repeat plays `times` times, or one more than its ending's highest number
-// ("1.2.3." → 4), and at least as many times as its section has verses. An ending is
-// played on the passes it's numbered for; one past all its numbers that doesn't repeat is
-// the final ending. A 1st ending recognition cut short (it stops just before its repeat
-// sign) runs to that repeat. After a D.S./D.C. repeats aren't taken again, first endings
-// are skipped, "To Coda" jumps to the Coda and "Fine" ends the song.
+// "1", "1, 2", "1.2.3." → lists; "1-3" and Audiveris's "1,,3" (it turns every non-digit of
+// a printed "1.-3." into a comma) → ranges.
+function endingNumbers(s) {
+  const range = /^\s*(\d+)\s*(?:,,|[-–])\s*(\d+)\s*$/.exec(s);
+  if (range) {
+    const out = [];
+    for (let n = Number(range[1]); n <= Number(range[2]) && out.length < 12; n++) out.push(n);
+    if (out.length) return out;
+  }
+  const nums = s.split(/[,\s.]+/).map(Number).filter((n) => n > 0);
+  return nums.length ? nums : [1];
+}
+
+// The measures in performance order with the verse pass each is sung in, or null when
+// that's just the written order. Repeats go back to the last forward repeat (or the
+// start, or just after the previous repeat) and play `times` times, or one more than their
+// ending's highest number ("1, 2, 3" → 4), and — when no D.S./D.C. comes back for another
+// pass — at least as many times as their section has verses. An ending plays on the passes
+// it's numbered for; one past all its numbers that doesn't repeat is the final ending. A
+// 1st ending recognition cut short (it stops just before its repeat sign) runs to that
+// sign. After a D.S./D.C. repeats aren't taken again, first endings are skipped, To Coda
+// jumps to the Coda and Fine ends the song. Verse passes: the pass of the repeat being
+// played; music after a repeat or a final ending is new (pass 1); after a D.S./D.C. one
+// more than the times the jump's target was sung.
 function performanceOrder(marks, notes) {
   const N = marks.length;
   if (!marks.some((m) => m.backward || m.ds || m.dc)) return null;
   const versesIn = Array.from({ length: N }, () => new Set());
   for (const n of notes) for (const v of Object.keys(n.verses)) versesIn[n.mi]?.add(v);
-  // Endings: start → stop (or its repeat), extended to a repeat sign just after it.
   const endingOf = new Array(N).fill(null);
   for (let i = 0; i < N; i++) {
     if (!marks[i].endingStart) continue;
@@ -278,82 +293,109 @@ function performanceOrder(marks, notes) {
     i = j;
   }
   const segno = marks.findIndex((m) => m.segno);
-  const jumpFrom = marks.findIndex((m) => m.ds || m.dc);
+  const jumpFrom = marks.findIndex((m) => (m.ds && segno >= 0) || m.dc);
   const toCoda = marks.findIndex((m) => m.toCoda);
   let codaAt = marks.findIndex((m, i) => m.codaTarget && i > jumpFrom);
   if (codaAt < 0) codaAt = marks.findLastIndex((m, i) => m.codaSign && i > Math.max(jumpFrom, toCoda) && !m.toCoda);
 
-  const order = [];
+  const order = [], passes = [];
   const taken = new Map();
-  let i = 0, repStart = 0, pass = 1, jumped = false, guard = 0;
+  let i = 0, repStart = 0, pass = 1, jumped = false, jumpPass = 1, fresh = false, guard = 0;
   while (i < N && guard++ < N * 12) {
     const mk = marks[i], e = endingOf[i];
-    if (mk.forward && repStart !== i) { repStart = i; pass = 1; }
+    if (mk.forward && repStart !== i) { repStart = i; pass = 1; fresh = false; }
     if (e && i === e.start) {
       const repeats = marks[e.end].backward;
       const play = jumped ? !repeats : e.nums.includes(pass) || (pass > Math.max(...e.nums) && !repeats);
       if (!play) { i = e.end + 1; continue; }
     }
     order.push(i);
+    passes.push(jumped ? jumpPass : fresh ? 1 : pass);
+    if (e && i === e.end && !mk.backward) fresh = true; // past a final ending: new music
     if (jumped && mk.fine) break;
     if (jumped && mk.toCoda && codaAt > i) { i = codaAt; continue; }
     if (mk.backward && !jumped) {
       let verseCount = 1;
-      for (let k = repStart; k <= i; k++) for (const v of versesIn[k]) verseCount = Math.max(verseCount, Number(v) || 1);
+      if (jumpFrom < 0) for (let k = repStart; k <= i; k++) for (const v of versesIn[k]) verseCount = Math.max(verseCount, Number(v) || 1);
       const times = Math.max(mk.times || (e ? Math.max(...e.nums) + 1 : 2), Math.min(verseCount, 8));
       const t = taken.get(i) || 0;
-      if (t < times - 1) { taken.set(i, t + 1); pass++; i = repStart; continue; }
+      if (t < times - 1) { taken.set(i, t + 1); pass++; fresh = false; i = repStart; continue; }
       repStart = i + 1;
+      pass = 1;
+      fresh = false;
     }
-    if ((mk.ds && segno >= 0) || mk.dc) {
-      if (!jumped) { jumped = true; i = mk.ds ? segno : 0; continue; }
+    if (((mk.ds && segno >= 0) || mk.dc) && !jumped) {
+      jumped = true;
+      i = mk.ds ? segno : 0;
+      jumpPass = order.filter((m) => m === i).length + 1;
+      continue;
     }
     i++;
   }
-  return order.every((m, k) => m === k) && order.length === N ? null : order;
+  if (order.length === N && order.every((m, k) => m === k)) return null;
+  return { order, passes };
 }
 
-// Lay the notes out in performance order. Each run of consecutive measures is one pass:
-// the k-th time its first measure is played, each of its measures sings verse k if it has
-// words for it, else the latest verse it has words for (a refrain printed once, under
-// verse 1). Notes then carry that pass's syllable as verse "1" (the Sing page's verse
-// menu disappears: the passes choose the verses).
-function unfold(score, order) {
+// Lay the notes out in performance order, each measure sung in its pass's verse:
+// - verse k if the note has words for it;
+// - a note after the last verse-k word in its measure takes the latest verse it has when
+//   the music that follows has no verse k either (a refrain printed once, under line 1);
+// - in the last measure before a repeat sign, a note with only the next verse's words is
+//   the pickup into the next pass (printed on line 2 in a 1st ending);
+// - a measure with no verse-k words at all sings the latest verse it has.
+// The chosen syllable becomes verse "1" (the Sing page's verse menu disappears: the passes
+// choose the verses) — unless the song has stacked verses no pass reaches (a hymn with a
+// repeated refrain), which keeps the written order and the verse menu. A note tied across
+// a jump (into a 1st ending, over To Coda) is cut where the music jumps; a note right after
+// a jump starts a new lyric line only if there's a rest before it ("small va- | -cation").
+function unfold(score, { order, passes }) {
+  const maxPass = Math.max(...passes);
+  if (score.verses.some((v) => Number(v) > maxPass)) return score;
   const len = (i) => (score.measures[i + 1] ?? score.length) - score.measures[i];
   const byMeasure = new Map();
   for (const n of score.notes) {
     if (!byMeasure.has(n.mi)) byMeasure.set(n.mi, []);
     byMeasure.get(n.mi).push(n);
   }
-  const runs = [];
-  order.forEach((m, k) => (k && m === order[k - 1] + 1 ? runs[runs.length - 1].push(m) : runs.push([m])));
-  const seen = new Map();
+  const has = (m, v) => (byMeasure.get(m) || []).some((n) => n.verses[v]);
   const notes = [], measures = [];
-  let t = 0;
-  for (const run of runs) {
-    const k = (seen.get(run[0]) || 0) + 1;
-    run.forEach((m, r) => {
-      const have = new Set();
-      for (const n of byMeasure.get(m) || []) for (const v of Object.keys(n.verses)) have.add(v);
-      const num = [...have].map(Number).filter((v) => v > 0 && v <= k);
-      const verse = have.has(String(k)) ? String(k) : num.length ? String(Math.max(...num)) : [...have][0];
-      seen.set(m, (seen.get(m) || 0) + 1);
-      measures.push(t);
-      for (const n of byMeasure.get(m) || []) {
-        const v = verse && n.verses[verse];
-        notes.push({ ...n, onset: t + (n.onset - score.measures[m]), verses: v ? { 1: v } : {},
-          restBefore: n.restBefore || (r === 0 && n === byMeasure.get(m)[0] && notes.length > 0), pass: k });
+  let t = 0, runStart = 0;
+  order.forEach((m, k) => {
+    const pass = passes[k];
+    const v = String(pass);
+    const jump = k > 0 && m !== order[k - 1] + 1;
+    const lastBeforeRepeat = k + 1 < order.length && order[k + 1] !== m + 1 && order[k + 1] < m;
+    const nextHasV = k + 1 < order.length && order[k + 1] === m + 1 && has(order[k + 1], v);
+    const ns = byMeasure.get(m) || [];
+    const lastV = ns.reduce((a, n, j) => (n.verses[v] ? j : a), -1);
+    if (jump) {
+      // The previous run ends here: cut notes held past it.
+      for (let j = runStart; j < notes.length; j++) if (notes[j].onset + notes[j].dur > t + 1e-6) notes[j].dur = Math.max(0.01, t - notes[j].onset);
+      runStart = notes.length;
+    }
+    measures.push(t);
+    ns.forEach((n, j) => {
+      let syl = n.verses[v];
+      if (!syl) {
+        const latest = Object.keys(n.verses).map(Number).filter((x) => x > 0 && x < pass).sort((a, b) => b - a)[0];
+        if (lastV < 0) syl = latest ? n.verses[latest] : n.verses[1];
+        else if (j > lastV && !nextHasV && latest) syl = n.verses[latest];
+        if (!syl && j > lastV && lastBeforeRepeat && n.verses[pass + 1]) syl = n.verses[pass + 1];
       }
-      t += len(m);
+      const onset = t + (n.onset - score.measures[m]);
+      const prev = notes[notes.length - 1];
+      const restBefore = j === 0 && jump ? !prev || onset > prev.onset + prev.dur + 1e-6 : n.restBefore;
+      notes.push({ ...n, onset, verses: syl ? { 1: syl } : {}, restBefore, pass });
     });
-  }
+    t += len(m);
+  });
   return {
     ...score,
     notes,
     measures,
     length: t,
     verses: notes.some((n) => n.verses[1]) ? ["1"] : [],
-    unfolded: { written: score.measures.length, played: order.length, passes: Math.max(...[...seen.values()]) },
+    unfolded: { written: score.measures.length, played: order.length, passes: maxPass },
   };
 }
 

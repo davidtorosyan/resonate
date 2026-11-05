@@ -90,8 +90,11 @@ export function textLines(content) {
     .slice(0, 8);
 }
 
-// A metronome mark in the page's text ("Moderately ♩ = 104": the note is drawn with the
-// music font, "= 104" is text) → beats per minute, or null.
+// A metronome mark in the page's text ("Moderately ♩ = 104": the number is text, the note
+// is usually a music-font glyph) → { bpm, unit, dotted }, or null. The unit is read from a
+// standard music font's metronome glyph just before the "=" (SMuFL ♩ U+ECA5, 𝅗𝅥 U+ECA3,
+// ♪ U+ECA7, dot U+ECB7; Unicode ♩ ♪ 𝅗𝅥); otherwise null (the meter decides later). A range
+// "= 92-96" takes its first number.
 export function tempoMark(content) {
   const rows = new Map();
   for (const it of content.items || []) {
@@ -100,8 +103,11 @@ export function tempoMark(content) {
     rows.set(y, `${rows.get(y) || ""} ${it.str}`);
   }
   for (const row of rows.values()) {
-    const m = /(?:^|\s)=\s*(\d{2,3})(?!\d)/.exec(row);
-    if (m && Number(m[1]) >= 30 && Number(m[1]) <= 300) return Number(m[1]);
+    const m = /(\S*)\s*=\s*(\d{2,3})(?!\d)/.exec(row);
+    if (!m || Number(m[2]) < 30 || Number(m[2]) > 300) continue;
+    const g = m[1];
+    const unit = /[\u{1D15E}]/u.test(g) ? "half" : /[♩]/u.test(g) ? "quarter" : /[♪]/u.test(g) ? "eighth" : null;
+    return { bpm: Number(m[2]), unit, dotted: !!unit && /[.]/u.test(g) };
   }
   return null;
 }
