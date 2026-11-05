@@ -112,6 +112,26 @@ function cleanFileName(name) {
   return { title: title || plain, seller: title !== plain && !!title };
 }
 
+// The key's mode a seller put in the file name ("…_-_F_Major_-_MN0305807"), or null.
+function modeFromFileName(name) {
+  const m = /[\s_]-[\s_]+[A-G][b#♭♯]?[\s_]*(major|minor)\b/i.exec(name);
+  return m ? m[1].toLowerCase() : null;
+}
+
+// Write <mode> into every <key> that has none (the Sing page names keys "F" vs "Dm").
+function setMode(xml, mode) {
+  const doc = new DOMParser().parseFromString(xml, "application/xml");
+  let n = 0;
+  for (const key of doc.querySelectorAll("key")) {
+    if (key.querySelector("mode") || !key.querySelector("fifths")) continue;
+    const m = doc.createElement("mode");
+    m.textContent = mode;
+    key.querySelector("fifths").after(m);
+    n++;
+  }
+  return n ? new XMLSerializer().serializeToString(doc) : xml;
+}
+
 function chooseTitle(res, xml, firstFailed) {
   if (res.title) return res.title;
   const file = cleanFileName(baseName);
@@ -194,6 +214,11 @@ async function run(file) {
     const firstFailed = res.failed.some((f) => f.sheet === 1);
     const title = chooseTitle(res, xml, firstFailed);
     finalXml = setTitle(xml, title);
+    const mode = modeFromFileName(baseName);
+    if (mode) {
+      finalXml = setMode(finalXml, mode);
+      appendLog(`[fix] key mode from the file name: ${mode}`);
+    }
     const score = parseMusicXml(finalXml, title);
     const id = await addSong(score.title, finalXml);
     try { localStorage.setItem("resonate.sing.song", id); localStorage.removeItem("resonate.sing.verse"); } catch {}

@@ -177,6 +177,8 @@
         -webkit-touch-callout: none; /* no copy / look-up callout on a long press */
       }
       .chip i { font-style: italic; font-weight: 600; font-size: 0.8rem; color: #ffe6a0; white-space: nowrap; min-height: 1.1em; }
+      .chip i.held { align-self: stretch; display: flex; align-items: flex-end; } /* the word goes on: an extender line */
+      .chip i.held::before { content: ""; flex: 1; height: 2px; margin: 0 -0.2rem 0.2em; background: rgba(255,230,160,0.45); border-radius: 1px; }
       .chip b { font-size: 0.72rem; opacity: 0.85; }
       .chip small { font-size: 0.6rem; opacity: 0.65; font-variant-numeric: tabular-nums; min-height: 1.1em; }
       .chip[data-tune="good"] { border-color: rgba(74,222,128,0.5); }
@@ -229,7 +231,7 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v40</span>
+        <span id="version">v41</span>
         <span id="status">idle</span>
       </div>
     </header>
