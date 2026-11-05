@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f0f1e" />
+    <title>Resonate · Voice profile</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; -webkit-tap-highlight-color: transparent; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: radial-gradient(ellipse at top, #1a1a3e, #0f0f1e 70%) fixed;
+        color: #e8e8f0;
+        padding-top: env(safe-area-inset-top);
+      }
+      .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace; }
+      header { padding: 0.9rem 1.25rem 0.5rem; display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; }
+      .header-left { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+      h1 { font-size: 1.25rem; margin: 0 0.25rem 0 0; font-weight: 600; letter-spacing: 0.02em; opacity: 0.95; }
+      .nav-link { font-size: 0.8rem; color: rgba(255,255,255,0.6); text-decoration: none; padding: 0.2rem 0.6rem; border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; }
+      .header-right { display: flex; align-items: baseline; gap: 0.6rem; }
+      #version { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; color: #a64fff; opacity: 0.9; }
+      #status { font-size: 0.75rem; opacity: 0.55; }
+      main { max-width: 640px; margin: 0 auto; padding: 0.5rem 1rem calc(2rem + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 0.8rem; }
+      [hidden] { display: none !important; }
+      .card {
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 1rem;
+        padding: 1rem 1.1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.7rem;
+      }
+      .card h2 { margin: 0; font-size: 1.02rem; font-weight: 600; }
+      .card p { margin: 0; font-size: 0.86rem; line-height: 1.45; opacity: 0.75; }
+      .row { display: flex; gap: 0.45rem; align-items: center; flex-wrap: wrap; }
+      button, select, input {
+        font: inherit;
+        font-size: 0.85rem;
+        color: #e8e8f0;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 0.55rem;
+        padding: 0.45rem 0.7rem;
+      }
+      button { cursor: pointer; touch-action: manipulation; }
+      button:disabled { opacity: 0.4; cursor: default; }
+      select { flex: 1 1 8rem; min-width: 0; }
+      input { flex: 1 1 8rem; min-width: 0; }
+      .primary {
+        border: 0;
+        font-weight: 600;
+        color: white;
+        background: linear-gradient(135deg, #4f7cff, #a64fff);
+        box-shadow: 0 8px 24px -10px rgba(79,124,255,0.6);
+        padding: 0.6rem 1.1rem;
+        border-radius: 999px;
+      }
+      .ghost { background: transparent; }
+      .small { font-size: 0.72rem; padding: 0.25rem 0.55rem; }
+
+      /* Range strip: C2..C6, limits dim, comfortable bright. */
+      #strip { position: relative; height: 2.6rem; margin: 0.2rem 0 0.9rem; border-radius: 0.5rem; background: rgba(255,255,255,0.03); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); }
+      #strip .band { position: absolute; top: 0.35rem; bottom: 0.35rem; border-radius: 0.35rem; }
+      #strip .limits { background: rgba(166,79,255,0.25); }
+      #strip .comfy { background: linear-gradient(90deg, rgba(79,124,255,0.85), rgba(166,79,255,0.85)); }
+      #strip .tick { position: absolute; top: 100%; transform: translateX(-50%); font-size: 0.62rem; opacity: 0.5; margin-top: 0.15rem; }
+      #strip .line { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.12); }
+      .edit { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.85rem; }
+      .edit .lbl { opacity: 0.65; font-size: 0.78rem; margin-top: 0.25rem; }
+      .pair { display: flex; align-items: center; gap: 0.35rem; }
+      .stepper { display: inline-flex; align-items: center; gap: 0.2rem; }
+      .stepper button { padding: 0.2rem 0.5rem; min-width: 1.9rem; }
+      .stepper .note { min-width: 2.9rem; text-align: center; font-weight: 600; text-decoration: underline dotted rgba(255,255,255,0.35); text-underline-offset: 3px; cursor: pointer; background: none; border: 0; padding: 0.2rem 0; }
+      .to { opacity: 0.5; margin: 0 0.15rem; }
+      .presets button { font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius: 999px; }
+      #msg { font-size: 0.82rem; color: #4ade80; min-height: 1.1em; }
+      #msg[data-kind="error"] { color: #ff8a9a; }
+      #msg:empty { display: none; }
+
+      /* Test overlay. */
+      #test {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        background: rgba(10,10,25,0.86);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.2rem;
+        padding-bottom: calc(1.2rem + env(safe-area-inset-bottom));
+      }
+      #test .card { width: 100%; max-width: 420px; background: linear-gradient(180deg, rgba(40,40,80,0.6), rgba(20,20,50,0.6)); gap: 0.9rem; }
+      #t-step { font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.55; }
+      #t-target { font-size: 3.6rem; font-weight: 800; text-align: center; letter-spacing: -0.02em; line-height: 1; min-height: 1em; }
+      #t-target[data-state="ok"] { color: #4ade80; }
+      #t-target[data-state="miss"] { color: #ff8a9a; }
+      #t-target[data-state="listen"] { color: #ffe6a0; }
+      #t-you { text-align: center; font-size: 0.95rem; min-height: 1.3em; opacity: 0.85; }
+      #t-hint { text-align: center; font-size: 0.8rem; min-height: 1.2em; color: #ffd58a; }
+      #t-meter { height: 0.6rem; border-radius: 999px; background: rgba(255,255,255,0.08); overflow: hidden; }
+      #t-meter div { height: 100%; width: 0%; background: linear-gradient(90deg, #4f7cff, #a64fff); transition: width 0.08s linear; }
+      #t-ladder { display: flex; flex-wrap: wrap; gap: 0.3rem; min-height: 1.6rem; }
+      #t-ladder span { font-size: 0.72rem; padding: 0.15rem 0.45rem; border-radius: 999px; border: 1px solid rgba(255,255,255,0.15); }
+      #t-ladder span[data-ok="true"] { border-color: rgba(74,222,128,0.6); color: #4ade80; }
+      #t-ladder span[data-ok="false"] { border-color: rgba(255,111,111,0.5); color: #ff8a9a; text-decoration: line-through; }
+      #t-buttons { display: flex; gap: 0.45rem; flex-wrap: wrap; justify-content: flex-end; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="header-left">
+        <h1>Voice</h1>
+        <a class="nav-link" href="./">Tuner</a>
+        <a class="nav-link" href="sing.html">Sing</a>
+        <a class="nav-link" href="tools.html">Tools</a>
+      </div>
+      <div class="header-right mono">
+        <span id="version">v32</span>
+        <span id="status">idle</span>
+      </div>
+    </header>
+    <main>
+      <section class="card" id="create-card" hidden>
+        <h2>Create your voice profile</h2>
+        <p>A profile remembers your volume calibration and your vocal range — the notes you can
+          hold, and where singing is comfortable. The Sing page can then transpose a song to fit you.</p>
+        <div class="row">
+          <input id="create-name" placeholder="Name (e.g. Dave)" maxlength="30" autocomplete="off" />
+          <button id="create-btn" class="primary" type="button">Create</button>
+        </div>
+      </section>
+
+      <section class="card" id="profile-card" hidden>
+        <div class="row">
+          <select id="profile-select" aria-label="Voice profile"></select>
+          <button id="new-btn" type="button">New</button>
+          <button id="rename-btn" type="button">Rename</button>
+          <button id="delete-btn" type="button" title="Delete this profile" aria-label="Delete this profile">✕</button>
+        </div>
+        <div id="msg"></div>
+      </section>
+
+      <section class="card" id="range-card" hidden>
+        <h2>Range</h2>
+        <p id="range-text"></p>
+        <div id="strip"></div>
+        <div class="edit" id="range-edit">
+          <div class="lbl">Comfortable — where songs are fitted</div>
+          <div class="pair"><span class="stepper" data-k="comfortLow"></span><span class="to">to</span><span class="stepper" data-k="comfortHigh"></span></div>
+          <div class="lbl">Limits — the lowest and highest notes you can hold</div>
+          <div class="pair"><span class="stepper" data-k="low"></span><span class="to">to</span><span class="stepper" data-k="high"></span></div>
+        </div>
+        <div class="row">
+          <button id="range-btn" class="primary" type="button">Find my range</button>
+        </div>
+        <div class="row presets" id="presets">
+          <span style="font-size:0.78rem;opacity:0.6">Or start from:</span>
+        </div>
+      </section>
+
+      <section class="card" id="vol-card" hidden>
+        <h2>Volume</h2>
+        <p id="vol-text"></p>
+        <div class="row">
+          <button id="vol-btn" type="button">Calibrate volume</button>
+        </div>
+      </section>
+    </main>
+
+    <div id="test" hidden>
+      <div class="card" role="dialog" aria-modal="true" aria-labelledby="t-title">
+        <div id="t-step"></div>
+        <h2 id="t-title"></h2>
+        <p id="t-text"></p>
+        <div id="t-target"></div>
+        <div id="t-you" class="mono"></div>
+        <div id="t-meter"><div></div></div>
+        <div id="t-hint"></div>
+        <div id="t-ladder" class="mono"></div>
+        <div id="t-buttons">
+          <button id="t-replay" type="button">▶ Hear it again</button>
+          <button id="t-limit" type="button">That's my limit</button>
+          <button id="t-stop" type="button" class="ghost">Stop</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="voice.js"></script>
+  </body>
+</html>

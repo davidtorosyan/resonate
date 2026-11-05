@@ -9,6 +9,8 @@ import { startCapture, playVoice } from "./capture.js";
 import { loadPiano, pianoReady, playPiano, playClick } from "./piano.js";
 import { listSongs, getSong, addSong, removeSong, persistent } from "./library.js";
 import { fixOmrScore } from "./omr/fixscore.js";
+import { activeProfile } from "./profiles.js";
+import { fitToRange } from "./fit.js";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -80,7 +82,10 @@ let range = { lo: 55, hi: 72 };
 const store = (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} };
 const recall = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 
-let transpose = 0; // semitones, per song (K.keys)
+let transpose = 0;  // semitones, or "fit" (to the active voice profile's range); per song (K.keys)
+let fit = null;     // fitToRange's result while fitting
+let shifts = [];    // semitones per score note (all the same unless fitting)
+let shiftSig = "";  // shifts as a string, to tell whether a take's grades still apply
 let rate = Number(recall(K.rate)) || 1;
 let guide = recall(K.guide) || "click";
 let playMode = recall(K.playMode) || "both";
@@ -109,11 +114,14 @@ function applySong() {
   const spq = secPerQuarter();
   // Transpose like a notation editor: new key with the fewest accidentals, every note
   // moved by the interval (so spelled right in that key), not just its MIDI number.
-  const key = transposeKey(score.fifths, transpose);
-  flats = key.fifths < 0;
-  notes = notesForVerse(score, verse).map((n) => ({
-    midi: n.midi + transpose,
-    name: spellTransposed(n, transpose, key.steps, flats).name,
+  // Fitting may also move whole phrases by octaves (same key, so same spelling rules).
+  shifts = noteShifts();
+  shiftSig = shifts.join(",");
+  flats = transposeKey(score.fifths, fit ? fit.key : shifts[0] ?? 0).fifths < 0;
+  if (transpose === "fit") showFitMsg(activeProfile());
+  notes = notesForVerse(score, verse).map((n, i) => ({
+    midi: n.midi + shifts[i],
+    name: spellTransposed(n, shifts[i], transposeKey(score.fifths, shifts[i]).steps, flats).name,
     t: n.onset * spq,
     d: n.dur * spq,
     text: n.text,
@@ -129,7 +137,7 @@ function applySong() {
   range = { lo: Math.min(...mids) - 4, hi: Math.max(...mids) + 4 };
   fillTempoOptions();
   fillKeyOptions();
-  if (take && (take.transpose !== transpose || take.rate !== rate)) take = null; // grades no longer apply
+  if (take && (take.shiftSig !== shiftSig || take.rate !== rate)) take = null; // grades no longer apply
   // Start at the bar containing the first note, not at bar 1 — songs with a
   // long piano intro would otherwise mean a long wait before singing.
   entryIdx = 0;
@@ -154,9 +162,54 @@ function fillTempoOptions() {
   tempoSelect.value = String(rate);
 }
 
-// "Key Cm", "+2 Dm", "−12 Cm 8vb": each option names the key it lands in.
+// Semitones per score note: the transposition, or fitted to the voice profile's range
+// (fit.js: one key, whole phrases moved by octaves where a part sits far from the rest).
+function noteShifts() {
+  fit = null;
+  if (transpose === "fit") {
+    const prof = activeProfile();
+    if (prof?.range) fit = fitToRange(score.notes, prof.range);
+    if (fit) return fit.shifts;
+  }
+  const t = transpose === "fit" ? 0 : transpose;
+  return score.notes.map(() => t);
+}
+
+function showFitMsg(prof) {
+  if (!prof?.range) {
+    return showMsg("To fit songs to your voice, set up a voice profile with your range first:", "info", { href: "voice.html", text: "Voice profile" });
+  }
+  const r = prof.range;
+  const span = (n) => {
+    const o = Math.floor(n / 12), r = n % 12;
+    const oct = o === 1 ? "an octave" : o ? `${o} octaves` : "";
+    const semi = r ? `${r} semitone${r > 1 ? "s" : ""}` : "";
+    return oct && semi ? `${oct} and ${semi}` : oct || semi;
+  };
+  const move = (t) => (t ? `${t > 0 ? "up" : "down"} ${span(Math.abs(t))}` : "as written");
+  const comfy = `${prof.name}'s comfortable range (${nameOf(r.comfortLow, flats)}–${nameOf(r.comfortHigh, flats)})`;
+  if (fit.moves.length === 1 && !fit.key) return showMsg(`Fits ${comfy} as written.`, "ok");
+  const key = keyName(transposeKey(score.fifths, fit.key).fifths, minor);
+  // Two groups = two parts (a duet on one staff): the one moved up more was the low part.
+  const byShift = [...fit.moves].sort((a, b) => b.shift - a.shift);
+  const phr = (m) => `${m.phrases} phrase${m.phrases > 1 ? "s" : ""}`;
+  const how = fit.moves.length === 1
+    ? `${move(fit.key)}, in ${key}`
+    : fit.moves.length === 2
+      ? `the low part (${phr(byShift[0])}) ${move(byShift[0].shift)}, the high part (${phr(byShift[1])}) ${move(byShift[1].shift)} — both in ${key}`
+      : `${byShift.map((m) => `${phr(m)} ${move(m.shift)}`).join(", ")} — all in ${key}`;
+  const rest = fit.outside >= 0.005
+    ? ` ${Math.round(fit.outside * 100) || "<1"}% of the singing is still outside it${fit.beyond >= 0.005 ? ` (${Math.round(fit.beyond * 100) || "<1"}% beyond your limits)` : ""}.`
+    : "";
+  showMsg(`Fitted to ${comfy}: ${how}.${rest}`, "ok");
+}
+
+// "Fit Dave", then "Key Cm", "+2 Dm", "−12 Cm 8vb": each option names the key it lands in.
 function fillKeyOptions() {
   keySelect.textContent = "";
+  const prof = activeProfile();
+  const fitLabel = prof ? `Fit ${prof.name}` : "Fit my range…";
+  keySelect.add(new Option(fitLabel.length > 14 ? `${fitLabel.slice(0, 13)}…` : fitLabel, "fit"));
   for (let k = -12; k <= 12; k++) {
     const name = keyName(transposeKey(score.fifths, k).fifths, minor);
     const label = k === 0 ? `Key ${name}` : `${k > 0 ? "+" : "−"}${Math.abs(k)} ${name}${Math.abs(k) === 12 ? (k > 0 ? " 8va" : " 8vb") : ""}`;
@@ -190,7 +243,8 @@ function readKeys() {
 function setScore(sc) {
   score = sc;
   minor = guessMinor(sc);
-  transpose = Number(readKeys()[songId]) || 0;
+  const savedKey = readKeys()[songId];
+  transpose = savedKey === "fit" ? "fit" : Number(savedKey) || 0;
   verseSelect.textContent = "";
   for (const v of sc.verses) verseSelect.add(new Option(`Verse ${v}`, v));
   const saved = recall(K.verse);
@@ -239,8 +293,14 @@ function cleanXml(xml) {
   }
 }
 
-function showMsg(text, kind = "info") {
+function showMsg(text, kind = "info", link = null) {
   songMsgEl.textContent = text;
+  if (link) {
+    const a = document.createElement("a");
+    a.href = link.href;
+    a.textContent = link.text;
+    songMsgEl.append(" ", a);
+  }
   songMsgEl.dataset.kind = kind;
   songMsgEl.hidden = !text;
 }
@@ -420,7 +480,7 @@ async function startSing() {
   // The singer follows what they hear (output latency); the mic hears them
   // late (input latency); a pitch frame lags its audio (analysis window).
   const latency = (ac.outputLatency || ac.baseLatency || 0) + INPUT_LATENCY;
-  take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, transpose, rate, octave: 0 };
+  take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, rate, octave: 0 };
   session = { kind: "sing", ac, nodes, songT0, latency, mic, capture, wakeLock, raf: null };
   singBtn.disabled = false;
   updateButtons();
@@ -1017,7 +1077,8 @@ verseSelect.addEventListener("change", () => {
   applySong();
 });
 keySelect.addEventListener("change", () => {
-  transpose = Number(keySelect.value);
+  transpose = keySelect.value === "fit" ? "fit" : Number(keySelect.value);
+  if (transpose !== "fit") showMsg("");
   const keys = readKeys();
   if (transpose) keys[songId] = transpose;
   else delete keys[songId];
