@@ -5,8 +5,8 @@
 // then does the same going up. The lowest and highest notes held are your limits; the
 // comfortable range starts a few notes inside them and can be adjusted by hand.
 
-import { openMic } from "./pitch.js";
-import { loadPiano, playPiano } from "./piano.js";
+import { openMic, createReader, FFT_SIZE } from "./pitch.js";
+import { loadPiano, holdPiano } from "./piano.js";
 import { noteName, median } from "./music.js";
 import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js";
 
@@ -22,7 +22,8 @@ const tReplay = $("t-replay"), tLimit = $("t-limit"), tStop = $("t-stop");
 const STEP = 2;            // semitones between test notes; the last one is checked by semitone
 const LOWEST = 33;         // A1 (55 Hz): pitch detection stops at 50 Hz
 const HIGHEST = 84;        // C6 (1047 Hz): …and at 1100 Hz
-const NOTE_SEC = 1.0;      // the reference note
+const NOTE_SEC = 1.2;      // the reference note (piano + held tone, as the Sing page's keys)
+const REF_LEVEL = 2.0;     // ~6 dB above Listen; the loudest sample still peaks below −2 dBFS
 const LISTEN_DELAY = 0.35; // s after it before listening (its fading tail isn't you)
 const LISTEN_MAX = 6000;   // ms to find the note and hold it
 const HOLD_MS = 800;       // on-pitch time that counts as holding it
@@ -164,7 +165,8 @@ async function hear(midi) {
     if (!playCtx || playCtx.state === "closed") playCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (playCtx.state === "suspended") await playCtx.resume();
     const piano = await loadPiano(playCtx);
-    playPiano(playCtx, piano, playCtx.currentTime + 0.03, NOTE_SEC, midi, 1.2, []);
+    const t = playCtx.currentTime + 0.03;
+    holdPiano(playCtx, piano, t, midi, REF_LEVEL).release(t + NOTE_SEC);
   } catch (err) {
     console.warn(err);
   }
@@ -220,29 +222,85 @@ for (const [name, [low, high, comfortLow, comfortHigh]] of Object.entries(PRESET
 // ---------------------------------------------------------------------------
 // Tests (range / volume): one mic session, one frame loop.
 
+// iOS plays sound very quietly (through the earpiece, or ducked) while a page has the
+// microphone open, and only goes back to the loudspeaker at full volume once capture
+// stops and the audio session is "playback" again. So the range test only captures while
+// you sing: before each reference note it stops the microphone and switches the session
+// to playback, then reopens the microphone to listen (no new permission prompt within the
+// page). Both of its audio contexts are created and started in the tap that begins the
+// test, so they may run again later without a tap.
+const MIC = { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } };
+const setSession = (type) => { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {} };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function newCtx() {
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  ac.resume().catch(() => {});
+  return ac;
+}
+
+// Capture into the test's analyser; false if the test moved on meanwhile.
+async function micOn(r, live) {
+  setSession("play-and-record");
+  const stream = await navigator.mediaDevices.getUserMedia(MIC);
+  if (!live()) {
+    stream.getTracks().forEach((t) => t.stop());
+    return false;
+  }
+  if (r.micCtx.state !== "running") await Promise.race([r.micCtx.resume(), sleep(1000)]).catch(() => {});
+  r.stream = stream;
+  r.source = r.micCtx.createMediaStreamSource(stream);
+  r.source.connect(r.analyser);
+  return true;
+}
+
+function micOff(r) {
+  r.stream?.getTracks().forEach((t) => t.stop());
+  try { r.source?.disconnect(); } catch {}
+  r.stream = r.source = null;
+}
+
 async function startRun(kind) {
   if (run) return;
   statusEl.textContent = "starting mic…";
-  let mic;
-  try {
-    mic = await openMic(); // inside the tap (iOS)
-  } catch (err) {
-    statusEl.textContent = "idle";
-    showMsg(`Couldn't open the microphone: ${err.message || err.name}`, "error");
-    return;
-  }
-  let piano = null;
-  if (kind === "range") {
-    statusEl.textContent = "loading piano…";
-    try { piano = await loadPiano(mic.ac); } catch (err) {
-      await mic.close();
+  if (kind === "vol") {
+    let mic;
+    try {
+      mic = await openMic(); // inside the tap (iOS)
+    } catch (err) {
       statusEl.textContent = "idle";
-      showMsg("Couldn't load the piano sound.", "error");
+      showMsg(`Couldn't open the microphone: ${err.message || err.name}`, "error");
       return;
     }
+    run = { kind, mic, read: mic.read, raf: 0, lastT: 0, recent: [], phase: "", phaseT: performance.now() };
+  } else {
+    // Inside the tap: both contexts start now (playback first, then the microphone's).
+    setSession("playback");
+    const playCtx = newCtx();
+    setSession("play-and-record");
+    const micCtx = newCtx();
+    const analyser = micCtx.createAnalyser();
+    analyser.fftSize = FFT_SIZE;
+    analyser.smoothingTimeConstant = 0;
+    const r = { kind, playCtx, micCtx, analyser, read: createReader(analyser, micCtx.sampleRate), stream: null, source: null,
+      piano: null, note: null, seq: 0, raf: 0, lastT: 0, recent: [], phase: "starting", phaseT: performance.now() };
+    run = r;
+    const fail = async (text) => {
+      if (run === r) await stopRun();
+      showMsg(text, "error");
+    };
+    try {
+      if (!(await micOn(r, () => run === r))) return;
+    } catch (err) {
+      return fail(`Couldn't open the microphone: ${err.message || err.name}`);
+    }
+    statusEl.textContent = "loading piano…";
+    try { r.piano = await loadPiano(playCtx); } catch (err) {
+      return fail("Couldn't load the piano sound.");
+    }
+    if (run !== r) return;
   }
   statusEl.textContent = "mic on";
-  run = { kind, mic, piano, nodes: [], raf: 0, lastT: 0, recent: [], phase: "", phaseT: performance.now() };
   testEl.hidden = false;
   tLadder.textContent = "";
   tHint.textContent = "";
@@ -256,10 +314,13 @@ async function stopRun() {
   if (!r) return;
   run = null;
   cancelAnimationFrame(r.raf);
-  for (const n of r.nodes) try { n.stop(); } catch {}
   testEl.hidden = true;
   statusEl.textContent = "idle";
-  await r.mic.close();
+  if (r.kind === "vol") return r.mic.close();
+  r.note?.release();
+  micOff(r);
+  setSession("playback");
+  for (const ac of [r.playCtx, r.micCtx]) try { await ac.close(); } catch {}
 }
 
 function loop() {
@@ -267,7 +328,7 @@ function loop() {
   const now = performance.now();
   const dt = run.lastT ? Math.min(100, now - run.lastT) : 0;
   run.lastT = now;
-  const fr = run.mic.read();
+  const fr = run.kind === "vol" || run.stream ? run.read() : null; // range: no mic while a note plays
   if (run.kind === "range") rangeFrame(fr, now, dt);
   else volFrame(fr, now, dt);
   if (run) run.raf = requestAnimationFrame(loop);
@@ -305,7 +366,7 @@ function beginAnchor() {
 }
 
 function rangeFrame(fr, now, dt) {
-  const sm = run.phase === "play" ? null : smoothed(fr, now);
+  const sm = fr && run.phase !== "play" ? smoothed(fr, now) : null;
   if (run.phase === "anchor") {
     run.window.push({ t: now, m: sm });
     while (run.window[0].t < now - ANCHOR_MS) run.window.shift();
@@ -326,16 +387,7 @@ function rangeFrame(fr, now, dt) {
     }
     return;
   }
-  if (run.phase === "play") {
-    if (now >= run.listenAt) {
-      setPhase("listen");
-      run.recent = []; // nothing from the piano
-      run.onMs = 0;
-      tTarget.dataset.state = "listen";
-      tText.textContent = "Now sing it and hold it.";
-    }
-    return;
-  }
+  if (run.phase === "play") return; // playTarget moves on to "listen"
   if (run.phase === "listen") {
     if (sm !== null) {
       const c = Math.round((sm - run.target) * 100);
@@ -364,18 +416,42 @@ function go(target) {
   playTarget();
 }
 
-function playTarget() {
+// Play the reference note with the microphone off (loud on phones, see above), then
+// reopen it and listen. A later call (Hear it again, next note, Stop) supersedes this one.
+async function playTarget() {
+  const r = run;
+  const token = ++r.seq;
+  const live = () => run === r && r.seq === token;
   setPhase("play");
-  for (const n of run.nodes) try { n.stop(); } catch {}
-  run.nodes = [];
-  const ac = run.mic.ac;
-  playPiano(ac, run.piano, ac.currentTime + 0.05, NOTE_SEC, run.target, 1.2, run.nodes);
-  run.listenAt = performance.now() + (0.05 + NOTE_SEC + LISTEN_DELAY) * 1000;
-  tTarget.textContent = noteName(run.target);
+  r.note?.release();
+  micOff(r);
+  setSession("playback");
+  tTarget.textContent = noteName(r.target);
   tTarget.dataset.state = "";
   tText.textContent = "Listen…";
   tYou.textContent = "";
+  tHint.textContent = r.retry ? "One more try" : "";
   meter(0);
+  await sleep(100); // let the output move back to the loudspeaker
+  if (!live()) return;
+  const ac = r.playCtx;
+  if (ac.state !== "running") await Promise.race([ac.resume(), sleep(500)]).catch(() => {});
+  const when = ac.currentTime + 0.03;
+  r.note = holdPiano(ac, r.piano, when, r.target, REF_LEVEL);
+  r.note.release(when + NOTE_SEC);
+  await sleep((0.03 + NOTE_SEC + LISTEN_DELAY) * 1000);
+  if (!live()) return;
+  try {
+    if (!(await micOn(r, live))) return;
+  } catch (err) {
+    await stopRun();
+    return showMsg(`The microphone didn't reopen: ${err.message || err.name}`, "error");
+  }
+  setPhase("listen");
+  r.recent = [];
+  r.onMs = 0;
+  tTarget.dataset.state = "listen";
+  tText.textContent = "Now sing it and hold it.";
 }
 
 function result(ok) {
@@ -494,9 +570,9 @@ function volFrame(fr, now, dt) {
 
 $("range-btn").addEventListener("click", () => startRun("range"));
 $("vol-btn").addEventListener("click", () => startRun("vol"));
-tReplay.addEventListener("click", () => { if (run?.kind === "range" && run.phase !== "anchor") playTarget(); });
+tReplay.addEventListener("click", () => { if (run?.kind === "range" && !["anchor", "starting"].includes(run.phase)) playTarget(); });
 tLimit.addEventListener("click", () => {
-  if (run?.kind !== "range" || run.phase === "anchor") return;
+  if (run?.kind !== "range" || ["anchor", "starting"].includes(run.phase)) return;
   if (run.phase !== "pause") addLadder(run.target, false);
   endDirection();
 });
@@ -513,4 +589,4 @@ document.addEventListener("visibilitychange", () => {
 if (!navigator.mediaDevices?.getUserMedia) statusEl.textContent = "mic API unavailable — open over HTTPS";
 
 render();
-window.resonateDebug = () => ({ run: run && { kind: run.kind, phase: run.phase, target: run.target, dir: run.dir, best: run.best, anchor: run.anchor }, profiles: loadProfiles() });
+window.resonateDebug = () => ({ run: run && { kind: run.kind, phase: run.phase, target: run.target, dir: run.dir, best: run.best, anchor: run.anchor, mic: !!(run.stream || run.mic) }, profiles: loadProfiles() });
