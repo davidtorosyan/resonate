@@ -31,7 +31,8 @@ export function loadPiano(ac) {
   return cache.get(ac);
 }
 
-// Schedule one note. `piano` is the resolved loadPiano() value.
+// Schedule one note. `piano` is the resolved loadPiano() value. Returns the note's
+// gain node (to damp it early).
 export function playPiano(ac, piano, when, dur, midi, level, nodes) {
   let key = piano.keys[0];
   for (const k of piano.keys) if (Math.abs(k - midi) < Math.abs(key - midi)) key = k;
@@ -47,6 +48,7 @@ export function playPiano(ac, piano, when, dur, midi, level, nodes) {
   src.start(when, ONSET);
   src.stop(end + RELEASE * 6);
   nodes.push(src);
+  return g;
 }
 
 // Metronome click: a short filtered noise burst. Noise has no pitch, so the

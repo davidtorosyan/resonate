@@ -89,6 +89,7 @@ let scrollT = 0;    // song time at the now-line when idle (also where Play/List
 let nowT = 0;       // song time at the now-line (follows the session)
 let shownLine = -1; // lyric line currently rendered
 let lastChip = -1;  // chip marked as current
+let preview = null; // a tapped note sounding: { j, ac, gain, timer }
 
 const noteName = (m) => nameOf(m, flats);
 
@@ -100,6 +101,7 @@ function secPerQuarter() {
 }
 
 function applySong() {
+  stopPreview(false);
   const verse = verseSelect.value || score.verses[0] || "1";
   const spq = secPerQuarter();
   notes = notesForVerse(score, verse).map((n) => ({
@@ -335,6 +337,7 @@ function beatGrid() {
 // Sing
 
 async function startSing() {
+  stopPreview(false);
   stopSession();
   take = null;
   showMsg("");
@@ -474,6 +477,7 @@ async function getPlayCtx() {
 
 // kind: "listen" (melody) or "playback" (per playMode).
 async function startPlay(kind, from) {
+  stopPreview(false);
   stopSession();
   const ac = await getPlayCtx();
   const end = kind === "playback" && take ? Math.max(take.endT ?? songEnd, 0) : songEnd;
@@ -578,7 +582,7 @@ function lineHtml(li, el, keep) {
 
 function renderLyrics(t) {
   if (!notes.length) return;
-  const fi = focusNote(t);
+  const fi = !session && preview ? preview.j : focusNote(t);
   const li = lineOf[fi] ?? 0;
   if (li !== shownLine) {
     sylEls = new Map();
@@ -586,13 +590,13 @@ function renderLyrics(t) {
     lineHtml(li + 1, lyricNextEl, false);
     shownLine = li;
   }
-  const cur = noteAt(t);
+  const cur = session ? noteAt(t) : preview ? preview.j : -1;
   // The syllable a melisma note belongs to.
   let curSyl = cur;
   while (curSyl > 0 && notes[curSyl].melisma) curSyl--;
   for (const [i, span] of sylEls) {
     const g = take?.grades[i];
-    span.dataset.state = i === curSyl && cur >= 0 && session ? "current" : g && g.status !== "unsung" ? g.status : "";
+    span.dataset.state = i === curSyl && cur >= 0 ? "current" : g && g.status !== "unsung" ? g.status : "";
   }
 }
 
@@ -624,21 +628,91 @@ function makeChip(j) {
     else if (g?.status === "off") res = noteName(Math.round(g.sungMidi));
     else if (g?.status === "missed") res = "missed";
     b.querySelector("small").textContent = res || " ";
-    b.addEventListener("click", () => seek(n.t - 0.4));
+    b.title = "Tap to hear this note";
+    b.addEventListener("click", () => previewNote(j));
     if (j === lastChip) b.dataset.current = "true";
+    if (j === preview?.j) b.dataset.playing = "true";
     return b;
 }
 
 function markCurrentChip() {
-  const i = noteAt(nowT);
+  setCurrentChip(noteAt(nowT), true);
+}
+
+function setCurrentChip(i, scroll) {
   if (i === lastChip) return;
   const chips = chipsEl.querySelectorAll(".chip");
   if (lastChip >= 0 && chips[lastChip]) chips[lastChip].dataset.current = "false";
   if (i >= 0 && chips[i]) {
     chips[i].dataset.current = "true";
-    chips[i].scrollIntoView({ block: "nearest" });
+    if (scroll) chips[i].scrollIntoView({ block: "nearest" });
   }
   lastChip = i;
+}
+
+// ---------------------------------------------------------------------------
+// Tap a note chip: hear that note on the piano exactly as Listen plays it (same
+// sound and level, its length at the current tempo, in the current key), with its
+// syllable and bar lit, and the cursor moved there so Listen starts from it. The
+// chip list isn't rebuilt (it would jump back to the top), so you can go note by
+// note. During Listen / Play a tap jumps playback there; while singing, nothing.
+
+
+async function previewNote(j) {
+  if (session) {
+    if (session.kind !== "sing") seek(notes[j].t - 0.4);
+    return;
+  }
+  const n = notes[j];
+  stopPreview(false);
+  scrollT = nowT = Math.max(-1, Math.min(n.t - 0.4, songEnd));
+  const mine = (preview = { j, ac: null, gain: null, timer: 0 });
+  showPreview();
+  const ac = await getPlayCtx(); // resumes the context inside the tap (iOS)
+  let piano = null;
+  if (!pianoReady(ac)) statusEl.textContent = "loading piano…";
+  try { piano = await loadPiano(ac); } catch (err) { console.warn(err); }
+  if (statusEl.textContent === "loading piano…") statusEl.textContent = "idle";
+  if (preview !== mine || session) return; // another tap, or Listen / Sing started meanwhile
+  if (!piano) {
+    statusEl.textContent = "couldn't load the piano";
+    stopPreview();
+    return;
+  }
+  const when = ac.currentTime + 0.03;
+  mine.ac = ac;
+  mine.gain = playPiano(ac, piano, when, n.d, n.midi, 1.4, []);
+  mine.timer = setTimeout(() => {
+    if (preview !== mine) return;
+    preview = null;
+    showPreview();
+  }, (when - ac.currentTime + Math.max(0.12, n.d)) * 1000);
+}
+
+// Damp the tapped note (a new tap, Listen, Sing, another song).
+function stopPreview(render = true) {
+  const p = preview;
+  if (!p) return;
+  preview = null;
+  clearTimeout(p.timer);
+  if (p.gain) {
+    const t = p.ac.currentTime;
+    p.gain.gain.cancelScheduledValues(t);
+    p.gain.gain.setTargetAtTime(0, t, 0.03);
+  }
+  if (render) showPreview();
+}
+
+function showPreview() {
+  if (session) return;
+  const chips = chipsEl.querySelectorAll(".chip");
+  for (const c of chipsEl.querySelectorAll('.chip[data-playing="true"]')) c.dataset.playing = "false";
+  if (preview) {
+    if (chips[preview.j]) chips[preview.j].dataset.playing = "true";
+    setCurrentChip(preview.j, false);
+  }
+  renderLyrics(nowT);
+  renderLane();
 }
 
 function renderSummary() {
@@ -752,7 +826,7 @@ function renderLane() {
 
   // Score notes with lyrics.
   const barH = Math.max(6, Math.min(rowH * 0.85, 22));
-  const cur = noteAt(nowT);
+  const cur = session ? noteAt(nowT) : preview ? preview.j : -1; // lit: playing now / tapped
   notes.forEach((n, j) => {
     if (n.t + n.d < tMin || n.t > tMax) return;
     const g = take?.grades[j];
@@ -761,8 +835,8 @@ function renderLane() {
     const x0 = xOf(n.t) + 1, x1 = xOf(n.t + n.d) - 1;
     const y = yOf(n.midi);
     ctx.fillStyle = fill;
-    ctx.strokeStyle = j === cur && session ? "#ffe6a0" : stroke;
-    ctx.lineWidth = j === cur && session ? 2 : 1;
+    ctx.strokeStyle = j === cur ? "#ffe6a0" : stroke;
+    ctx.lineWidth = j === cur ? 2 : 1;
     if (key === "missed") ctx.setLineDash([4, 3]);
     roundRect(x0, y - barH / 2, Math.max(3, x1 - x0), barH, Math.min(5, barH / 2));
     ctx.fill();
@@ -772,7 +846,7 @@ function renderLane() {
       ctx.font = "italic 600 12px system-ui, sans-serif";
       ctx.textBaseline = "top";
       ctx.textAlign = "left";
-      ctx.fillStyle = j === cur && session ? "#ffe6a0" : "rgba(255,230,160,0.8)";
+      ctx.fillStyle = j === cur ? "#ffe6a0" : "rgba(255,230,160,0.8)";
       ctx.fillText(n.text + (joinsNext(j) ? "-" : ""), x0, y + barH / 2 + 2);
     }
   });

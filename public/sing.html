@@ -170,6 +170,7 @@
         font: inherit;
         cursor: pointer;
         min-width: 2.7rem;
+        touch-action: manipulation; /* quick repeat taps play, not zoom */
       }
       .chip i { font-style: italic; font-weight: 600; font-size: 0.8rem; color: #ffe6a0; white-space: nowrap; min-height: 1.1em; }
       .chip b { font-size: 0.72rem; opacity: 0.85; }
@@ -180,6 +181,7 @@
       .chip[data-tune="missed"] { border-style: dashed; border-color: rgba(255,255,255,0.35); opacity: 0.75; }
       .chip[data-tune="unsung"] { opacity: 0.45; }
       .chip[data-current="true"] { background: rgba(255,230,160,0.15); }
+      .chip[data-playing="true"] { background: rgba(255,230,160,0.32); border-color: #ffe6a0; }
       .phrase-break { flex-basis: 100%; height: 0; }
 
       footer {
@@ -223,7 +225,7 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v29</span>
+        <span id="version">v30</span>
         <span id="status">idle</span>
       </div>
     </header>
