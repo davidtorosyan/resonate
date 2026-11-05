@@ -22,11 +22,23 @@ export async function openMic() {
   analyser.fftSize = FFT_SIZE;
   analyser.smoothingTimeConstant = 0;
   source.connect(analyser);
-  const floatBuf = new Float32Array(FFT_SIZE);
-  const detect = createYin(ac.sampleRate, FFT_SIZE);
+  const read = createReader(analyser, ac.sampleRate);
 
-  // Read the newest window: { rms, db, midi | null }.
-  function read() {
+  async function close() {
+    stream.getTracks().forEach((t) => t.stop());
+    try { source.disconnect(); } catch {}
+    try { await ac.close(); } catch {}
+  }
+
+  return { stream, ac, source, analyser, read, close };
+}
+
+// An AnalyserNode (fftSize FFT_SIZE) fed by a mic → read() the newest window:
+// { rms, db, midi | null }.
+export function createReader(analyser, sampleRate) {
+  const floatBuf = new Float32Array(FFT_SIZE);
+  const detect = createYin(sampleRate, FFT_SIZE);
+  return function read() {
     analyser.getFloatTimeDomainData(floatBuf);
     let sumSq = 0;
     for (let i = 0; i < floatBuf.length; i++) sumSq += floatBuf[i] * floatBuf[i];
@@ -42,15 +54,7 @@ export async function openMic() {
       }
     }
     return { rms, db: 20 * Math.log10(rms || 1e-6), midi };
-  }
-
-  async function close() {
-    stream.getTracks().forEach((t) => t.stop());
-    try { source.disconnect(); } catch {}
-    try { await ac.close(); } catch {}
-  }
-
-  return { stream, ac, source, analyser, read, close };
+  };
 }
 
 // YIN (de Cheveigné & Kawahara, 2002), bounded to the vocal range.
