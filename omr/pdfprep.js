@@ -48,8 +48,12 @@ export async function renderPdf(data, { pdfjsBase, dpi = DPI, onPage } = {}) {
     for (let p = 0, q = 0; p < gray.length; p++, q += 4) {
       gray[p] = rgba[q] * 299 + rgba[q + 1] * 587 + rgba[q + 2] * 114 < 200000 ? 0 : 255;
     }
-    let lines = [];
-    try { lines = textLines(await page.getTextContent()); } catch {}
+    let lines = [], tempo = null;
+    try {
+      const content = await page.getTextContent();
+      lines = textLines(content);
+      tempo = tempoMark(content);
+    } catch {}
     page.cleanup();
     canvas.width = canvas.height = 0; // free the 35 MB backing store now (iOS caps total canvas memory)
     const staves = countStaves(gray, width, height);
@@ -57,7 +61,7 @@ export async function renderPdf(data, { pdfjsBase, dpi = DPI, onPage } = {}) {
     for (let p = 0; p < gray.length; p += 97) if (!gray[p]) ink++;
     // < 0.5% ink: (almost) nothing drawn — e.g. an undecodable scan under a footer line
     const blank = ink * 97 < gray.length * 0.005;
-    pages.push({ index: i, width, height, gray, staves, blank, lines });
+    pages.push({ index: i, width, height, gray, staves, blank, lines, tempo });
     onPage?.(i, doc.numPages, staves, blank);
   }
   await task.destroy();
@@ -84,6 +88,22 @@ export function textLines(content) {
     .filter((l) => l.text.length <= 80 && /\p{L}{2}/u.test(l.text) && /^[\p{L}\p{N}\s'’",.!?&:()\-–—]+$/u.test(l.text))
     .sort((a, b) => b.size - a.size)
     .slice(0, 8);
+}
+
+// A metronome mark in the page's text ("Moderately ♩ = 104": the note is drawn with the
+// music font, "= 104" is text) → beats per minute, or null.
+export function tempoMark(content) {
+  const rows = new Map();
+  for (const it of content.items || []) {
+    if (!it.str || !it.transform) continue;
+    const y = Math.round(it.transform[5] / 3);
+    rows.set(y, `${rows.get(y) || ""} ${it.str}`);
+  }
+  for (const row of rows.values()) {
+    const m = /(?:^|\s)=\s*(\d{2,3})(?!\d)/.exec(row);
+    if (m && Number(m[1]) >= 30 && Number(m[1]) <= 300) return Number(m[1]);
+  }
+  return null;
 }
 
 // Count 5-line staves: rows containing a long horizontal dark run are

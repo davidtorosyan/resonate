@@ -89,6 +89,7 @@ export function pdfTitle(pages, firstMusic) {
  * Convert a PDF (File/Blob/ArrayBuffer) to MusicXML with Audiveris.
  * Returns { mxls: [Uint8Array] (zipped MusicXML: one score, or several if Audiveris split the
  *           book into movements), pages: [kept page numbers], title: the PDF's own title text or null,
+ *           tempo: a "= 104" metronome mark in the first music page's text, or null,
  *           failed: [{ sheet, page, step, reason }] (pages Audiveris gave up on; the rest is in mxls),
  *           log: string[] }.
  */
@@ -118,6 +119,8 @@ export async function convertPdf(input, { onProgress, onLog } = {}) {
   }
   const title = pdfTitle(pages, music[0].index);
   if (title) addLog(`title from the PDF's text: ${title}`);
+  const tempo = music[0].tempo ?? pages.find((p) => p.tempo && p.index <= music[0].index)?.tempo ?? null;
+  if (tempo) addLog(`tempo mark in the PDF's text: = ${tempo}`);
   const tiff = buildTiff(music);
   pages.length = 0; // free the rendered pages
 
@@ -141,7 +144,7 @@ export async function convertPdf(input, { onProgress, onLog } = {}) {
     // Belt and braces: Audiveris exports nothing once its music font proved unusable.
     if (log.some((l) => /Music font \S+ unusable/.test(l))) throw new Error('music font unusable');
     if (mxls.length > 1) addLog(`[engine] ${mxls.length} scores exported (movements); they're joined in order`);
-    return { mxls, pages: music.map((p) => p.index), title, failed: failedSheets(log, pageOf), log };
+    return { mxls, pages: music.map((p) => p.index), title, tempo, failed: failedSheets(log, pageOf), log };
   } catch (err) {
     throw explain(err, log, (sheet) => music[sheet - 1]?.index ?? sheet);
   } finally {
