@@ -97,27 +97,26 @@ function onProgress(p) {
 }
 
 // The title, best source first: the PDF's own text (exact; vector PDFs only), the file
-// name (Musicnotes-style "Wichita_Lineman_-_F_Major_-_MN0305807" → "Wichita Lineman"),
-// then the largest-font text Audiveris read on the first page (OCR: often a footer like
-// "Authorized for use by: …" or a chord name, so it's only used when the file name says
-// nothing), else the bare file name.
-const NOT_TITLE = /authori[sz]ed for use|musicnotes|copyright|©|all rights|international|published|words and music|^by\b/i;
-const GENERIC_NAME = /^(scan(ned)?|score|document|doc|img|image|page|untitled|sheet ?music|music|download|file|song)?[\s\d_\-().]*$/i;
+// name when it's clearly a title (a seller's name like Musicnotes'
+// "Wichita_Lineman_-_F_Major_-_MN0305807" → "Wichita Lineman"; or anything that isn't a
+// camera/scanner default like "Scanned Document 2" or "IMG_0042"), then the largest-font
+// text Audiveris read on the first page (OCR: often a footer like "Authorized for use by:
+// …" or a chord name, hence last), else the file name as it is.
+const NOT_TITLE = /authori[sz]ed for use|musicnotes|copyright|©|all rights reserved|published (by|under)|words and music/i;
+const GENERIC_NAME = /^((scanned )?(document|scan|img|image|photo|picture|page|untitled|score|sheet ?music|music|download|file|song|pdf|camscanner|adobe scan)\b)?[\s\d_\-().:,]*$/i;
+const SELLER = /\s+-\s+[A-G][b#♭♯]?\s*(major|minor|maj|min)\b.*$|\s*-?\s*\bMN\d{5,}\b.*$/i;
 
 function cleanFileName(name) {
-  return name
-    .replace(/_+/g, " ")
-    .replace(/\s+-\s+[A-G][b#♭♯]?\s*(major|minor|maj|min)\b.*$/i, "")
-    .replace(/\s*-?\s*\bMN\d{5,}\b.*$/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const plain = name.replace(/_+/g, " ").replace(/\s+/g, " ").trim();
+  const title = plain.replace(SELLER, "").trim();
+  return { title: title || plain, seller: title !== plain && !!title };
 }
 
 function chooseTitle(res, xml, firstFailed) {
   if (res.title) return res.title;
   const file = cleanFileName(baseName);
-  if (file && !GENERIC_NAME.test(file)) return file;
-  return (!firstFailed && pickTitle(xml, null)) || file || baseName;
+  if (file.seller || (file.title && !GENERIC_NAME.test(file.title))) return file.title;
+  return (!firstFailed && pickTitle(xml, null)) || file.title || baseName;
 }
 
 // The largest-font credit Audiveris read on the first page, if it looks like words.
@@ -129,7 +128,8 @@ function pickTitle(xml, fallback) {
     for (const w of c.querySelectorAll("credit-words")) {
       const t = (w.textContent || "").trim();
       const s = parseFloat(w.getAttribute("font-size")) || 0;
-      if (s > size && /[A-Za-z]{3}/.test(t) && !/\d/.test(t) && !NOT_TITLE.test(t) && t.length >= 3 && t.length <= 80) { size = s; best = t; }
+      // Words (letters and digits not run together like "Blzmaj7", "C2"), not a publisher's line.
+      if (s > size && /\p{L}{3}|^\d{2,}$/u.test(t) && !/\p{L}\d|\d\p{L}/u.test(t) && !NOT_TITLE.test(t) && t.length >= 2 && t.length <= 80) { size = s; best = t; }
     }
   }
   return best || fallback;

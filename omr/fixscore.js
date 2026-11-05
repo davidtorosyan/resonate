@@ -19,27 +19,61 @@ export function fixOmrScore(xml, log = []) {
 }
 
 // Several scores ("movements") Audiveris exported from one PDF, joined in order into one:
-// each part gets the next score's measures for the same part id (else the same position),
-// renumbered; a part missing from a score gets empty measures so the parts stay aligned.
-// Credits, part list and defaults are the first score's. A song is one piece; Audiveris
-// starts a new movement at an indented system (a Coda), which the engine now turns off,
-// but music must never be dropped if it happens anyway.
+// each part gets the next score's measures for the part with the same name (else the same
+// id, else the same position), renumbered; a part missing from a score gets measures of
+// rest so the parts stay aligned. Each joined score's first measure starts a new page
+// (as it did in the PDF), so the key and line-break logic see the boundary. Credits, part
+// list and defaults are the first score's. A song is one piece; Audiveris starts a new
+// movement at an indented system (a Coda), which the engine now turns off, but music must
+// never be dropped if it happens anyway.
 export function joinMovements(xmls) {
   if (xmls.length < 2) return xmls[0];
   const docs = xmls.map((x) => new DOMParser().parseFromString(x, "application/xml"));
   if (docs.some((d) => d.querySelector("parsererror"))) return xmls[0];
   const base = docs[0];
   const measuresOf = (part) => [...part.children].filter((c) => c.nodeName === "measure");
+  const nameOf = (d, id) => d.querySelector(`score-part[id="${id}"] > part-name`)?.textContent.trim() || "";
   const baseParts = [...base.querySelectorAll("score-partwise > part")];
   for (const d of docs.slice(1)) {
     const parts = [...d.querySelectorAll("score-partwise > part")];
+    const used = new Set();
+    const pick = (bp, i) => {
+      const id = bp.getAttribute("id"), name = nameOf(base, id);
+      const free = parts.filter((p) => !used.has(p));
+      return (name && free.find((p) => nameOf(d, p.getAttribute("id")) === name)) ||
+        (parts.length === baseParts.length && free.find((p) => p.getAttribute("id") === id)) ||
+        (parts.length === baseParts.length ? free[0] : null);
+    };
     const add = Math.max(0, ...parts.map((p) => measuresOf(p).length));
     baseParts.forEach((bp, i) => {
-      const src = parts.find((p) => p.getAttribute("id") === bp.getAttribute("id")) || parts[i];
+      const src = pick(bp, i);
+      if (src) used.add(src);
       const ms = src ? measuresOf(src) : [];
       let n = measuresOf(bp).length;
       for (let k = 0; k < add; k++) {
-        const m = ms[k] ? base.importNode(ms[k], true) : base.createElement("measure");
+        let m;
+        if (ms[k]) m = base.importNode(ms[k], true);
+        else {
+          // A whole-measure rest; its length is the other parts' measure.
+          m = base.createElement("measure");
+          const len = parts.map((p) => measuresOf(p)[k]).filter(Boolean)
+            .map((x) => [...x.children].filter((c) => c.nodeName === "note" && !c.querySelector(":scope > chord"))
+              .reduce((a, c) => a + Number(c.querySelector(":scope > duration")?.textContent || 0), 0))[0] || 0;
+          if (len) {
+            const el = (name, kids = [], attrs = {}) => {
+              const e = base.createElement(name);
+              for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+              for (const c of kids) e.append(c);
+              return e;
+            };
+            m.append(el("note", [el("rest", [], { measure: "yes" }), el("duration", [String(len)]), el("voice", ["1"])]));
+          }
+        }
+        if (k === 0) {
+          let pr = [...m.children].find((c) => c.nodeName === "print");
+          if (!pr) { pr = base.createElement("print"); m.insertBefore(pr, m.firstChild); }
+          pr.setAttribute("new-page", "yes");
+        }
         m.setAttribute("number", String(++n));
         bp.append(m);
       }
@@ -112,103 +146,201 @@ function restoreTempo(doc, log, changes) {
 
 // Missed key signatures. On small staves Audiveris often doesn't find a system's key
 // signature (Wichita Lineman, in F: the voice had none for its first 12 measures and the
-// key flipped between F and C every system, in voice and piano alike), and then writes
-// that system in C — every B♭ becomes a B. A key reading of "none" is the usual miss, so
-// when the readings (one per part per system) are mostly one key and parts disagree
-// within a system, each system gets the key its staves read (majority of the non-zero
-// readings; none → the previous system's, the first ones → the first key read), and the
-// notes of re-keyed measures are respelled: no printed accidental → the key's alteration;
-// printed accidentals, notes after one in the same measure, and tied continuations keep
-// theirs. Scores whose parts agree system by system are left alone (real key changes).
+// key flipped between F and C every system, in voice and piano alike) and spells that
+// system in C — every B♭ becomes a B. How its exporter writes keys (PartwiseBuilder):
+// a <key> where a staff's key changes (number="N" when the staves of a part differ),
+// fifths 0 at a system start where a key is missing after one was known, and nothing at
+// all at the top of a page where it's missing (it forgets keys at each page). So each
+// staff's key is read per "segment" (system starts, plus measures where a key was
+// written mid-system), a page start without a key counting as "none", and:
+// - a segment where some staves read a key and others none gets the key the staves read
+//   (the majority; ties → the key read most often in the score);
+// - a run of segments where no staff reads a key is a miss only next to a segment whose
+//   staves disagree (key read on some, missed on others); when every staff changes key
+//   together it's a real key change and stays. A single staff fills a gap only between
+//   two segments in the same key;
+// - a part whose key differs from the others' by the same amount on every segment is a
+//   transposing instrument (Audiveris never writes <transpose>): left alone.
+// Notes of re-keyed measures are respelled in time order: no printed accidental → the
+// key's alteration; printed accidentals carry to later notes of that staff, step and
+// octave in the measure (any voice), and tie continuations keep their tie start's pitch.
+// Keys are rewritten where they start or change and at every page start, so running this
+// again changes nothing.
 const KEY_SHARPS = "FCGDAEB", KEY_FLATS = "BEADGCF";
 const keyAlter = (fifths, step) =>
   fifths > 0 && KEY_SHARPS.indexOf(step) < fifths ? 1 : fifths < 0 && KEY_FLATS.indexOf(step) < -fifths ? -1 : 0;
 
 function unifyKeySignatures(doc, changes) {
   const kids = (el, name) => [...el.children].filter((c) => c.nodeName === name);
-  // Transposing instruments (a B♭ part) have their own key on every system: left out.
-  const parts = [...doc.querySelectorAll("score-partwise > part")]
-    .filter((p) => !p.querySelector(":scope > measure > attributes > transpose"))
-    .map((p) => kids(p, "measure"));
+  const partEls = [...doc.querySelectorAll("score-partwise > part")];
+  const parts = partEls.map((p) => kids(p, "measure"));
   if (!parts.length || !parts[0].length) return;
   const count = Math.min(...parts.map((m) => m.length));
-  // System starts: measure 0 and any measure (of any part) printed on a new system or page.
-  const starts = [0];
-  for (let i = 1; i < count; i++) {
-    if (parts.some((ms) => ms[i].querySelector(':scope > print[new-system="yes"], :scope > print[new-page="yes"]'))) starts.push(i);
-  }
-  const sysOf = (i) => { let s = 0; while (s + 1 < starts.length && starts[s + 1] <= i) s++; return s; };
-  const keyIn = (m) => {
-    const k = m.querySelector(":scope > attributes > key > fifths");
-    return k ? Number(k.textContent) : null;
-  };
-  // Each part's key in force at each measure, as written (none yet = 0).
-  const old = parts.map((ms) => {
-    let k = 0;
-    return ms.slice(0, count).map((m) => (k = keyIn(m) ?? k));
-  });
-  const readings = starts.map((i) => old.map((ks) => ks[i]));
-  const all = readings.flat();
-  const nonzero = all.filter((k) => k !== 0);
-  if (nonzero.length < 2 || nonzero.length < 0.25 * all.length) return; // a song in C, or a stray reading
-  const disagree = parts.length > 1
-    ? readings.some((r) => new Set(r).size > 1)
-    : readings.some((r, s) => r[0] === 0 && readings.slice(0, s).some((x) => x[0]) && readings.slice(s + 1).some((x) => x[0])) ||
-      nonzero.length >= 0.5 * all.length;
-  if (!disagree) return;
-  // Resolve each system's key.
-  const resolved = readings.map((r) => {
-    const counts = new Map();
-    for (const k of r) if (k !== 0) counts.set(k, (counts.get(k) || 0) + 1);
-    return counts.size ? [...counts].sort((a, b) => b[1] - a[1])[0][0] : null;
-  });
-  for (let s = 1; s < resolved.length; s++) if (resolved[s] === null) resolved[s] = resolved[s - 1];
-  const first = resolved.find((k) => k !== null);
-  for (let s = 0; s < resolved.length; s++) if (resolved[s] === null) resolved[s] = first;
-  const target = (i) => resolved[sysOf(i)];
-  if (old.every((ks) => ks.every((k, i) => k === target(i)))) return;
-
-  let notesFixed = 0, systemsFixed = new Set();
+  const has = (i, sel) => parts.some((ms) => ms[i].querySelector(sel));
+  const pageStart = (i) => i === 0 || has(i, ':scope > print[new-page="yes"]');
+  const systemStart = (i) => pageStart(i) || has(i, ':scope > print[new-system="yes"]');
+  // Staves (lanes) of pitched parts; percussion/tab staves have no key.
+  const lanes = [];
   parts.forEach((ms, p) => {
-    let prevTarget = null;
-    const tieAlter = new Map(); // staff|step|octave → alter of the last tie start
-    ms.slice(0, count).forEach((m, i) => {
-      const t = target(i);
-      // Key elements: one where the resolved key starts or changes, none elsewhere.
-      for (const k of m.querySelectorAll(":scope > attributes > key")) k.remove();
-      if (t !== prevTarget) setKey(doc, m, t);
-      prevTarget = t;
-      const fix = old[p][i] !== t;
-      if (fix) systemsFixed.add(sysOf(i));
-      const carried = new Set(); // staff|step|octave with a printed accidental earlier in the measure
-      for (const n of kids(m, "note")) {
-        const pitch = kids(n, "pitch")[0];
-        if (!pitch) continue;
-        const step = kids(pitch, "step")[0]?.textContent;
-        const octave = kids(pitch, "octave")[0]?.textContent;
-        const where = `${kids(n, "staff")[0]?.textContent || "1"}|${step}|${octave}`;
-        const tied = kids(n, "tie").map((x) => x.getAttribute("type"));
-        let alterEl = kids(pitch, "alter")[0];
-        let alter = alterEl ? Number(alterEl.textContent) : 0;
-        if (kids(n, "accidental").length) carried.add(where);
-        else if (fix && !carried.has(where)) {
-          const want = tied.includes("stop") && tieAlter.has(where) ? tieAlter.get(where) : keyAlter(t, step);
-          if (want !== alter) {
-            if (!want) alterEl?.remove();
-            else {
-              if (!alterEl) { alterEl = doc.createElement("alter"); pitch.insertBefore(alterEl, kids(pitch, "octave")[0] || null); }
-              alterEl.textContent = String(want);
-            }
-            alter = want;
-            notesFixed++;
-          }
-        }
-        if (tied.includes("start")) tieAlter.set(where, alter);
-      }
+    if (ms.some((m) => m.querySelector(":scope > attributes > clef > sign")?.textContent.match(/percussion|TAB/))) return;
+    const staves = Math.max(1, ...ms.map((m) => Number(m.querySelector(":scope > attributes > staves")?.textContent || 1)));
+    for (let st = 1; st <= staves; st++) lanes.push({ p, st });
+  });
+  if (!lanes.length) return;
+  const keyFor = (m, st) => {
+    let all = null, mine = null;
+    for (const k of m.querySelectorAll(":scope > attributes > key")) {
+      const f = k.querySelector(":scope > fifths");
+      if (!f) continue;
+      const n = k.getAttribute("number");
+      if (!n) all = Number(f.textContent);
+      else if (Number(n) === st) mine = Number(f.textContent);
+    }
+    return mine ?? all;
+  };
+  // Each lane's key as Audiveris spelled its notes.
+  const spelled = lanes.map(({ p, st }) => {
+    let k = 0;
+    return parts[p].slice(0, count).map((m, i) => {
+      const w = keyFor(m, st);
+      k = w !== null ? w : pageStart(i) ? 0 : k;
+      return k;
     });
   });
-  const names = [...new Set(resolved)].map((k) => (k ? `${Math.abs(k)} ${k > 0 ? "sharp" : "flat"}${Math.abs(k) > 1 ? "s" : ""}` : "no sharps or flats"));
-  changes.push(`key signature ${names.join(" / ")}: missed on ${systemsFixed.size} of ${starts.length} systems, ${notesFixed} notes respelled`);
+  const bounds = [];
+  for (let i = 0; i < count; i++) {
+    if (systemStart(i) || spelled.some((ks) => ks[i] !== ks[i - 1])) bounds.push(i);
+  }
+  const segOf = (i) => { let s = 0; while (s + 1 < bounds.length && bounds[s + 1] <= i) s++; return s; };
+  const read = bounds.map((i) => spelled.map((ks) => ks[i]));
+
+  // Transposing parts: the same non-zero offset from the other parts on every segment
+  // where both read a key (at least twice).
+  const skip = new Set();
+  [...new Set(lanes.map((l) => l.p))].forEach((p) => {
+    const offs = [];
+    read.forEach((r) => {
+      const mine = r.filter((k, li) => lanes[li].p === p && k !== 0);
+      const others = r.filter((k, li) => lanes[li].p !== p && k !== 0);
+      if (mine.length && others.length) offs.push(mine[0] - others[0]);
+    });
+    if (offs.length >= 2 && offs[0] !== 0 && offs.every((o) => o === offs[0])) skip.add(p);
+  });
+  const fixGroup = (act) => {
+    const nz = (s) => act.map((li) => read[s][li]).filter((k) => k !== 0);
+    const popular = new Map();
+    read.forEach((_, s) => nz(s).forEach((k) => popular.set(k, (popular.get(k) || 0) + 1)));
+    if (!popular.size) return null; // a song in C
+    const mixed = (s) => { const n = nz(s).length; return n > 0 && n < act.length; };
+    // Several staves that agree on every segment: nothing was missed (or nothing can be told apart).
+    if (act.length > 1 && !read.some((_, s) => mixed(s))) return null;
+    // Resolve each segment. A key written mid-system is read beyond the system's header
+    // (accidentals before a change): what was written there wins over staves that kept
+    // the old key.
+    const resolved = read.map((_, s) => {
+      const i0 = bounds[s];
+      if (!systemStart(i0)) {
+        const w = act.filter((li) => keyFor(parts[lanes[li].p][i0], lanes[li].st) !== null).map((li) => spelled[li][i0]);
+        if (w.length) {
+          const c = new Map();
+          for (const k of w) c.set(k, (c.get(k) || 0) + 1);
+          return [...c].sort((a, b) => b[1] - a[1])[0][0];
+        }
+      }
+      const c = new Map();
+      for (const k of nz(s)) c.set(k, (c.get(k) || 0) + 1);
+      if (!c.size) return null;
+      return [...c].sort((a, b) => b[1] - a[1] || (popular.get(b[0]) || 0) - (popular.get(a[0]) || 0))[0][0];
+    });
+    for (let a = 0; a < resolved.length; a++) {
+      if (resolved[a] !== null) continue;
+      let b = a;
+      while (b + 1 < resolved.length && resolved[b + 1] === null) b++;
+      const prev = a > 0 ? a - 1 : null, next = b + 1 < resolved.length ? b + 1 : null;
+      // A boundary that is a key written mid-system is a real change, not evidence of misses.
+      const viaPrev = prev !== null && systemStart(bounds[a]);
+      const viaNext = next !== null && systemStart(bounds[next]);
+      const fill = act.length > 1
+        ? (viaPrev && mixed(prev)) || (viaNext && mixed(next))
+        : viaPrev && viaNext && resolved[prev] === resolved[next];
+      const k = fill ? (prev !== null ? resolved[prev] : resolved[next]) : 0;
+      for (let s = a; s <= b; s++) resolved[s] = k;
+      a = b;
+    }
+    const target = (i) => resolved[segOf(i)];
+    const wrong = act.filter((li) => spelled[li].some((k, i) => k !== target(i)));
+    if (!wrong.length) return null;
+
+    let notes = 0;
+    const segsFixed = new Set();
+    const tieAlter = new Map(); // lane|step|octave → alter of the last tie start
+    const dur = (el) => Number(kids(el, "duration")[0]?.textContent || 0);
+    [...new Set(act.map((li) => lanes[li].p))].forEach((p) => {
+      const laneOf = (st) => act.find((li) => lanes[li].p === p && lanes[li].st === st);
+      let prevTarget = null;
+      parts[p].slice(0, count).forEach((m, i) => {
+        const t = target(i);
+        for (const k of m.querySelectorAll(":scope > attributes > key")) k.remove();
+        if (t !== prevTarget || pageStart(i)) setKey(doc, m, t);
+        prevTarget = t;
+        // Notes in time order (voices of a staff interleave through <backup>).
+        const items = [];
+        let pos = 0, last = 0;
+        for (const el of m.children) {
+          if (el.nodeName === "backup") pos -= dur(el);
+          else if (el.nodeName === "forward") pos += dur(el);
+          else if (el.nodeName === "note") {
+            const chord = kids(el, "chord").length > 0;
+            const at = chord ? last : pos;
+            if (!chord) { last = pos; if (!kids(el, "grace").length) pos += dur(el); }
+            items.push({ el, at, order: items.length });
+          }
+        }
+        items.sort((a, b) => a.at - b.at || a.order - b.order);
+        const carried = new Set();
+        for (const { el: n } of items) {
+          const pitch = kids(n, "pitch")[0];
+          if (!pitch) continue;
+          const st = Number(kids(n, "staff")[0]?.textContent || 1);
+          const li = laneOf(st);
+          if (li === undefined) continue;
+          const step = kids(pitch, "step")[0]?.textContent;
+          const where = `${li}|${step}|${kids(pitch, "octave")[0]?.textContent}`;
+          const ties = kids(n, "tie").map((x) => x.getAttribute("type"));
+          let alterEl = kids(pitch, "alter")[0];
+          let alter = alterEl ? Number(alterEl.textContent) : 0;
+          if (kids(n, "accidental").length) carried.add(where);
+          else if (spelled[li][i] !== t && !carried.has(where)) {
+            const want = ties.includes("stop") && tieAlter.has(where) ? tieAlter.get(where) : keyAlter(t, step);
+            if (want !== alter) {
+              if (!want) alterEl?.remove();
+              else {
+                if (!alterEl) { alterEl = doc.createElement("alter"); pitch.insertBefore(alterEl, kids(pitch, "octave")[0] || null); }
+                alterEl.textContent = String(want);
+              }
+              alter = want;
+              notes++;
+              segsFixed.add(segOf(i));
+            }
+          }
+          if (ties.includes("start")) tieAlter.set(where, alter);
+        }
+      });
+    });
+    const names = [...new Set(resolved)].map((k) => (k ? `${Math.abs(k)} ${k > 0 ? "sharp" : "flat"}${Math.abs(k) > 1 ? "s" : ""}` : "none"));
+    const missed = new Set(wrong.flatMap((li) => spelled[li].map((k, i) => (k !== target(i) ? segOf(i) : -1)).filter((x) => x >= 0))).size;
+    const who = groups.length > 1 ? `part${act.length > 1 && new Set(act.map((li) => lanes[li].p)).size > 1 ? "s" : ""} ${[...new Set(act.map((li) => partEls[lanes[li].p].getAttribute("id")))].join(", ")}: ` : "";
+    return `${who}key signature ${names.join(" / ")}: missed on ${missed} of ${bounds.length} segments, ${notes} notes respelled`;
+  };
+  // Parts transposed against the others are judged on their own; the rest together.
+  const groups = [];
+  const together = lanes.map((l, li) => li).filter((li) => !skip.has(lanes[li].p));
+  if (together.length) groups.push(together);
+  for (const p of skip) groups.push(lanes.map((l, li) => li).filter((li) => lanes[li].p === p));
+  for (const g of groups) {
+    const msg = fixGroup(g);
+    if (msg) changes.push(msg + (skip.size && g === together ? ` (transposing part${skip.size > 1 ? "s" : ""} ${[...skip].map((p) => partEls[p].getAttribute("id")).join(", ")} on their own)` : ""));
+  }
 }
 
 // Put <key><fifths>f</fifths></key> in a measure's <attributes> (made if needed), after
