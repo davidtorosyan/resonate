@@ -223,7 +223,8 @@ const VOL_STEADY_MS = 2000;
 const volHistory = [];
 let isCalibrated = false;
 
-const CAL_KEY = "resonate.volCal";
+const CAL_KEY = "resonate.volCal"; // used while there's no voice profile
+const PROFILES_KEY = "resonate.profiles"; // voice profiles (profiles.js, edited on voice.html)
 const CAL_HOLD_MS = 2000; // how long a pad must be held to lock in a level
 const CAL_MIN_DB = -50;   // sound must exceed this for a held pad to fill
 
@@ -234,15 +235,41 @@ let calActiveMs = 0;     // time held with sound present — this drives the fil
 let calLastTick = 0;
 let calSamples = [];
 
+// The active voice profile's calibration (or, before any profile exists, the Tuner's own).
+function loadProfiles() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PROFILES_KEY));
+    if (p && Array.isArray(p.list) && p.list.length) return p;
+  } catch {}
+  return null;
+}
+function activeProfile(p) {
+  return p && (p.list.find((x) => x.id === p.active) || p.list[0]);
+}
+function saveCal(cal) {
+  try {
+    const p = loadProfiles();
+    const prof = activeProfile(p);
+    if (prof) {
+      prof.vol = cal;
+      localStorage.setItem(PROFILES_KEY, JSON.stringify(p));
+    } else if (cal) localStorage.setItem(CAL_KEY, JSON.stringify(cal));
+    else localStorage.removeItem(CAL_KEY);
+  } catch {}
+}
+
 try {
-  const raw = localStorage.getItem(CAL_KEY);
-  if (raw) {
-    const cal = JSON.parse(raw);
-    if (typeof cal.floor === "number" && typeof cal.ceiling === "number" && cal.ceiling > cal.floor) {
-      VOL_FLOOR_DB = cal.floor;
-      VOL_CEIL_DB = cal.ceiling;
-      setCalibrated(true);
-    }
+  const prof = activeProfile(loadProfiles());
+  const cal = prof ? prof.vol : JSON.parse(localStorage.getItem(CAL_KEY));
+  if (cal && typeof cal.floor === "number" && typeof cal.ceiling === "number" && cal.ceiling > cal.floor) {
+    VOL_FLOOR_DB = cal.floor;
+    VOL_CEIL_DB = cal.ceiling;
+    setCalibrated(true);
+  }
+  const chip = document.getElementById("profile-chip");
+  if (prof) {
+    const nm = (m) => `${NOTE_NAMES[m % 12]}${Math.floor(m / 12) - 1}`;
+    chip.textContent = `${prof.name}${prof.range ? ` · comfortable ${nm(prof.range.comfortLow)}–${nm(prof.range.comfortHigh)}` : " · find your range"} ›`;
   }
 } catch {}
 
@@ -343,9 +370,7 @@ function confirmCalibration() {
   VOL_FLOOR_DB = floor;
   VOL_CEIL_DB = ceiling;
   setCalibrated(true);
-  try {
-    localStorage.setItem(CAL_KEY, JSON.stringify({ floor, ceiling }));
-  } catch {}
+  saveCal({ floor, ceiling });
   closeCalModal();
 }
 
@@ -376,9 +401,7 @@ function setCalibrated(v) {
 
 // Discard the saved calibration and revert to the wide default range.
 function clearCalibration() {
-  try {
-    localStorage.removeItem(CAL_KEY);
-  } catch {}
+  saveCal(null);
   VOL_FLOOR_DB = VOL_FLOOR_DEFAULT;
   VOL_CEIL_DB = VOL_CEIL_DEFAULT;
   setCalibrated(false);
