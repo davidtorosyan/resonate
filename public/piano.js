@@ -54,10 +54,13 @@ export function playPiano(ac, piano, when, dur, midi, level, nodes) {
 // Hold a note down like a piano key, until release(at). The samples die away fast (mid
 // and high notes are ~40 dB down within a second, and they end at 3 s), so with
 // `sustain` a soft steady tone at the same pitch fades in under the piano to keep a held
-// pitch audible. release() damps both like lifting the key.
-const SUSTAIN = 0.05;               // held tone's level, relative to the piano's
-const HARMONICS = [0, 1, 0.4, 0.18, 0.08, 0.04]; // mellow: fundamental + a few overtones
-const waves = new WeakMap();        // AudioContext -> PeriodicWave
+// pitch audible. It has plenty of overtones (≈1/n^1.2, like a mellow sawtooth) and is
+// boosted below middle C: a phone speaker barely plays below ~200 Hz, so a low note's
+// fundamental alone would be near silent. release() damps both like lifting the key; it
+// can be called again with an earlier time (stop now instead of at the end of the note).
+const SUSTAIN = 0.05;   // held tone's level, relative to the piano's
+const HARMONICS = [0, ...Array.from({ length: 12 }, (_, i) => 1 / (i + 1) ** 1.2)];
+const waves = new WeakMap(); // AudioContext -> PeriodicWave
 
 export function holdPiano(ac, piano, when, midi, level, { sustain = true } = {}) {
   const nodes = [];
@@ -73,22 +76,25 @@ export function holdPiano(ac, piano, when, midi, level, { sustain = true } = {})
     osc.setPeriodicWave(wave);
     osc.frequency.value = 440 * 2 ** ((midi - 69) / 12);
     const sg = ac.createGain();
+    const low = Math.min(2, Math.max(1, 1 + (60 - midi) / 24)); // ×1 at C4 → ×2 at C2
     sg.gain.setValueAtTime(0, when);
-    sg.gain.setTargetAtTime(SUSTAIN * level, when + 0.15, 0.3); // in as the piano fades
+    sg.gain.setTargetAtTime(SUSTAIN * level * low, when + 0.15, 0.3); // in as the piano fades
     osc.connect(sg);
     sg.connect(ac.destination);
     osc.start(when);
     parts.push({ src: osc, gain: sg.gain });
   }
-  let released = false;
+  let releasedAt = Infinity;
   return {
-    release(at = ac.currentTime) {
-      if (released) return;
-      released = true;
+    // Damp at `at` with time constant `tc` (RELEASE = a lifted key; small = cut off).
+    release(at = ac.currentTime, tc = RELEASE) {
+      at = Math.max(at, ac.currentTime);
+      if (at >= releasedAt) return;
+      releasedAt = at;
       for (const p of parts) {
         p.gain.cancelScheduledValues(at);
-        p.gain.setTargetAtTime(0, at, RELEASE);
-        try { p.src.stop(at + RELEASE * 6); } catch {}
+        p.gain.setTargetAtTime(0, at, tc);
+        try { p.src.stop(at + tc * 6); } catch {}
       }
     },
   };
