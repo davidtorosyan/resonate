@@ -1,19 +1,23 @@
 // Fit a melody into a singer's range, best effort.
 //
-// One key for the whole song: every phrase moves by the same interval s (−6…+5
-// semitones, so the song stays in one key). On top of that a phrase may move by whole
-// octaves, which keeps it in that key: a song that alternates a low and a high singer
-// (Hades and Eurydice in "Hey, Little Songbird") can have the low phrases sung an
-// octave up and the high ones an octave down. Phrases are runs of notes between rests,
-// also split at a leap of more than an octave (singers handing over without a rest).
+// Transposing the whole song by t semitones is the simple case. A song that alternates
+// a low and a high singer on one staff (Hades and Eurydice in "Hey, Little Songbird")
+// may fit no single t, so a key can also be sung "split": every phrase moves by the same
+// interval s (−6…+5, so the song stays in one key) plus whole octaves of its own — the
+// low phrases an octave up, the high ones an octave down. Phrases are runs of notes
+// between rests, also split at a leap of more than an octave (singers handing over
+// without a rest).
 //
 // Cost, in beat·semitones: each note pays its length × how far it lies outside the
 // comfortable range (5× more beyond the limits; a little within EDGE semitones of the
-// comfortable edges, so a song that can sit inside doesn't hug them); changing octave between neighbouring
-// phrases costs SWITCH; moving music at all costs a little (MOVE per beat per
-// semitone), so a song that already fits stays as written, and the octave a phrase
-// is sung in only changes when that clearly pays off. Searched exactly (dynamic
-// programming over phrases for each key shift).
+// comfortable edges, so an option that can sit inside doesn't hug them); changing octave
+// between neighbouring phrases costs SWITCH; moving music at all costs a little (MOVE per
+// beat per semitone). A split is searched exactly (dynamic programming over phrases for
+// each key s).
+//
+// fitOptions lists the choices (every whole-song shift −24…+24, plus each key's best
+// split where that beats singing the key whole); fitKey re-solves one key's split;
+// fitToRange picks the single best option.
 
 const SWITCH = 24;        // ≈ a 4-beat phrase sung 6 semitones out of comfort
 const MOVE = 0.02;
@@ -21,15 +25,10 @@ const BEYOND = 4;         // extra weight per semitone beyond the limits
 const EDGE = 2, EDGE_COST = 0.25;
 const LEAP = 12;          // a jump of more than this starts a new phrase
 const OCTAVES = [-3, -2, -1, 0, 1, 2, 3];
+const WHOLE = 24;         // whole-song shifts listed: −24…+24
 
 // notes: [{ midi, dur (beats), restBefore }]; range: { low, high, comfortLow, comfortHigh } (MIDI).
-// Returns { key, shifts: [semitones per note], phrases, moves, outside, beyond } —
-// key: the shift most of the song gets (every shift is key ± whole octaves); moves:
-// [{ shift, phrases, beats }] most-sung first; outside/beyond: share of the sung beats
-// still outside the comfortable range / beyond the limits. A song that already sits
-// inside the comfortable range is left as written.
-export function fitToRange(notes, range) {
-  if (!notes.length) return null;
+function prepare(notes, range) {
   const cLo = range.comfortLow ?? range.low, cHi = range.comfortHigh ?? range.high;
   const lo = range.low ?? cLo, hi = range.high ?? cHi;
   const phrases = [];
@@ -43,7 +42,14 @@ export function fitToRange(notes, range) {
     EDGE_COST * (Math.max(0, Math.min(edge, cLo + edge - m)) + Math.max(0, Math.min(edge, m - (cHi - edge))));
   const beats = phrases.map((p) => p.reduce((a, i) => a + notes[i].dur, 0));
   const allBeats = beats.reduce((a, b) => a + b, 0);
-  const report = (s, octs) => {
+  const cost = (k, t) => phrases[k].reduce((a, i) => a + notes[i].dur * miss(notes[i].midi + t), 0) + MOVE * beats[k] * Math.abs(t);
+
+  // An option: phrase k sung shifted by s + 12·octs[k].
+  //   { s (−6…+5: the key), key: the shift most of the song gets, shifts: [per note],
+  //     moves: [{ shift, phrases, beats }] most-sung first, split: moves.length > 1,
+  //     outside / beyond: share of the sung beats outside the comfortable range / the limits,
+  //     total: cost (lower is better) }
+  const option = (s, octs, total) => {
     const shifts = new Array(notes.length);
     const moves = new Map();
     let outBeats = 0, beyondBeats = 0;
@@ -62,21 +68,22 @@ export function fitToRange(notes, range) {
     });
     const list = [...moves.values()].sort((a, b) => b.beats - a.beats);
     return {
+      s: (((s % 12) + 18) % 12) - 6,
       key: list[0].shift,
       shifts,
       phrases: phrases.length,
       moves: list,
+      split: list.length > 1,
       outside: allBeats ? outBeats / allBeats : 0,
       beyond: allBeats ? beyondBeats / allBeats : 0,
+      total,
     };
   };
-  if (notes.every((n) => n.midi >= cLo && n.midi <= cHi)) return report(0, phrases.map(() => 0));
 
-  const cost = (k, t) => phrases[k].reduce((a, i) => a + notes[i].dur * miss(notes[i].midi + t), 0) + MOVE * beats[k] * Math.abs(t);
+  const whole = (t) => option(t, phrases.map(() => 0), phrases.reduce((a, _, k) => a + cost(k, t), 0));
 
-  let best = null;
-  for (let s = -6; s <= 5; s++) {
-    // dp[o]: cheapest way to sing phrases 0..k with phrase k shifted by s + 12·o.
+  // The best split in key s: dp[o] = cheapest way to sing phrases 0..k, phrase k at s + 12·o.
+  const solveKey = (s) => {
     let dp = OCTAVES.map((o) => cost(0, s + 12 * o));
     const from = [];
     for (let k = 1; k < phrases.length; k++) {
@@ -95,14 +102,44 @@ export function fitToRange(notes, range) {
     }
     let oi = dp.indexOf(Math.min(...dp));
     const total = dp[oi];
-    if (best && total >= best.total) continue;
     const octs = new Array(phrases.length);
     for (let k = phrases.length - 1; k >= 0; k--) {
       octs[k] = OCTAVES[oi];
       if (k) oi = from[k - 1][oi];
     }
-    best = { total, s, octs };
-  }
+    return option(s, octs, total);
+  };
 
-  return report(best.s, best.octs);
+  return { whole, solveKey, fitsAsWritten: notes.every((n) => n.midi >= cLo && n.midi <= cHi) };
+}
+
+// Every choice: the whole-song shifts −24…+24, and for each key the best split when it's
+// actually split and cheaper than singing that key whole in any octave.
+export function fitOptions(notes, range) {
+  if (!notes.length) return [];
+  const f = prepare(notes, range);
+  const out = [];
+  const bestWhole = new Map(); // key s → cheapest whole-song option in it
+  for (let t = -WHOLE; t <= WHOLE; t++) {
+    const o = f.whole(t);
+    out.push(o);
+    if (!bestWhole.has(o.s) || o.total < bestWhole.get(o.s).total) bestWhole.set(o.s, o);
+  }
+  for (let s = -6; s <= 5; s++) {
+    const o = f.solveKey(s);
+    if (o.split && o.total < (bestWhole.get(o.s)?.total ?? Infinity)) out.push(o);
+  }
+  return out;
+}
+
+// Key s's best split (see fitOptions), for a song saved as "fit:s".
+export function fitKey(notes, range, s) {
+  return notes.length ? prepare(notes, range).solveKey(s) : null;
+}
+
+// The single best option; a song already inside the comfortable range stays as written.
+export function fitToRange(notes, range) {
+  if (!notes.length) return null;
+  if (prepare(notes, range).fitsAsWritten) return prepare(notes, range).whole(0);
+  return fitOptions(notes, range).reduce((a, b) => (b.total < a.total ? b : a));
 }

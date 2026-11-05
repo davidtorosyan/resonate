@@ -10,7 +10,7 @@ import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.
 import { listSongs, getSong, addSong, removeSong, persistent } from "./library.js";
 import { fixOmrScore } from "./omr/fixscore.js";
 import { activeProfile } from "./profiles.js";
-import { fitToRange } from "./fit.js";
+import { fitOptions, fitKey, fitToRange } from "./fit.js";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -82,8 +82,11 @@ let range = { lo: 55, hi: 72 };
 const store = (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} };
 const recall = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 
-let transpose = 0;  // semitones, or "fit" (to the active voice profile's range); per song (K.keys)
-let fit = null;     // fitToRange's result while fitting
+let transpose = 0;  // whole-song semitones; "fit:s" = key s split by phrase octaves for the voice
+                    // profile (fit.js); "fit" = "fit me" without a profile range yet. Per song (K.keys)
+let fit = null;     // how the current choice fits the voice profile (a fit.js option), if there is one
+let profile = null; // the active voice profile (profiles.js)
+let fitOpts = [];   // fitOptions for it: what the transpose menu offers
 let shifts = [];    // semitones per score note (all the same unless fitting)
 let shiftSig = "";  // shifts as a string, to tell whether a take's grades still apply
 let rate = Number(recall(K.rate)) || 1;
@@ -118,7 +121,7 @@ function applySong() {
   shifts = noteShifts();
   shiftSig = shifts.join(",");
   flats = transposeKey(score.fifths, fit ? fit.key : shifts[0] ?? 0).fifths < 0;
-  if (transpose === "fit") showFitMsg(activeProfile());
+  if (typeof transpose === "string") showFitMsg();
   notes = notesForVerse(score, verse).map((n, i) => ({
     midi: n.midi + shifts[i],
     name: spellTransposed(n, shifts[i], transposeKey(score.fifths, shifts[i]).steps, flats).name,
@@ -162,23 +165,35 @@ function fillTempoOptions() {
   tempoSelect.value = String(rate);
 }
 
-// Semitones per score note: the transposition, or fitted to the voice profile's range
-// (fit.js: one key, whole phrases moved by octaves where a part sits far from the rest).
+// Semitones per score note: the whole-song transposition, or a key split by phrase
+// octaves for the voice profile ("fit:s"). Also works out how every option fits the
+// profile's range, for the transpose menu.
 function noteShifts() {
+  profile = activeProfile();
+  fitOpts = profile?.range ? fitOptions(score.notes, profile.range) : [];
   fit = null;
-  if (transpose === "fit") {
-    const prof = activeProfile();
-    if (prof?.range) fit = fitToRange(score.notes, prof.range);
-    if (fit) return fit.shifts;
+  if (typeof transpose === "string") {
+    if (transpose.startsWith("fit:") && profile?.range) {
+      fit = fitKey(score.notes, profile.range, Number(transpose.slice(4)));
+      return fit.shifts;
+    }
+    return score.notes.map(() => 0); // "fit" with no range yet: as written (showFitMsg says why)
   }
-  const t = transpose === "fit" ? 0 : transpose;
-  return score.notes.map(() => t);
+  fit = fitOpts.find((o) => !o.split && o.key === transpose) || null;
+  return score.notes.map(() => transpose);
 }
 
-function showFitMsg(prof) {
+const signed = (t) => (t ? `${t > 0 ? "+" : "−"}${Math.abs(t)}` : "±0");
+const keyOf = (t) => keyName(transposeKey(score.fifths, t).fifths, minor);
+const pctOut = (f) => `${Math.round(f * 100) || "<1"}%`;
+
+// Under the song bar: how the chosen transposition sits in the voice profile's range.
+function showFitMsg() {
+  const prof = profile;
   if (!prof?.range) {
-    return showMsg("To fit songs to your voice, set up a voice profile with your range first:", "info", { href: "voice.html", text: "Voice profile" });
+    return showMsg("To see which keys fit your voice, set up a voice profile with your range:", "info", { href: "voice.html", text: "Voice profile" });
   }
+  if (!fit) return showMsg("");
   const r = prof.range;
   const span = (n) => {
     const o = Math.floor(n / 12), r = n % 12;
@@ -188,34 +203,80 @@ function showFitMsg(prof) {
   };
   const move = (t) => (t ? `${t > 0 ? "up" : "down"} ${span(Math.abs(t))}` : "as written");
   const comfy = `${prof.name}'s comfortable range (${nameOf(r.comfortLow, flats)}–${nameOf(r.comfortHigh, flats)})`;
-  if (fit.moves.length === 1 && !fit.key) return showMsg(`Fits ${comfy} as written.`, "ok");
-  const key = keyName(transposeKey(score.fifths, fit.key).fifths, minor);
+  const key = keyOf(fit.key);
   // Two groups = two parts (a duet on one staff): the one moved up more was the low part.
   const byShift = [...fit.moves].sort((a, b) => b.shift - a.shift);
   const phr = (m) => `${m.phrases} phrase${m.phrases > 1 ? "s" : ""}`;
-  const how = fit.moves.length === 1
-    ? `${move(fit.key)}, in ${key}`
+  const how = !fit.split
+    ? `${move(fit.key)}, in ${key}${fit.key && fit.s === 0 ? " (the song's own key)" : ""}`
     : fit.moves.length === 2
       ? `the low part (${phr(byShift[0])}) ${move(byShift[0].shift)}, the high part (${phr(byShift[1])}) ${move(byShift[1].shift)} — both in ${key}`
       : `${byShift.map((m) => `${phr(m)} ${move(m.shift)}`).join(", ")} — all in ${key}`;
-  const rest = fit.outside >= 0.005
-    ? ` ${Math.round(fit.outside * 100) || "<1"}% of the singing is still outside it${fit.beyond >= 0.005 ? ` (${Math.round(fit.beyond * 100) || "<1"}% beyond your limits)` : ""}.`
-    : "";
-  showMsg(`Fitted to ${comfy}: ${how}.${rest}`, "ok");
+  const out = fit.outside >= 0.005
+    ? `${pctOut(fit.outside)} of the singing is outside ${comfy}${fit.beyond >= 0.005 ? ` (${pctOut(fit.beyond)} beyond your limits)` : ""}.`
+    : `Fits ${comfy}.`;
+  showMsg(`${how[0].toUpperCase()}${how.slice(1)}. ${out}`, fit.outside < 0.02 && !fit.beyond ? "ok" : "info");
 }
 
-// "Fit Dave", then "Key Cm", "+2 Dm", "−12 Cm 8vb": each option names the key it lands in.
+// The transpose menu. With a voice range: "Fits Dave (C3–E4)" — every option that keeps
+// the singing inside the comfortable range, best first — then "Close" (a little outside),
+// then the other whole-song shifts −12…+12. Options name the key they land in ("−10 Dm",
+// "−12 Cm · same key"); a split names each part's move ("+12 / −12 Cm · same key").
 function fillKeyOptions() {
   keySelect.textContent = "";
-  const prof = activeProfile();
-  const fitLabel = prof ? `Fit ${prof.name}` : "Fit my range…";
-  keySelect.add(new Option(fitLabel.length > 14 ? `${fitLabel.slice(0, 13)}…` : fitLabel, "fit"));
-  for (let k = -12; k <= 12; k++) {
-    const name = keyName(transposeKey(score.fifths, k).fifths, minor);
-    const label = k === 0 ? `Key ${name}` : `${k > 0 ? "+" : "−"}${Math.abs(k)} ${name}${Math.abs(k) === 12 ? (k > 0 ? " 8va" : " 8vb") : ""}`;
-    keySelect.add(new Option(label, String(k)));
+  const label = (t) => (t ? `${signed(t)} ${keyOf(t)}${t % 12 === 0 ? " · same key" : ""}` : `Key ${keyOf(0)}`);
+  const optLabel = (o) => (o.split
+    ? `${[...o.moves].sort((a, b) => b.shift - a.shift).map((m) => signed(m.shift)).join(" / ")} ${keyOf(o.key)}${o.s === 0 ? " · same key" : ""}`
+    : label(o.key));
+  const value = (o) => (o.split ? `fit:${o.s}` : String(o.key));
+  const listed = new Set();
+  const group = (name) => {
+    const g = document.createElement("optgroup");
+    g.label = name;
+    keySelect.append(g);
+    return g;
+  };
+  const add = (parent, text, v) => {
+    if (listed.has(v)) return;
+    listed.add(v);
+    parent.append(new Option(text, v));
+  };
+  if (fitOpts.length) {
+    const r = profile.range;
+    const byTotal = (a, b) => a.total - b.total;
+    const good = fitOpts.filter((o) => o.outside < 0.02 && !o.beyond).sort(byTotal);
+    const close = fitOpts.filter((o) => !good.includes(o) && o.outside < 0.15 && o.beyond < 0.02).sort(byTotal).slice(0, 8);
+    const name = profile.name.length > 12 ? `${profile.name.slice(0, 11)}…` : profile.name;
+    if (good.length) {
+      const g = group(`Fits ${name} (${nameOf(r.comfortLow, flats)}–${nameOf(r.comfortHigh, flats)})`);
+      for (const o of good) add(g, optLabel(o), value(o));
+    }
+    if (close.length) {
+      const g = group(good.length ? "Close — a little outside" : `Closest for ${name}`);
+      for (const o of close) add(g, `${optLabel(o)} · ${pctOut(o.outside)} out`, value(o));
+    }
+  } else {
+    add(keySelect, "Fit my range…", "fit");
   }
-  keySelect.value = String(transpose);
+  // A song whose parts need splitting (a duet on one staff) also offers every other key
+  // split — first, since singing it whole fits nobody; e.g. its own key, to stay in it.
+  const splits = fitOpts.filter((o) => o.split && !listed.has(value(o))).sort((a, b) => a.s - b.s);
+  const best = fitOpts.reduce((a, o) => (!a || o.total < a.total ? o : a), null);
+  const addSplits = () => {
+    if (!splits.length) return;
+    const g = group("Other keys, parts split");
+    for (const o of splits) add(g, `${optLabel(o)} · ${pctOut(o.outside)} out`, value(o));
+  };
+  if (best?.split) addSplits();
+  const other = fitOpts.length ? group(best?.split ? "Other keys, sung whole" : "Other keys") : keySelect;
+  for (let t = -12; t <= 12; t++) add(other, label(t), String(t));
+  if (!best?.split) addSplits();
+  // A saved choice the lists above don't hold (e.g. −17 from a fit, or a split without a range now).
+  if (!listed.has(String(transpose))) {
+    if (typeof transpose === "number") add(other, label(transpose), String(transpose));
+    else if (!listed.has("fit")) add(keySelect, "Fit my range…", "fit");
+  }
+  keySelect.value = listed.has(String(transpose)) ? String(transpose) : "fit";
 }
 
 // Major or minor: the file says (<mode>), else the melody's tonic — of the two the
@@ -244,7 +305,17 @@ function setScore(sc) {
   score = sc;
   minor = guessMinor(sc);
   const savedKey = readKeys()[songId];
-  transpose = savedKey === "fit" ? "fit" : Number(savedKey) || 0;
+  transpose = typeof savedKey === "string" && savedKey.startsWith("fit") ? savedKey : Number(savedKey) || 0;
+  // v32's single "Fit" choice becomes the option it picked.
+  const range = activeProfile()?.range;
+  if (transpose === "fit" && range) {
+    const best = fitToRange(sc.notes, range);
+    if (best) transpose = best.split ? `fit:${best.s}` : best.key;
+    const keys = readKeys();
+    if (transpose) keys[songId] = transpose;
+    else delete keys[songId];
+    store(K.keys, JSON.stringify(keys));
+  }
   verseSelect.textContent = "";
   for (const v of sc.verses) verseSelect.add(new Option(`Verse ${v}`, v));
   const saved = recall(K.verse);
@@ -482,6 +553,7 @@ async function startSing() {
   const latency = (ac.outputLatency || ac.baseLatency || 0) + INPUT_LATENCY;
   take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, rate, octave: 0 };
   session = { kind: "sing", ac, nodes, songT0, latency, mic, capture, wakeLock, raf: null };
+  stopKeys(); // a key pressed while the mic was opening
   singBtn.disabled = false;
   updateButtons();
 
@@ -611,6 +683,7 @@ async function startPlay(kind, from) {
   }
   if (wantVoice) playVoice(ac, take.voice, start, from, nodes);
   session = { kind, ac, nodes, songT0, raf: null, end };
+  stopKeys(); // a key that started while this was loading
   updateButtons();
   const loop = () => {
     if (!session || session.ac !== ac || session.kind !== kind) return;
@@ -736,11 +809,17 @@ function makeChip(j) {
     b.querySelector("small").textContent = res || " ";
     b.title = "Press and hold to hear this note";
     b.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0) return; // left mouse button; touch and pen report 0
+      if (e.button !== 0 || session) return; // left mouse button (touch and pen report 0); Listen: see click
+      if (e.pointerType === "touch" && performance.now() - lastChipScroll < 150) return; // stopping a fling
       try { b.setPointerCapture(e.pointerId); } catch {} // mouse: the release still reaches us
       pressKey(j, e.pointerId, true);
     });
-    b.addEventListener("click", (e) => { if (e.detail === 0) pressKey(j, "click", false); }); // keyboard etc.
+    b.addEventListener("pointerup", onPointerUp);
+    b.addEventListener("pointercancel", (e) => cancelKey(e.pointerId));
+    b.addEventListener("click", (e) => {
+      if (session) { if (session.kind !== "sing") seek(n.t - 0.4); return; } // a tap, not a scroll
+      if (e.detail === 0) pressKey(j, "click", false); // keyboard, assistive tech
+    });
     b.addEventListener("contextmenu", (e) => e.preventDefault()); // long press is a held key
     if (j === lastChip) b.dataset.current = "true";
     if ([...keys.values()].some((k) => k.j === j)) b.dataset.playing = "true";
@@ -769,37 +848,52 @@ function setCurrentChip(i, scroll) {
 // audible (holdPiano). The chip, its syllable and its lane bar light up while it sounds,
 // and the cursor moves there so Listen starts from it; the chip list isn't rebuilt (it
 // would jump back to the top), so you can go note by note. Each finger is its own key.
-// If the chip list starts scrolling under the finger (pointercancel) the note stops at
-// once. A click with no press (keyboard, assistive tech) plays the note for its length
-// in the song. During Listen / Play a press jumps playback there; while singing, nothing.
+// A click with no press (keyboard, assistive tech) plays the note for its length in the
+// song. During Listen / Play a tap (click, so not a scroll) jumps playback there; while
+// singing, nothing.
+//
+// Scrolling the chip list starts on a chip too: when the browser takes the touch for a
+// scroll (pointercancel) the note is cut off at once and the cursor goes back where it
+// was; a touch that stops a fling (just after the list scrolled) isn't a key press.
 //
 // Browsers only let audio *start* on a touch's end (iOS, and the HTML spec's activation
 // rules), so on a phone the very first press may only sound when the finger lifts: it then
-// plays for its length in the song, and every later press sounds at once.
+// plays for its length in the song, and every later press sounds at once. The piano
+// starts loading on that first touch (decoding works before audio is allowed), so the
+// lift doesn't wait for the download; a press that still isn't sounding 1.5 s after the
+// lift is dropped rather than played late.
 
-const MIN_PRESS = 0.25; // s: a quick tap still sounds this long
-const keys = new Map(); // pointerId (or "click") → { id, j, held, ac, note, t0, timer }
+const MIN_PRESS = 0.25;   // s: a quick tap still sounds this long
+const CUT = 0.01;         // s: time constant when a scroll cancels a press
+const MAX_HOLD = 60000;   // ms: a key nobody lets go of (a lost release) stops by itself
+const keys = new Map();   // pointerId (or "click") → { id, j, held, ac, note, t0, timer, cap, prev }
+let lastChipScroll = -1e9;
 
 async function pressKey(j, id, held) {
-  if (session) {
-    if (session.kind !== "sing") seek(notes[j].t - 0.4);
-    return;
-  }
+  if (session) return;
   const n = notes[j];
   const old = keys.get(id);
   if (old) dropKey(old, true);
-  const key = { id, j, held, ac: null, note: null, t0: 0, timer: 0 };
+  const key = { id, j, held, ac: null, note: null, t0: 0, timer: 0, cap: 0, prev: { scrollT, nowT, chip: lastChip } };
   keys.set(id, key);
+  if (held) key.cap = setTimeout(() => releaseKey(id), MAX_HOLD);
   scrollT = nowT = Math.max(-1, Math.min(n.t - 0.4, songEnd));
   showKeys();
-  const ac = await getPlayCtx();
-  let piano = null;
-  if (!pianoReady(ac)) statusEl.textContent = "loading piano…";
-  try { piano = await loadPiano(ac); } catch (err) { console.warn(err); }
+  // The samples can load and decode before audio may start (first touch on a phone).
+  if (!playCtx || playCtx.state === "closed") playCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const loading = loadPiano(playCtx);
+  loading.catch(() => {});
+  if (!pianoReady(playCtx)) statusEl.textContent = "loading piano…";
+  let ac = null, piano = null;
+  try {
+    ac = await getPlayCtx();
+    piano = await loading;
+  } catch (err) { console.warn(err); }
   if (statusEl.textContent === "loading piano…") statusEl.textContent = "idle";
-  if (keys.get(id) !== key || session) return; // pressed again, or Listen / Sing started meanwhile
-  if (!piano) {
-    statusEl.textContent = "couldn't load the piano";
+  if (keys.get(id) !== key) return; // pressed again, let go too long ago, or silenced
+  if (session) return dropKey(key, true); // Listen / Sing started meanwhile
+  if (!piano || ac !== playCtx) {
+    if (!piano) statusEl.textContent = "couldn't load the piano";
     return dropKey(key);
   }
   key.ac = ac;
@@ -807,24 +901,48 @@ async function pressKey(j, id, held) {
   // Still held: until released. Already let go (it couldn't start sooner) or a click: the
   // note's length in the song, the piano alone — as Listen plays it.
   key.note = holdPiano(ac, piano, key.t0, n.midi, 1.4, { sustain: key.held });
-  if (!key.held) releaseKey(id, key.t0 + Math.max(0.12, n.d));
+  if (!key.held) {
+    const end = key.t0 + Math.max(0.12, n.d);
+    key.note.release(end);
+    clearTimeout(key.timer);
+    key.timer = setTimeout(() => dropKey(key), (end - ac.currentTime) * 1000);
+  }
 }
 
-// Let go of a key: damped at `at` (default: now, but not before MIN_PRESS has sounded).
-function releaseKey(id, at = null) {
+// Let go of a key: damped at MIN_PRESS after it started, or now if later.
+function releaseKey(id) {
   const key = keys.get(id);
-  if (!key) return;
+  if (!key || !key.held) return; // not held (already let go, or a click)
   key.held = false;
-  if (!key.note) return; // not sounding yet: pressKey plays it for its length in the song
-  const t = at ?? Math.max(key.ac.currentTime, key.t0 + MIN_PRESS);
-  key.note.release(t);
+  clearTimeout(key.cap);
   clearTimeout(key.timer);
+  if (!key.note) {
+    // Not sounding yet (first press on a phone): pressKey plays it for its length in the
+    // song if audio starts soon; otherwise forget it rather than play it late.
+    key.timer = setTimeout(() => { if (!key.note) dropKey(key); }, 1500);
+    return;
+  }
+  const t = Math.max(key.ac.currentTime, key.t0 + MIN_PRESS);
+  key.note.release(t);
   key.timer = setTimeout(() => dropKey(key), Math.max(0, t - key.ac.currentTime) * 1000);
 }
 
-function dropKey(key, now = false) {
+// The browser took the touch for a scroll: cut the note off and put the cursor back.
+function cancelKey(id) {
+  const key = keys.get(id);
+  if (!key) return;
+  if (!session) {
+    scrollT = key.prev.scrollT;
+    nowT = key.prev.nowT;
+    setCurrentChip(key.prev.chip, false);
+  }
+  dropKey(key, true, CUT);
+}
+
+function dropKey(key, now = false, tc = undefined) {
   clearTimeout(key.timer);
-  if (now && key.note) key.note.release(key.ac.currentTime);
+  clearTimeout(key.cap);
+  if (now && key.note) key.note.release(key.ac.currentTime, tc);
   if (keys.get(key.id) === key) keys.delete(key.id);
   showKeys();
 }
@@ -838,28 +956,30 @@ function stopKeys() {
 function showKeys() {
   const last = [...keys.values()].pop();
   preview = last ? { j: last.j } : null;
-  if (session) return;
   const chips = chipsEl.querySelectorAll(".chip");
   const down = new Set([...keys.values()].map((k) => k.j));
   chips.forEach((c, i) => {
     const on = down.has(i) ? "true" : "false";
     if ((c.dataset.playing || "false") !== on) c.dataset.playing = on;
   });
+  if (session) return; // the session draws the lane and lyrics
   if (preview) setCurrentChip(preview.j, false);
   renderLyrics(nowT);
   renderLane();
 }
 
-window.addEventListener("pointerup", (e) => {
+// Releases are handled on the window (a pointer that wandered off its chip) and on the
+// chip itself (WebKit sends a touch's end to the chip it started on, even if that chip
+// was replaced meanwhile and so no longer reaches the window).
+function onPointerUp(e) {
   if (!keys.has(e.pointerId)) return;
   // A touch's end is when phones allow audio to start: resume it here if the press couldn't.
   if (!playCtx || playCtx.state !== "running") getPlayCtx();
   releaseKey(e.pointerId);
-});
-window.addEventListener("pointercancel", (e) => {
-  const key = keys.get(e.pointerId);
-  if (key) dropKey(key, true); // the list scrolled: that wasn't a key press
-});
+}
+window.addEventListener("pointerup", onPointerUp);
+window.addEventListener("pointercancel", (e) => cancelKey(e.pointerId));
+chipsEl.addEventListener("scroll", () => { lastChipScroll = performance.now(); }, { passive: true });
 window.addEventListener("blur", stopKeys);
 
 function renderSummary() {
@@ -1118,14 +1238,14 @@ verseSelect.addEventListener("change", () => {
   applySong();
 });
 keySelect.addEventListener("change", () => {
-  transpose = keySelect.value === "fit" ? "fit" : Number(keySelect.value);
-  if (transpose !== "fit") showMsg("");
+  transpose = keySelect.value.startsWith("fit") ? keySelect.value : Number(keySelect.value);
   const keys = readKeys();
   if (transpose) keys[songId] = transpose;
   else delete keys[songId];
   store(K.keys, JSON.stringify(keys));
   stopSession();
-  applySong();
+  applySong(); // (a split or "fit me" explains itself there)
+  if (typeof transpose === "number") profile?.range ? showFitMsg() : showMsg("");
 });
 tempoSelect.addEventListener("change", () => {
   rate = Number(tempoSelect.value);
