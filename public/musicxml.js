@@ -1,9 +1,11 @@
 // MusicXML → a timed melody for karaoke.
-//   score = { title, partName, fifths, tempo (quarter notes / min), beats, beatType,
-//             verses, measures: [start (quarters)], length (quarters), notes }
-//   note  = { midi, onset, dur (quarters), measure, verses: { "1": {text, syllabic} }, restBefore }
+//   score = { title, partName, fifths, mode ("major"/"minor"/null), tempo (quarter notes / min),
+//             beats, beatType, verses, measures: [start (quarters)], length (quarters), notes }
+//   note  = { midi, letter (0-6 = C-B, as written), alter, onset, dur (quarters), measure,
+//             verses: { "1": {text, syllabic} }, restBefore }
 
 const STEP_PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+const LETTERS = "CDEFGAB";
 const UNIT_QUARTERS = { whole: 4, half: 2, quarter: 1, eighth: 0.5, "16th": 0.25 };
 export const DEFAULT_TEMPO = 90;
 
@@ -61,7 +63,7 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
 
   const tempo = findTempo(root);
   let divisions = 1;
-  let fifths = null;
+  let fifths = null, mode = null;
   let beats = null, beatType = null;
   const notes = [];
   const measures = [];
@@ -90,7 +92,10 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
         const d = text(el.querySelector("divisions"));
         if (d) divisions = Number(d) || 1;
         const f = text(el.querySelector("key > fifths"));
-        if (f && fifths === null) fifths = Number(f);
+        if (f && fifths === null) {
+          fifths = Number(f);
+          mode = { major: "major", minor: "minor" }[text(el.querySelector("key > mode"))] || null;
+        }
         if (beats === null && el.querySelector("time > beats")) {
           beats = Number(text(el.querySelector("time > beats"))) || 4;
           beatType = Number(text(el.querySelector("time > beat-type"))) || 4;
@@ -125,16 +130,16 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
       }
       const pitch = el.querySelector("pitch");
       if (!pitch) continue; // unpitched
-      const midi =
-        (Number(text(pitch.querySelector("octave"))) + 1) * 12 +
-        STEP_PC[text(pitch.querySelector("step"))] +
-        Math.round(Number(text(pitch.querySelector("alter")) || 0));
+      const step = text(pitch.querySelector("step"));
+      const alter = Math.round(Number(text(pitch.querySelector("alter")) || 0));
+      const midi = (Number(text(pitch.querySelector("octave"))) + 1) * 12 + STEP_PC[step] + alter;
+      const letter = LETTERS.indexOf(step);
       const onset = measureStart + start;
 
       // Chord tones: keep only the highest note at that onset.
       if (isChord) {
         const last = notes[notes.length - 1];
-        if (last && Math.abs(last.onset - onset) < 1e-6 && midi > last.midi) last.midi = midi;
+        if (last && Math.abs(last.onset - onset) < 1e-6 && midi > last.midi) Object.assign(last, { midi, letter, alter });
         continue;
       }
 
@@ -173,7 +178,7 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
         continue;
       }
       lineStart = false;
-      notes.push({ midi, onset, dur, measure: mNum, verses, restBefore: restPending, tieOpen: tieTypes.includes("start") });
+      notes.push({ midi, letter, alter, onset, dur, measure: mNum, verses, restBefore: restPending, tieOpen: tieTypes.includes("start") });
       restPending = false;
     }
     measureStart += maxPos;
@@ -183,7 +188,7 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
 
   const verses = [...verseSet].sort((a, b) => (Number(a) || 0) - (Number(b) || 0) || a.localeCompare(b));
   return {
-    title, partName, fifths: fifths ?? 0, tempo: tempo ?? DEFAULT_TEMPO, tempoFromScore: tempo !== null,
+    title, partName, fifths: fifths ?? 0, mode, tempo: tempo ?? DEFAULT_TEMPO, tempoFromScore: tempo !== null,
     beats: beats ?? 4, beatType: beatType ?? 4, verses, measures, length: measureStart, notes,
   };
 }
@@ -211,7 +216,7 @@ export function notesForVerse(score, verse) {
   let lastSyl = null;
   return score.notes.map((n) => {
     const v = n.verses[verse];
-    const base = { midi: n.midi, onset: n.onset, dur: n.dur, measure: n.measure, restBefore: n.restBefore };
+    const base = { midi: n.midi, letter: n.letter, alter: n.alter, onset: n.onset, dur: n.dur, measure: n.measure, restBefore: n.restBefore };
     if (v) {
       lastSyl = v;
       return { ...base, text: v.text, syllabic: v.syllabic, melisma: false };
