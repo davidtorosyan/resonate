@@ -89,7 +89,7 @@ export function pdfTitle(pages, firstMusic) {
  * Convert a PDF (File/Blob/ArrayBuffer) to MusicXML with Audiveris.
  * Returns { mxls: [Uint8Array] (zipped MusicXML: one score, or several if Audiveris split the
  *           book into movements), pages: [kept page numbers], title: the PDF's own title text or null,
- *           tempo: a "= 104" metronome mark in the first music page's text, or null,
+ *           tempo: a "= 104" metronome mark in the first music page's text ({ bpm, unit, dotted }) or null,
  *           failed: [{ sheet, page, step, reason }] (pages Audiveris gave up on; the rest is in mxls),
  *           log: string[] }.
  */
@@ -120,7 +120,7 @@ export async function convertPdf(input, { onProgress, onLog } = {}) {
   const title = pdfTitle(pages, music[0].index);
   if (title) addLog(`title from the PDF's text: ${title}`);
   const tempo = music[0].tempo ?? pages.find((p) => p.tempo && p.index <= music[0].index)?.tempo ?? null;
-  if (tempo) addLog(`tempo mark in the PDF's text: = ${tempo}`);
+  if (tempo) addLog(`tempo mark in the PDF's text: ${tempo.unit ? `${tempo.dotted ? "dotted " : ""}${tempo.unit} ` : ""}= ${tempo.bpm}`);
   const tiff = buildTiff(music);
   pages.length = 0; // free the rendered pages
 

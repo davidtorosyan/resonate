@@ -3,7 +3,8 @@
 // scores, so they run once, here, on OMR output only.
 //
 //   const { xml: fixed, changes } = fixOmrScore(xml, log, { tempo });
-//   log: the engine's log lines; tempo: a metronome mark read from the PDF's own text
+//   log: the engine's log lines; tempo: a metronome mark read from the PDF's own text,
+//   { bpm, unit: 'half'|'quarter'|'eighth'|null, dotted }
 
 const SPARSE = 0.15; // a "verse" with < 15% of the main verse's syllables is an OCR artifact
 
@@ -117,20 +118,40 @@ function foldSparseVerses(doc, changes) {
     `${moved} moved into verse ${main}, ${dropped} dropped`);
 }
 
-// Audiveris drops a metronome mark whose note symbol OCR missed ("♩ = 133" read as "= 133"),
-// logging: No beat unit in metronome line "With seductive menace, = 133" ... — assume a quarter note.
+// A tempo the engine didn't put in the score. Best source first: the mark as the PDF's own
+// text has it (vector PDFs: exact digits, often its note glyph too), then Audiveris's log
+// line for a metronome mark whose note symbol OCR missed (No beat unit in metronome line
+// "With seductive menace, = 133"). The text mark is the first music page's, so it's added
+// unless the first measure has a tempo already (a later mark the engine read doesn't count);
+// the log line can't be placed, so it's only used when the score has no tempo at all.
+// Beat unit: the glyph when known (SMuFL ♩ 𝅗𝅥 ♪, with a dot), else the meter's usual one —
+// a dotted quarter in 6/8, 9/8, 12/8, a half in cut time, else a quarter.
+const BEAT = { half: 2, quarter: 1, eighth: 0.5 };
 function restoreTempo(doc, log, changes, fromText) {
-  if (doc.querySelector("sound[tempo], metronome")) return;
-  let bpm = null, source = "the engine log (the note symbol wasn't read)";
-  for (const line of log) {
-    const m = /metronome line "[^"]*?=\s*(\d{2,3})\b/.exec(line);
-    if (m && Number(m[1]) >= 30 && Number(m[1]) <= 300) { bpm = Number(m[1]); break; }
+  const firstMeasures = [...doc.querySelectorAll("score-partwise > part")].map((p) => p.querySelector(":scope > measure")).filter(Boolean);
+  if (!firstMeasures.length) return;
+  const text = typeof fromText === "number" ? { bpm: fromText } : fromText;
+  let mark = null, source = "";
+  if (text?.bpm && !firstMeasures.some((m) => m.querySelector("sound[tempo], metronome"))) {
+    mark = text;
+    source = "the PDF's text (the engine didn't read the mark)";
+  } else if (!doc.querySelector("sound[tempo], metronome")) {
+    for (const line of log) {
+      const m = /metronome line "[^"]*?=\s*(\d{2,3})\b/.exec(line);
+      if (m && Number(m[1]) >= 30 && Number(m[1]) <= 300) { mark = { bpm: Number(m[1]) }; break; }
+    }
+    source = "the engine log (the note symbol wasn't read)";
   }
-  // Else the mark as the PDF's text has it (vector PDFs): the engine missed it entirely.
-  if (!bpm && fromText) { bpm = fromText; source = "the PDF's text (the engine didn't read the mark)"; }
-  if (!bpm) return;
-  const measure = doc.querySelector("score-partwise > part > measure");
-  if (!measure) return;
+  if (!mark) return;
+  let unit = mark.unit, dotted = !!mark.dotted;
+  if (!unit) {
+    const time = doc.querySelector("time");
+    const beats = Number(time?.querySelector("beats")?.textContent), type = Number(time?.querySelector("beat-type")?.textContent);
+    if (type === 8 && beats >= 6 && beats % 3 === 0) { unit = "quarter"; dotted = true; }
+    else if (time?.getAttribute("symbol") === "cut" || (beats === 2 && type === 2)) unit = "half";
+    else unit = "quarter";
+  }
+  const qpm = Math.round(mark.bpm * BEAT[unit] * (dotted ? 1.5 : 1) * 100) / 100;
   const el = (name, attrs = {}, kids = []) => {
     const e = doc.createElement(name);
     for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
@@ -138,13 +159,15 @@ function restoreTempo(doc, log, changes, fromText) {
     return e;
   };
   const direction = el("direction", { placement: "above" }, [
-    el("direction-type", {}, [el("metronome", {}, [el("beat-unit", {}, ["quarter"]), el("per-minute", {}, [String(bpm)])])]),
-    el("sound", { tempo: String(bpm) }),
+    el("direction-type", {}, [el("metronome", {}, [el("beat-unit", {}, [unit]), ...(dotted ? [el("beat-unit-dot")] : []), el("per-minute", {}, [String(mark.bpm)])])]),
+    el("sound", { tempo: String(qpm) }),
   ]);
   // After <print>/<attributes>, before the first note: direction is valid anywhere in the music data.
+  const measure = firstMeasures[0];
   const first = measure.querySelector(":scope > note, :scope > backup, :scope > forward, :scope > direction");
   measure.insertBefore(direction, first);
-  changes.push(`tempo ♩ = ${bpm} restored from ${source}`);
+  const glyph = { half: "𝅗𝅥", quarter: "♩", eighth: "♪" }[unit] + (dotted ? "." : "");
+  changes.push(`tempo ${glyph} = ${mark.bpm} restored from ${source}`);
 }
 
 // Missed key signatures. On small staves Audiveris often doesn't find a system's key
