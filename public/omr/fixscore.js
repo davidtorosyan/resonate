@@ -2,16 +2,17 @@
 // recognition slips that the generic MusicXML parser shouldn't second-guess in hand-made
 // scores, so they run once, here, on OMR output only.
 //
-//   const { xml: fixed, changes } = fixOmrScore(xml, log);   // log: the engine's log lines
+//   const { xml: fixed, changes } = fixOmrScore(xml, log, { tempo });
+//   log: the engine's log lines; tempo: a metronome mark read from the PDF's own text
 
 const SPARSE = 0.15; // a "verse" with < 15% of the main verse's syllables is an OCR artifact
 
-export function fixOmrScore(xml, log = []) {
+export function fixOmrScore(xml, log = [], { tempo = null } = {}) {
   const doc = new DOMParser().parseFromString(xml, "application/xml");
   if (doc.querySelector("parsererror")) return { xml, changes: [] };
   const changes = [];
   foldSparseVerses(doc, changes);
-  restoreTempo(doc, log, changes);
+  restoreTempo(doc, log, changes, tempo);
   unifyKeySignatures(doc, changes);
   unifyOctaveClefs(doc, changes);
   markUnmarkedTuplets(doc, changes);
@@ -118,13 +119,15 @@ function foldSparseVerses(doc, changes) {
 
 // Audiveris drops a metronome mark whose note symbol OCR missed ("♩ = 133" read as "= 133"),
 // logging: No beat unit in metronome line "With seductive menace, = 133" ... — assume a quarter note.
-function restoreTempo(doc, log, changes) {
+function restoreTempo(doc, log, changes, fromText) {
   if (doc.querySelector("sound[tempo], metronome")) return;
-  let bpm = null;
+  let bpm = null, source = "the engine log (the note symbol wasn't read)";
   for (const line of log) {
     const m = /metronome line "[^"]*?=\s*(\d{2,3})\b/.exec(line);
     if (m && Number(m[1]) >= 30 && Number(m[1]) <= 300) { bpm = Number(m[1]); break; }
   }
+  // Else the mark as the PDF's text has it (vector PDFs): the engine missed it entirely.
+  if (!bpm && fromText) { bpm = fromText; source = "the PDF's text (the engine didn't read the mark)"; }
   if (!bpm) return;
   const measure = doc.querySelector("score-partwise > part > measure");
   if (!measure) return;
@@ -141,7 +144,7 @@ function restoreTempo(doc, log, changes) {
   // After <print>/<attributes>, before the first note: direction is valid anywhere in the music data.
   const first = measure.querySelector(":scope > note, :scope > backup, :scope > forward, :scope > direction");
   measure.insertBefore(direction, first);
-  changes.push(`tempo ♩ = ${bpm} restored from the engine log (the note symbol wasn't read)`);
+  changes.push(`tempo ♩ = ${bpm} restored from ${source}`);
 }
 
 // Missed key signatures. On small staves Audiveris often doesn't find a system's key

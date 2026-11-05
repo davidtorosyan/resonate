@@ -187,7 +187,7 @@ async function run(file) {
     for (const [i, b] of res.mxls.entries()) xmls.push(await readScoreFile(new File([b], `${baseName}-${i + 1}.mxl`)));
     const joined = joinMovements(xmls);
     if (xmls.length > 1) appendLog(`[fix] ${xmls.length} scores (movements) joined into one`);
-    const fixed = fixOmrScore(joined, res.log);
+    const fixed = fixOmrScore(joined, res.log, { tempo: res.tempo });
     for (const c of fixed.changes) appendLog(`[fix] ${c}`);
     const xml = fixed.xml;
     // Page 1's credits (title) are gone when the first music page failed; don't take page 2's.

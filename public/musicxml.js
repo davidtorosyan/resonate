@@ -79,7 +79,8 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
     }
   }
 
-  for (const measure of best.part.querySelectorAll(":scope > measure")) {
+  const melodyMeasures = [...best.part.querySelectorAll(":scope > measure")];
+  melodyMeasures.forEach((measure, mi) => {
     const mNum = measure.getAttribute("number");
     measures.push(measureStart);
     let lineStart = lineStarts.has(mNum); // until this measure's first melody note
@@ -178,18 +179,181 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
         continue;
       }
       lineStart = false;
-      notes.push({ midi, letter, alter, onset, dur, measure: mNum, verses, restBefore: restPending, tieOpen: tieTypes.includes("start") });
+      notes.push({ midi, letter, alter, onset, dur, measure: mNum, mi, verses, restBefore: restPending, tieOpen: tieTypes.includes("start") });
       restPending = false;
     }
     measureStart += maxPos;
-  }
+  });
   if (!notes.length) throw new Error("No pitched notes found");
   for (const n of notes) delete n.tieOpen;
 
   const verses = [...verseSet].sort((a, b) => (Number(a) || 0) - (Number(b) || 0) || a.localeCompare(b));
-  return {
+  const score = {
     title, partName, fifths: fifths ?? 0, mode, tempo: tempo ?? DEFAULT_TEMPO, tempoFromScore: tempo !== null,
     beats: beats ?? 4, beatType: beatType ?? 4, verses, measures, length: measureStart, notes,
+  };
+  const order = performanceOrder(readStructure(parts, melodyMeasures.length), notes);
+  return order ? unfold(score, order) : score;
+}
+
+// --- Repeats, endings and jumps -------------------------------------------------
+// The Sing page follows a song the way it's performed: repeats taken, 1st/2nd endings,
+// D.S./D.C. (al Coda / al Fine) — each pass through a repeated section singing its own
+// verse (pass 2 → verse 2, when that section has a verse 2; else the latest verse it has).
+
+// Per measure (index): { forward, backward, times, endingStart: [numbers], endingStop,
+// segno, codaSign, toCoda, codaTarget, ds, dc, fine }, from every part (sheet-music
+// recognition may put a sign on only some of them).
+function readStructure(parts, count) {
+  const marks = Array.from({ length: count }, () => ({}));
+  for (const part of parts) {
+    [...part.querySelectorAll(":scope > measure")].slice(0, count).forEach((m, i) => {
+      const mk = marks[i];
+      for (const bl of m.querySelectorAll(":scope > barline")) {
+        const rep = bl.querySelector(":scope > repeat");
+        const dir = rep?.getAttribute("direction");
+        if (dir === "forward") mk.forward = true;
+        if (dir === "backward") {
+          mk.backward = true;
+          mk.times = Math.max(mk.times || 0, Number(rep.getAttribute("times")) || 0);
+        }
+        const end = bl.querySelector(":scope > ending");
+        if (end) {
+          const type = end.getAttribute("type");
+          if (type === "start") {
+            const nums = (end.getAttribute("number") || "").split(/[,\s.]+/).map(Number).filter((n) => n > 0);
+            mk.endingStart = nums.length ? nums : [1];
+          } else if (type === "stop" || type === "discontinue") mk.endingStop = true;
+        }
+      }
+      for (const d of m.querySelectorAll(":scope > direction")) {
+        const words = [...d.querySelectorAll("direction-type > words")].map((w) => w.textContent).join(" ");
+        if (d.querySelector("direction-type > segno")) mk.segno = true;
+        if (d.querySelector("direction-type > coda")) mk.codaSign = true;
+        if (/\bto\s+coda\b/i.test(words)) mk.toCoda = true;
+        if (/\bD\.\s?S\.|\bdal\s+segno\b/i.test(words)) mk.ds = true;
+        else if (/\bD\.\s?C\.|\bda\s+capo\b/i.test(words)) mk.dc = true;
+        if (/^\s*fine\s*$/i.test(words)) mk.fine = true;
+      }
+      for (const snd of m.querySelectorAll("sound")) {
+        if (snd.hasAttribute("segno")) mk.segno = true;
+        if (snd.hasAttribute("dalsegno")) mk.ds = true;
+        if (snd.getAttribute("dacapo") === "yes") mk.dc = true;
+        if (snd.hasAttribute("tocoda")) mk.toCoda = true;
+        if (snd.hasAttribute("coda")) mk.codaTarget = true;
+        if (snd.hasAttribute("fine")) mk.fine = true;
+      }
+    });
+  }
+  return marks;
+}
+
+// The measure indexes in performance order, or null when that's just the written order.
+// Repeats go back to the last forward repeat (or the start, or just after the previous
+// repeat); a repeat plays `times` times, or one more than its ending's highest number
+// ("1.2.3." → 4), and at least as many times as its section has verses. An ending is
+// played on the passes it's numbered for; one past all its numbers that doesn't repeat is
+// the final ending. A 1st ending recognition cut short (it stops just before its repeat
+// sign) runs to that repeat. After a D.S./D.C. repeats aren't taken again, first endings
+// are skipped, "To Coda" jumps to the Coda and "Fine" ends the song.
+function performanceOrder(marks, notes) {
+  const N = marks.length;
+  if (!marks.some((m) => m.backward || m.ds || m.dc)) return null;
+  const versesIn = Array.from({ length: N }, () => new Set());
+  for (const n of notes) for (const v of Object.keys(n.verses)) versesIn[n.mi]?.add(v);
+  // Endings: start → stop (or its repeat), extended to a repeat sign just after it.
+  const endingOf = new Array(N).fill(null);
+  for (let i = 0; i < N; i++) {
+    if (!marks[i].endingStart) continue;
+    let j = i;
+    while (j < N - 1 && !marks[j].endingStop && !marks[j].backward && !marks[j + 1].endingStart && !marks[j + 1].forward) j++;
+    if (!marks[j].backward) {
+      for (let k = j + 1; k <= Math.min(N - 1, j + 2); k++) {
+        if (marks[k].endingStart || marks[k].forward) break;
+        if (marks[k].backward) { j = k; break; }
+      }
+    }
+    const e = { nums: marks[i].endingStart, start: i, end: j };
+    for (let k = i; k <= j; k++) endingOf[k] = e;
+    i = j;
+  }
+  const segno = marks.findIndex((m) => m.segno);
+  const jumpFrom = marks.findIndex((m) => m.ds || m.dc);
+  const toCoda = marks.findIndex((m) => m.toCoda);
+  let codaAt = marks.findIndex((m, i) => m.codaTarget && i > jumpFrom);
+  if (codaAt < 0) codaAt = marks.findLastIndex((m, i) => m.codaSign && i > Math.max(jumpFrom, toCoda) && !m.toCoda);
+
+  const order = [];
+  const taken = new Map();
+  let i = 0, repStart = 0, pass = 1, jumped = false, guard = 0;
+  while (i < N && guard++ < N * 12) {
+    const mk = marks[i], e = endingOf[i];
+    if (mk.forward && repStart !== i) { repStart = i; pass = 1; }
+    if (e && i === e.start) {
+      const repeats = marks[e.end].backward;
+      const play = jumped ? !repeats : e.nums.includes(pass) || (pass > Math.max(...e.nums) && !repeats);
+      if (!play) { i = e.end + 1; continue; }
+    }
+    order.push(i);
+    if (jumped && mk.fine) break;
+    if (jumped && mk.toCoda && codaAt > i) { i = codaAt; continue; }
+    if (mk.backward && !jumped) {
+      let verseCount = 1;
+      for (let k = repStart; k <= i; k++) for (const v of versesIn[k]) verseCount = Math.max(verseCount, Number(v) || 1);
+      const times = Math.max(mk.times || (e ? Math.max(...e.nums) + 1 : 2), Math.min(verseCount, 8));
+      const t = taken.get(i) || 0;
+      if (t < times - 1) { taken.set(i, t + 1); pass++; i = repStart; continue; }
+      repStart = i + 1;
+    }
+    if ((mk.ds && segno >= 0) || mk.dc) {
+      if (!jumped) { jumped = true; i = mk.ds ? segno : 0; continue; }
+    }
+    i++;
+  }
+  return order.every((m, k) => m === k) && order.length === N ? null : order;
+}
+
+// Lay the notes out in performance order. Each run of consecutive measures is one pass:
+// the k-th time its first measure is played, each of its measures sings verse k if it has
+// words for it, else the latest verse it has words for (a refrain printed once, under
+// verse 1). Notes then carry that pass's syllable as verse "1" (the Sing page's verse
+// menu disappears: the passes choose the verses).
+function unfold(score, order) {
+  const len = (i) => (score.measures[i + 1] ?? score.length) - score.measures[i];
+  const byMeasure = new Map();
+  for (const n of score.notes) {
+    if (!byMeasure.has(n.mi)) byMeasure.set(n.mi, []);
+    byMeasure.get(n.mi).push(n);
+  }
+  const runs = [];
+  order.forEach((m, k) => (k && m === order[k - 1] + 1 ? runs[runs.length - 1].push(m) : runs.push([m])));
+  const seen = new Map();
+  const notes = [], measures = [];
+  let t = 0;
+  for (const run of runs) {
+    const k = (seen.get(run[0]) || 0) + 1;
+    run.forEach((m, r) => {
+      const have = new Set();
+      for (const n of byMeasure.get(m) || []) for (const v of Object.keys(n.verses)) have.add(v);
+      const num = [...have].map(Number).filter((v) => v > 0 && v <= k);
+      const verse = have.has(String(k)) ? String(k) : num.length ? String(Math.max(...num)) : [...have][0];
+      seen.set(m, (seen.get(m) || 0) + 1);
+      measures.push(t);
+      for (const n of byMeasure.get(m) || []) {
+        const v = verse && n.verses[verse];
+        notes.push({ ...n, onset: t + (n.onset - score.measures[m]), verses: v ? { 1: v } : {},
+          restBefore: n.restBefore || (r === 0 && n === byMeasure.get(m)[0] && notes.length > 0), pass: k });
+      }
+      t += len(m);
+    });
+  }
+  return {
+    ...score,
+    notes,
+    measures,
+    length: t,
+    verses: notes.some((n) => n.verses[1]) ? ["1"] : [],
+    unfolded: { written: score.measures.length, played: order.length, passes: Math.max(...[...seen.values()]) },
   };
 }
 
