@@ -279,12 +279,19 @@ function fillKeyOptions() {
   keySelect.value = listed.has(String(transpose)) ? String(transpose) : "fit";
 }
 
-// Major or minor: the file says (<mode>), else the melody's tonic — of the two the
-// key signature allows (E♭ / C for 3 flats), the one it dwells and ends on.
+// Major or minor: the file says (<mode>), else the bass of the final chord or the
+// melody's last note, if it's one of the two tonics the key signature allows (F / D for 1
+// flat), else the one the melody dwells on. (Wichita Lineman ends on a B♭maj7 chord and its
+// melody dwells on D, but the melody ends on F: F major.)
 function guessMinor(sc) {
   if (sc.mode) return sc.mode === "minor";
   const pc = (m) => ((m % 12) + 12) % 12;
   const major = pc(7 * sc.fifths), rel = pc(major + 9);
+  if (sc.finalBass != null && pc(sc.finalBass) === major) return false;
+  if (sc.finalBass != null && pc(sc.finalBass) === rel) return true;
+  const end = sc.notes.reduce((a, n) => (n.onset >= a.onset ? n : a), sc.notes[0]);
+  if (end && pc(end.midi) === major) return false;
+  if (end && pc(end.midi) === rel) return true;
   let wMajor = 0, wMinor = 0;
   for (const n of sc.notes) {
     if (pc(n.midi) === major) wMajor += n.dur;
@@ -800,7 +807,12 @@ function makeChip(j) {
     b.className = "chip mono";
     b.dataset.tune = g ? g.status : "";
     b.innerHTML = "<i></i><b></b><small></small>";
-    b.querySelector("i").textContent = n.melisma ? "‿" : n.text + (joinsNext(j) ? "-" : "");
+    // A held syllable (melisma) draws the score's extender line instead of a word.
+    const lyric = b.querySelector("i");
+    if (n.melisma) {
+      lyric.className = "held";
+      lyric.setAttribute("aria-label", "held");
+    } else lyric.textContent = n.text + (joinsNext(j) ? "-" : "");
     b.querySelector("b").textContent = n.name;
     let res = "";
     if (g?.status === "good" || g?.status === "ok") res = `✓ ${centsLabel(Math.round(g.dev * 100))}`;

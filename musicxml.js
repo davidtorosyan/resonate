@@ -191,9 +191,31 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
   const score = {
     title, partName, fifths: fifths ?? 0, mode, tempo: tempo ?? DEFAULT_TEMPO, tempoFromScore: tempo !== null,
     beats: beats ?? 4, beatType: beatType ?? 4, verses, measures, length: measureStart, notes,
+    finalBass: finalBass(parts),
   };
   const played = performanceOrder(readStructure(parts, melodyMeasures.length), notes);
   return played ? unfold(score, played) : score;
+}
+
+// The lowest note of the last measure that has any (all parts): the final chord's bass,
+// which is the key's tonic far more reliably than the melody (Wichita Lineman's melody
+// dwells on D, the relative minor's tonic, but the song ends on an F chord).
+function finalBass(parts) {
+  let last = -1, low = null;
+  const midiOf = (p) =>
+    (Number(text(p.querySelector("octave"))) + 1) * 12 + (STEP_PC[text(p.querySelector("step"))] ?? 0) +
+    Math.round(Number(text(p.querySelector("alter")) || 0));
+  for (const part of parts) {
+    const ms = [...part.querySelectorAll(":scope > measure")];
+    for (let i = ms.length - 1; i >= 0 && i >= last; i--) {
+      const pitches = [...ms[i].querySelectorAll(":scope > note > pitch")].map(midiOf).filter((m) => Number.isFinite(m));
+      if (!pitches.length) continue;
+      const lo = Math.min(...pitches);
+      if (i > last) { last = i; low = lo; } else low = Math.min(low, lo);
+      break;
+    }
+  }
+  return low;
 }
 
 // --- Repeats, endings and jumps -------------------------------------------------
