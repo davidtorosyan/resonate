@@ -4,7 +4,7 @@
 
 import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js";
 import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js";
-import { openMic, ANALYSIS_LAG } from "./pitch.js";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE } from "./pitch.js";
 import { startCapture, playVoice } from "./capture.js";
 import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.js";
 import { listSongs, getSong, addSong, removeSong, persistent } from "./library.js";
@@ -39,6 +39,11 @@ const playModesEl = $("play-modes");
 const chipsEl = $("chips");
 const listenBtn = $("listen");
 const singBtn = $("sing");
+const monitorBtn = $("monitor");
+const youEl = $("you");
+const youNoteEl = $("you-note");
+const youCentsEl = $("you-cents");
+const youVsEl = $("you-vs");
 
 const SAMPLES = { "amazing-grace": { title: "Amazing Grace", url: "songs/amazing-grace.musicxml" } };
 const K = {
@@ -101,6 +106,7 @@ let nowT = 0;       // song time at the now-line (follows the session)
 let shownLine = -1; // lyric line currently rendered
 let lastChip = -1;  // chip marked as current
 let preview = null; // the latest note chip held down (piano keys): { j }
+let practiceJ = -1; // the note chip pressed last: what the pitch readout compares you with
 
 const noteName = (m) => nameOf(m, flats);
 
@@ -329,6 +335,7 @@ function setScore(sc) {
   if (saved && sc.verses.includes(saved)) verseSelect.value = saved;
   verseSelect.hidden = sc.verses.length < 2;
   take = null;
+  practiceJ = -1;
   applySong();
 }
 
@@ -520,7 +527,15 @@ function beatGrid() {
 // ---------------------------------------------------------------------------
 // Sing
 
+// While Sing / Listen / Play is starting, the pitch monitor keeps the mic closed.
+let starting = false;
 async function startSing() {
+  starting = true;
+  monitorSync();
+  try { await beginSing(); } finally { starting = false; monitorSync(MON_RESUME); }
+}
+
+async function beginSing() {
   stopKeys();
   stopSession();
   take = null;
@@ -570,6 +585,8 @@ async function startSing() {
     const r = mic.read();
     const ft = songT - ANALYSIS_LAG - latency;
     if (ft > entryT - 0.5) addFrame(ft, r.midi);
+    pushYou(r.midi);
+    renderYou();
     gradeUpTo(ft);
     nowT = songT;
     statusEl.textContent = songT < entryT ? `count-in ${Math.min(count, Math.floor((songT - entryT + count * beatSec) / beatSec) + 1)}` : `${r.db.toFixed(0)} dB`;
@@ -646,6 +663,7 @@ async function stopSing() {
   nowT = entryT;
   renderAll();
   chipsEl.scrollTop = 0;
+  monitorSync(MON_RESUME);
 }
 
 // ---------------------------------------------------------------------------
@@ -662,6 +680,12 @@ async function getPlayCtx() {
 
 // kind: "listen" (melody) or "playback" (per playMode).
 async function startPlay(kind, from) {
+  starting = true;
+  monitorSync();
+  try { await beginPlay(kind, from); } finally { starting = false; monitorSync(MON_RESUME); }
+}
+
+async function beginPlay(kind, from) {
   stopKeys();
   stopSession();
   const ac = await getPlayCtx();
@@ -711,6 +735,7 @@ function stopSession() {
   for (const n of s.nodes) try { n.stop(); } catch {}
   scrollT = Math.max(0, Math.min(nowT, songEnd));
   renderAll();
+  monitorSync(MON_RESUME);
 }
 
 // ---------------------------------------------------------------------------
@@ -722,6 +747,7 @@ function renderAll() {
   renderChips();
   renderSummary();
   updateButtons();
+  renderYou();
   renderLane();
 }
 
@@ -886,8 +912,13 @@ async function pressKey(j, id, held) {
   const n = notes[j];
   const old = keys.get(id);
   if (old) dropKey(old, true);
-  const key = { id, j, held, ac: null, note: null, t0: 0, timer: 0, cap: 0, prev: { scrollT, nowT, chip: lastChip } };
+  const key = { id, j, held, ac: null, note: null, t0: 0, timer: 0, cap: 0, prev: { scrollT, nowT, chip: lastChip, practiceJ } };
   keys.set(id, key);
+  practiceJ = j;
+  // The pitch monitor's mic closes while a key sounds (on iPhone an open mic makes it
+  // quiet); the speaker needs a moment to take over again before the note starts.
+  const route = mon?.stream ? 0.1 : 0;
+  monitorSync();
   if (held) key.cap = setTimeout(() => releaseKey(id), MAX_HOLD);
   scrollT = nowT = Math.max(-1, Math.min(n.t - 0.4, songEnd));
   showKeys();
@@ -909,7 +940,7 @@ async function pressKey(j, id, held) {
     return dropKey(key);
   }
   key.ac = ac;
-  key.t0 = ac.currentTime + 0.01;
+  key.t0 = ac.currentTime + 0.01 + route;
   // Still held: until released. Already let go (it couldn't start sooner) or a click: the
   // note's length in the song, the piano alone — as Listen plays it.
   key.note = holdPiano(ac, piano, key.t0, n.midi, 1.4, { sustain: key.held });
@@ -946,6 +977,7 @@ function cancelKey(id) {
   if (!session) {
     scrollT = key.prev.scrollT;
     nowT = key.prev.nowT;
+    practiceJ = key.prev.practiceJ;
     setCurrentChip(key.prev.chip, false);
   }
   dropKey(key, true, CUT);
@@ -957,6 +989,7 @@ function dropKey(key, now = false, tc = undefined) {
   if (now && key.note) key.note.release(key.ac.currentTime, tc);
   if (keys.get(key.id) === key) keys.delete(key.id);
   showKeys();
+  monitorSync(keys.size ? 0 : MON_RESUME); // the last key up: listen again once it has died away
 }
 
 // Silence every key (Listen, Sing, another song or transposition, the page hidden).
@@ -977,6 +1010,7 @@ function showKeys() {
   if (session) return; // the session draws the lane and lyrics
   if (preview) setCurrentChip(preview.j, false);
   renderLyrics(nowT);
+  renderYou();
   renderLane();
 }
 
@@ -1006,6 +1040,189 @@ function unlockPlay(e) {
 }
 for (const t of ["pointerup", "keydown"]) document.addEventListener(t, unlockPlay, true);
 window.addEventListener("blur", stopKeys);
+
+// ---------------------------------------------------------------------------
+// Pitch monitor (🎤 Pitch): the note you're singing, any time — not only during a take —
+// so a note can be practised: press its chip to hear it, then sing it back and watch the
+// readout (and your pitch drawn on the lane) turn green. It's compared with the chip
+// pressed last, in any octave. During a take the readout follows the take's own mic.
+//
+// iPhone plays very quietly while a page has the mic open (see the Voice page), so the
+// monitor only captures while nothing plays: its mic closes when a key goes down or
+// Listen / Play / Sing start, and reopens MON_RESUME after the last key is let go (no new
+// permission prompt within the page). Its AudioContext is made in the tap that turns it on.
+
+const MON_RESUME = 300;  // ms after the last key is let go (the note's damping) before listening again
+const MON_QUIET = 150;   // ms of a reopened mic not read (what's left of the note)
+const YOU_WINDOW = 0.2;  // s of pitch frames the readout takes the median of
+const MIC = { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } };
+const setSession = (type) => { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {} };
+let mon = null;          // { micCtx, analyser, read, stream, source, opening, timer, raf, quietUntil }
+const youFrames = [];    // recent { t (s, performance clock), midi | null }
+
+function monitorOn() {
+  if (mon) return;
+  // In the tap: the context may start now and keep running between mic sessions (made
+  // for recording, like the Voice page's).
+  setSession("play-and-record");
+  const micCtx = new (window.AudioContext || window.webkitAudioContext)();
+  micCtx.resume().catch(() => {});
+  const analyser = micCtx.createAnalyser();
+  analyser.fftSize = FFT_SIZE;
+  analyser.smoothingTimeConstant = 0;
+  mon = { micCtx, analyser, read: createReader(analyser, micCtx.sampleRate), stream: null, source: null, opening: false, timer: 0, raf: 0, quietUntil: 0 };
+  youFrames.length = 0;
+  monitorBtn.setAttribute("aria-pressed", "true");
+  const loop = () => {
+    if (!mon) return;
+    mon.raf = requestAnimationFrame(loop);
+    if (session) return renderYou(); // a take shows its own mic; Listen / Play: hidden, the mic is closed
+    if (mon.stream && performance.now() >= mon.quietUntil) pushYou(mon.read().midi);
+    renderYou();
+    renderLane();
+  };
+  mon.raf = requestAnimationFrame(loop);
+  monitorSync();
+}
+
+function monitorOff() {
+  const m = mon;
+  if (!m) return;
+  mon = null;
+  clearTimeout(m.timer);
+  cancelAnimationFrame(m.raf);
+  micStop(m);
+  m.micCtx.close().catch(() => {});
+  monitorBtn.setAttribute("aria-pressed", "false");
+  if (!session) setSession("auto");
+  youFrames.length = 0;
+  renderYou();
+  renderLane();
+}
+
+const monitorListens = () => mon && !session && !starting && !keys.size && !document.hidden;
+
+// Open or close the monitor's mic to match what's going on; reopening can wait `delay` ms.
+function monitorSync(delay = 0) {
+  if (!mon) return;
+  clearTimeout(mon.timer);
+  if (!monitorListens()) return micStop(mon);
+  if (mon.stream || mon.opening) return;
+  if (delay) mon.timer = setTimeout(() => monitorSync(), delay);
+  else micStart(mon);
+}
+
+async function micStart(m) {
+  m.opening = true;
+  setSession("play-and-record");
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(MIC);
+    if (mon === m && monitorListens() && m.micCtx.state !== "running") {
+      await Promise.race([m.micCtx.resume(), new Promise((r) => setTimeout(r, 1000))]).catch(() => {});
+    }
+  } catch (err) {
+    m.opening = false;
+    if (mon !== m) return;
+    if (!monitorListens()) return; // closed meanwhile (a key, Listen…): tried again later
+    console.warn(err);
+    monitorOff();
+    showMsg(err.name === "NotAllowedError"
+      ? "The microphone is blocked for this site — allow it (Safari: aA → Website Settings) to see your pitch."
+      : `Couldn't open the microphone: ${err.message || err.name}`, "error");
+    return;
+  }
+  m.opening = false;
+  if (mon !== m || !monitorListens()) {
+    stream?.getTracks().forEach((t) => t.stop());
+    if (mon === m) monitorSync(); // e.g. let go of a key again meanwhile
+    return;
+  }
+  m.stream = stream;
+  m.source = m.micCtx.createMediaStreamSource(stream);
+  m.source.connect(m.analyser);
+  m.quietUntil = performance.now() + MON_QUIET;
+  youFrames.length = 0;
+}
+
+function micStop(m) {
+  m.stream?.getTracks().forEach((t) => t.stop());
+  try { m.source?.disconnect(); } catch {}
+  m.stream = m.source = null;
+}
+
+function pushYou(midi) {
+  const t = performance.now() / 1000;
+  youFrames.push({ t, midi });
+  while (youFrames.length && youFrames[0].t < t - 4) youFrames.shift();
+}
+
+// The pitch you're singing now (median of the last YOU_WINDOW), or null when silent.
+function currentYou() {
+  const t = performance.now() / 1000;
+  const win = youFrames.filter((f) => f.t >= t - YOU_WINDOW);
+  const voiced = win.filter((f) => f.midi !== null).map((f) => f.midi);
+  return voiced.length >= 2 && voiced.length >= win.length / 2 ? median(voiced) : null;
+}
+
+// What the readout compares you with: during a take the note due now, else the chip
+// pressed last.
+function youTarget() {
+  if (session?.kind === "sing") return noteAt(nowT - ANALYSIS_LAG - session.latency);
+  return practiceJ >= 0 && practiceJ < notes.length ? practiceJ : -1;
+}
+
+const setText = (el, text) => { if (el.textContent !== text) el.textContent = text; };
+
+function renderYou() {
+  const sing = session?.kind === "sing";
+  const show = sing || (!!mon && !session);
+  if (youEl.hidden === show) youEl.hidden = !show;
+  if (!show) return;
+  const j = youTarget();
+  const target = j >= 0 ? notes[j] : null;
+  let state = "", big = "–", cents = "", vs = "";
+  if (!sing && keys.size) {
+    // A key sounds (the mic is closed meanwhile): show the note to match.
+    state = "hear";
+    big = target ? target.name : "♪";
+    vs = "listen…";
+  } else if (!sing && !mon.stream) {
+    state = "wait";
+    big = "…";
+    vs = "mic…";
+  } else {
+    const m = currentYou();
+    if (m !== null) {
+      const r = Math.round(m);
+      big = noteName(r);
+      cents = centsLabel(Math.round((m - r) * 100));
+    }
+    if (!target) vs = sing ? "" : "tap a note";
+    else if (m === null) vs = `sing ${target.name}`;
+    else {
+      const d = fold(m - target.midi);
+      const a = Math.abs(d) * 100;
+      state = a <= GOOD_CENTS ? "good" : a <= OK_CENTS ? "ok" : "off";
+      vs = `${a <= OK_CENTS ? "✓" : d < 0 ? "↑" : "↓"} ${target.name}`;
+    }
+  }
+  if ((youEl.dataset.state || "") !== state) youEl.dataset.state = state;
+  setText(youNoteEl, big);
+  setText(youCentsEl, cents || " ");
+  setText(youVsEl, vs || " ");
+  youVsEl.title = state === "off" ? (vs.startsWith("↑") ? "sing higher" : "sing lower") : "";
+}
+
+monitorBtn.addEventListener("click", () => {
+  if (mon) monitorOff();
+  else {
+    showMsg("");
+    monitorOn();
+  }
+  renderYou();
+  renderLane();
+});
 
 function renderSummary() {
   if (!take || take.endT === null) {
@@ -1118,7 +1335,7 @@ function renderLane() {
 
   // Score notes with lyrics.
   const barH = Math.max(6, Math.min(rowH * 0.85, 22));
-  const cur = session ? noteAt(nowT) : preview ? preview.j : -1; // lit: playing now / tapped
+  const cur = session ? noteAt(nowT) : preview ? preview.j : mon ? youTarget() : -1; // lit: playing now / tapped / practised
   notes.forEach((n, j) => {
     if (n.t + n.d < tMin || n.t > tMax) return;
     const g = take?.grades[j];
@@ -1143,8 +1360,51 @@ function renderLane() {
     }
   });
 
+  // Pitch monitor: the practised note's row, and your pitch over the last few seconds
+  // running back from the now line, moved by octaves next to that note.
+  const monitoring = mon && !session;
+  if (monitoring) {
+    const j = youTarget();
+    const ref = j >= 0 ? notes[j].midi : (lo + hi) / 2;
+    if (j >= 0) {
+      ctx.strokeStyle = "rgba(255,230,160,0.45)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 5]);
+      ctx.beginPath();
+      ctx.moveTo(GUTTER, yOf(ref));
+      ctx.lineTo(w, yOf(ref));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    const tNow = performance.now() / 1000;
+    const colour = (m) => j < 0 ? "rgba(255,255,255,0.85)" : Math.abs(fold(m - ref)) * 100 <= OK_CENTS ? "rgba(74,222,128,0.95)" : "rgba(255,120,120,0.95)";
+    const disp = (m) => m + 12 * Math.round((ref - m) / 12);
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = ctx.lineCap = "round";
+    let prev = null;
+    for (const f of youFrames) {
+      if (f.midi === null) { prev = null; continue; }
+      const p = { x: nowX - (tNow - f.t) * PX_PER_SEC, y: yOf(disp(f.midi)), d: disp(f.midi), t: f.t };
+      if (prev && Math.abs(prev.d - p.d) < 1.5 && f.t - prev.t < 0.1) {
+        ctx.strokeStyle = colour(f.midi);
+        ctx.beginPath();
+        ctx.moveTo(prev.x, prev.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+      }
+      prev = p;
+    }
+    const m = currentYou();
+    if (m !== null) {
+      ctx.fillStyle = colour(m);
+      ctx.beginPath();
+      ctx.arc(nowX, yOf(disp(m)), 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   // Your pitch.
-  if (take) {
+  if (take && !monitoring) {
     ctx.lineWidth = 2.5;
     ctx.lineJoin = ctx.lineCap = "round";
     let prev = null;
@@ -1359,10 +1619,28 @@ document.addEventListener("drop", (e) => {
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) stopKeys();
+  if (document.hidden && mon) {
+    monitorOff();
+    statusEl.textContent = "pitch off (backgrounded)";
+  }
   if (document.hidden && session) {
     stopSession();
     statusEl.textContent = "stopped (backgrounded)";
   }
+});
+// Leaving the page: give the tab's audio session back. iOS keeps its type across pages,
+// and a "playback" left behind kept the Tuner's microphone from starting.
+window.addEventListener("pagehide", () => {
+  stopKeys();
+  monitorOff();
+  stopSession();
+  if (playCtx) playCtx.close().catch(() => {});
+  playCtx = null;
+  setSession("auto");
+});
+// Back from the back/forward cache: the next tap starts the audio again.
+window.addEventListener("pageshow", (e) => {
+  if (e.persisted) for (const t of ["pointerup", "keydown"]) document.addEventListener(t, unlockPlay, true);
 });
 
 // ---------------------------------------------------------------------------
@@ -1397,4 +1675,5 @@ if (!navigator.mediaDevices?.getUserMedia) {
 })();
 
 // Debug hook for automated tests / devtools.
-window.resonateDebug = () => ({ score, notes, take, session: session && { kind: session.kind }, nowT, scrollT });
+window.resonateDebug = () => ({ score, notes, take, session: session && { kind: session.kind }, nowT, scrollT, practiceJ,
+  monitor: mon && { listening: !!mon.stream, opening: mon.opening, ctx: mon.micCtx.state }, you: currentYou() });
