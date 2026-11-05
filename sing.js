@@ -3,7 +3,7 @@
 // note is graded on the pitch you held during its own time slot (any octave).
 
 import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js";
-import { noteName as nameOf, BLACK, fold, median, centsLabel } from "./music.js";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js";
 import { openMic, ANALYSIS_LAG } from "./pitch.js";
 import { startCapture, playVoice } from "./capture.js";
 import { loadPiano, pianoReady, playPiano, playClick } from "./piano.js";
@@ -44,7 +44,8 @@ const K = {
   legacyXml: "resonate.sing.customXml",   // pre-library single custom song (migrated)
   legacyName: "resonate.sing.customName",
   verse: "resonate.sing.verse",
-  transpose: "resonate.sing.transpose",
+  legacyTranspose: "resonate.sing.transpose", // pre-v31: one transposition for every song
+  keys: "resonate.sing.keys",                  // { songId: semitones }
   rate: "resonate.sing.rate",
   guide: "resonate.sing.guide",
   playMode: "resonate.sing.playMode",
@@ -65,10 +66,12 @@ const END_PAD = 1.0;        // keep going this long after the last note
 
 // --- Song state ---------------------------------------------------------------
 let score = null;
-let notes = [];    // { midi (transposed), t, d (s), text, syllabic, melisma, restBefore }
+let notes = [];    // { midi (transposed), name (spelled in the new key), t, d (s), text, syllabic, melisma, restBefore }
 let lines = [];    // [[note index]]
 let lineOf = [];   // note index → line index
-let flats = false;
+let flats = false; // black keys as flats (the key's signature has flats)
+let songId = null;
+let minor = false; // the song's key is minor (from <mode>, else guessed from the melody)
 let songEnd = 0;   // s
 let entryIdx = 0;  // measure where the singing starts (skips instrumental intros)
 let entryT = 0;    // its start time (s) — count-in, lane and Listen start here
@@ -77,7 +80,7 @@ let range = { lo: 55, hi: 72 };
 const store = (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} };
 const recall = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 
-let transpose = Number(recall(K.transpose)) || 0;
+let transpose = 0; // semitones, per song (K.keys)
 let rate = Number(recall(K.rate)) || 1;
 let guide = recall(K.guide) || "click";
 let playMode = recall(K.playMode) || "both";
@@ -104,8 +107,13 @@ function applySong() {
   stopPreview(false);
   const verse = verseSelect.value || score.verses[0] || "1";
   const spq = secPerQuarter();
+  // Transpose like a notation editor: new key with the fewest accidentals, every note
+  // moved by the interval (so spelled right in that key), not just its MIDI number.
+  const key = transposeKey(score.fifths, transpose);
+  flats = key.fifths < 0;
   notes = notesForVerse(score, verse).map((n) => ({
     midi: n.midi + transpose,
+    name: spellTransposed(n, transpose, key.steps, flats).name,
     t: n.onset * spq,
     d: n.dur * spq,
     text: n.text,
@@ -119,10 +127,8 @@ function applySong() {
   songEnd = notes.length ? Math.max(...notes.map((n) => n.t + n.d)) : 0;
   const mids = notes.map((n) => n.midi);
   range = { lo: Math.min(...mids) - 4, hi: Math.max(...mids) + 4 };
-  // Spell notes like the (transposed) key signature.
-  const f = (((score.fifths + 7 * transpose) % 12) + 12 + 6) % 12 - 6;
-  flats = f < 0;
   fillTempoOptions();
+  fillKeyOptions();
   if (take && (take.transpose !== transpose || take.rate !== rate)) take = null; // grades no longer apply
   // Start at the bar containing the first note, not at bar 1 — songs with a
   // long piano intro would otherwise mean a long wait before singing.
@@ -135,6 +141,10 @@ function applySong() {
   renderAll();
 }
 
+// The song's (transposed) lowest and highest notes.
+const lowest = () => notes.reduce((a, n) => (n.midi < a.midi ? n : a));
+const highest = () => notes.reduce((a, n) => (n.midi > a.midi ? n : a));
+
 function fillTempoOptions() {
   tempoSelect.textContent = "";
   for (const r of RATES) {
@@ -144,8 +154,43 @@ function fillTempoOptions() {
   tempoSelect.value = String(rate);
 }
 
+// "Key Cm", "+2 Dm", "−12 Cm 8vb": each option names the key it lands in.
+function fillKeyOptions() {
+  keySelect.textContent = "";
+  for (let k = -12; k <= 12; k++) {
+    const name = keyName(transposeKey(score.fifths, k).fifths, minor);
+    const label = k === 0 ? `Key ${name}` : `${k > 0 ? "+" : "−"}${Math.abs(k)} ${name}${Math.abs(k) === 12 ? (k > 0 ? " 8va" : " 8vb") : ""}`;
+    keySelect.add(new Option(label, String(k)));
+  }
+  keySelect.value = String(transpose);
+}
+
+// Major or minor: the file says (<mode>), else the melody's tonic — of the two the
+// key signature allows (E♭ / C for 3 flats), the one it dwells and ends on.
+function guessMinor(sc) {
+  if (sc.mode) return sc.mode === "minor";
+  const pc = (m) => ((m % 12) + 12) % 12;
+  const major = pc(7 * sc.fifths), rel = pc(major + 9);
+  let wMajor = 0, wMinor = 0;
+  for (const n of sc.notes) {
+    if (pc(n.midi) === major) wMajor += n.dur;
+    if (pc(n.midi) === rel) wMinor += n.dur;
+  }
+  const last = sc.notes[sc.notes.length - 1];
+  const bonus = 0.25 * sc.notes.reduce((a, n) => a + n.dur, 0) / 7; // the final note counts extra
+  if (last && pc(last.midi) === major) wMajor += bonus;
+  if (last && pc(last.midi) === rel) wMinor += bonus;
+  return wMinor > wMajor;
+}
+
+function readKeys() {
+  try { return JSON.parse(recall(K.keys)) || {}; } catch { return {}; }
+}
+
 function setScore(sc) {
   score = sc;
+  minor = guessMinor(sc);
+  transpose = Number(readKeys()[songId]) || 0;
   verseSelect.textContent = "";
   for (const v of sc.verses) verseSelect.add(new Option(`Verse ${v}`, v));
   const saved = recall(K.verse);
@@ -158,6 +203,7 @@ function setScore(sc) {
 // id: a sample key, or a saved song's id (from library.js).
 async function selectSong(id) {
   stopSession();
+  songId = id;
   songSelect.value = id;
   store(K.song, id);
   removeBtn.hidden = !!SAMPLES[id];
@@ -562,7 +608,7 @@ function joinsNext(i) {
 
 function sylText(n, i) {
   if (n.melisma) return "";
-  if (!score.verses.length) return noteName(n.midi) + " "; // no lyrics: show the notes
+  if (!score.verses.length) return n.name + " "; // no lyrics: show the notes
   return n.text + (joinsNext(i) ? "" : " ");
 }
 
@@ -622,7 +668,7 @@ function makeChip(j) {
     b.dataset.tune = g ? g.status : "";
     b.innerHTML = "<i></i><b></b><small></small>";
     b.querySelector("i").textContent = n.melisma ? "‿" : n.text + (joinsNext(j) ? "-" : "");
-    b.querySelector("b").textContent = noteName(n.midi);
+    b.querySelector("b").textContent = n.name;
     let res = "";
     if (g?.status === "good" || g?.status === "ok") res = `✓ ${centsLabel(Math.round(g.dev * 100))}`;
     else if (g?.status === "off") res = noteName(Math.round(g.sungMidi));
@@ -719,7 +765,7 @@ function renderSummary() {
   if (!take || take.endT === null) {
     scorePctEl.textContent = "";
     summaryEl.textContent = score
-      ? `${score.title.toUpperCase()} · ${score.beats}/${score.beatType} · ♩=${Math.round(score.tempo * rate)}${score.tempoFromScore ? "" : " (no tempo in score)"}`
+      ? `${score.title.toUpperCase()} · ${score.beats}/${score.beatType} · ♩=${Math.round(score.tempo * rate)}${score.tempoFromScore ? "" : " (no tempo in score)"}${notes.length ? ` · ${lowest().name}–${highest().name}` : ""}`
       : "";
     return;
   }
@@ -896,7 +942,7 @@ function renderLane() {
     ctx.textBaseline = "top";
     if (i >= 0) {
       ctx.fillStyle = "rgba(255,230,160,0.9)";
-      ctx.fillText(`target ${noteName(notes[i].midi)}`, w - 8, 6);
+      ctx.fillText(`target ${notes[i].name}`, w - 8, 6);
       if (f && f.midi !== null) {
         const c = Math.round(fold(f.midi - notes[i].midi) * 100);
         ctx.fillStyle = Math.abs(c) <= OK_CENTS ? "#4ade80" : "#ff7878";
@@ -972,7 +1018,10 @@ verseSelect.addEventListener("change", () => {
 });
 keySelect.addEventListener("change", () => {
   transpose = Number(keySelect.value);
-  store(K.transpose, String(transpose));
+  const keys = readKeys();
+  if (transpose) keys[songId] = transpose;
+  else delete keys[songId];
+  store(K.keys, JSON.stringify(keys));
   stopSession();
   applySong();
 });
@@ -1071,8 +1120,6 @@ document.addEventListener("visibilitychange", () => {
 // ---------------------------------------------------------------------------
 // Init
 
-for (let k = -6; k <= 6; k++) keySelect.add(new Option(k === 0 ? "Key ±0" : `Key ${k > 0 ? "+" : ""}${k}`, String(k)));
-keySelect.value = String(transpose);
 guideSelect.value = guide;
 if (!navigator.mediaDevices?.getUserMedia) {
   statusEl.textContent = "mic API unavailable — open over HTTPS";
@@ -1089,6 +1136,13 @@ if (!navigator.mediaDevices?.getUserMedia) {
       store(K.legacyName, null);
     } catch (err) { console.warn("couldn't migrate saved song", err); }
   }
+  const legacyT = Number(recall(K.legacyTranspose));
+  if (legacyT && savedSong) {
+    const keys = readKeys();
+    if (!(savedSong in keys)) keys[savedSong] = legacyT;
+    store(K.keys, JSON.stringify(keys));
+  }
+  store(K.legacyTranspose, null);
   await refreshLibrary();
   const known = SAMPLES[savedSong] || (savedSong && [...mySongsEl.querySelectorAll("option")].some((o) => o.value === savedSong));
   await selectSong(known ? savedSong : "amazing-grace");
