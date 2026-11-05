@@ -51,6 +51,49 @@ export function playPiano(ac, piano, when, dur, midi, level, nodes) {
   return g;
 }
 
+// Hold a note down like a piano key, until release(at). The samples die away fast (mid
+// and high notes are ~40 dB down within a second, and they end at 3 s), so with
+// `sustain` a soft steady tone at the same pitch fades in under the piano to keep a held
+// pitch audible. release() damps both like lifting the key.
+const SUSTAIN = 0.05;               // held tone's level, relative to the piano's
+const HARMONICS = [0, 1, 0.4, 0.18, 0.08, 0.04]; // mellow: fundamental + a few overtones
+const waves = new WeakMap();        // AudioContext -> PeriodicWave
+
+export function holdPiano(ac, piano, when, midi, level, { sustain = true } = {}) {
+  const nodes = [];
+  const g = playPiano(ac, piano, when, 3600, midi, level, nodes); // until released
+  const parts = [{ src: nodes[0], gain: g.gain }];
+  if (sustain) {
+    let wave = waves.get(ac);
+    if (!wave) {
+      wave = ac.createPeriodicWave(new Float32Array(HARMONICS.length), new Float32Array(HARMONICS));
+      waves.set(ac, wave);
+    }
+    const osc = ac.createOscillator();
+    osc.setPeriodicWave(wave);
+    osc.frequency.value = 440 * 2 ** ((midi - 69) / 12);
+    const sg = ac.createGain();
+    sg.gain.setValueAtTime(0, when);
+    sg.gain.setTargetAtTime(SUSTAIN * level, when + 0.15, 0.3); // in as the piano fades
+    osc.connect(sg);
+    sg.connect(ac.destination);
+    osc.start(when);
+    parts.push({ src: osc, gain: sg.gain });
+  }
+  let released = false;
+  return {
+    release(at = ac.currentTime) {
+      if (released) return;
+      released = true;
+      for (const p of parts) {
+        p.gain.cancelScheduledValues(at);
+        p.gain.setTargetAtTime(0, at, RELEASE);
+        try { p.src.stop(at + RELEASE * 6); } catch {}
+      }
+    },
+  };
+}
+
 // Metronome click: a short filtered noise burst. Noise has no pitch, so the
 // mic picking it up doesn't register as singing.
 export function playClick(ac, when, accent, nodes) {

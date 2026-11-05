@@ -6,7 +6,7 @@ import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./music
 import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js";
 import { openMic, ANALYSIS_LAG } from "./pitch.js";
 import { startCapture, playVoice } from "./capture.js";
-import { loadPiano, pianoReady, playPiano, playClick } from "./piano.js";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.js";
 import { listSongs, getSong, addSong, removeSong, persistent } from "./library.js";
 import { fixOmrScore } from "./omr/fixscore.js";
 import { activeProfile } from "./profiles.js";
@@ -97,7 +97,7 @@ let scrollT = 0;    // song time at the now-line when idle (also where Play/List
 let nowT = 0;       // song time at the now-line (follows the session)
 let shownLine = -1; // lyric line currently rendered
 let lastChip = -1;  // chip marked as current
-let preview = null; // a tapped note sounding: { j, ac, gain, timer }
+let preview = null; // the latest note chip held down (piano keys): { j }
 
 const noteName = (m) => nameOf(m, flats);
 
@@ -109,7 +109,7 @@ function secPerQuarter() {
 }
 
 function applySong() {
-  stopPreview(false);
+  stopKeys();
   const verse = verseSelect.value || score.verses[0] || "1";
   const spq = secPerQuarter();
   // Transpose like a notation editor: new key with the fewest accidentals, every note
@@ -443,7 +443,7 @@ function beatGrid() {
 // Sing
 
 async function startSing() {
-  stopPreview(false);
+  stopKeys();
   stopSession();
   take = null;
   showMsg("");
@@ -577,13 +577,13 @@ let playCtx = null;
 async function getPlayCtx() {
   try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch {}
   if (!playCtx || playCtx.state === "closed") playCtx = new (window.AudioContext || window.webkitAudioContext)();
-  if (playCtx.state === "suspended") await playCtx.resume();
+  if (playCtx.state !== "running") await playCtx.resume(); // suspended, or "interrupted" (iOS)
   return playCtx;
 }
 
 // kind: "listen" (melody) or "playback" (per playMode).
 async function startPlay(kind, from) {
-  stopPreview(false);
+  stopKeys();
   stopSession();
   const ac = await getPlayCtx();
   const end = kind === "playback" && take ? Math.max(take.endT ?? songEnd, 0) : songEnd;
@@ -734,10 +734,16 @@ function makeChip(j) {
     else if (g?.status === "off") res = noteName(Math.round(g.sungMidi));
     else if (g?.status === "missed") res = "missed";
     b.querySelector("small").textContent = res || " ";
-    b.title = "Tap to hear this note";
-    b.addEventListener("click", () => previewNote(j));
+    b.title = "Press and hold to hear this note";
+    b.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return; // left mouse button; touch and pen report 0
+      try { b.setPointerCapture(e.pointerId); } catch {} // mouse: the release still reaches us
+      pressKey(j, e.pointerId, true);
+    });
+    b.addEventListener("click", (e) => { if (e.detail === 0) pressKey(j, "click", false); }); // keyboard etc.
+    b.addEventListener("contextmenu", (e) => e.preventDefault()); // long press is a held key
     if (j === lastChip) b.dataset.current = "true";
-    if (j === preview?.j) b.dataset.playing = "true";
+    if ([...keys.values()].some((k) => k.j === j)) b.dataset.playing = "true";
     return b;
 }
 
@@ -757,69 +763,104 @@ function setCurrentChip(i, scroll) {
 }
 
 // ---------------------------------------------------------------------------
-// Tap a note chip: hear that note on the piano exactly as Listen plays it (same
-// sound and level, its length at the current tempo, in the current key), with its
-// syllable and bar lit, and the cursor moved there so Listen starts from it. The
-// chip list isn't rebuilt (it would jump back to the top), so you can go note by
-// note. During Listen / Play a tap jumps playback there; while singing, nothing.
+// Note chips are piano keys: press one (touch down / mouse down) and it sounds — the
+// same piano as Listen, in the current key — for as long as it's held, then it's damped
+// like a lifted key. A soft steady tone joins under the piano so a held pitch stays
+// audible (holdPiano). The chip, its syllable and its lane bar light up while it sounds,
+// and the cursor moves there so Listen starts from it; the chip list isn't rebuilt (it
+// would jump back to the top), so you can go note by note. Each finger is its own key.
+// If the chip list starts scrolling under the finger (pointercancel) the note stops at
+// once. A click with no press (keyboard, assistive tech) plays the note for its length
+// in the song. During Listen / Play a press jumps playback there; while singing, nothing.
+//
+// Browsers only let audio *start* on a touch's end (iOS, and the HTML spec's activation
+// rules), so on a phone the very first press may only sound when the finger lifts: it then
+// plays for its length in the song, and every later press sounds at once.
 
+const MIN_PRESS = 0.25; // s: a quick tap still sounds this long
+const keys = new Map(); // pointerId (or "click") → { id, j, held, ac, note, t0, timer }
 
-async function previewNote(j) {
+async function pressKey(j, id, held) {
   if (session) {
     if (session.kind !== "sing") seek(notes[j].t - 0.4);
     return;
   }
   const n = notes[j];
-  stopPreview(false);
+  const old = keys.get(id);
+  if (old) dropKey(old, true);
+  const key = { id, j, held, ac: null, note: null, t0: 0, timer: 0 };
+  keys.set(id, key);
   scrollT = nowT = Math.max(-1, Math.min(n.t - 0.4, songEnd));
-  const mine = (preview = { j, ac: null, gain: null, timer: 0 });
-  showPreview();
-  const ac = await getPlayCtx(); // resumes the context inside the tap (iOS)
+  showKeys();
+  const ac = await getPlayCtx();
   let piano = null;
   if (!pianoReady(ac)) statusEl.textContent = "loading piano…";
   try { piano = await loadPiano(ac); } catch (err) { console.warn(err); }
   if (statusEl.textContent === "loading piano…") statusEl.textContent = "idle";
-  if (preview !== mine || session) return; // another tap, or Listen / Sing started meanwhile
+  if (keys.get(id) !== key || session) return; // pressed again, or Listen / Sing started meanwhile
   if (!piano) {
     statusEl.textContent = "couldn't load the piano";
-    stopPreview();
-    return;
+    return dropKey(key);
   }
-  const when = ac.currentTime + 0.03;
-  mine.ac = ac;
-  mine.gain = playPiano(ac, piano, when, n.d, n.midi, 1.4, []);
-  mine.timer = setTimeout(() => {
-    if (preview !== mine) return;
-    preview = null;
-    showPreview();
-  }, (when - ac.currentTime + Math.max(0.12, n.d)) * 1000);
+  key.ac = ac;
+  key.t0 = ac.currentTime + 0.01;
+  // Still held: until released. Already let go (it couldn't start sooner) or a click: the
+  // note's length in the song, the piano alone — as Listen plays it.
+  key.note = holdPiano(ac, piano, key.t0, n.midi, 1.4, { sustain: key.held });
+  if (!key.held) releaseKey(id, key.t0 + Math.max(0.12, n.d));
 }
 
-// Damp the tapped note (a new tap, Listen, Sing, another song).
-function stopPreview(render = true) {
-  const p = preview;
-  if (!p) return;
-  preview = null;
-  clearTimeout(p.timer);
-  if (p.gain) {
-    const t = p.ac.currentTime;
-    p.gain.gain.cancelScheduledValues(t);
-    p.gain.gain.setTargetAtTime(0, t, 0.03);
-  }
-  if (render) showPreview();
+// Let go of a key: damped at `at` (default: now, but not before MIN_PRESS has sounded).
+function releaseKey(id, at = null) {
+  const key = keys.get(id);
+  if (!key) return;
+  key.held = false;
+  if (!key.note) return; // not sounding yet: pressKey plays it for its length in the song
+  const t = at ?? Math.max(key.ac.currentTime, key.t0 + MIN_PRESS);
+  key.note.release(t);
+  clearTimeout(key.timer);
+  key.timer = setTimeout(() => dropKey(key), Math.max(0, t - key.ac.currentTime) * 1000);
 }
 
-function showPreview() {
+function dropKey(key, now = false) {
+  clearTimeout(key.timer);
+  if (now && key.note) key.note.release(key.ac.currentTime);
+  if (keys.get(key.id) === key) keys.delete(key.id);
+  showKeys();
+}
+
+// Silence every key (Listen, Sing, another song or transposition, the page hidden).
+function stopKeys() {
+  for (const key of [...keys.values()]) dropKey(key, true);
+}
+
+// The chips of the keys down light up; the latest one's syllable and lane bar too.
+function showKeys() {
+  const last = [...keys.values()].pop();
+  preview = last ? { j: last.j } : null;
   if (session) return;
   const chips = chipsEl.querySelectorAll(".chip");
-  for (const c of chipsEl.querySelectorAll('.chip[data-playing="true"]')) c.dataset.playing = "false";
-  if (preview) {
-    if (chips[preview.j]) chips[preview.j].dataset.playing = "true";
-    setCurrentChip(preview.j, false);
-  }
+  const down = new Set([...keys.values()].map((k) => k.j));
+  chips.forEach((c, i) => {
+    const on = down.has(i) ? "true" : "false";
+    if ((c.dataset.playing || "false") !== on) c.dataset.playing = on;
+  });
+  if (preview) setCurrentChip(preview.j, false);
   renderLyrics(nowT);
   renderLane();
 }
+
+window.addEventListener("pointerup", (e) => {
+  if (!keys.has(e.pointerId)) return;
+  // A touch's end is when phones allow audio to start: resume it here if the press couldn't.
+  if (!playCtx || playCtx.state !== "running") getPlayCtx();
+  releaseKey(e.pointerId);
+});
+window.addEventListener("pointercancel", (e) => {
+  const key = keys.get(e.pointerId);
+  if (key) dropKey(key, true); // the list scrolled: that wasn't a key press
+});
+window.addEventListener("blur", stopKeys);
 
 function renderSummary() {
   if (!take || take.endT === null) {
@@ -1172,6 +1213,7 @@ document.addEventListener("drop", (e) => {
 });
 
 document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopKeys();
   if (document.hidden && session) {
     stopSession();
     statusEl.textContent = "stopped (backgrounded)";
