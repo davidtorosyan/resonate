@@ -136,13 +136,19 @@ const qToT = (q) => (useMap && tmap ? tmap.qToT(q) / rate : q * secPerQuarter())
 // Seconds per beat (the click's beat) from quarter q: steady, or with a tapped timing the
 // average over the next two bars (up to `limit`) — one stretched pickup or breath
 // shouldn't set the count-in's pace — else the timing's average.
-const beatQ = () => 4 / score.beatType;
+// (The meter is the one in effect at a measure — a song may change it, e.g. Piano Man's
+// "Freely" intro in 4/4, then 3/4.)
+const meterAt = (mi) => score.meters?.[mi] || [score.beats, score.beatType];
+const measureAt = (q) => { let m = 0; score.measures.forEach((x, i) => { if (x <= q + 1e-6) m = i; }); return m; };
+const beatQ = (mi = entryIdx) => 4 / meterAt(mi)[1];
 function beatSecAt(q, limit = score.length) {
-  if (!(useMap && tmap)) return qToT(q + beatQ()) - qToT(q);
-  const bar = score.beats * beatQ();
+  const mi = measureAt(q);
+  const bq = beatQ(mi);
+  if (!(useMap && tmap)) return qToT(q + bq) - qToT(q);
+  const bar = meterAt(mi)[0] * bq;
   const span = Math.min(2 * bar, limit - q);
-  if (span < bar) return (tmap.avg / rate) * beatQ();
-  return ((qToT(q + span) - qToT(q)) / span) * beatQ();
+  if (span < bar) return (tmap.avg / rate) * bq;
+  return ((qToT(q + span) - qToT(q)) / span) * bq;
 }
 // Identifies the timing a take was sung to (a take's grades only hold for it).
 const timingSig = () => `${rate}|${useMap && tmap ? JSON.stringify(timingEntry()?.segs) : "steady"}`;
@@ -590,20 +596,23 @@ function focusNote(t) {
   return notes.length - 1;
 }
 
-function countInBeats() {
-  const beatQ = 4 / score.beatType;
-  const barQ = score.beats * beatQ;
-  const firstQ = (score.measures[entryIdx + 1] ?? score.length) - score.measures[entryIdx];
+// A bar of clicks in the meter where the singing starts (measure mi), plus the missing
+// beats when that bar is a pickup.
+function countInBeats(mi = entryIdx) {
+  const [beats, type] = meterAt(Math.min(mi + 1, score.measures.length - 1)); // (a pickup bar may show no time yet)
+  const beatQ = 4 / type;
+  const barQ = beats * beatQ;
+  const firstQ = (score.measures[mi + 1] ?? score.length) - score.measures[mi];
   // Pickup bar: count a full bar, then the rest of the pickup bar's beats.
   const pickupFill = firstQ < barQ - 1e-6 ? Math.round((barQ - firstQ) / beatQ) : 0;
-  return score.beats + pickupFill;
+  return beats + pickupFill;
 }
 
 // Every beat of the song: [{ t (s), accent }]
 function beatGrid() {
-  const bq = beatQ();
   const out = [];
   score.measures.forEach((m, i) => {
+    const bq = beatQ(i);
     const end = score.measures[i + 1] ?? score.length;
     for (let q = m; q < end - 1e-6; q += bq) out.push({ t: qToT(q), accent: q === m && i > 0 });
   });
@@ -669,10 +678,12 @@ async function beginSing(part) {
   const start = part ? part.from : entryT;
   const end = part ? part.until : songEnd + END_PAD;
   const [j0, j1] = part ? part.range : [0, notes.length];
-  const count = part ? score.beats : countInBeats();
+  const startM = part ? part.fromM : entryIdx;
+  const count = part ? meterAt(startM)[0] : countInBeats();
+  const barBeats = meterAt(Math.min(startM + 1, score.measures.length - 1))[0];
   const t0 = ac.currentTime + 0.3;
   const songT0 = t0 + count * beatSec - start; // song time `start` sounds right after the count-in
-  for (let k = 0; k < count; k++) playClick(ac, t0 + k * beatSec, k % score.beats === 0, nodes);
+  for (let k = 0; k < count; k++) playClick(ac, t0 + k * beatSec, k % barBeats === 0, nodes);
   if (guide === "click") for (const b of beatGrid()) if (b.t >= start - 1e-6 && b.t < end) playClick(ac, songT0 + b.t, b.accent, nodes);
   if (piano) for (const n of notes.slice(j0, j1)) playPiano(ac, piano, songT0 + n.t, n.d, n.midi, 0.9, nodes);
 
@@ -1428,7 +1439,7 @@ function startLoop(li) {
   const ac = new (window.AudioContext || window.webkitAudioContext)();
   ac.resume().catch(() => {});
   drill = {
-    li, range: [j0, j1], from: qToT(score.measures[m]), fromQ: score.measures[m], until: last.t + last.d + MAX_SHIFT + 0.3,
+    li, range: [j0, j1], from: qToT(score.measures[m]), fromQ: score.measures[m], fromM: m, until: last.t + last.d + MAX_SHIFT + 0.3,
     token: {}, round: 0, scores: [], phase: "", last: null, savedTake: take?.part ? drill?.savedTake ?? null : take, ac,
   };
   showMsg("");
@@ -1453,7 +1464,7 @@ async function runLoop(d) {
     if (!alive()) return;
     d.phase = "sing";
     renderLoop();
-    await startSing({ from: d.from, fromQ: d.fromQ, until: d.until, range: d.range, ac: d.ac, token: d.token });
+    await startSing({ from: d.from, fromQ: d.fromQ, fromM: d.fromM, until: d.until, range: d.range, ac: d.ac, token: d.token });
     if (!alive()) return;
     const t = await session?.ended;
     if (!alive() || !t) return;
@@ -1716,7 +1727,7 @@ function renderSummary() {
   if (!take || take.endT === null) {
     scorePctEl.textContent = "";
     summaryEl.textContent = score
-      ? `${score.title.toUpperCase()} · ${score.beats}/${score.beatType} · ${useMap && tmap ? `TAPPED TIMING ♩≈${Math.round(60 / (tmap.avg / rate))}` : `♩=${Math.round(score.tempo * rate)}${score.tempoFromScore ? "" : " (no tempo in score)"}`}${notes.length ? ` · ${lowest().name}–${highest().name}` : ""}`
+      ? `${score.title.toUpperCase()} · ${meterAt(entryIdx).join("/")} · ${useMap && tmap ? `TAPPED TIMING ♩≈${Math.round(60 / (tmap.avg / rate))}` : `♩=${Math.round(score.tempo * rate)}${score.tempoFromScore ? "" : " (no tempo in score)"}`}${notes.length ? ` · ${lowest().name}–${highest().name}` : ""}`
       : "";
     return;
   }
@@ -2081,7 +2092,7 @@ function typeTempo() {
 // Tap the beat: a steady tempo from taps (the median of the last few intervals). The beat
 // is the meter's: a dotted quarter in 6/8, 9/8, 12/8, else the time signature's unit.
 
-const tapQ = () => (score.beatType === 8 && score.beats % 3 === 0 ? 1.5 : beatQ());
+const tapQ = () => { const [b, t] = meterAt(entryIdx); return t === 8 && b % 3 === 0 ? 1.5 : 4 / t; };
 const unitGlyph = (q) => ({ 0.5: "♪", 1: "♩", 1.5: "♩.", 2: "𝅗𝅥" })[q] || "♩";
 let tapTimes = [];
 let tappedBpm = null; // quarter notes per minute
@@ -2346,5 +2357,5 @@ if (!navigator.mediaDevices?.getUserMedia) {
 })();
 
 // Debug hook for automated tests / devtools.
-window.resonateDebug = () => ({ score, notes, lines, take, session: session && { kind: session.kind, line: session.line, mode: session.mode }, nowT, scrollT, practiceJ, reviewRows,
+window.resonateDebug = () => ({ score, notes, lines, take, session: session && { kind: session.kind, line: session.line, mode: session.mode, count: session.count, beatSec: session.beatSec }, nowT, scrollT, practiceJ, reviewRows,
   monitor: mon && { listening: !!mon.stream, opening: mon.opening, ctx: mon.micCtx.state }, you: currentYou(), tapTargets: tapAlong?.targets });
