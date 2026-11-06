@@ -30,8 +30,11 @@ export function fixOmrScore(xml, log = [], { tempo = null } = {}) {
 // and no notes), it restates the time signature already in effect, and it's much
 // narrower (< 75%) or far more indented (> 2×) than the score's regular systems — a box
 // centred on the page. (A real piano-only passage — an intro, an interlude — has full
-// width and no restated time, and stays.) Its measures are removed from every part; a
-// <divisions> set inside them moves to the next measure.
+// width and no restated time, and stays.) Its measures are removed from every part; the
+// attributes set inside them — <divisions>, and the last <key> / <clef> per staff — move to
+// the next measure where it doesn't set its own: Audiveris fills a part hidden in the box
+// with the clef of that part's next system and writes no clef there when it's the same,
+// so the box can be the only place a clef change was written.
 function dropInserts(doc, changes) {
   const parts = [...doc.querySelectorAll("score-partwise > part")];
   if (parts.length < 2) return;
@@ -85,19 +88,41 @@ function dropInserts(doc, changes) {
   let count = 0;
   for (const sy of drop) {
     for (const ms of all) {
-      let divisions = null;
+      // The attribute state the box leaves behind: divisions, keys and clefs by number.
+      const carry = new Map(); // "divisions" | "key:N" | "clef:N" → element
       for (let i = sy.from; i < sy.to; i++) {
-        divisions = ms[i].querySelector(":scope > attributes > divisions") || divisions;
+        for (const at of ms[i].querySelectorAll(":scope > attributes")) {
+          for (const el of at.children) {
+            if (el.nodeName === "divisions") carry.set("divisions", el);
+            else if (el.nodeName === "key" || el.nodeName === "clef") carry.set(`${el.nodeName}:${el.getAttribute("number") || "1"}`, el);
+          }
+        }
         ms[i].remove();
       }
       const next = ms[sy.to];
-      if (divisions && next && !next.querySelector(":scope > attributes > divisions")) {
-        let attrs = next.querySelector(":scope > attributes");
-        if (!attrs) {
-          attrs = doc.createElement("attributes");
-          next.insertBefore(attrs, next.querySelector(":scope > note, :scope > backup, :scope > forward, :scope > direction, :scope > harmony") || null);
-        }
-        attrs.insertBefore(divisions, attrs.firstChild);
+      if (!next || !carry.size) continue;
+      // Only the next measure's leading attributes count as "set there" (a clef change in
+      // the middle of it comes after the box's clef has applied).
+      const firstMusic = next.querySelector(":scope > note, :scope > backup, :scope > forward");
+      let lead = next.querySelector(":scope > attributes");
+      if (lead && firstMusic && lead.compareDocumentPosition(firstMusic) & Node.DOCUMENT_POSITION_PRECEDING) lead = null;
+      const has = (key) => {
+        if (!lead) return false;
+        const [name, num] = key.split(":");
+        return [...lead.children].some((el) => el.nodeName === name && (!num || (el.getAttribute("number") || "1") === num));
+      };
+      const missing = [...carry].filter(([key]) => !has(key));
+      if (!missing.length) continue;
+      if (!lead) {
+        lead = doc.createElement("attributes");
+        next.insertBefore(lead, next.querySelector(":scope > note, :scope > backup, :scope > forward, :scope > direction, :scope > harmony") || null);
+      }
+      // MusicXML order: divisions, key, time, staves, …, clef.
+      const order = { divisions: 0, key: 1, time: 2, staves: 3, "part-symbol": 4, instruments: 5, clef: 6 };
+      for (const [, el] of missing) {
+        const rank = order[el.nodeName];
+        const before = [...lead.children].find((c) => (order[c.nodeName] ?? 7) > rank);
+        lead.insertBefore(el, before || null);
       }
     }
     count += sy.to - sy.from;
@@ -492,7 +517,33 @@ function unifyOctaveClefs(doc, changes) {
     for (const kind of new Set(clefs.map((c) => c.kind))) {
       if (!/^[GF]/.test(kind)) continue;
       const same = clefs.filter((c) => c.kind === kind);
-      for (const oct of [-1, 1]) {
+      // First, treble 8va clefs among plain ones of the part are misreads — something
+      // printed just above the clef taken for the 8 (Piano Man's "𝄌𝄌" coda sign at CODA II put
+      // "And the piano, it sounds like a…" an octave high). A voice doesn't switch to an 8va
+      // clef for a system or two; only a part whose clefs are (nearly) all 8va — a piccolo —
+      // keeps them. (An 8vb is never reverted: it may be a tenor clef the engine only saw
+      // sometimes.)
+      const up = same.filter((c) => c.oct === 1);
+      const plainG = same.filter((c) => c.oct === 0);
+      if (/^G/.test(kind) && up.length && plainG.length && up.length < 2 * plainG.length) {
+        let moved = 0;
+        for (const c of up) {
+          c.el.querySelector("clef-octave-change")?.remove();
+          c.oct = 0; // (now plain: an 8vb spread below covers it too)
+          const next = clefs.find((d) => d.mi > c.mi);
+          const end = next ? next.mi : measures.length;
+          for (let mi = c.mi; mi < end; mi++) {
+            for (const o of measures[mi].querySelectorAll(":scope > note > pitch > octave")) {
+              o.textContent = String(Number(o.textContent) - 1);
+              moved++;
+            }
+          }
+        }
+        changes.push(`part ${part.getAttribute("id")}: ${up.length} ${kind} 8va clef${up.length > 1 ? "s" : ""} (${up.map((c) => `m${measures[c.mi].getAttribute("number")}`).join(", ")}) among plain ones: ${moved} notes moved down an octave`);
+      }
+      // Then (only) an 8vb spreads (a voice's treble 8va is a misread — above — and a few of
+      // those must not move the whole part up.)
+      for (const oct of /^G/.test(kind) ? [-1] : [-1, 1]) {
         const withOct = same.filter((c) => c.oct === oct).length;
         const plain = same.filter((c) => c.oct === 0);
         if (!plain.length || withOct < 2 || 2 * withOct < plain.length) continue;
@@ -512,26 +563,6 @@ function unifyOctaveClefs(doc, changes) {
         }
         changes.push(`part ${part.getAttribute("id")}: ${plain.length} ${kind} clef${plain.length > 1 ? "s" : ""} without the 8 ` +
           `(${withOct} have it): ${moved} notes moved ${oct < 0 ? "down" : "up"} an octave`);
-      }
-      // The reverse: a lone treble 8va between plain clefs of the part is a misread —
-      // something printed just above the clef taken for the 8 (Piano Man's "𝄌𝄌" coda sign at
-      // CODA II put "And the piano, it sounds like a…" an octave high). A voice doesn't
-      // switch to an 8va clef for one system. (A lone 8vb is left alone: it may be a tenor
-      // clef the engine only saw once.)
-      const up = same.filter((c) => c.oct === 1);
-      if (/^G/.test(kind) && up.length === 1 && same.some((d) => d.oct === 0 && d.mi < up[0].mi) && same.some((d) => d.oct === 0 && d.mi > up[0].mi)) {
-        const c = up[0];
-        c.el.querySelector("clef-octave-change")?.remove();
-        const next = clefs.find((d) => d.mi > c.mi);
-        const end = next ? next.mi : measures.length;
-        let moved = 0;
-        for (let mi = c.mi; mi < end; mi++) {
-          for (const o of measures[mi].querySelectorAll(":scope > note > pitch > octave")) {
-            o.textContent = String(Number(o.textContent) - 1);
-            moved++;
-          }
-        }
-        changes.push(`part ${part.getAttribute("id")}: a lone ${kind} 8va clef (m${measures[c.mi].getAttribute("number")}) between plain ones: ${moved} notes moved down an octave`);
       }
     }
   }
