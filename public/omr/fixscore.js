@@ -12,12 +12,97 @@ export function fixOmrScore(xml, log = [], { tempo = null } = {}) {
   const doc = new DOMParser().parseFromString(xml, "application/xml");
   if (doc.querySelector("parsererror")) return { xml, changes: [] };
   const changes = [];
+  dropInserts(doc, changes);
   foldSparseVerses(doc, changes);
   restoreTempo(doc, log, changes, tempo);
   unifyKeySignatures(doc, changes);
   unifyOctaveClefs(doc, changes);
   markUnmarkedTuplets(doc, changes);
   return { xml: changes.length ? new XMLSerializer().serializeToString(doc) : xml, changes };
+}
+
+// Boxed inserts — "Fill 1" (a piano fill for the 2nd time), an ossia — are small systems
+// drawn apart from the music, usually in a box at the foot of a page, with the time
+// signature restated. The engine reads them as measures of the song, right where they
+// sit on the page, so the melody got bars of silence that aren't in the song (Piano Man:
+// "mak-in' | love" across a page break waited a whole bar for Fill 1). A system is an insert
+// only when all three hold: the melody's staff isn't in it (its measures have no width
+// and no notes), it restates the time signature already in effect, and it's much
+// narrower (< 75%) or far more indented (> 2×) than the score's regular systems — a box
+// centred on the page. (A real piano-only passage — an intro, an interlude — has full
+// width and no restated time, and stays.) Its measures are removed from every part; a
+// <divisions> set inside them moves to the next measure.
+function dropInserts(doc, changes) {
+  const parts = [...doc.querySelectorAll("score-partwise > part")];
+  if (parts.length < 2) return;
+  const measuresOf = (p) => [...p.children].filter((c) => c.nodeName === "measure");
+  const all = parts.map(measuresOf);
+  const n = Math.min(...all.map((ms) => ms.length));
+  const lyrics = parts.map((p) => p.querySelectorAll("lyric").length);
+  const melody = all[lyrics.indexOf(Math.max(...lyrics))];
+  const starts = [];
+  for (let i = 0; i < n; i++) {
+    if (i === 0 || all.some((ms) => ms[i].querySelector(':scope > print[new-system="yes"], :scope > print[new-page="yes"]'))) starts.push(i);
+  }
+  const width = (i) => Math.max(0, ...all.map((ms) => Number(ms[i].getAttribute("width")) || 0));
+  const margin = (i) => {
+    for (const ms of all) {
+      const m = ms[i].querySelector(":scope > print system-margins > left-margin");
+      if (m) return Number(m.textContent) || 0;
+    }
+    return null;
+  };
+  const systems = starts.map((from, k) => {
+    const to = starts[k + 1] ?? n;
+    let w = 0;
+    for (let i = from; i < to; i++) w += width(i);
+    return { from, to, width: w, margin: margin(from) };
+  });
+  const median = (xs) => { const a = xs.filter((x) => x).sort((x, y) => x - y); return a.length ? a[a.length >> 1] : 0; };
+  const regularWidth = median(systems.map((sy) => sy.width));
+  const regularMargin = median(systems.map((sy) => sy.margin));
+  const timeAt = (i) => {
+    const t = all.map((ms) => ms[i].querySelector(":scope > attributes > time")).find(Boolean);
+    return t ? `${t.querySelector("beats")?.textContent}/${t.querySelector("beat-type")?.textContent}` : null;
+  };
+  let meter = null;
+  const meterBefore = [];
+  for (let i = 0; i < n; i++) {
+    meterBefore.push(meter);
+    meter = timeAt(i) ?? meter;
+  }
+  const drop = systems.filter((sy) => {
+    if (sy.from === 0) return false;
+    for (let i = sy.from; i < sy.to; i++) {
+      if (melody[i].getAttribute("width") || [...melody[i].querySelectorAll("note")].some((nt) => !nt.querySelector("rest"))) return false;
+    }
+    const t = timeAt(sy.from);
+    if (!t || t !== meterBefore[sy.from]) return false;
+    return (regularWidth && sy.width < 0.75 * regularWidth) || (regularMargin && sy.margin !== null && sy.margin > 2 * regularMargin);
+  });
+  if (!drop.length) return;
+  const num = (i) => melody[i].getAttribute("number");
+  let count = 0;
+  for (const sy of drop) {
+    for (const ms of all) {
+      let divisions = null;
+      for (let i = sy.from; i < sy.to; i++) {
+        divisions = ms[i].querySelector(":scope > attributes > divisions") || divisions;
+        ms[i].remove();
+      }
+      const next = ms[sy.to];
+      if (divisions && next && !next.querySelector(":scope > attributes > divisions")) {
+        let attrs = next.querySelector(":scope > attributes");
+        if (!attrs) {
+          attrs = doc.createElement("attributes");
+          next.insertBefore(attrs, next.querySelector(":scope > note, :scope > backup, :scope > forward, :scope > direction, :scope > harmony") || null);
+        }
+        attrs.insertBefore(divisions, attrs.firstChild);
+      }
+    }
+    count += sy.to - sy.from;
+  }
+  changes.push(`inserted boxes (fills, ossias) dropped: ${drop.map((sy) => `m${num(sy.from)}${sy.to - sy.from > 1 ? `–${num(sy.to - 1)}` : ""}`).join(", ")} (${count} measures)`);
 }
 
 // Several scores ("movements") Audiveris exported from one PDF, joined in order into one:
@@ -126,7 +211,7 @@ function foldSparseVerses(doc, changes) {
 // the log line can't be placed, so it's only used when the score has no tempo at all.
 // Beat unit: the glyph when known (SMuFL ♩ 𝅗𝅥 ♪, with a dot), else the meter's usual one —
 // a dotted quarter in 6/8, 9/8, 12/8, a half in cut time, else a quarter.
-const BEAT = { half: 2, quarter: 1, eighth: 0.5 };
+const BEAT = { whole: 4, half: 2, quarter: 1, eighth: 0.5, "16th": 0.25 };
 function restoreTempo(doc, log, changes, fromText) {
   const firstMeasures = [...doc.querySelectorAll("score-partwise > part")].map((p) => p.querySelector(":scope > measure")).filter(Boolean);
   if (!firstMeasures.length) return;
@@ -166,7 +251,7 @@ function restoreTempo(doc, log, changes, fromText) {
   const measure = firstMeasures[0];
   const first = measure.querySelector(":scope > note, :scope > backup, :scope > forward, :scope > direction");
   measure.insertBefore(direction, first);
-  const glyph = { half: "𝅗𝅥", quarter: "♩", eighth: "♪" }[unit] + (dotted ? "." : "");
+  const glyph = ({ whole: "𝅝", half: "𝅗𝅥", quarter: "♩", eighth: "♪", "16th": "𝅘𝅥𝅯" }[unit] || "♩") + (dotted ? "." : "");
   changes.push(`tempo ${glyph} = ${mark.bpm} restored from ${source}`);
 }
 
@@ -427,6 +512,26 @@ function unifyOctaveClefs(doc, changes) {
         }
         changes.push(`part ${part.getAttribute("id")}: ${plain.length} ${kind} clef${plain.length > 1 ? "s" : ""} without the 8 ` +
           `(${withOct} have it): ${moved} notes moved ${oct < 0 ? "down" : "up"} an octave`);
+      }
+      // The reverse: a lone treble 8va between plain clefs of the part is a misread —
+      // something printed just above the clef taken for the 8 (Piano Man's "𝄌𝄌" coda sign at
+      // CODA II put "And the piano, it sounds like a…" an octave high). A voice doesn't
+      // switch to an 8va clef for one system. (A lone 8vb is left alone: it may be a tenor
+      // clef the engine only saw once.)
+      const up = same.filter((c) => c.oct === 1);
+      if (/^G/.test(kind) && up.length === 1 && same.some((d) => d.oct === 0 && d.mi < up[0].mi) && same.some((d) => d.oct === 0 && d.mi > up[0].mi)) {
+        const c = up[0];
+        c.el.querySelector("clef-octave-change")?.remove();
+        const next = clefs.find((d) => d.mi > c.mi);
+        const end = next ? next.mi : measures.length;
+        let moved = 0;
+        for (let mi = c.mi; mi < end; mi++) {
+          for (const o of measures[mi].querySelectorAll(":scope > note > pitch > octave")) {
+            o.textContent = String(Number(o.textContent) - 1);
+            moved++;
+          }
+        }
+        changes.push(`part ${part.getAttribute("id")}: a lone ${kind} 8va clef (m${measures[c.mi].getAttribute("number")}) between plain ones: ${moved} notes moved down an octave`);
       }
     }
   }

@@ -93,7 +93,10 @@ export function textLines(content) {
 // A metronome mark in the page's text ("Moderately ♩ = 104": the number is text, the note
 // is usually a music-font glyph) → { bpm, unit, dotted }, or null. The unit is read from a
 // standard music font's metronome glyph just before the "=" (SMuFL ♩ U+ECA5, 𝅗𝅥 U+ECA3,
-// ♪ U+ECA7, dot U+ECB7; Unicode ♩ ♪ 𝅗𝅥); otherwise null (the meter decides later). A range
+// ♪ U+ECA7, dot U+ECB7; Unicode ♩ ♪ 𝅗𝅥), or from a music *text* font that draws notes as
+// letters (Finale's Maestro, Sibelius's Opus Text…: w whole, h half, q quarter, e eighth,
+// x sixteenth, "." the dot) — the text layer then reads "h. = 58" (Piano Man: 𝅗𝅥. = 58, a
+// fast three "in one", i.e. ♩ = 174); otherwise null (the meter decides later). A range
 // "= 92-96" takes its first number.
 export function tempoMark(content) {
   const rows = new Map();
@@ -106,8 +109,15 @@ export function tempoMark(content) {
     const m = /(\S*)\s*=\s*(\d{2,3})(?!\d)/.exec(row);
     if (!m || Number(m[2]) < 30 || Number(m[2]) > 300) continue;
     const g = m[1];
-    const unit = /[\u{1D15E}]/u.test(g) ? "half" : /[♩]/u.test(g) ? "quarter" : /[♪]/u.test(g) ? "eighth" : null;
-    return { bpm: Number(m[2]), unit, dotted: !!unit && /[.]/u.test(g) };
+    let unit = /[\u{1D15E}]/u.test(g) ? "half" : /[♩]/u.test(g) ? "quarter" : /[♪]/u.test(g) ? "eighth" : null;
+    let dotted = !!unit && /[.]/u.test(g);
+    // A music text font's letter: the whole token is one letter (+ a dot).
+    const letter = /^([whqex])(\.?)$/.exec(g);
+    if (!unit && letter) {
+      unit = { w: "whole", h: "half", q: "quarter", e: "eighth", x: "16th" }[letter[1]];
+      dotted = !!letter[2];
+    }
+    return { bpm: Number(m[2]), unit, dotted };
   }
   return null;
 }

@@ -1,6 +1,7 @@
 // MusicXML → a timed melody for karaoke.
 //   score = { title, partName, fifths, mode ("major"/"minor"/null), tempo (quarter notes / min),
-//             beats, beatType, verses, measures: [start (quarters)], length (quarters), notes }
+//             beats, beatType, verses, measures: [start (quarters)], meters: [[beats, beatType]] (per
+//             measure; beats/beatType = the first), length (quarters), notes }
 //   note  = { midi, letter (0-6 = C-B, as written), alter, onset, dur (quarters), measure,
 //             verses: { "1": {text, syllabic} }, restBefore }
 
@@ -65,8 +66,10 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
   let divisions = 1;
   let fifths = null, mode = null;
   let beats = null, beatType = null;
+  let meter = null; // the time signature in effect (changes too, not only the first)
   const notes = [];
   const measures = [];
+  const meters = [];
   const verseSet = new Set();
   let restPending = false;
   let measureStart = 0;
@@ -83,6 +86,7 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
   melodyMeasures.forEach((measure, mi) => {
     const mNum = measure.getAttribute("number");
     measures.push(measureStart);
+    meters.push(meter);
     let lineStart = lineStarts.has(mNum); // until this measure's first melody note
     // Track the position across every voice (backup/forward) so the
     // measure's length — and so every note's onset — is right.
@@ -97,9 +101,10 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
           fifths = Number(f);
           mode = { major: "major", minor: "minor" }[text(el.querySelector("key > mode"))] || null;
         }
-        if (beats === null && el.querySelector("time > beats")) {
-          beats = Number(text(el.querySelector("time > beats"))) || 4;
-          beatType = Number(text(el.querySelector("time > beat-type"))) || 4;
+        if (el.querySelector("time > beats")) {
+          meter = [Number(text(el.querySelector("time > beats"))) || 4, Number(text(el.querySelector("time > beat-type"))) || 4];
+          if (beats === null) [beats, beatType] = meter;
+          if (meters.length === mi + 1) meters[mi] = meter; // (set at this measure's start)
         }
         continue;
       }
@@ -191,6 +196,7 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
   const score = {
     title, partName, fifths: fifths ?? 0, mode, tempo: tempo ?? DEFAULT_TEMPO, tempoFromScore: tempo !== null,
     beats: beats ?? 4, beatType: beatType ?? 4, verses, measures, length: measureStart, notes,
+    meters: meters.map((m) => m || [beats ?? 4, beatType ?? 4]),
     finalBass: finalBass(parts),
   };
   const played = performanceOrder(readStructure(parts, melodyMeasures.length), notes);
@@ -380,7 +386,7 @@ function unfold(score, { order, passes }) {
     byMeasure.get(n.mi).push(n);
   }
   const has = (m, v) => (byMeasure.get(m) || []).some((n) => n.verses[v]);
-  const notes = [], measures = [];
+  const notes = [], measures = [], meters = [];
   let t = 0, runStart = 0;
   order.forEach((m, k) => {
     const pass = passes[k];
@@ -396,6 +402,7 @@ function unfold(score, { order, passes }) {
       runStart = notes.length;
     }
     measures.push(t);
+    meters.push(score.meters[m]);
     ns.forEach((n, j) => {
       let syl = n.verses[v];
       if (!syl) {
@@ -415,6 +422,7 @@ function unfold(score, { order, passes }) {
     ...score,
     notes,
     measures,
+    meters,
     length: t,
     verses: notes.some((n) => n.verses[1]) ? ["1"] : [],
     unfolded: { written: score.measures.length, played: order.length, passes: maxPass },
