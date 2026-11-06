@@ -206,6 +206,24 @@
       .op-choice input { margin-top: 0.2rem; accent-color: #a64fff; }
       #options select { width: 100%; font: inherit; font-size: 0.9rem; color: #e8e8f0; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.18); border-radius: 0.6rem; padding: 0.5rem; }
 
+      /* Tapping: the tempo, or the timing of a recording. */
+      .pad { display: block; width: 100%; margin: 0.8rem 0 0.5rem; padding: 1.6rem 0; font: inherit; font-size: 1.3rem; font-weight: 800; letter-spacing: 0.06em;
+        color: #14142c; background: linear-gradient(135deg, #ffe6a0, #ffc46b); border: 0; border-radius: 1rem; cursor: pointer;
+        touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+      .pad:active { transform: scale(0.985); filter: brightness(1.08); }
+      .pad-read { text-align: center; font-size: 1.6rem; font-weight: 700; margin-bottom: 0.6rem; }
+      .go { font: inherit; font-weight: 700; font-size: 0.9rem; color: white; border: 0; border-radius: 999px; padding: 0.55rem 1.1rem; background: linear-gradient(135deg, #4f7cff, #a64fff); cursor: pointer; }
+      .go:disabled { opacity: 0.4; cursor: default; }
+      #tt-use { display: block; margin: 0 auto; }
+      .ta-row { display: flex; align-items: center; gap: 0.5rem; justify-content: space-between; margin-top: 0.55rem; }
+      .ta-start { flex: 1; text-align: center; font-size: 0.82rem; color: rgba(255,255,255,0.75); }
+      #ta-lyrics { margin-top: 0.7rem; text-align: center; min-height: 3.4rem; }
+      #ta-now { font-size: 1.25rem; font-weight: 700; line-height: 1.35; }
+      #ta-next { font-size: 0.85rem; opacity: 0.45; margin-top: 0.15rem; }
+      #ta-now span[data-s="done"] { color: rgba(255,255,255,0.4); }
+      #ta-now span[data-s="next"] { color: #ffe6a0; text-decoration: underline; text-underline-offset: 4px; }
+      #ta-count { font-size: 0.75rem; color: rgba(255,255,255,0.6); }
+
       /* Perform: a take shows just the lyrics (the lane, chips and readout come back after). */
       #lyric-prev { font-size: 0.95rem; min-height: 0; transition: color 0.3s ease; }
       #lyric-prev:empty { display: none; }
@@ -318,7 +336,7 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v48</span>
+        <span id="version">v49</span>
         <span id="status">idle</span>
       </div>
     </header>
@@ -400,6 +418,48 @@
           <option value="melody">Melody on piano (use headphones)</option>
           <option value="none">No guide</option>
         </select>
+      </div>
+    </div>
+    <div id="taptempo" class="overlay" hidden>
+      <div class="sheet" role="dialog" aria-labelledby="tt-title">
+        <div class="rv-head">
+          <span id="tt-title" class="op-title">Tap the beat</span>
+          <button id="tt-close" class="tool-btn" type="button" aria-label="Close">✕</button>
+        </div>
+        <p class="rv-empty">Tap along with the beat of the song — a recording, or the one in your head. The tempo shows after a few taps.</p>
+        <button id="tt-pad" class="pad" type="button">Tap</button>
+        <div id="tt-bpm" class="pad-read mono">—</div>
+        <button id="tt-use" class="go" type="button" disabled>Use this tempo</button>
+      </div>
+    </div>
+    <div id="tapalong" class="overlay" hidden>
+      <div class="sheet" role="dialog" aria-labelledby="ta-title">
+        <div class="rv-head">
+          <span id="ta-title" class="op-title">Tap along with a recording</span>
+          <button id="ta-close" class="tool-btn" type="button" aria-label="Close">✕</button>
+        </div>
+        <p class="rv-empty">Play the song — on Spotify or anywhere; this page stays silent — and tap the big button as each syllable is sung. The clicks, Listen and grading then follow that timing. Tap just a part if you like (the chorus, say): the rest keeps its pace.</p>
+        <div class="ta-row">
+          <span class="seg" id="ta-mode" role="group" aria-label="What to tap">
+            <button type="button" data-mode="words">Every syllable</button>
+            <button type="button" data-mode="lines">Each line's start</button>
+          </span>
+        </div>
+        <div class="ta-row">
+          <button id="ta-prevline" class="tool-btn" type="button" aria-label="Start a line earlier">◀</button>
+          <span id="ta-start" class="ta-start"></span>
+          <button id="ta-nextline" class="tool-btn" type="button" aria-label="Start a line later">▶</button>
+        </div>
+        <div id="ta-lyrics">
+          <div id="ta-now"></div>
+          <div id="ta-next"></div>
+        </div>
+        <button id="ta-pad" class="pad" type="button">Tap</button>
+        <div class="ta-row">
+          <button id="ta-undo" class="tool-btn" type="button">↶ Undo</button>
+          <span id="ta-count" class="mono"></span>
+          <button id="ta-save" class="go" type="button" disabled>Save timing</button>
+        </div>
       </div>
     </div>
     <div id="review" class="overlay" hidden>
