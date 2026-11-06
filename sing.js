@@ -250,6 +250,7 @@ function fillTempoOptions() {
     g.append(new Option(`♩=${bpm}${r === 1 ? "" : RATES.includes(r) ? ` (${Math.round(r * 100)}%)` : " (yours)"}`, `r:${r}`));
   }
   const t = group("Set the tempo");
+  t.append(new Option("Type a tempo…", "type"));
   t.append(new Option("Tap the beat…", "tap"));
   t.append(new Option("Tap along with a recording…", "tapmap"));
   if (tmap) t.append(new Option("Forget the tapped timing", "clearmap"));
@@ -2037,9 +2038,10 @@ keySelect.addEventListener("change", () => {
 });
 tempoSelect.addEventListener("change", () => {
   const v = tempoSelect.value;
-  if (v === "tap" || v === "tapmap" || v === "clearmap") {
+  if (v === "type" || v === "tap" || v === "tapmap" || v === "clearmap") {
     fillTempoOptions(); // the menu shows the current choice again
-    if (v === "tap") openTapTempo();
+    if (v === "type") typeTempo();
+    else if (v === "tap") openTapTempo();
     else if (v === "tapmap") openTapAlong();
     else if (confirm("Forget the timing you tapped for this song?")) {
       saveTiming({ segs: [], use: false });
@@ -2059,6 +2061,20 @@ function setTiming(r, map, bpm = null) {
   saveTiming({ use: map, bpm });
   stopSession();
   applySong();
+}
+
+// Type a tempo: quarter notes per minute, kept as this song's own (like a tapped one).
+function typeTempo() {
+  const now = Math.round(useMap && tmap ? 60 / (tmap.avg / rate) : score.tempo * rate);
+  const answer = prompt(`Tempo for this song, in quarter notes per minute (♩ =).\nThe score says ♩=${Math.round(score.tempo)}; it's ♩=${now} now.`, String(now));
+  if (answer === null) return;
+  const bpm = Math.round(Number(String(answer).replace(",", ".").replace(/[^\d.]/g, "")));
+  if (!(bpm >= 20 && bpm <= 400)) {
+    showMsg("That tempo didn't look right — type a number between 20 and 400.", "error");
+    return;
+  }
+  setTiming(null, false, bpm);
+  showMsg(`Tempo set to ♩=${bpm}.`, "ok");
 }
 
 // ---------------------------------------------------------------------------
