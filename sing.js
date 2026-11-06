@@ -47,6 +47,10 @@ const youNoteEl = $("you-note");
 const youCentsEl = $("you-cents");
 const youVsEl = $("you-vs");
 const reviewEl = $("review");
+const optionsEl = $("options");
+const optionsBtn = $("options-btn");
+const lyricPrevEl = $("lyric-prev");
+const countinEl = $("countin");
 const reviewBtn = $("review-btn");
 
 const SAMPLES = { "amazing-grace": { title: "Amazing Grace", url: "songs/amazing-grace.musicxml" } };
@@ -60,7 +64,8 @@ const K = {
   rate: "resonate.sing.rate",
   guide: "resonate.sing.guide",
   playMode: "resonate.sing.playMode",
-  history: "resonate.sing.history",            // { songId: [{ sig, at, pct, lines: [score | null] }] } — latest last
+  history: "resonate.sing.history",
+  view: "resonate.sing.view",                  // while singing: "practice" (notes + pitch) or "perform" (lyrics only)            // { songId: [{ sig, at, pct, lines: [score | null] }] } — latest last
 };
 const RATES = [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.25];
 
@@ -96,6 +101,7 @@ let shifts = [];    // semitones per score note (all the same unless fitting)
 let shiftSig = "";  // shifts as a string, to tell whether a take's grades still apply
 let rate = Number(recall(K.rate)) || 1;
 let guide = recall(K.guide) || "click";
+let view = recall(K.view) === "perform" ? "perform" : "practice";
 let playMode = recall(K.playMode) || "both";
 
 // --- Session state (sing / listen / playback) ----------------------------------
@@ -798,8 +804,11 @@ function lineHtml(li, el, keep) {
   }
 }
 
+let shownPrev = null; // [line, perform] of the previous-line display
+
 function renderLyrics(t) {
   if (!notes.length) return;
+  const perform = performing();
   const fi = !session && preview ? preview.j : focusNote(t);
   const li = lineOf[fi] ?? 0;
   if (li !== shownLine) {
@@ -808,15 +817,45 @@ function renderLyrics(t) {
     lineHtml(li + 1, lyricNextEl, false);
     shownLine = li;
   }
+  // Perform: the line just sung stays above, coloured by how it went once it's all graded.
+  const prevKey = perform ? li - 1 : -1;
+  if (shownPrev !== prevKey) {
+    lineHtml(prevKey, lyricPrevEl, false);
+    if (prevKey >= 0) lyricPrevEl.append(Object.assign(document.createElement("span"), { className: "pct" }));
+    lyricPrevEl.dataset.tune = "";
+    shownPrev = prevKey;
+  }
+  if (prevKey >= 0) {
+    const js = lines[prevKey];
+    const done = js.every((j) => take.grades[j]);
+    const sc = done ? takeScore(js.map((j) => notes[j]), js.map((j) => take.grades[j])) : undefined;
+    const tune = sc === undefined ? "" : tuneOf(sc);
+    if (lyricPrevEl.dataset.tune !== tune) {
+      lyricPrevEl.dataset.tune = tune;
+      lyricPrevEl.querySelector(".pct").textContent = sc === undefined ? "" : sc === null ? "?" : `${Math.round(sc * 100)}%`;
+    }
+  }
+  // Perform: the count-in in big numbers (the lane, which shows it otherwise, is hidden).
+  const counting = perform && nowT < entryT;
+  if (countinEl.hidden === counting) countinEl.hidden = !counting;
+  if (counting) {
+    const beatSec = (4 / score.beatType) * secPerQuarter();
+    const left = String(Math.max(1, Math.ceil((entryT - nowT) / beatSec)));
+    if (countinEl.textContent !== left) countinEl.textContent = left;
+  }
   const cur = session ? noteAt(t) : preview ? preview.j : -1;
   // The syllable a melisma note belongs to.
   let curSyl = cur;
   while (curSyl > 0 && notes[curSyl].melisma) curSyl--;
   for (const [i, span] of sylEls) {
     const g = take?.grades[i];
-    span.dataset.state = i === curSyl && cur >= 0 ? "current" : g && g.status !== "unsung" ? g.status : "";
+    // (Perform: no note-by-note colours while singing.)
+    span.dataset.state = i === curSyl && cur >= 0 ? "current" : g && g.status !== "unsung" && !perform ? g.status : "";
   }
 }
+
+// A take in Perform view: just the lyrics.
+const performing = () => session?.kind === "sing" && view === "perform";
 
 function renderChips() {
   chipsEl.textContent = "";
@@ -1404,10 +1443,32 @@ function showLine(r) {
   renderAll();
 }
 
+// Singing options: Practice / Perform, and the guide.
+function openOptions() {
+  for (const r of optionsEl.querySelectorAll('input[name="view"]')) r.checked = r.value === view;
+  guideSelect.value = guide;
+  optionsEl.hidden = false;
+}
+optionsBtn.addEventListener("click", openOptions);
+$("op-close").addEventListener("click", () => { optionsEl.hidden = true; });
+optionsEl.addEventListener("click", (e) => { if (e.target === optionsEl) optionsEl.hidden = true; });
+for (const r of optionsEl.querySelectorAll('input[name="view"]')) {
+  r.addEventListener("change", () => {
+    if (!r.checked) return;
+    view = r.value;
+    store(K.view, view);
+    updateButtons();
+  });
+}
+
 reviewBtn.addEventListener("click", openReview);
 $("rv-close").addEventListener("click", closeReview);
 reviewEl.addEventListener("click", (e) => { if (e.target === reviewEl) closeReview(); }); // the dimmed backdrop
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !reviewEl.hidden) closeReview(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!reviewEl.hidden) closeReview();
+  optionsEl.hidden = true;
+});
 
 function renderSummary() {
   if (!take || take.endT === null) {
@@ -1436,7 +1497,10 @@ function renderSummary() {
 
 function updateButtons() {
   const kind = session?.kind;
-  singBtn.textContent = kind === "sing" ? "■ Stop" : take?.endT != null ? "● Sing again" : "● Sing";
+  const verb = view === "perform" ? "Perform" : "Sing";
+  singBtn.textContent = kind === "sing" ? "■ Stop" : take?.endT != null ? `● ${verb} again` : `● ${verb}`;
+  const perform = performing() ? "true" : "false";
+  if (document.body.dataset.perform !== perform) document.body.dataset.perform = perform;
   singBtn.dataset.active = kind === "sing" ? "true" : "false";
   listenBtn.textContent = kind === "listen" ? "■ Stop" : "▶ Listen";
   listenBtn.disabled = kind === "sing" || !score;
@@ -1448,7 +1512,7 @@ function updateButtons() {
     b.disabled = b.dataset.mode !== "melody" && !take?.voice;
     b.dataset.active = b.dataset.mode === playMode ? "true" : "false";
   }
-  for (const el of [songSelect, verseSelect, keySelect, tempoSelect, guideSelect, openFileBtn, openLinkBtn, removeBtn, saveBtn]) el.disabled = kind === "sing";
+  for (const el of [songSelect, verseSelect, keySelect, tempoSelect, optionsBtn, openFileBtn, openLinkBtn, removeBtn, saveBtn]) el.disabled = kind === "sing";
   canvas.dataset.pannable = session ? "false" : "true";
   if (!reviewEl.hidden) showReviewPlaying();
 }
