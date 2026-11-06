@@ -106,6 +106,7 @@
       .syl[data-state="ok"] { color: #c49bff; }
       .syl[data-state="off"] { color: #ff6f6f; }
       .syl[data-state="missed"] { color: rgba(255,255,255,0.35); }
+      .syl[data-state="unclear"] { color: rgba(170,180,255,0.7); }
 
       #lane {
         width: 100%;
@@ -203,6 +204,7 @@
       .chip[data-tune="off"] { border-color: rgba(255,111,111,0.55); }
       .chip[data-tune="missed"] { border-style: dashed; border-color: rgba(255,255,255,0.35); opacity: 0.75; }
       .chip[data-tune="unsung"] { opacity: 0.45; }
+      .chip[data-tune="unclear"] { border-style: dotted; border-color: rgba(170,180,255,0.6); }
       .chip[data-current="true"] { background: rgba(255,230,160,0.15); }
       .chip[data-playing="true"] { background: rgba(255,230,160,0.32); border-color: #ffe6a0; }
       .phrase-break { flex-basis: 100%; height: 0; }
@@ -248,7 +250,7 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v43</span>
+        <span id="version">v44</span>
         <span id="status">idle</span>
       </div>
     </header>
