@@ -4,7 +4,8 @@
 
 import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js";
 import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE } from "./pitch.js";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js";
 import { startCapture, playVoice } from "./capture.js";
 import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.js";
 import { listSongs, getSong, addSong, removeSong, persistent } from "./library.js";
@@ -64,11 +65,6 @@ const PX_PER_SEC = 100;     // lane zoom
 const NOW_FRAC = 0.3;       // where the "now" line sits across the lane
 const GUTTER = 36;          // note-label gutter (CSS px)
 const INPUT_LATENCY = 0.02; // mic → analyser, rough (not reported by browsers)
-const GRACE_MAX = 0.12;     // ignore up to this much of each note's start (scoops, late entry)
-const GRACE_FRAC = 0.25;    //   …or this fraction of the note, whichever is less
-const MIN_VOICED = 0.35;    // voiced less than this share of the slot → "missed"
-const GOOD_CENTS = 25;
-const OK_CENTS = 50;
 const END_PAD = 1.0;        // keep going this long after the last note
 
 // --- Song state ---------------------------------------------------------------
@@ -584,7 +580,7 @@ async function beginSing() {
     const songT = ac.currentTime - songT0;
     const r = mic.read();
     const ft = songT - ANALYSIS_LAG - latency;
-    if (ft > entryT - 0.5) addFrame(ft, r.midi);
+    if (ft > entryT - 0.5) addFrame(ft, r.midi, r.rms);
     pushYou(r.midi);
     gradeUpTo(ft);
     nowT = songT;
@@ -599,8 +595,8 @@ async function beginSing() {
 
 // Store a frame; `disp` is the pitch shifted by octaves next to the melody
 // so singing an octave off still overlays the notes.
-function addFrame(t, midi) {
-  const f = { t, midi, disp: null, ok: null };
+function addFrame(t, midi, rms) {
+  const f = { t, midi, rms, disp: null, ok: null };
   if (midi !== null) {
     const i = noteAt(t);
     const ref = i >= 0 ? notes[i].midi : take.lastDisp ?? (range.lo + range.hi) / 2;
@@ -611,35 +607,34 @@ function addFrame(t, midi) {
   take.frames.push(f);
 }
 
-// Grade every note whose slot has fully passed by frame time `t`.
-function gradeUpTo(t, final = false) {
+// Grade (grade.js) every note the take can no longer change: once frames reach past its
+// latest possible end. The whole take is graded again when it ends (slots move together).
+function gradeUpTo(t) {
   notes.forEach((n, j) => {
-    if (take.grades[j]) return;
-    if (n.t + n.d <= t) take.grades[j] = gradeNote(j, n.t + n.d);
-    else if (final) take.grades[j] = gradeNote(j, t);
-    else return;
+    if (take.grades[j] || n.t + n.d + MAX_SHIFT > t) return;
+    take.grades[j] = gradeLive(notes, take.frames, j, { endT: t, gate: MIN_RMS });
     const old = chipsEl.querySelectorAll(".chip")[j];
     if (old) old.replaceWith(makeChip(j));
   });
 }
 
-function gradeNote(j, until) {
-  const n = notes[j];
-  const from = n.t + Math.min(GRACE_MAX, GRACE_FRAC * n.d);
-  const to = Math.min(n.t + n.d, until);
-  const win = take.frames.filter((f) => f.t >= from && f.t < to);
-  // Stopped before (most of) this note → not part of the take.
-  if (to - from < 0.5 * (n.t + n.d - from) || win.length < 2) return { status: "unsung" };
-  const voiced = win.filter((f) => f.midi !== null);
-  if (voiced.length / win.length < MIN_VOICED) return { status: "missed", hit: 0 };
-  const diffs = voiced.map((f) => f.midi - n.midi);
-  const dev = median(diffs.map(fold));
-  const raw = median(diffs);
-  const octave = Math.round((raw - fold(raw)) / 12);
-  const hit = voiced.filter((f) => Math.abs(fold(f.midi - n.midi)) * 100 <= OK_CENTS).length / win.length;
-  const a = Math.abs(dev) * 100;
-  const status = a <= GOOD_CENTS ? "good" : a <= OK_CENTS ? "ok" : "off";
-  return { status, hit, dev, octave, sungMidi: n.midi + raw };
+// The take's final grades; your pitch line is coloured against the note each frame was
+// matched with (its moved slot), and drawn next to it.
+function gradeFinal(endT) {
+  take.grades = gradeTake(notes, take.frames, { endT, gate: MIN_RMS });
+  for (const f of take.frames) f.ok = null;
+  let k = 0;
+  take.grades.forEach((g, j) => {
+    if (g.from === undefined) return;
+    const n = notes[j];
+    while (k < take.frames.length && take.frames[k].t < g.from) k++;
+    for (let i = k; i < take.frames.length && take.frames[i].t < g.to; i++) {
+      const f = take.frames[i];
+      if (f.midi === null) continue;
+      f.ok = Math.abs(fold(f.midi - n.midi)) * 100 <= OK_CENTS;
+      f.disp = f.midi + 12 * Math.round((n.midi - f.midi) / 12);
+    }
+  });
 }
 
 async function stopSing() {
@@ -650,7 +645,7 @@ async function stopSing() {
   for (const n of s.nodes) try { n.stop(); } catch {}
   const endT = s.ac.currentTime - s.songT0 - ANALYSIS_LAG - s.latency;
   take.endT = endT;
-  gradeUpTo(endT, true);
+  gradeFinal(endT);
   const octs = take.grades.filter((g) => g && g.octave !== undefined).map((g) => g.octave);
   take.octave = octs.length ? Math.round(median(octs)) : 0;
   const v = await s.capture.finish();
@@ -844,6 +839,7 @@ function makeChip(j) {
     if (g?.status === "good" || g?.status === "ok") res = `✓ ${centsLabel(Math.round(g.dev * 100))}`;
     else if (g?.status === "off") res = noteName(Math.round(g.sungMidi));
     else if (g?.status === "missed") res = "missed";
+    else if (g?.status === "unclear") res = "unclear";
     b.querySelector("small").textContent = res || " ";
     b.title = "Press and hold to hear this note";
     b.addEventListener("pointerdown", (e) => {
@@ -1249,18 +1245,20 @@ function renderSummary() {
       : "";
     return;
   }
-  const graded = take.grades.map((g, j) => [g, notes[j]]).filter(([g]) => g && g.status !== "unsung");
-  if (!graded.length) {
+  const graded = take.grades.filter((g) => g && g.status !== "unsung");
+  const score01 = takeScore(notes, take.grades);
+  if (!graded.length || score01 === null) {
     scorePctEl.textContent = "";
-    summaryEl.textContent = "NO NOTES SUNG";
+    summaryEl.textContent = graded.length ? "COULDN'T HEAR THE NOTES CLEARLY" : "NO NOTES SUNG";
     return;
   }
-  const total = graded.reduce((a, [, n]) => a + n.d, 0);
-  const pct = Math.round((100 * graded.reduce((a, [g, n]) => a + (g.hit || 0) * n.d, 0)) / total);
-  const c = (s) => graded.filter(([g]) => g.status === s).length;
-  scorePctEl.textContent = `${pct}%`;
+  const c = (s) => graded.filter((g) => g.status === s).length;
+  scorePctEl.textContent = `${Math.round(score01 * 100)}%`;
   let t = `${c("good")} GOOD · ${c("ok")} CLOSE · ${c("off")} OFF · ${c("missed")} MISSED`;
+  if (c("unclear")) t += ` · ${c("unclear")} UNCLEAR`;
   if (take.octave) t += take.octave < 0 ? " · SUNG 8VB" : " · SUNG 8VA";
+  const lead = timingTendency(take.grades);
+  if (Math.abs(lead) >= 0.08) t += ` · ${lead < 0 ? "EARLY" : "LATE"} ~${Math.abs(lead).toFixed(2).replace(/^0/, "")} S`;
   summaryEl.textContent = t;
 }
 
@@ -1287,6 +1285,7 @@ const TUNE = {
   ok: ["rgba(166,79,255,0.45)", "rgba(166,79,255,0.95)"],
   off: ["rgba(255,111,111,0.4)", "rgba(255,111,111,0.95)"],
   missed: ["rgba(255,255,255,0.04)", "rgba(255,255,255,0.35)"],
+  unclear: ["rgba(160,170,255,0.08)", "rgba(160,170,255,0.5)"],
   todo: ["rgba(255,255,255,0.12)", "rgba(255,255,255,0.4)"],
 };
 
@@ -1364,11 +1363,16 @@ function renderLane() {
     ctx.fillStyle = fill;
     ctx.strokeStyle = j === cur ? "#ffe6a0" : stroke;
     ctx.lineWidth = j === cur ? 2 : 1;
-    if (key === "missed") ctx.setLineDash([4, 3]);
+    if (key === "missed" || key === "unclear") ctx.setLineDash([4, 3]);
     roundRect(x0, y - barH / 2, Math.max(3, x1 - x0), barH, Math.min(5, barH / 2));
     ctx.fill();
     ctx.stroke();
     ctx.setLineDash([]);
+    // Sung early or late: a line over the bar where you actually sang it.
+    if (g?.from !== undefined && Math.abs(g.shift) >= 0.08 && ["good", "ok", "off"].includes(g.status)) {
+      ctx.fillStyle = stroke;
+      ctx.fillRect(xOf(g.from) + 1, y - barH / 2 - 4, Math.max(2, xOf(g.to) - xOf(g.from) - 2), 2);
+    }
     if (!n.melisma && n.text) {
       ctx.font = "italic 600 12px system-ui, sans-serif";
       ctx.textBaseline = "top";
