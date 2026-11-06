@@ -97,7 +97,15 @@
       }
       #drop[hidden] { display: none; }
 
-      #lyrics { flex-shrink: 0; min-height: 3.6rem; text-align: center; }
+      #lyrics { flex-shrink: 0; min-height: 3.6rem; text-align: center; position: relative; }
+      #loop-btn[hidden] { display: none; }
+      #loopbar { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.55rem 0.75rem; border-radius: 0.8rem; border: 1px solid rgba(255,214,120,0.4); background: rgba(255,214,120,0.07); }
+      #loopbar[hidden] { display: none; }
+      #lp-text { font-weight: 700; font-size: 0.98rem; }
+      #lp-text[data-tune="good"] { color: #4ade80; }
+      #lp-text[data-tune="ok"] { color: #c49bff; }
+      #lp-text[data-tune="off"] { color: #ff8a9a; }
+      #lp-scores { font-size: 0.72rem; color: rgba(255,255,255,0.6); }
       #lyric-now { font-size: 1.35rem; font-weight: 700; line-height: 1.35; min-height: 1.35em; }
       #lyric-next { font-size: 0.9rem; opacity: 0.45; min-height: 1.35em; margin-top: 0.15rem; }
       .syl { transition: color 0.1s ease; color: rgba(255,255,255,0.75); }
@@ -310,7 +318,7 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v47</span>
+        <span id="version">v48</span>
         <span id="status">idle</span>
       </div>
     </header>
@@ -344,6 +352,10 @@
       </section>
       <canvas id="lane"></canvas>
       <section id="results">
+        <div id="loopbar" hidden>
+          <span id="lp-text"></span>
+          <span id="lp-scores" class="mono"></span>
+        </div>
         <div class="results-head">
           <span id="score-pct"></span>
           <span id="summary" class="mono"></span>
@@ -352,6 +364,7 @@
               <b id="you-note"></b>
               <span class="you-detail mono"><span id="you-cents"></span><span id="you-vs"></span></span>
             </span>
+            <button id="loop-btn" class="tool-btn" type="button" title="Practise the line shown above: hear it, sing it, again" hidden>⟳ Loop line</button>
             <button id="monitor" class="tool-btn" type="button" aria-pressed="false" title="Show the note you're singing (uses the microphone)">🎤 Pitch</button>
           </span>
         </div>

@@ -9,14 +9,15 @@ export const TAIL_SAMPLES = 1024; // voicing also needs the newest ~21 ms to be 
 export const ANALYSIS_LAG = 0.05; // a frame describes the trailing ~85 ms window; its pitch lags ~50 ms
 
 // Open the mic with processing off (echo cancel / noise suppression / AGC
-// distort pitch and level). Returns the pieces the caller needs.
-export async function openMic() {
+// distort pitch and level). Returns the pieces the caller needs. `ac`: an AudioContext
+// to use (made earlier, in a tap, so it can run without one now) — left open by close().
+export async function openMic({ ac: given = null } = {}) {
   try { if (navigator.audioSession) navigator.audioSession.type = "play-and-record"; } catch {}
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
   });
-  const ac = new (window.AudioContext || window.webkitAudioContext)();
-  if (ac.state === "suspended") await ac.resume();
+  const ac = given || new (window.AudioContext || window.webkitAudioContext)();
+  if (ac.state !== "running") await Promise.race([ac.resume(), new Promise((r) => setTimeout(r, 1500))]).catch(() => {});
   const source = ac.createMediaStreamSource(stream);
   const analyser = ac.createAnalyser();
   analyser.fftSize = FFT_SIZE;
@@ -27,7 +28,7 @@ export async function openMic() {
   async function close() {
     stream.getTracks().forEach((t) => t.stop());
     try { source.disconnect(); } catch {}
-    try { await ac.close(); } catch {}
+    if (!given) try { await ac.close(); } catch {}
   }
 
   return { stream, ac, source, analyser, read, close };
