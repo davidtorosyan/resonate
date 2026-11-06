@@ -51,6 +51,8 @@ const optionsEl = $("options");
 const optionsBtn = $("options-btn");
 const lyricPrevEl = $("lyric-prev");
 const countinEl = $("countin");
+const loopBtn = $("loop-btn");
+const loopbarEl = $("loopbar");
 const reviewBtn = $("review-btn");
 
 const SAMPLES = { "amazing-grace": { title: "Amazing Grace", url: "songs/amazing-grace.musicxml" } };
@@ -536,15 +538,20 @@ function beatGrid() {
 
 // While Sing / Listen / Play is starting ("sing" / "play"), the pitch monitor keeps its mic closed.
 let starting = null;
-async function startSing() {
+// part (a phrase-loop round): { from (s, a bar start: the count-in is the bar before),
+// until (s), range: [first note, end), ac (the loop's mic context) } — no recording,
+// review or history; stopSing resolves session.ended with the round's grades.
+async function startSing(part = null) {
   starting = "sing";
   monitorSync();
-  try { await beginSing(); } finally { starting = null; monitorSync(MON_RESUME); }
+  try { await beginSing(part); } finally { starting = null; monitorSync(MON_RESUME); }
 }
 
-async function beginSing() {
-  closeReview();
-  reviewRows = [];
+async function beginSing(part) {
+  if (!part) {
+    closeReview();
+    reviewRows = [];
+  }
   stopKeys();
   stopSession();
   take = null;
@@ -553,57 +560,64 @@ async function beginSing() {
   statusEl.textContent = "requesting mic…";
   let mic;
   try {
-    mic = await openMic();
+    mic = await openMic({ ac: part?.ac });
   } catch (err) {
     console.error(err);
     statusEl.textContent = `mic error: ${err.name || err.message}`;
     singBtn.disabled = listenBtn.disabled = false;
+    if (part) stopLoop(`Couldn't open the microphone: ${err.message || err.name}`);
     return;
   }
+  if (part && drill?.token !== part.token) { await mic.close(); return; } // the loop stopped meanwhile
   const ac = mic.ac;
   let piano = null;
   if (guide === "melody") {
     statusEl.textContent = "loading piano…";
     try { piano = await loadPiano(ac); } catch (err) { console.warn(err); }
   }
-  const capture = await startCapture(ac, mic.source);
+  const capture = part ? { finish: async () => null } : await startCapture(ac, mic.source);
   let wakeLock = null;
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
 
   const nodes = [];
   const beatSec = (4 / score.beatType) * secPerQuarter();
-  const count = countInBeats();
+  const start = part ? part.from : entryT;
+  const end = part ? part.until : songEnd + END_PAD;
+  const [j0, j1] = part ? part.range : [0, notes.length];
+  const count = part ? score.beats : countInBeats();
   const t0 = ac.currentTime + 0.3;
-  const songT0 = t0 + count * beatSec - entryT; // song time entryT sounds right after the count-in
+  const songT0 = t0 + count * beatSec - start; // song time `start` sounds right after the count-in
   for (let k = 0; k < count; k++) playClick(ac, t0 + k * beatSec, k % score.beats === 0, nodes);
-  if (guide === "click") for (const b of beatGrid()) if (b.t >= entryT - 1e-6) playClick(ac, songT0 + b.t, b.accent, nodes);
-  if (piano) for (const n of notes) playPiano(ac, piano, songT0 + n.t, n.d, n.midi, 0.9, nodes);
+  if (guide === "click") for (const b of beatGrid()) if (b.t >= start - 1e-6 && b.t < end) playClick(ac, songT0 + b.t, b.accent, nodes);
+  if (piano) for (const n of notes.slice(j0, j1)) playPiano(ac, piano, songT0 + n.t, n.d, n.midi, 0.9, nodes);
 
   // The singer follows what they hear (output latency); the mic hears them
   // late (input latency); a pitch frame lags its audio (analysis window).
   const latency = (ac.outputLatency || ac.baseLatency || 0) + INPUT_LATENCY;
-  take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, rate, verse: verseSelect.value || score.verses[0] || "1", octave: 0 };
-  session = { kind: "sing", ac, nodes, songT0, latency, mic, capture, wakeLock, raf: null };
+  take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, rate, verse: verseSelect.value || score.verses[0] || "1", octave: 0, range: [j0, j1], part: !!part };
+  let endRes;
+  const ended = new Promise((r) => { endRes = r; });
+  session = { kind: "sing", ac, nodes, songT0, latency, mic, capture, wakeLock, raf: null, part, start, ended, endRes };
   stopKeys(); // a key pressed while the mic was opening
   singBtn.disabled = false;
   updateButtons();
 
-  const loop = () => {
+  const tick = () => {
     if (!session || session.kind !== "sing") return;
     const songT = ac.currentTime - songT0;
     const r = mic.read();
     const ft = songT - ANALYSIS_LAG - latency;
-    if (ft > entryT - 0.5) addFrame(ft, r.midi, r.rms);
+    if (ft > start - 0.5) addFrame(ft, r.midi, r.rms);
     pushYou(r.midi);
     gradeUpTo(ft);
     nowT = songT;
     renderYou();
-    statusEl.textContent = songT < entryT ? `count-in ${Math.min(count, Math.floor((songT - entryT + count * beatSec) / beatSec) + 1)}` : `${r.db.toFixed(0)} dB`;
+    statusEl.textContent = songT < start ? `count-in ${Math.min(count, Math.floor((songT - start + count * beatSec) / beatSec) + 1)}` : `${r.db.toFixed(0)} dB`;
     renderLive();
-    if (songT > songEnd + END_PAD) { stopSing(); return; }
-    session.raf = requestAnimationFrame(loop);
+    if (songT > end) { stopSing(); return; }
+    session.raf = requestAnimationFrame(tick);
   };
-  session.raf = requestAnimationFrame(loop);
+  session.raf = requestAnimationFrame(tick);
 }
 
 // Store a frame; `disp` is the pitch shifted by octaves next to the melody
@@ -623,8 +637,9 @@ function addFrame(t, midi, rms) {
 // Grade (grade.js) every note the take can no longer change: once frames reach past its
 // latest possible end. The whole take is graded again when it ends (slots move together).
 function gradeUpTo(t) {
+  const [j0, j1] = take.range;
   notes.forEach((n, j) => {
-    if (take.grades[j] || n.t + n.d + MAX_SHIFT > t) return;
+    if (j < j0 || j >= j1 || take.grades[j] || n.t + n.d + MAX_SHIFT > t) return;
     take.grades[j] = gradeLive(notes, take.frames, j, { endT: t, gate: MIN_RMS });
     const old = chipsEl.querySelectorAll(".chip")[j];
     if (old) old.replaceWith(makeChip(j));
@@ -634,11 +649,13 @@ function gradeUpTo(t) {
 // The take's final grades; your pitch line is coloured against the note each frame was
 // matched with (its moved slot), and drawn next to it.
 function gradeFinal(endT) {
-  take.grades = gradeTake(notes, take.frames, { endT, gate: MIN_RMS });
+  const [j0, j1] = take.range;
+  const part = gradeTake(notes.slice(j0, j1), take.frames, { endT, gate: MIN_RMS });
+  take.grades = notes.map((_, j) => (j >= j0 && j < j1 ? part[j - j0] : null));
   for (const f of take.frames) f.ok = null;
   let k = 0;
   take.grades.forEach((g, j) => {
-    if (g.from === undefined) return;
+    if (!g || g.from === undefined) return;
     const n = notes[j];
     while (k < take.frames.length && take.frames[k].t < g.from) k++;
     for (let i = k; i < take.frames.length && take.frames[i].t < g.to; i++) {
@@ -667,11 +684,18 @@ async function stopSing() {
   try { await s.wakeLock?.release(); } catch {}
   await s.mic.close();
   statusEl.textContent = "idle";
+  if (s.part) {
+    scrollT = s.start;
+    renderAll();
+    s.endRes(take);
+    return;
+  }
   scrollT = entryT;
   nowT = entryT;
   renderAll();
   chipsEl.scrollTop = 0;
   monitorSync(MON_RESUME);
+  s.endRes(take);
   recordTake();
   openReview();
 }
@@ -725,7 +749,9 @@ async function beginPlay(kind, from, opts) {
     }
   }
   if (wantVoice) playVoice(ac, take.voice, start, from, nodes);
-  session = { kind, ac, nodes, songT0, raf: null, end, line: opts.line ?? null, mode };
+  let endRes;
+  const ended = new Promise((r) => { endRes = r; });
+  session = { kind, ac, nodes, songT0, raf: null, end, line: opts.line ?? null, mode, ended, endRes };
   stopKeys(); // a key that started while this was loading
   updateButtons();
   const loop = () => {
@@ -748,6 +774,7 @@ function stopSession() {
   scrollT = Math.max(0, Math.min(nowT, songEnd));
   renderAll();
   monitorSync(MON_RESUME);
+  s.endRes?.();
 }
 
 // ---------------------------------------------------------------------------
@@ -855,7 +882,7 @@ function renderLyrics(t) {
 }
 
 // A take in Perform view: just the lyrics.
-const performing = () => session?.kind === "sing" && view === "perform";
+const performing = () => session?.kind === "sing" && !session.part && view === "perform";
 
 function renderChips() {
   chipsEl.textContent = "";
@@ -901,7 +928,7 @@ function makeChip(j) {
     b.addEventListener("pointerup", onPointerUp);
     b.addEventListener("pointercancel", (e) => cancelKey(e.pointerId));
     b.addEventListener("click", (e) => {
-      if (session) { if (session.kind !== "sing") seek(n.t - 0.4); return; } // a tap, not a scroll
+      if (session) { if (session.kind !== "sing" && !drill) seek(n.t - 0.4); return; } // a tap, not a scroll
       if (e.detail === 0) pressKey(j, "click", false); // keyboard, assistive tech
     });
     b.addEventListener("contextmenu", (e) => e.preventDefault()); // long press is a held key
@@ -1148,7 +1175,7 @@ function monitorOff() {
   renderLane();
 }
 
-const monitorListens = () => mon && !session && !starting && !keys.size && !document.hidden;
+const monitorListens = () => mon && !session && !drill && !starting && !keys.size && !document.hidden;
 
 // Open or close the monitor's mic to match what's going on; reopening can wait `delay` ms.
 function monitorSync(delay = 0) {
@@ -1288,6 +1315,102 @@ monitorBtn.addEventListener("click", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phrase loop: one line over and over — hear it (the melody, with the mic closed so it's
+// loud on a phone), then sing it after a bar of count-in (graded like a take, grade.js),
+// then see how it went (coach.js) — until Stop. The whole-song take is put back after.
+
+let drill = null; // { li, range: [j0, j1), from, until, token, round, scores, phase, last, savedTake, ac }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function startLoop(li) {
+  if (!lines[li]?.length || session?.kind === "sing") return;
+  stopLoop();
+  closeReview();
+  stopKeys();
+  const js = lines[li];
+  const j0 = js[0], j1 = js[js.length - 1] + 1;
+  const spq = secPerQuarter();
+  let m = 0;
+  score.measures.forEach((q, i) => { if (q * spq <= notes[j0].t + 1e-6) m = i; });
+  const last = notes[j1 - 1];
+  // In the tap: the mic's context is made for recording, then the playback context
+  // starts (getPlayCtx, in startPlay) — so later rounds can start both without a tap.
+  setSession("play-and-record");
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  ac.resume().catch(() => {});
+  drill = {
+    li, range: [j0, j1], from: score.measures[m] * spq, until: last.t + last.d + MAX_SHIFT + 0.3,
+    token: {}, round: 0, scores: [], phase: "", last: null, savedTake: take?.part ? drill?.savedTake ?? null : take, ac,
+  };
+  showMsg("");
+  monitorSync();
+  updateButtons();
+  runLoop(drill);
+}
+
+async function runLoop(d) {
+  const alive = () => drill === d;
+  while (alive()) {
+    d.round++;
+    d.phase = "listen";
+    renderLoop();
+    await startPlay("listen", Math.max(0, notes[d.range[0]].t - 0.3), { until: d.until - MAX_SHIFT, line: d.li });
+    if (!alive()) return;
+    await session?.ended;
+    if (!alive()) return;
+    await sleep(250);
+    if (!alive()) return;
+    d.phase = "sing";
+    renderLoop();
+    await startSing({ from: d.from, until: d.until, range: d.range, ac: d.ac, token: d.token });
+    if (!alive()) return;
+    const t = await session?.ended;
+    if (!alive() || !t) return;
+    const row = analyzeLines(notes, [lines[d.li]], t.grades, { text: () => lineText(d.li), name: noteName })[0];
+    d.last = row || null;
+    d.scores.push(row ? row.score : null);
+    d.phase = "result";
+    renderLoop();
+    await sleep(2400);
+  }
+}
+
+// Stop looping (msg: why, shown as an error) and put the whole-song take back.
+function stopLoop(msg) {
+  const d = drill;
+  if (!d) return;
+  drill = null;
+  if (session) stopSession();
+  take = d.savedTake;
+  reviewRows = [];
+  d.ac.close().catch(() => {});
+  scrollT = Math.max(-1, notes[d.range[0]].t - 0.5);
+  renderAll();
+  monitorSync(MON_RESUME);
+  if (msg) showMsg(msg, "error");
+}
+
+function renderLoop() {
+  const d = drill;
+  if (!d) return;
+  const text = $("lp-text"), trail = $("lp-scores");
+  let line = "", tune = "";
+  if (d.phase === "listen") line = `Round ${d.round} · listen…`;
+  else if (d.phase === "sing") line = `Round ${d.round} · your turn — sing it`;
+  else if (d.phase === "result") {
+    const r = d.last;
+    tune = tuneOf(r ? r.score : null);
+    line = `${pctText(r ? r.score : null)} — ${r?.reasons[0]?.text || (r?.score >= 0.85 ? "nice, that's it" : "again")}`;
+  }
+  text.textContent = line;
+  text.dataset.tune = tune;
+  trail.textContent = d.scores.map((x) => (x === null ? "?" : Math.round(x * 100))).join(" → ");
+  updateButtons();
+}
+
+loopBtn.addEventListener("click", () => startLoop(shownLine));
+
+// ---------------------------------------------------------------------------
 // Review (coach.js): after a take, the lines worth working on — with what went wrong in
 // plain words — then every line; each can be heard (your take / the melody / both) or
 // shown on the lane. Scores are compared with the previous take of the same song.
@@ -1412,6 +1535,12 @@ function reviewLine(r, full) {
     b.addEventListener("click", () => playLine(r, mode));
     btns.append(b);
   }
+  const lb = document.createElement("button");
+  lb.type = "button";
+  lb.textContent = "⟳ Loop";
+  lb.title = "Practise this line: hear it, sing it, again";
+  lb.addEventListener("click", () => startLoop(r.li));
+  btns.append(lb);
   el.append(btns);
   return el;
 }
@@ -1498,14 +1627,16 @@ function renderSummary() {
 function updateButtons() {
   const kind = session?.kind;
   const verb = view === "perform" ? "Perform" : "Sing";
-  singBtn.textContent = kind === "sing" ? "■ Stop" : take?.endT != null ? `● ${verb} again` : `● ${verb}`;
+  singBtn.textContent = drill ? "■ Stop loop" : kind === "sing" ? "■ Stop" : take?.endT != null ? `● ${verb} again` : `● ${verb}`;
   const perform = performing() ? "true" : "false";
   if (document.body.dataset.perform !== perform) document.body.dataset.perform = perform;
   singBtn.dataset.active = kind === "sing" ? "true" : "false";
   listenBtn.textContent = kind === "listen" ? "■ Stop" : "▶ Listen";
-  listenBtn.disabled = kind === "sing" || !score;
-  singBtn.disabled = !score || (kind && kind !== "sing");
-  playbarEl.hidden = !take || take.endT === null || kind === "sing";
+  listenBtn.disabled = kind === "sing" || !score || !!drill;
+  singBtn.disabled = !score || (kind && kind !== "sing" && !drill);
+  playbarEl.hidden = !take || take.endT === null || kind === "sing" || !!drill;
+  loopBtn.hidden = !!session || !!drill || !score || !notes.length;
+  loopbarEl.hidden = !drill;
   playBtn.textContent = kind === "playback" ? "■ Stop" : "▶ Play";
   playBtn.dataset.playing = kind === "playback" ? "true" : "false";
   for (const b of playModesEl.querySelectorAll("button")) {
@@ -1765,7 +1896,7 @@ canvas.addEventListener("wheel", (e) => {
   renderLive();
 }, { passive: false });
 
-singBtn.addEventListener("click", () => (session?.kind === "sing" ? stopSing() : startSing()));
+singBtn.addEventListener("click", () => (drill ? stopLoop() : session?.kind === "sing" ? stopSing() : startSing()));
 listenBtn.addEventListener("click", () => (session?.kind === "listen" ? stopSession() : startPlay("listen", Math.max(0, scrollT))));
 playBtn.addEventListener("click", () => (session?.kind === "playback" ? stopSession() : startPlay("playback", Math.max(0, scrollT))));
 playModesEl.addEventListener("click", (e) => {
@@ -1880,6 +2011,7 @@ document.addEventListener("drop", (e) => {
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) stopKeys();
+  if (document.hidden && drill) stopLoop();
   if (document.hidden && mon) {
     monitorOff();
     statusEl.textContent = "pitch off (backgrounded)";
@@ -1893,6 +2025,7 @@ document.addEventListener("visibilitychange", () => {
 // and a "playback" left behind kept the Tuner's microphone from starting.
 window.addEventListener("pagehide", () => {
   stopKeys();
+  stopLoop();
   monitorOff();
   stopSession();
   if (playCtx) playCtx.close().catch(() => {});
