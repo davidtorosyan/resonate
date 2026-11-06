@@ -10,7 +10,7 @@ import { analyzeLines, workOn, lineDelta } from "./coach.js";
 import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js";
 import { startCapture, playVoice } from "./capture.js";
 import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.js";
-import { listSongs, getSong, addSong, removeSong, persistent } from "./library.js";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js";
 import { fixOmrScore } from "./omr/fixscore.js";
 import { activeProfile } from "./profiles.js";
 import { fitOptions, fitKey, fitToRange } from "./fit.js";
@@ -448,7 +448,7 @@ async function selectSong(id) {
     }
     const song = await getSong(id);
     if (!song) throw new Error("that song is no longer saved");
-    return setScore(parseMusicXml(cleanXml(song.xml), song.title));
+    return setScore(parseMusicXml(songXml(song), song.title));
   } catch (err) {
     console.error(err);
     showMsg(`Couldn't load song: ${err.message}`, "error");
@@ -468,6 +468,18 @@ function cleanXml(xml) {
     console.warn("OMR clean-ups failed", err);
     return xml;
   }
+}
+
+// A saved song's MusicXML, cleaned up: the cleaned copy saved with it when this version of
+// the app made it (the clean-ups take a while on a big score on a phone), else cleaned now
+// and saved for next time. The original stays as it was imported.
+const APP_VERSION = document.getElementById("version")?.textContent.trim() || "";
+function songXml(song) {
+  if (!/<software>\s*Audiveris/.test(song.xml.slice(0, 4000))) return song.xml;
+  if (APP_VERSION && song.clean?.ver === APP_VERSION) return song.clean.xml ?? song.xml;
+  const xml = cleanXml(song.xml);
+  if (APP_VERSION) saveClean(song.id, xml === song.xml ? null : xml, APP_VERSION).catch(() => {});
+  return xml;
 }
 
 function showMsg(text, kind = "info", link = null) {
@@ -2260,7 +2272,7 @@ saveBtn.addEventListener("click", async () => {
     } else {
       const song = await getSong(id);
       if (!song) throw new Error("that song is no longer saved");
-      xml = cleanXml(song.xml);
+      xml = songXml(song);
       title = song.title;
     }
   } catch (err) {
