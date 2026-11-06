@@ -42,7 +42,7 @@ Server prints both HTTP (port 3000) and HTTPS (port 3443) URLs for localhost and
 
 ## Version marker
 
-`index.html` shows a `v<N>` badge in the top-right of the header (`#version`, purple). It exists so you can confirm a frontend change actually reached the phone — bump the number, refresh, check the badge. To bump: edit the `<span id="version">` line in **every** page — `index.html`, `record.html`, `sing.html`, `tools.html`, `pdf-import.html`, `voice.html` (keep them equal). If the badge doesn't change after a refresh, the phone is serving a cached `index.html` — hard-refresh / pull-to-refresh.
+`index.html` shows a `v<N>` badge in the top-right of the header (`#version`, purple). It exists so you can confirm a frontend change actually reached the phone — bump the number, refresh, check the badge. **To bump, run `node bump.mjs <N>`** (repo root): it sets the badge on every page and puts `?v=<N>` on every local script/module address (`<script src>`, `import … from`, `import()`, `new Worker()`, `addModule()`, `importScripts()`), so a new page only ever loads that version's code. GitHub Pages lets browsers reuse each file for 10 minutes (`max-age=600`), one module at a time: v54's sing.js with a cached v53 library.js failed with "does not provide an export named 'saveClean'" and the Sing page showed nothing but Amazing Grace. A new module must be imported with the `?v=` suffix too (the script adds it to any `.js` import). The song library's clean-up cache is keyed by the badge as well. If the badge doesn't change after a refresh, the phone is serving a cached `index.html` — hard-refresh / pull-to-refresh.
 
 ## Stack
 
