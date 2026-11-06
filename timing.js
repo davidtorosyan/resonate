@@ -10,6 +10,28 @@
 
 const MIN_GAP = 0.06; // s: taps closer than this are a bounce, not a word
 
+export { MIN_GAP };
+
+// Split knots where the tapping paused (a gap far slower than the rest: > 4× the median
+// pace and > 3 s — leaving to restart the music, say): each run is merged on its own, so
+// the pause doesn't become a crawl. Returns { runs: [[knot]], pauses: [{ q, s }] }.
+export function splitPauses(knots) {
+  const paces = [];
+  for (let k = 0; k + 1 < knots.length; k++) paces.push((knots[k + 1].t - knots[k].t) / (knots[k + 1].q - knots[k].q));
+  const sorted = [...paces].sort((a, b) => a - b);
+  const med = sorted.length ? sorted[sorted.length >> 1] : 0;
+  const runs = [[]], pauses = [];
+  knots.forEach((kn, k) => {
+    runs[runs.length - 1].push(kn);
+    const gap = k + 1 < knots.length ? knots[k + 1].t - kn.t : 0;
+    if (k < paces.length && paces[k] > 4 * med && gap > 3) {
+      pauses.push({ q: knots[k + 1].q, s: gap });
+      runs.push([]);
+    }
+  });
+  return { runs: runs.filter((r) => r.length >= 2), pauses };
+}
+
 // Knots from taps [{ q, t }] (in tap order): bounces dropped, kept in order of q.
 export function knotsFromTaps(taps) {
   const out = [];

@@ -18,7 +18,9 @@ const WEAK = 0.85;
 
 // lines: [[note index]]; grades: per note (grade.js); text(li) → the line's words;
 // name(midi) → a note name.
-export function analyzeLines(notes, lines, grades, { text, name, lead = 0 }) {
+// syl(j) → note j's syllable as the lyrics show it (joined to the next within a word, a
+// space after a word's end); notes without words are named by their pitch.
+export function analyzeLines(notes, lines, grades, { text, name, lead = 0, syl = null }) {
   const out = [];
   lines.forEach((idx, li) => {
     const sung = idx.filter((j) => grades[j] && grades[j].status !== "unsung");
@@ -32,8 +34,18 @@ export function analyzeLines(notes, lines, grades, { text, name, lead = 0 }) {
     const score = judged.length ? judged.reduce((a, j) => a + (grades[j].hit || 0) * notes[j].d, 0) / dur(judged) : null;
     const reasons = [];
     const words = (js) => {
-      const w = js.filter((j) => notes[j].text && !notes[j].melisma).map((j) => notes[j].text.replace(/[,.;:!?]+$/, ""));
-      return w.length ? `“${w.slice(0, 4).join(" ")}${w.length > 4 ? "…" : ""}”` : "a held note";
+      const own = js.filter((j) => !notes[j].melisma);
+      if (!own.length) return "a held note";
+      if (!own.some((j) => notes[j].text)) return own.slice(0, 4).map((j) => notes[j].name).join(" ") + (own.length > 4 ? "…" : "");
+      // Syllables joined into words (only syllables next to each other in the line).
+      const nextSyl = (j) => { let i = j + 1; while (i < notes.length && notes[i].melisma) i++; return i; };
+      let s = "";
+      own.forEach((j, k) => {
+        const t = syl ? syl(j) : `${notes[j].text} `;
+        s += k + 1 < own.length && own[k + 1] !== nextSyl(j) && !/\s$/.test(t) ? `${t} ` : t;
+      });
+      const w = s.trim().replace(/[,.;:!?]+(?=\s|$)/g, "").split(/\s+/).filter(Boolean);
+      return `“${w.slice(0, 4).join(" ")}${w.length > 4 ? "…" : ""}”`;
     };
     if (dur(missed) >= Math.min(0.5, all) || dur(missed) / all >= 0.15) reasons.push({ kind: "missed", text: `didn't hear you on ${words(missed)} — too quiet, or not sung` });
     if (dur(unclear) / all >= 0.3) reasons.push({ kind: "unclear", text: "couldn't make out the pitch — sing out a little, closer to the mic" });
@@ -41,8 +53,10 @@ export function analyzeLines(notes, lines, grades, { text, name, lead = 0 }) {
     if (off.length) {
       const j = off[0], n = notes[j], g = grades[j];
       const sang = name(Math.round(n.midi + g.dev));
-      const syl = n.melisma ? "a held note" : `“${(n.text || "").replace(/[,.;:!?]+$/, "")}”`;
-      reasons.push({ kind: "note", text: `${syl} should be ${n.name} — you sang ${sang}${off.length > 1 ? ` (+${off.length - 1} more)` : ""}` });
+      const more = off.length > 1 ? ` (+${off.length - 1} more)` : "";
+      reasons.push({ kind: "note", text: n.melisma ? `a held note should be ${n.name} — you sang ${sang}${more}`
+        : n.text ? `“${n.text.replace(/[,.;:!?]+$/, "")}” should be ${n.name} — you sang ${sang}${more}`
+        : `${n.name} came out as ${sang}${more}` });
     }
     const inTune = pitched.filter((j) => grades[j].status !== "off");
     if (inTune.length >= 2) {
@@ -54,7 +68,10 @@ export function analyzeLines(notes, lines, grades, { text, name, lead = 0 }) {
     const typical = shifts.length ? shifts[shifts.length >> 1] : 0;
     const entry = first !== undefined && first === idx.find((j) => !notes[j].melisma) ? grades[first].shift : lead;
     const off2 = Math.abs(entry - lead) >= 0.12 ? entry : Math.abs(typical - lead) >= 0.12 ? typical : null;
-    if (off2 !== null) {
+    // Only worth fixing when it's further off the beat than the rest of the take (a line
+    // sung on time in a late take is the good one).
+    const worse = off2 !== null && Math.abs(off2) >= 0.08 && (Math.sign(off2) !== Math.sign(lead) || Math.abs(off2) > Math.abs(lead));
+    if (worse) {
       const early = off2 < lead;
       const how = Math.abs(off2) < 0.05 ? "on time" : `~${Math.abs(off2).toFixed(2)} s ${off2 < 0 ? "early" : "late"}`;
       reasons.push({ kind: early ? "early" : "late", text: `${off2 === entry ? "came in" : "sang it"} ${how}${lead ? ` (you were ~${Math.abs(lead).toFixed(2)} s ${lead < 0 ? "early" : "late"} elsewhere)` : ""}` });
