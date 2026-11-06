@@ -7,14 +7,17 @@
 // whole take at once (dynamic programming over the notes, shifts in STEP steps) so that
 // the notes stay in order, and so that moving costs a little (MOVE) and changing the
 // shift between neighbouring notes costs a little more (DRIFT) — a steady "you're 0.15 s
-// early" beats jitter. A note's start shift is how early (−) or late (+) you were.
+// early" beats jitter. A note's start shift is how early (−) or late (+) you were. The
+// cost is the time sung off the note (each frame counted once), plus singing a note in
+// the rest before it (an early entry); ringing a note on into the rest after it is free.
 //
 // A note is then graded on the frames in its (moved) slot, skipping a short grace at its
 // start for scoops: voiced in at least MIN_VOICED of it → its pitch is the median of
 // your octave-folded deviation (≤ 25¢ good, ≤ 50¢ close, else off) and `hit` is the
-// share of its frames within 50¢; otherwise, if you were singing (loud) but no clear
-// pitch was found, it's "unclear" — the app couldn't hear the pitch, which isn't counted
-// against you — else "missed". Notes the take didn't reach are "unsung".
+// share of its frames within 50¢; otherwise, if you were singing (loud: `loudGate`, above
+// the room's noise) but no clear pitch was found, it's "unclear" — the app couldn't hear
+// the pitch, which isn't counted against you — else "missed". Notes the take didn't reach
+// are "unsung".
 //
 // frames: [{ t (song time of the audio, s), midi | null, rms }] in time order.
 // notes:  [{ midi, t, d }] (s), in time order.
@@ -58,28 +61,35 @@ function slot(n, a, b, endT) {
 function prep(notes, frames) {
   const dt = frames.length > 1 ? (frames[frames.length - 1].t - frames[0].t) / (frames.length - 1) : 0;
   return notes.map((n) => {
-    const lo = lowerBound(frames, n.t - MAX_SHIFT - 0.01);
-    const hi = lowerBound(frames, n.t + n.d + MAX_SHIFT + 0.01, lo);
+    const lo = lowerBound(frames, n.t - 2 * MAX_SHIFT - 0.01); // (a moved slot + the rest before it)
+    const hi = lowerBound(frames, n.t + n.d + 2 * MAX_SHIFT + 0.01, lo);
     const match = new Int32Array(hi - lo + 1);
     for (let i = lo; i < hi; i++) {
       const m = frames[i].midi;
-      match[i - lo + 1] = match[i - lo] + (m !== null && Math.abs(fold(m - n.midi)) * 100 <= OK_CENTS ? 1 : 0);
+      const d = m === null ? null : fold(m - n.midi);
+      // (A note after a rest is often scooped into from below: for finding where it was
+      // sung, up to 2 semitones flat counts too — silence still doesn't, so a late entry is
+      // still found.)
+      const hit = d !== null && (Math.abs(d) * 100 <= OK_CENTS || (n.restBefore && d >= -2 && d < 0));
+      match[i - lo + 1] = match[i - lo] + (hit ? 1 : 0);
     }
     return { lo, hi, match, dt };
   });
 }
 
-// Cost of note j sung in [s, e): its length × the share of frames that miss it — plus,
-// next to a rest, the time it was sung in that rest just before or after the slot (an
-// early entry or a held-over end), which otherwise no slot would notice.
+// Cost of note j sung in [s, e): the time in it that doesn't match the note (additive, so
+// each frame is charged once whichever slot it falls in — moving a boundary only pays
+// when frames really match the note they move into, not by spreading a scoop or a
+// silence over a longer slot) — plus, after a rest, the time the note was sung in that
+// rest just before its slot (an early entry, which no slot would notice otherwise). A note
+// held on into the rest after it is just phrasing, not lateness: not charged.
 function slotCost(n, p, frames, s, e) {
   const at = (t) => lowerBound(frames, t, p.lo, p.hi);
   const matched = (i0, i1) => p.match[i1 - p.lo] - p.match[i0 - p.lo];
   const i0 = at(s), i1 = at(e);
   const count = i1 - i0;
-  let c = count < 2 ? n.d : n.d * (1 - matched(i0, i1) / count);
+  let c = count < 2 ? Math.max(0, e - s) : (count - matched(i0, i1)) * p.dt;
   if (n.restBefore) c += matched(at(s - Math.min(MAX_SHIFT, n.restBefore)), i0) * p.dt;
-  if (n.restAfter) c += matched(i1, at(e + Math.min(MAX_SHIFT, n.restAfter))) * p.dt;
   return c;
 }
 
@@ -113,6 +123,24 @@ function withRests(notes) {
   });
 }
 
+// What counts as "loud" (singing, even without a clear pitch): above the pitch detector's
+// gate and well above the room's noise — ×2.5 (≈ 8 dB) the quietest quarter second of the
+// take (median rms; a breath or the count-in is the room) — else a fan or traffic would
+// turn every skipped note "unclear", which isn't counted against you.
+export function loudGate(frames, base) {
+  if (frames.length < 10) return base;
+  const span = frames[frames.length - 1].t - frames[0].t;
+  const per = Math.max(3, Math.round((0.25 * (frames.length - 1)) / Math.max(span, 1e-3))); // frames in 0.25 s
+  let floor = Infinity;
+  for (let i = 0; i + per <= frames.length; i += Math.max(1, per >> 2)) {
+    const w = [];
+    for (let k = i; k < i + per; k++) w.push(frames[k].rms ?? 0);
+    w.sort((a, b) => a - b);
+    floor = Math.min(floor, w[w.length >> 1]);
+  }
+  return Number.isFinite(floor) ? Math.max(base, 2.5 * floor) : base;
+}
+
 // Notes the take reached: those whose first half it covered.
 const reached = (notes, endT) => {
   let k = 0;
@@ -124,6 +152,7 @@ const reached = (notes, endT) => {
 // Returns one grade per note: { status, hit, dev, octave, sungMidi, shift, from, to }.
 export function gradeTake(notes, frames, { endT = Infinity, gate = 0.012 } = {}) {
   notes = withRests(notes);
+  gate = loudGate(frames, gate);
   const N = reached(notes, endT);
   const grades = notes.map(() => ({ status: "unsung" }));
   if (!N) return grades;
@@ -164,7 +193,12 @@ export function gradeTake(notes, frames, { endT = Infinity, gate = 0.012 } = {})
   for (let j = 0; j < N; j++) {
     const a = SHIFTS[ks[j]];
     const b = joined(notes, j) && j + 1 < N ? SHIFTS[ks[j + 1]] : a;
-    const [s, e] = slot(notes[j], a, b, endT);
+    // (A slot squeezed short may hold < 2 frames once its grace is cut: judge its whole
+    // span, else its written slot — a note the take reached is never "unsung".)
+    let [s, e] = slot(notes[j], a, b, endT);
+    const few = (s, e) => lowerBound(frames, e) - lowerBound(frames, s) < 2;
+    if (few(s, e)) [s, e] = span(notes[j], a, b, endT);
+    if (few(s, e)) [s, e] = span(notes[j], 0, 0, endT);
     grades[j] = judge(notes[j], frames, s, e, gate, { shift: +a.toFixed(2), from: notes[j].t + a, to: e });
   }
   return grades;
@@ -175,6 +209,7 @@ export function gradeTake(notes, frames, { endT = Infinity, gate = 0.012 } = {})
 // the end).
 export function gradeLive(notes, frames, j, { endT = Infinity, gate = 0.012 } = {}) {
   const n = withRests(notes)[j];
+  gate = loudGate(frames, gate);
   const [p] = prep([n], frames);
   let best = 0, bestC = Infinity;
   for (const a of SHIFTS) {
