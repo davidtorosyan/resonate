@@ -7,6 +7,7 @@ import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyN
 import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js";
 import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js";
 import { analyzeLines, workOn, lineDelta } from "./coach.js";
+import { knotsFromTaps, mergeKnots, makeTiming } from "./timing.js";
 import { startCapture, playVoice } from "./capture.js";
 import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.js";
 import { listSongs, getSong, addSong, removeSong, persistent } from "./library.js";
@@ -66,8 +67,9 @@ const K = {
   rate: "resonate.sing.rate",
   guide: "resonate.sing.guide",
   playMode: "resonate.sing.playMode",
-  history: "resonate.sing.history",
-  view: "resonate.sing.view",                  // while singing: "practice" (notes + pitch) or "perform" (lyrics only)            // { songId: [{ sig, at, pct, lines: [score | null] }] } — latest last
+  history: "resonate.sing.history",            // { songId: [{ sig, at, pct, lines: [score | null] }] } — latest last
+  view: "resonate.sing.view",                  // while singing: "practice" (notes + pitch) or "perform" (lyrics only)
+  timing: "resonate.sing.timing",              // { songId: { sig, segs: [[q, spq | null]], use } } — tapped along with a recording
 };
 const RATES = [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.25];
 
@@ -125,10 +127,44 @@ function secPerQuarter() {
   return 60 / (score.tempo * rate);
 }
 
+// Song time (s) of a position in quarter notes (performance order): the score's tempo ×
+// rate, or — when the song has a timing tapped along with a recording and it's chosen —
+// that timing (timing.js), also × rate (90% = a little slower than the recording).
+let tmap = null;      // makeTiming(...) of this song's tapped timing, or null
+let useMap = false;   // follow it
+const qToT = (q) => (useMap && tmap ? tmap.qToT(q) / rate : q * secPerQuarter());
+// Seconds per beat (the click's beat) at quarter q.
+const beatQ = () => 4 / score.beatType;
+const beatSecAt = (q) => qToT(q + beatQ()) - qToT(q);
+// Identifies the timing a take was sung to (a take's grades only hold for it).
+const timingSig = () => `${rate}|${useMap && tmap ? JSON.stringify(timingEntry()?.segs) : "steady"}`;
+
+function readTimingStore() {
+  try { return JSON.parse(recall(K.timing) || "{}") || {}; } catch { return {}; }
+}
+const timingKey = () => `${verseSelect.value || score?.verses[0] || "1"}|${score ? notesForVerse(score, verseSelect.value || score.verses[0] || "1").length : 0}`;
+// This song's tapped timing (for the current verse's notes), if any.
+function timingEntry() {
+  const e = readTimingStore()[songId];
+  return e && e.sig === timingKey() ? e : null;
+}
+function loadTiming() {
+  const e = timingEntry();
+  tmap = e ? makeTiming(e.segs) : null;
+  useMap = !!(tmap && e.use);
+}
+function saveTiming(segs, use) {
+  const all = readTimingStore();
+  if (segs) all[songId] = { sig: timingKey(), segs, use };
+  else delete all[songId];
+  store(K.timing, JSON.stringify(all));
+  loadTiming();
+}
+
 function applySong() {
   stopKeys();
   const verse = verseSelect.value || score.verses[0] || "1";
-  const spq = secPerQuarter();
+  loadTiming();
   // Transpose like a notation editor: new key with the fewest accidentals, every note
   // moved by the interval (so spelled right in that key), not just its MIDI number.
   // Fitting may also move whole phrases by octaves (same key, so same spelling rules).
@@ -139,8 +175,10 @@ function applySong() {
   notes = notesForVerse(score, verse).map((n, i) => ({
     midi: n.midi + shifts[i],
     name: spellTransposed(n, shifts[i], transposeKey(score.fifths, shifts[i]).steps, flats).name,
-    t: n.onset * spq,
-    d: n.dur * spq,
+    q: n.onset,
+    dq: n.dur,
+    t: qToT(n.onset),
+    d: qToT(n.onset + n.dur) - qToT(n.onset),
     text: n.text,
     syllabic: n.syllabic,
     melisma: n.melisma,
@@ -154,13 +192,13 @@ function applySong() {
   range = { lo: Math.min(...mids) - 4, hi: Math.max(...mids) + 4 };
   fillTempoOptions();
   fillKeyOptions();
-  if (take && (take.shiftSig !== shiftSig || take.rate !== rate || take.verse !== verse)) take = null; // grades no longer apply
+  if (take && (take.shiftSig !== shiftSig || take.timing !== timingSig() || take.verse !== verse)) take = null; // grades no longer apply
   if (!take) { reviewRows = []; closeReview(); }
   // Start at the bar containing the first note, not at bar 1 — songs with a
   // long piano intro would otherwise mean a long wait before singing.
   entryIdx = 0;
-  if (notes.length) score.measures.forEach((m, i) => { if (m * spq <= notes[0].t + 1e-6) entryIdx = i; });
-  entryT = (score.measures[entryIdx] ?? 0) * spq;
+  if (notes.length) score.measures.forEach((m, i) => { if (m <= notes[0].q + 1e-6) entryIdx = i; });
+  entryT = qToT(score.measures[entryIdx] ?? 0);
   shownLine = -1; // force the lyric line to redraw for the new song
   lastChip = -1;
   scrollT = entryT;
@@ -171,13 +209,33 @@ function applySong() {
 const lowest = () => notes.reduce((a, n) => (n.midi < a.midi ? n : a));
 const highest = () => notes.reduce((a, n) => (n.midi > a.midi ? n : a));
 
+// The tempo menu: the timing tapped along with a recording (if any) at a few speeds,
+// steady tempos, and the ways to set one by tapping.
+const MAP_RATES = [1, 0.9, 0.8, 0.7];
 function fillTempoOptions() {
   tempoSelect.textContent = "";
-  for (const r of RATES) {
-    const bpm = Math.round(score.tempo * r);
-    tempoSelect.add(new Option(`♩=${bpm}${r === 1 ? "" : ` (${Math.round(r * 100)}%)`}`, String(r)));
+  const group = (label) => {
+    const g = document.createElement("optgroup");
+    g.label = label;
+    tempoSelect.append(g);
+    return g;
+  };
+  if (tmap) {
+    const g = group("Recording's timing (tapped)");
+    const rs = !useMap || MAP_RATES.includes(rate) ? MAP_RATES : [...MAP_RATES, rate].sort((a, b) => b - a);
+    for (const r of rs) g.append(new Option(r === 1 ? "Tapped" : `Tapped · ${Math.round(r * 100)}%`, `m:${r}`));
   }
-  tempoSelect.value = String(rate);
+  const g = tmap ? group("Steady tempo") : tempoSelect;
+  const rs = useMap || RATES.includes(rate) ? RATES : [...RATES, rate].sort((a, b) => a - b);
+  for (const r of rs) {
+    const bpm = Math.round(score.tempo * r);
+    g.append(new Option(`♩=${bpm}${r === 1 ? "" : RATES.includes(r) ? ` (${Math.round(r * 100)}%)` : " (yours)"}`, `r:${r}`));
+  }
+  const t = group("Set the tempo");
+  t.append(new Option("Tap the beat…", "tap"));
+  t.append(new Option("Tap along with a recording…", "tapmap"));
+  if (tmap) t.append(new Option("Forget the tapped timing", "clearmap"));
+  tempoSelect.value = `${useMap ? "m" : "r"}:${rate}`;
 }
 
 // Semitones per score note: the whole-song transposition, or a key split by phrase
@@ -523,12 +581,11 @@ function countInBeats() {
 
 // Every beat of the song: [{ t (s), accent }]
 function beatGrid() {
-  const spq = secPerQuarter();
-  const beatQ = 4 / score.beatType;
+  const bq = beatQ();
   const out = [];
   score.measures.forEach((m, i) => {
     const end = score.measures[i + 1] ?? score.length;
-    for (let q = m; q < end - 1e-6; q += beatQ) out.push({ t: q * spq, accent: q === m && i > 0 });
+    for (let q = m; q < end - 1e-6; q += bq) out.push({ t: qToT(q), accent: q === m && i > 0 });
   });
   return out;
 }
@@ -580,7 +637,8 @@ async function beginSing(part) {
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
 
   const nodes = [];
-  const beatSec = (4 / score.beatType) * secPerQuarter();
+  const startQ = part ? part.fromQ : score.measures[entryIdx] ?? 0;
+  const beatSec = beatSecAt(startQ); // the count-in's pace: the song's at its start
   const start = part ? part.from : entryT;
   const end = part ? part.until : songEnd + END_PAD;
   const [j0, j1] = part ? part.range : [0, notes.length];
@@ -594,10 +652,10 @@ async function beginSing(part) {
   // The singer follows what they hear (output latency); the mic hears them
   // late (input latency); a pitch frame lags its audio (analysis window).
   const latency = (ac.outputLatency || ac.baseLatency || 0) + INPUT_LATENCY;
-  take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, rate, verse: verseSelect.value || score.verses[0] || "1", octave: 0, range: [j0, j1], part: !!part };
+  take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, timing: timingSig(), rate, verse: verseSelect.value || score.verses[0] || "1", octave: 0, range: [j0, j1], part: !!part };
   let endRes;
   const ended = new Promise((r) => { endRes = r; });
-  session = { kind: "sing", ac, nodes, songT0, latency, mic, capture, wakeLock, raf: null, part, start, ended, endRes };
+  session = { kind: "sing", ac, nodes, songT0, latency, mic, capture, wakeLock, raf: null, part, start, beatSec, ended, endRes };
   stopKeys(); // a key pressed while the mic was opening
   singBtn.disabled = false;
   updateButtons();
@@ -866,8 +924,7 @@ function renderLyrics(t) {
   const counting = perform && nowT < entryT;
   if (countinEl.hidden === counting) countinEl.hidden = !counting;
   if (counting) {
-    const beatSec = (4 / score.beatType) * secPerQuarter();
-    const left = String(Math.max(1, Math.ceil((entryT - nowT) / beatSec)));
+    const left = String(Math.max(1, Math.ceil((entryT - nowT) / session.beatSec)));
     if (countinEl.textContent !== left) countinEl.textContent = left;
   }
   const cur = session ? noteAt(t) : preview ? preview.j : -1;
@@ -1105,7 +1162,7 @@ chipsEl.addEventListener("scroll", () => { lastChipScroll = performance.now(); }
 // the audio session is left alone (not "playback"), so other apps' music isn't stopped
 // before a note actually plays. The piano starts loading too.
 function unlockPlay(e) {
-  if (!e.isTrusted || session?.kind === "sing" || e.target.closest?.("#sing")) return;
+  if (!e.isTrusted || session?.kind === "sing" || e.target.closest?.("#sing, #tapalong, #taptempo")) return;
   for (const t of ["pointerup", "keydown"]) document.removeEventListener(t, unlockPlay, true);
   if (!playCtx || playCtx.state === "closed") playCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (playCtx.state !== "running") playCtx.resume().catch(() => {});
@@ -1329,9 +1386,8 @@ function startLoop(li) {
   stopKeys();
   const js = lines[li];
   const j0 = js[0], j1 = js[js.length - 1] + 1;
-  const spq = secPerQuarter();
   let m = 0;
-  score.measures.forEach((q, i) => { if (q * spq <= notes[j0].t + 1e-6) m = i; });
+  score.measures.forEach((q, i) => { if (q <= notes[j0].q + 1e-6) m = i; });
   const last = notes[j1 - 1];
   // In the tap: the mic's context is made for recording, then the playback context
   // starts (getPlayCtx, in startPlay) — so later rounds can start both without a tap.
@@ -1339,7 +1395,7 @@ function startLoop(li) {
   const ac = new (window.AudioContext || window.webkitAudioContext)();
   ac.resume().catch(() => {});
   drill = {
-    li, range: [j0, j1], from: score.measures[m] * spq, until: last.t + last.d + MAX_SHIFT + 0.3,
+    li, range: [j0, j1], from: qToT(score.measures[m]), fromQ: score.measures[m], until: last.t + last.d + MAX_SHIFT + 0.3,
     token: {}, round: 0, scores: [], phase: "", last: null, savedTake: take?.part ? drill?.savedTake ?? null : take, ac,
   };
   showMsg("");
@@ -1362,7 +1418,7 @@ async function runLoop(d) {
     if (!alive()) return;
     d.phase = "sing";
     renderLoop();
-    await startSing({ from: d.from, until: d.until, range: d.range, ac: d.ac, token: d.token });
+    await startSing({ from: d.from, fromQ: d.fromQ, until: d.until, range: d.range, ac: d.ac, token: d.token });
     if (!alive()) return;
     const t = await session?.ended;
     if (!alive() || !t) return;
@@ -1596,14 +1652,14 @@ reviewEl.addEventListener("click", (e) => { if (e.target === reviewEl) closeRevi
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (!reviewEl.hidden) closeReview();
-  optionsEl.hidden = true;
+  for (const id of ["options", "taptempo", "tapalong"]) $(id).hidden = true;
 });
 
 function renderSummary() {
   if (!take || take.endT === null) {
     scorePctEl.textContent = "";
     summaryEl.textContent = score
-      ? `${score.title.toUpperCase()} · ${score.beats}/${score.beatType} · ♩=${Math.round(score.tempo * rate)}${score.tempoFromScore ? "" : " (no tempo in score)"}${notes.length ? ` · ${lowest().name}–${highest().name}` : ""}`
+      ? `${score.title.toUpperCase()} · ${score.beats}/${score.beatType} · ${useMap && tmap ? `TAPPED TIMING ♩≈${Math.round(60 / (tmap.avg / rate))}` : `♩=${Math.round(score.tempo * rate)}${score.tempoFromScore ? "" : " (no tempo in score)"}`}${notes.length ? ` · ${lowest().name}–${highest().name}` : ""}`
       : "";
     return;
   }
@@ -1710,10 +1766,9 @@ function renderLane() {
   ctx.clip();
 
   // Bar lines.
-  const spq = secPerQuarter();
   ctx.fillStyle = "rgba(255,255,255,0.09)";
   for (const m of score.measures) {
-    const t = m * spq;
+    const t = qToT(m);
     if (t >= tMin && t <= tMax) ctx.fillRect(xOf(t), 0, 1, h);
   }
 
@@ -1821,9 +1876,8 @@ function renderLane() {
   ctx.restore();
 
   // Count-in overlay.
-  if (session?.kind === "sing" && nowT < entryT) {
-    const beatSec = (4 / score.beatType) * spq;
-    const left = Math.ceil((entryT - nowT) / beatSec);
+  if (session?.kind === "sing" && nowT < session.start) {
+    const left = Math.max(1, Math.ceil((session.start - nowT) / session.beatSec));
     ctx.fillStyle = "rgba(255,230,160,0.9)";
     ctx.font = "800 44px system-ui, sans-serif";
     ctx.textAlign = "center";
@@ -1925,10 +1979,153 @@ keySelect.addEventListener("change", () => {
   if (typeof transpose === "number") profile?.range ? showFitMsg() : showMsg("");
 });
 tempoSelect.addEventListener("change", () => {
-  rate = Number(tempoSelect.value);
+  const v = tempoSelect.value;
+  if (v === "tap" || v === "tapmap" || v === "clearmap") {
+    fillTempoOptions(); // the menu shows the current choice again
+    if (v === "tap") openTapTempo();
+    else if (v === "tapmap") openTapAlong();
+    else if (confirm("Forget the timing you tapped for this song?")) {
+      saveTiming(null);
+      stopSession();
+      applySong();
+    }
+    return;
+  }
+  const [kind, r] = v.split(":");
+  setTiming(Number(r), kind === "m");
+});
+
+// Choose a speed (× the score's tempo, or × the tapped timing).
+function setTiming(r, map) {
+  rate = r;
   store(K.rate, String(rate));
+  const e = timingEntry();
+  if (e) saveTiming(e.segs, map);
   stopSession();
   applySong();
+}
+
+// ---------------------------------------------------------------------------
+// Tap the beat: a steady tempo from taps (the median of the last few intervals). The beat
+// is the meter's: a dotted quarter in 6/8, 9/8, 12/8, else the time signature's unit.
+
+const tapQ = () => (score.beatType === 8 && score.beats % 3 === 0 ? 1.5 : beatQ());
+const unitGlyph = (q) => ({ 0.5: "♪", 1: "♩", 1.5: "♩.", 2: "𝅗𝅥" })[q] || "♩";
+let tapTimes = [];
+let tappedBpm = null; // quarter notes per minute
+
+function openTapTempo() {
+  tapTimes = [];
+  tappedBpm = null;
+  $("tt-bpm").textContent = "—";
+  $("tt-use").disabled = true;
+  $("taptempo").hidden = false;
+}
+$("tt-pad").addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  const now = performance.now() / 1000;
+  if (tapTimes.length && now - tapTimes[tapTimes.length - 1] > 2.5) tapTimes = []; // a pause: start over
+  tapTimes.push(now);
+  tapTimes = tapTimes.slice(-12);
+  if (tapTimes.length < 4) {
+    $("tt-bpm").textContent = `${4 - tapTimes.length} more…`;
+    return;
+  }
+  const gaps = tapTimes.slice(1).map((t, i) => t - tapTimes[i]);
+  const beat = median(gaps);
+  tappedBpm = (60 / beat) * tapQ();
+  $("tt-bpm").textContent = `${unitGlyph(tapQ())} = ${Math.round(60 / beat)}`;
+  $("tt-use").disabled = false;
+});
+$("tt-use").addEventListener("click", () => {
+  if (!tappedBpm) return;
+  $("taptempo").hidden = true;
+  setTiming(Math.round((tappedBpm / score.tempo) * 1000) / 1000, false);
+  showMsg(`Tempo set to ♩=${Math.round(tappedBpm)}.`, "ok");
+});
+$("tt-close").addEventListener("click", () => { $("taptempo").hidden = true; });
+
+// ---------------------------------------------------------------------------
+// Tap along with a recording (timing.js): while the song plays elsewhere, tap each
+// syllable (or each line's first one) as it's sung; the taps become this song's timing.
+// The page makes no sound meanwhile (other apps' audio isn't interrupted).
+
+let tapAlong = null; // { mode, startLine, targets: [note index], taps: [{ q, t }] }
+
+function openTapAlong() {
+  stopKeys();
+  stopSession();
+  if (playCtx && playCtx.state === "running") playCtx.suspend().catch(() => {});
+  tapAlong = { mode: tapAlong?.mode || "words", startLine: Math.max(0, shownLine), targets: [], taps: [] };
+  prepTapAlong();
+  $("tapalong").hidden = false;
+}
+
+function prepTapAlong() {
+  const a = tapAlong;
+  const first = lines[a.startLine]?.[0] ?? 0;
+  const words = score.verses.length > 0;
+  a.targets = a.mode === "lines"
+    ? lines.slice(a.startLine).map((l) => l.find((j) => !notes[j].melisma) ?? l[0])
+    : notes.map((_, j) => j).filter((j) => j >= first && !notes[j].melisma && (!words || notes[j].text));
+  a.taps = [];
+  renderTapAlong();
+}
+
+function renderTapAlong() {
+  const a = tapAlong;
+  for (const b of $("ta-mode").querySelectorAll("button")) b.dataset.active = b.dataset.mode === a.mode ? "true" : "false";
+  $("ta-start").textContent = `Start at line ${a.startLine + 1} of ${lines.length}`;
+  const next = a.targets[a.taps.length];
+  const li = next === undefined ? lines.length - 1 : lineOf[next];
+  const nowEl = $("ta-now");
+  nowEl.textContent = "";
+  for (const i of lines[li] || []) {
+    const t = sylText(notes[i], i);
+    if (!t) continue;
+    const span = document.createElement("span");
+    span.textContent = t;
+    const k = a.targets.indexOf(i);
+    span.dataset.s = i === next ? "next" : k >= 0 && k < a.taps.length ? "done" : "";
+    nowEl.append(span);
+  }
+  $("ta-next").textContent = lineText(li + 1);
+  $("ta-count").textContent = next === undefined ? `all ${a.taps.length} tapped` : `${a.taps.length} / ${a.targets.length}`;
+  $("ta-save").disabled = a.taps.length < 4;
+  $("ta-undo").disabled = !a.taps.length;
+  $("ta-prevline").disabled = a.startLine <= 0;
+  $("ta-nextline").disabled = a.startLine >= lines.length - 1;
+}
+
+function tapAlongTap() {
+  const a = tapAlong;
+  if (!a || a.taps.length >= a.targets.length) return;
+  a.taps.push({ q: notes[a.targets[a.taps.length]].q, t: performance.now() / 1000 });
+  renderTapAlong();
+}
+$("ta-pad").addEventListener("pointerdown", (e) => { e.preventDefault(); tapAlongTap(); });
+$("ta-pad").addEventListener("click", (e) => { if (e.detail === 0) tapAlongTap(); }); // keyboard
+$("ta-undo").addEventListener("click", () => { tapAlong.taps.pop(); renderTapAlong(); });
+$("ta-prevline").addEventListener("click", () => { tapAlong.startLine--; prepTapAlong(); });
+$("ta-nextline").addEventListener("click", () => { tapAlong.startLine++; prepTapAlong(); });
+$("ta-mode").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-mode]");
+  if (!b) return;
+  tapAlong.mode = b.dataset.mode;
+  prepTapAlong();
+});
+$("ta-close").addEventListener("click", () => { $("tapalong").hidden = true; });
+$("ta-save").addEventListener("click", () => {
+  const knots = knotsFromTaps(tapAlong.taps);
+  if (knots.length < 4) return;
+  const segs = mergeKnots(timingEntry()?.segs || [], knots);
+  rate = 1;
+  store(K.rate, "1");
+  saveTiming(segs, true);
+  $("tapalong").hidden = true;
+  stopSession();
+  applySong();
+  showMsg("Timing saved — the clicks, Listen and grading follow the recording now. The tempo menu switches back to a steady tempo, or slows the tapped timing down.", "ok");
 });
 guideSelect.addEventListener("change", () => {
   guide = guideSelect.value;
@@ -2070,4 +2267,4 @@ if (!navigator.mediaDevices?.getUserMedia) {
 
 // Debug hook for automated tests / devtools.
 window.resonateDebug = () => ({ score, notes, lines, take, session: session && { kind: session.kind, line: session.line, mode: session.mode }, nowT, scrollT, practiceJ, reviewRows,
-  monitor: mon && { listening: !!mon.stream, opening: mon.opening, ctx: mon.micCtx.state }, you: currentYou() });
+  monitor: mon && { listening: !!mon.stream, opening: mon.opening, ctx: mon.micCtx.state }, you: currentYou(), tapTargets: tapAlong?.targets });
