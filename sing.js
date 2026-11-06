@@ -2,18 +2,18 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js";
-import { analyzeLines, workOn, lineDelta } from "./coach.js";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js";
-import { startCapture, playVoice } from "./capture.js";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.js";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js";
-import { fixOmrScore } from "./omr/fixscore.js";
-import { activeProfile } from "./profiles.js";
-import { fitOptions, fitKey, fitToRange } from "./fit.js";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=55";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=55";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=55";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=55";
+import { analyzeLines, workOn, lineDelta } from "./coach.js?v=55";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=55";
+import { startCapture, playVoice } from "./capture.js?v=55";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.js?v=55";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=55";
+import { fixOmrScore } from "./omr/fixscore.js?v=55";
+import { activeProfile } from "./profiles.js?v=55";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=55";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
