@@ -6,6 +6,7 @@ import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./music
 import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js";
 import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js";
 import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js";
+import { analyzeLines, workOn, lineDelta } from "./coach.js";
 import { startCapture, playVoice } from "./capture.js";
 import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.js";
 import { listSongs, getSong, addSong, removeSong, persistent } from "./library.js";
@@ -45,6 +46,8 @@ const youEl = $("you");
 const youNoteEl = $("you-note");
 const youCentsEl = $("you-cents");
 const youVsEl = $("you-vs");
+const reviewEl = $("review");
+const reviewBtn = $("review-btn");
 
 const SAMPLES = { "amazing-grace": { title: "Amazing Grace", url: "songs/amazing-grace.musicxml" } };
 const K = {
@@ -57,6 +60,7 @@ const K = {
   rate: "resonate.sing.rate",
   guide: "resonate.sing.guide",
   playMode: "resonate.sing.playMode",
+  history: "resonate.sing.history",            // { songId: [{ sig, at, pct, lines: [score | null] }] } — latest last
 };
 const RATES = [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.25];
 
@@ -142,7 +146,8 @@ function applySong() {
   range = { lo: Math.min(...mids) - 4, hi: Math.max(...mids) + 4 };
   fillTempoOptions();
   fillKeyOptions();
-  if (take && (take.shiftSig !== shiftSig || take.rate !== rate)) take = null; // grades no longer apply
+  if (take && (take.shiftSig !== shiftSig || take.rate !== rate || take.verse !== verse)) take = null; // grades no longer apply
+  if (!take) { reviewRows = []; closeReview(); }
   // Start at the bar containing the first note, not at bar 1 — songs with a
   // long piano intro would otherwise mean a long wait before singing.
   entryIdx = 0;
@@ -532,6 +537,8 @@ async function startSing() {
 }
 
 async function beginSing() {
+  closeReview();
+  reviewRows = [];
   stopKeys();
   stopSession();
   take = null;
@@ -569,7 +576,7 @@ async function beginSing() {
   // The singer follows what they hear (output latency); the mic hears them
   // late (input latency); a pitch frame lags its audio (analysis window).
   const latency = (ac.outputLatency || ac.baseLatency || 0) + INPUT_LATENCY;
-  take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, rate, octave: 0 };
+  take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, rate, verse: verseSelect.value || score.verses[0] || "1", octave: 0 };
   session = { kind: "sing", ac, nodes, songT0, latency, mic, capture, wakeLock, raf: null };
   stopKeys(); // a key pressed while the mic was opening
   singBtn.disabled = false;
@@ -659,6 +666,8 @@ async function stopSing() {
   renderAll();
   chipsEl.scrollTop = 0;
   monitorSync(MON_RESUME);
+  recordTake();
+  openReview();
 }
 
 // ---------------------------------------------------------------------------
@@ -674,20 +683,22 @@ async function getPlayCtx() {
 }
 
 // kind: "listen" (melody) or "playback" (per playMode).
-async function startPlay(kind, from) {
+// opts: { mode (voice / melody / both, instead of the play mode), until (s), line (review row) }
+async function startPlay(kind, from, opts = {}) {
   starting = "play";
   monitorSync();
-  try { await beginPlay(kind, from); } finally { starting = null; monitorSync(MON_RESUME); }
+  try { await beginPlay(kind, from, opts); } finally { starting = null; monitorSync(MON_RESUME); }
 }
 
-async function beginPlay(kind, from) {
+async function beginPlay(kind, from, opts) {
   stopKeys();
   stopSession();
   const ac = await getPlayCtx();
-  const end = kind === "playback" && take ? Math.max(take.endT ?? songEnd, 0) : songEnd;
+  const mode = opts.mode ?? playMode;
+  const end = opts.until ?? (kind === "playback" && take ? Math.max(take.endT ?? songEnd, 0) : songEnd);
   if (from >= end - 0.05 || from < entryT - 1) from = entryT;
-  const wantMelody = kind === "listen" || playMode !== "voice" || !take?.voice;
-  const wantVoice = kind === "playback" && take?.voice && playMode !== "melody";
+  const wantMelody = kind === "listen" || mode !== "voice" || !take?.voice;
+  const wantVoice = kind === "playback" && take?.voice && mode !== "melody";
   let piano = null;
   if (wantMelody) {
     if (!pianoReady(ac)) {
@@ -702,13 +713,13 @@ async function beginPlay(kind, from) {
   const songT0 = start - from;
   if (piano) {
     for (const n of notes) {
-      if (n.t + n.d <= from) continue;
+      if (n.t + n.d <= from || n.t >= end) continue;
       const st = Math.max(n.t, from);
       playPiano(ac, piano, songT0 + st, n.t + n.d - st, n.midi, wantVoice ? 0.8 : 1.4, nodes);
     }
   }
   if (wantVoice) playVoice(ac, take.voice, start, from, nodes);
-  session = { kind, ac, nodes, songT0, raf: null, end };
+  session = { kind, ac, nodes, songT0, raf: null, end, line: opts.line ?? null, mode };
   stopKeys(); // a key that started while this was loading
   updateButtons();
   const loop = () => {
@@ -1237,6 +1248,167 @@ monitorBtn.addEventListener("click", () => {
   renderLane();
 });
 
+// ---------------------------------------------------------------------------
+// Review (coach.js): after a take, the lines worth working on — with what went wrong in
+// plain words — then every line; each can be heard (your take / the melody / both) or
+// shown on the lane. Scores are compared with the previous take of the same song.
+
+let reviewRows = [];
+
+const lineText = (li) => (lines[li] || []).map((i) => sylText(notes[i], i)).join("").trim();
+const tuneOf = (x) => (x === null ? "none" : x >= 0.85 ? "good" : x >= 0.6 ? "ok" : "off");
+const pctText = (x) => (x === null ? "?" : `${Math.round(x * 100)}%`);
+const historySig = () => `${verseSelect.value || "1"}|${notes.length}|${lines.length}`;
+
+const analyzeTake = () => analyzeLines(notes, lines, take.grades, { text: lineText, name: noteName, lead: timingLead() });
+// The take's steady lead (s, − = early), when it's big enough to mention.
+const timingLead = () => { const t = timingTendency(take.grades); return Math.abs(t) >= 0.08 ? t : 0; };
+
+function readHistory() {
+  try { return JSON.parse(recall(K.history) || "{}") || {}; } catch { return {}; }
+}
+
+// This take's scores go into the song's history (the last 10 takes).
+function recordTake() {
+  if (!take || take.endT === null || !songId) return;
+  const pct = takeScore(notes, take.grades);
+  if (pct === null) return;
+  reviewRows = analyzeTake();
+  const all = readHistory();
+  const list = (all[songId] || []).filter((h) => h.sig === historySig());
+  take.prev = list[list.length - 1] || null;
+  list.push({ sig: historySig(), at: Date.now(), pct, lines: lines.map((_, li) => reviewRows.find((r) => r.li === li)?.score ?? null) });
+  all[songId] = list.slice(-10);
+  store(K.history, JSON.stringify(all));
+}
+
+function openReview() {
+  if (!take || take.endT === null) return;
+  if (!reviewRows.length) reviewRows = analyzeTake();
+  if (!reviewRows.length) return;
+  renderReview();
+  reviewEl.hidden = false;
+  reviewEl.querySelector(".sheet").scrollTop = 0;
+}
+
+function closeReview() {
+  reviewEl.hidden = true;
+}
+
+function renderReview() {
+  const pct = takeScore(notes, take.grades);
+  $("rv-pct").textContent = pctText(pct);
+  const d = take.prev && pct !== null ? Math.round((pct - take.prev.pct) * 100) : null;
+  const dEl = $("rv-delta");
+  dEl.textContent = d === null ? "First take of this song" : d === 0 ? "Same as last take" : `${d > 0 ? "▲" : "▼"} ${Math.abs(d)} from last take (${pctText(take.prev.pct)})`;
+  dEl.dataset.dir = d > 0 ? "up" : d < 0 ? "down" : "";
+  $("rv-sum").textContent = summaryEl.textContent;
+  const lead = timingLead();
+  const tip = $("rv-tip");
+  tip.hidden = Math.abs(lead) < 0.1;
+  tip.textContent = lead < 0
+    ? `You sang about ${Math.abs(lead).toFixed(2)} s ahead of the beat all the way through — let the click lead, and wait for it.`
+    : `You sang about ${lead.toFixed(2)} s behind the beat all the way through — come in right with the click.`;
+  const work = workOn(reviewRows);
+  const workEl = $("rv-work"), linesEl = $("rv-lines");
+  workEl.textContent = linesEl.textContent = "";
+  if (!work.length) {
+    const p = document.createElement("p");
+    p.className = "rv-empty";
+    p.textContent = "Nothing stands out — every line went well. Try it a little faster next time.";
+    workEl.append(p);
+  }
+  for (const r of work) workEl.append(reviewLine(r, true));
+  for (const r of reviewRows) linesEl.append(reviewLine(r, false));
+  showReviewPlaying();
+}
+
+function reviewLine(r, full) {
+  const el = document.createElement("div");
+  el.className = `rv-line${full ? " work" : ""}`;
+  el.dataset.li = r.li;
+  const top = document.createElement("div");
+  top.className = "rv-top";
+  const sc = document.createElement("span");
+  sc.className = "rv-score";
+  sc.dataset.tune = tuneOf(r.score);
+  sc.textContent = pctText(r.score);
+  const tx = document.createElement("button");
+  tx.type = "button";
+  tx.className = "rv-text";
+  tx.textContent = r.text || "…";
+  tx.title = "Show this line on the lane";
+  tx.addEventListener("click", () => showLine(r));
+  top.append(sc, tx);
+  const delta = lineDelta(take.prev, r);
+  if (delta !== null && Math.abs(delta) >= 0.05) {
+    const dd = document.createElement("span");
+    dd.className = "rv-d";
+    dd.dataset.dir = delta > 0 ? "up" : "down";
+    dd.textContent = `${delta > 0 ? "▲" : "▼"}${Math.round(Math.abs(delta) * 100)}`;
+    dd.title = "Compared with the previous take";
+    top.append(dd);
+  }
+  el.append(top);
+  const reasons = full ? r.reasons : r.reasons.slice(0, 1);
+  if (reasons.length) {
+    const ul = document.createElement("ul");
+    ul.className = "rv-why";
+    for (const x of reasons) {
+      const li = document.createElement("li");
+      li.textContent = x.text;
+      ul.append(li);
+    }
+    el.append(ul);
+  }
+  const btns = document.createElement("div");
+  btns.className = "rv-btns";
+  for (const [mode, label] of full ? [["voice", "▶ You"], ["melody", "▶ Melody"], ["both", "▶ Both"]] : [["voice", "▶ You"], ["melody", "▶ Melody"]]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.dataset.mode = mode;
+    b.dataset.label = label;
+    b.textContent = label;
+    if (mode !== "melody" && !take.voice) b.disabled = true;
+    b.addEventListener("click", () => playLine(r, mode));
+    btns.append(b);
+  }
+  el.append(btns);
+  return el;
+}
+
+// Hear a line: from just before it to just after it.
+function playLine(r, mode) {
+  if (session?.line === r.li && session.mode === mode) return stopSession();
+  startPlay("playback", Math.max(0, r.from - 0.4), { mode, until: r.to + 0.5, line: r.li });
+}
+
+// The review's play buttons follow what's playing.
+function showReviewPlaying() {
+  for (const el of reviewEl.querySelectorAll(".rv-line")) {
+    const on = session && session.line === Number(el.dataset.li);
+    el.dataset.playing = on ? "true" : "false";
+    for (const b of el.querySelectorAll("button[data-mode]")) {
+      const active = on && session.mode === b.dataset.mode;
+      b.dataset.on = active ? "true" : "false";
+      b.textContent = active ? "■ Stop" : b.dataset.label;
+    }
+  }
+}
+
+// Close the review on the lane at this line.
+function showLine(r) {
+  closeReview();
+  if (session) stopSession();
+  scrollT = Math.max(-1, r.from - 0.5);
+  renderAll();
+}
+
+reviewBtn.addEventListener("click", openReview);
+$("rv-close").addEventListener("click", closeReview);
+reviewEl.addEventListener("click", (e) => { if (e.target === reviewEl) closeReview(); }); // the dimmed backdrop
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !reviewEl.hidden) closeReview(); });
+
 function renderSummary() {
   if (!take || take.endT === null) {
     scorePctEl.textContent = "";
@@ -1258,7 +1430,7 @@ function renderSummary() {
   if (c("unclear")) t += ` · ${c("unclear")} UNCLEAR`;
   if (take.octave) t += take.octave < 0 ? " · SUNG 8VB" : " · SUNG 8VA";
   const lead = timingTendency(take.grades);
-  if (Math.abs(lead) >= 0.08) t += ` · ${lead < 0 ? "EARLY" : "LATE"} ~${Math.abs(lead).toFixed(2).replace(/^0/, "")} S`;
+  if (Math.abs(lead) >= 0.08) t += ` · ${lead < 0 ? "EARLY" : "LATE"} ~${Math.abs(lead).toFixed(2)} S`;
   summaryEl.textContent = t;
 }
 
@@ -1278,6 +1450,7 @@ function updateButtons() {
   }
   for (const el of [songSelect, verseSelect, keySelect, tempoSelect, guideSelect, openFileBtn, openLinkBtn, removeBtn, saveBtn]) el.disabled = kind === "sing";
   canvas.dataset.pannable = session ? "false" : "true";
+  if (!reviewEl.hidden) showReviewPlaying();
 }
 
 const TUNE = {
@@ -1699,5 +1872,5 @@ if (!navigator.mediaDevices?.getUserMedia) {
 })();
 
 // Debug hook for automated tests / devtools.
-window.resonateDebug = () => ({ score, notes, take, session: session && { kind: session.kind }, nowT, scrollT, practiceJ,
+window.resonateDebug = () => ({ score, notes, lines, take, session: session && { kind: session.kind, line: session.line, mode: session.mode }, nowT, scrollT, practiceJ, reviewRows,
   monitor: mon && { listening: !!mon.stream, opening: mon.opening, ctx: mon.micCtx.state }, you: currentYou() });
