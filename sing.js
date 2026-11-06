@@ -141,11 +141,10 @@ const qToT = (q) => (useMap && tmap ? tmap.qToT(q) / rate : q * secPerQuarter())
 const meterAt = (mi) => score.meters?.[mi] || [score.beats, score.beatType];
 const measureAt = (q) => { let m = 0; score.measures.forEach((x, i) => { if (x <= q + 1e-6) m = i; }); return m; };
 const beatQ = (mi = entryIdx) => 4 / meterAt(mi)[1];
-function beatSecAt(q, limit = score.length) {
-  const mi = measureAt(q);
-  const bq = beatQ(mi);
+function beatSecAt(q, limit = score.length, meter = meterAt(measureAt(q))) {
+  const bq = 4 / meter[1];
   if (!(useMap && tmap)) return qToT(q + bq) - qToT(q);
-  const bar = meterAt(mi)[0] * bq;
+  const bar = meter[0] * bq;
   const span = Math.min(2 * bar, limit - q);
   if (span < bar) return (tmap.avg / rate) * bq;
   return ((qToT(q + span) - qToT(q)) / span) * bq;
@@ -596,10 +595,17 @@ function focusNote(t) {
   return notes.length - 1;
 }
 
-// A bar of clicks in the meter where the singing starts (measure mi), plus the missing
-// beats when that bar is a pickup.
+// The count-in's meter: the one where the singing starts (measure mi) — or, when that bar
+// is a pickup, the next bar's (a pickup may still carry the old meter: a 4/4 intro, a beat
+// of pickup, then 3/4).
+function countInMeter(mi = entryIdx) {
+  const own = meterAt(mi);
+  const firstQ = (score.measures[mi + 1] ?? score.length) - score.measures[mi];
+  return firstQ < own[0] * (4 / own[1]) - 1e-6 ? meterAt(Math.min(mi + 1, score.measures.length - 1)) : own;
+}
+// A bar of clicks in that meter, plus the missing beats when the first bar is a pickup.
 function countInBeats(mi = entryIdx) {
-  const [beats, type] = meterAt(Math.min(mi + 1, score.measures.length - 1)); // (a pickup bar may show no time yet)
+  const [beats, type] = countInMeter(mi);
   const beatQ = 4 / type;
   const barQ = beats * beatQ;
   const firstQ = (score.measures[mi + 1] ?? score.length) - score.measures[mi];
@@ -674,13 +680,14 @@ async function beginSing(part) {
   const nodes = [];
   const startQ = part ? part.fromQ : score.measures[entryIdx] ?? 0;
   const lastQ = part ? notes[part.range[1] - 1].q + notes[part.range[1] - 1].dq : score.length;
-  const beatSec = beatSecAt(startQ, lastQ); // the count-in's pace: the song's at its start
+  const startM = part ? part.fromM : entryIdx;
+  const meter = part ? meterAt(startM) : countInMeter(startM); // one meter for the count-in's beats, pace and accents
+  const beatSec = beatSecAt(startQ, lastQ, meter); // the count-in's pace: the song's at its start
   const start = part ? part.from : entryT;
   const end = part ? part.until : songEnd + END_PAD;
   const [j0, j1] = part ? part.range : [0, notes.length];
-  const startM = part ? part.fromM : entryIdx;
-  const count = part ? meterAt(startM)[0] : countInBeats();
-  const barBeats = meterAt(Math.min(startM + 1, score.measures.length - 1))[0];
+  const count = part ? meter[0] : countInBeats();
+  const barBeats = meter[0];
   const t0 = ac.currentTime + 0.3;
   const songT0 = t0 + count * beatSec - start; // song time `start` sounds right after the count-in
   for (let k = 0; k < count; k++) playClick(ac, t0 + k * beatSec, k % barBeats === 0, nodes);
