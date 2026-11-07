@@ -2,19 +2,19 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=61";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=61";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=61";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=61";
-import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=61";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=61";
-import { startCapture, playVoice } from "./capture.js?v=61";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN } from "./piano.js?v=61";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=61";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=61";
-import { fixOmrScore } from "./omr/fixscore.js?v=61";
-import { activeProfile } from "./profiles.js?v=61";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=61";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=62";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=62";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=62";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=62";
+import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=62";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=62";
+import { startCapture, playVoice } from "./capture.js?v=62";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN } from "./piano.js?v=62";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=62";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=62";
+import { fixOmrScore } from "./omr/fixscore.js?v=62";
+import { activeProfile } from "./profiles.js?v=62";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=62";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");

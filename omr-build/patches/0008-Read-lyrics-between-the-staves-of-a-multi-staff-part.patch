@@ -1,0 +1,37 @@
+From 49b9690582041c4dfacb6aa6a36195bea69d1c4e Mon Sep 17 00:00:00 2001
+From: build <build@localhost>
+Date: Sat, 7 Nov 2026 21:16:19 +0000
+Subject: [PATCH] Read lyrics between the staves of a multi-staff part
+ (piano-vocal, tune in the right hand)
+
+---
+ .../main/java/org/audiveris/omr/text/TextRole.java  | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/app/src/main/java/org/audiveris/omr/text/TextRole.java b/app/src/main/java/org/audiveris/omr/text/TextRole.java
+index 4af2d4d..762b8dc 100644
+--- a/app/src/main/java/org/audiveris/omr/text/TextRole.java
++++ b/app/src/main/java/org/audiveris/omr/text/TextRole.java
+@@ -273,6 +273,19 @@ public enum TextRole
+                                 || ((partPosition == StaffPosition.ABOVE_STAVES) //
+                                         && switches.getValue(ProcessingSwitch.lyricsAboveStaff)))) {
+                     return Lyrics;
++                } else if (lyricsAllowed //
++                        && switches.getValue(ProcessingSwitch.lyrics)
++                        && (partPosition == StaffPosition.WITHIN_STAVES)
++                        && (part.getStaves().size() > 1)
++                        && !isMainlyItalic
++                        && !tinySentence
++                        && hasVowel
++                        && (line.getWords().size() >= 2)) {
++                    // Between the staves of a multi-staff part: a piano-vocal score with the
++                    // melody in the piano's right hand (no voice staff) prints the words there.
++                    // Directions there are short or italic ("sim.", "8va bassa throughout").
++                    // The line is then mapped to the staff above (same part: mapLyricLines).
++                    return Lyrics;
+                 } else if (!tinySentence) {
+                     return Direction;
+                 }
+-- 
+2.43.0
+

@@ -53,6 +53,13 @@ after a same-staff voice of chords of its duration, filling the measure exactly,
 measure ends one chord too long, and the page side (`public/omr/fixscore.js`) turns it into a 4:3 tuplet. Only chords that
 used to be dropped are affected.
 
+`0008` — **Lyrics between a part's staves.** `TextRole.guess` made text between two staves of the same part a Direction,
+never Lyrics. A piano/vocal arrangement with the tune in the piano's right hand prints the words exactly there (Musicnotes'
+"The Longest Time": 1 syllable exported out of ~300). A non-italic line of two or more words with vowels between the staves
+of a multi-staff part is now Lyrics; `mapLyricLines` already maps such a line to the staff above. Italic directions there
+("sim.", "8va bassa throughout") stay directions. Other test scores: the sung melody and its words identical; a stray
+syllable or two in a piano part, which the Sing page's parser never picks as the melody.
+
 `build.sh` applies the patches with `git am --keep-cr`: the upstream sources are CRLF.
 
 ## StripVolatile (applied to every jar)
