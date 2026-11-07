@@ -2,7 +2,7 @@
 // (a WebAssembly JVM) inside a Web Worker (omr-worker.js), with OCR by the
 // WebAssembly build of Tesseract (ocr-engine.js) in the same worker.
 //
-//   const omr = await import('./omr/omr.js?v=58');
+//   const omr = await import('./omr/omr.js?v=59');
 //   const { mxls, title, log } = await omr.convertPdf(file, { onProgress });
 //
 // The page must not run two conversions: Audiveris keeps global state, so the
@@ -10,7 +10,7 @@
 //
 // See omr/README.md for how the pieces are built and licensed.
 
-import { renderPdf, buildTiff } from './pdfprep.js?v=58';
+import { renderPdf, buildTiff } from './pdfprep.js?v=59';
 
 const BASE = new URL('.', import.meta.url).href;          // .../omr/
 
@@ -94,7 +94,7 @@ export function pdfTitle(pages, firstMusic) {
  *           log: string[] }.
  */
 export async function convertPdf(input, { onProgress, onLog } = {}) {
-  if (started) throw new Error('Audiveris already ran in this page — reload to convert another file.');
+  if (started) throw new Error('Already ran. Reload to convert another file.');
   started = true;
   const log = [];
   const addLog = (s) => { log.push(s); onLog?.(s); };
@@ -113,9 +113,8 @@ export async function convertPdf(input, { onProgress, onLog } = {}) {
   if (!music.length) {
     const blank = pages.every((p) => p.blank);
     throw new Error(blank
-      ? "This PDF's pages came out blank here (an image format the page renderer couldn't decode?) — " +
-        'send the log (Details → Copy log) so it can be fixed.'
-      : 'No music staves found in this PDF — is it sheet music? Scanned pages need to be reasonably sharp.');
+      ? 'The pages came out blank. Send the log (Details → Copy log).'
+      : 'No music staves found. Scans need to be sharp.');
   }
   const title = pdfTitle(pages, music[0].index);
   if (title) addLog(`title from the PDF's text: ${title}`);
@@ -128,7 +127,7 @@ export async function convertPdf(input, { onProgress, onLog } = {}) {
   onProgress?.({ phase: 'engine', fraction: 0 });
   const track = progressTracker(music.length, onProgress);
   const classpath = JARS.map((j) => `/app${new URL(`lib/${j}`, BASE).pathname}`).join(':');
-  const worker = new Worker(`${BASE}omr-worker.js?v=58`);
+  const worker = new Worker(`${BASE}omr-worker.js?v=59`);
   try {
     const mxls = await new Promise((resolve, reject) => {
       worker.onmessage = (e) => {
@@ -168,15 +167,13 @@ function failedSheets(log, pageOf) {
 
 function explain(err, log, pageOf) {
   if (log.some((l) => /Music font \S+ unusable/.test(l))) {
-    return new Error("The recognition engine couldn't draw music symbols in this browser (its music " +
-      "font failed to load), so it can't read the score. Reload and try again; if it keeps happening, " +
-      "try another browser, and send the log (Details → Copy log) so this can be fixed.");
+    return new Error("The music font didn't load in this browser. Reload and try again; if it recurs, " +
+      "try another browser and send the log (Details → Copy log).");
   }
   const failed = failedSheets(log, pageOf);
   if (failed.length && /without producing MusicXML/.test(err.message)) {
     const f = failed[0];
-    return new Error(`Audiveris couldn't read any page (page ${f.page} stopped at ${f.step}: ${f.reason}). ` +
-      "Details → Copy log has the full story.");
+    return new Error(`No page could be read (page ${f.page}, ${f.step}: ${f.reason}). Log: Details → Copy log.`);
   }
   return err;
 }

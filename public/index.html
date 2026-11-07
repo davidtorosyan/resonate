@@ -461,7 +461,7 @@
         <a class="page-link" href="record.html">Record</a>
         <a class="page-link" href="sing.html">Sing</a>
         <a class="page-link" href="tools.html">Tools</a>
-        <span id="version">v58</span>
+        <span id="version">v59</span>
         <span id="status">idle</span>
       </div>
     </header>
@@ -497,7 +497,7 @@
             <span id="volume-label">VOL<svg class="gear" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
           </button>
         </div>
-        <a id="profile-chip" href="voice.html" title="Voice profile: name, volume calibration and vocal range">Voice profile ›</a>
+        <a id="profile-chip" href="voice.html" title="Voice profile">Voice profile ›</a>
       </section>
       <canvas id="scope"></canvas>
     </main>
@@ -508,8 +508,7 @@
       <div class="cal-card" role="dialog" aria-modal="true" aria-labelledby="cal-title">
         <h2 id="cal-title">Calibrate your volume</h2>
         <p id="cal-instructions">
-          Hold a pad and sustain a sound until it fills — <b>Low</b> for your
-          quietest, <b>High</b> for your loudest. Redo a side anytime, then Confirm.
+          Hold a pad and sing until it fills: <b>Low</b> quietest, <b>High</b> loudest.
         </p>
         <div class="cal-pads">
           <button id="cal-low" class="cal-pad" type="button" data-state="empty">
@@ -533,6 +532,6 @@
         </div>
       </div>
     </div>
-    <script src="app.js?v=58"></script>
+    <script src="app.js?v=59"></script>
   </body>
 </html>

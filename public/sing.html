@@ -325,8 +325,8 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v58</span>
-        <span id="status">idle</span>
+        <span id="version">v59</span>
+        <span id="status"></span>
       </div>
     </header>
     <main>
@@ -337,18 +337,18 @@
           </optgroup>
           <optgroup id="my-songs" label="My songs" hidden></optgroup>
         </select>
-        <button id="open-file" class="tool-btn" type="button" title="Open a MusicXML file (.musicxml, .xml, .mxl)">Open</button>
-        <button id="open-link" class="tool-btn" type="button" title="Load MusicXML from a link">Link</button>
-        <button id="save-song" class="tool-btn" type="button" title="Download this song as MusicXML" aria-label="Download MusicXML">⤓</button>
-        <button id="remove-song" class="tool-btn" type="button" title="Remove this song from My songs" hidden>✕</button>
+        <button id="open-file" class="tool-btn" type="button" title="MusicXML (.musicxml, .xml, .mxl)">Open</button>
+        <button id="open-link" class="tool-btn" type="button" title="MusicXML link">Link</button>
+        <button id="save-song" class="tool-btn" type="button" title="Download MusicXML" aria-label="Download MusicXML">⤓</button>
+        <button id="remove-song" class="tool-btn" type="button" title="Remove from My songs" hidden>✕</button>
         <!-- No accept filter: iOS greys out .musicxml/.mxl (no system file type for them). Files are validated after picking. -->
         <input id="file-input" type="file" hidden />
       </section>
       <section class="controls">
         <select id="verse-select" aria-label="Verse" hidden></select>
-        <select id="key-select" aria-label="Transpose" title="Transpose: move the melody up or down, spelled in the new key"></select>
+        <select id="key-select" aria-label="Transpose" title="Transpose"></select>
         <select id="tempo-select" aria-label="Tempo"></select>
-        <button id="options-btn" class="tool-btn" type="button" title="Singing options: practice or perform, guide" aria-label="Singing options">⚙</button>
+        <button id="options-btn" class="tool-btn" type="button" title="Singing options" aria-label="Singing options">⚙</button>
       </section>
       <div id="song-msg" hidden></div>
       <section id="lyrics">
@@ -370,13 +370,13 @@
               <b id="you-note"></b>
               <span class="you-detail mono"><span id="you-cents"></span><span id="you-vs"></span></span>
             </span>
-            <button id="loop-btn" class="tool-btn" type="button" title="Practise the line shown above: hear it, sing it, again" hidden>⟳ Loop line</button>
-            <button id="monitor" class="tool-btn" type="button" aria-pressed="false" title="Show the note you're singing (uses the microphone)">🎤 Pitch</button>
+            <button id="loop-btn" class="tool-btn" type="button" title="Hear it, sing it, repeat" hidden>⟳ Loop line</button>
+            <button id="monitor" class="tool-btn" type="button" aria-pressed="false" title="Your pitch (mic)">🎤 Pitch</button>
           </span>
         </div>
         <div id="playbar" hidden>
           <button id="play" type="button">▶ Play</button>
-          <button id="review-btn" class="tool-btn" type="button" title="How it went, line by line">Review</button>
+          <button id="review-btn" class="tool-btn" type="button">Review</button>
           <span id="play-modes" class="seg" role="group" aria-label="Playback">
             <button type="button" data-mode="voice" title="Your recording">Voice</button>
             <button type="button" data-mode="melody" title="The song's melody on piano">Melody</button>
@@ -390,7 +390,7 @@
       <button id="listen" type="button">▶ Listen</button>
       <button id="sing" type="button">● Sing</button>
     </footer>
-    <div id="drop" hidden>Drop a MusicXML file to load it</div>
+    <div id="drop" hidden>Drop MusicXML here</div>
     <div id="options" class="overlay" hidden>
       <div class="sheet" role="dialog" aria-labelledby="op-title">
         <div class="rv-head">
@@ -398,13 +398,13 @@
           <button id="op-close" class="tool-btn" type="button" aria-label="Close the options">✕</button>
         </div>
         <h3>While you sing</h3>
-        <label class="op-choice"><input type="radio" name="view" value="practice" /><span><b>Practice</b> — the notes and your pitch as you go</span></label>
-        <label class="op-choice"><input type="radio" name="view" value="perform" /><span><b>Perform</b> — just the lyrics, so you can sing the song; each line gets a colour when it's done, the details after</span></label>
+        <label class="op-choice"><input type="radio" name="view" value="practice" /><span><b>Practice</b> — notes + your pitch</span></label>
+        <label class="op-choice"><input type="radio" name="view" value="perform" /><span><b>Perform</b> — lyrics only, review after</span></label>
         <h3>Guide</h3>
         <select id="guide-select" aria-label="Guide while singing">
-          <option value="click">Click — a quiet beat</option>
-          <option value="melody">Melody on piano (use headphones)</option>
-          <option value="none">No guide</option>
+          <option value="click">Click</option>
+          <option value="melody">Melody (headphones)</option>
+          <option value="none">None</option>
         </select>
       </div>
     </div>
@@ -414,7 +414,6 @@
           <span id="tt-title" class="op-title">Tap the beat</span>
           <button id="tt-close" class="tool-btn" type="button" aria-label="Close">✕</button>
         </div>
-        <p class="rv-empty">Tap along with the beat of the song — a recording, or the one in your head. The tempo shows after a few taps.</p>
         <button id="tt-pad" class="pad" type="button">Tap</button>
         <div id="tt-bpm" class="pad-read mono">—</div>
         <button id="tt-use" class="go" type="button" disabled>Use this tempo</button>
@@ -426,7 +425,7 @@
           <span id="ta-title" class="op-title">Tap along with a recording</span>
           <button id="ta-close" class="tool-btn" type="button" aria-label="Close">✕</button>
         </div>
-        <p class="rv-empty">Play the song — on Spotify or anywhere; this page stays silent — and tap the big button as each syllable is sung. The clicks, Listen and grading then follow that timing. Tap just a part if you like (the chorus, say): the rest keeps its pace.</p>
+        <p class="rv-empty">Play the recording in another app; tap as it's sung.</p>
         <div class="ta-row">
           <span class="seg" id="ta-mode" role="group" aria-label="What to tap">
             <button type="button" data-mode="words">Every syllable</button>
@@ -465,6 +464,6 @@
         <div id="rv-lines"></div>
       </div>
     </div>
-    <script type="module" src="sing.js?v=58"></script>
+    <script type="module" src="sing.js?v=59"></script>
   </body>
 </html>

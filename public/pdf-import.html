@@ -119,25 +119,16 @@
         <a class="nav-link" href="tools.html">Tools</a>
         <a class="nav-link" href="sing.html">Sing</a>
       </div>
-      <span id="version" class="mono">v58</span>
+      <span id="version" class="mono">v59</span>
     </header>
     <main>
       <section class="card">
-        <h2>Turn sheet music into a song you can sing</h2>
-        <p>Pick a PDF of sheet music with lyrics (piano/vocal, lead sheet, choir part…). It's read by
-          <b>Audiveris</b>, an open-source music-recognition program, running entirely inside this
-          browser tab — the file never leaves your device. The result is saved to <b>My songs</b> on the
-          Sing page.</p>
+        <p>Sheet music with lyrics → <b>My songs</b>. Read on this device; the PDF isn't uploaded.</p>
       </section>
 
       <section class="card warn" id="warning">
-        <h2>Heads up: this is heavy</h2>
-        <p>• The first run downloads the recognition program — about 60&nbsp;MB (a Java runtime, Audiveris,
-          and the OCR engine). It's cached after that, so later runs start much faster.</p>
-        <p>• It takes a while: roughly half a minute to a minute per page (a 9-page song took about
-          5 minutes on an iPhone), longer on older devices. Keep the screen on while it works.</p>
-        <p>• Keep this tab open and in front (on a phone, keep the screen on) until it finishes.</p>
-        <p>• Recognition isn't perfect — expect some wrong notes or syllables, especially on scans.</p>
+        <p>~60&nbsp;MB download the first time · ½–1&nbsp;min per page · keep this tab open, screen on.</p>
+        <p>Expect some wrong notes and syllables, mostly on scans.</p>
       </section>
 
       <section id="pick">
@@ -177,10 +168,9 @@
         <div class="row" style="margin-top:0.6rem"><button class="ghost again" type="button">Try again</button></div>
       </section>
 
-      <p class="credit">Recognition by <a href="https://github.com/Audiveris/audiveris">Audiveris</a> (AGPL-3.0;
-        <a href="https://github.com/davidtorosyan/resonate/tree/main/omr-build">source of this build</a>) ·
-        OCR by Tesseract · PDF rendering by pdf.js · Java runs in <a href="https://cheerpj.com">CheerpJ</a>
-        (Community Edition, personal use).</p>
+      <p class="credit"><a href="https://github.com/Audiveris/audiveris">Audiveris</a> (AGPL-3.0,
+        <a href="https://github.com/davidtorosyan/resonate/tree/main/omr-build">this build's source</a>) ·
+        Tesseract OCR · pdf.js · <a href="https://cheerpj.com">CheerpJ</a> (Community Edition, personal use)</p>
 
       <details id="log-wrap" hidden>
         <summary>Details (engine log)</summary>
@@ -188,6 +178,6 @@
         <div class="row"><button id="copy-log" class="ghost" type="button">Copy log</button></div>
       </details>
     </main>
-    <script type="module" src="pdf-import.js?v=58"></script>
+    <script type="module" src="pdf-import.js?v=59"></script>
   </body>
 </html>

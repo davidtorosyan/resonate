@@ -269,7 +269,7 @@ try {
   const chip = document.getElementById("profile-chip");
   if (prof) {
     const nm = (m) => `${NOTE_NAMES[m % 12]}${Math.floor(m / 12) - 1}`;
-    chip.textContent = `${prof.name}${prof.range ? ` · comfortable ${nm(prof.range.comfortLow)}–${nm(prof.range.comfortHigh)}` : " · find your range"} ›`;
+    chip.textContent = `${prof.name}${prof.range ? ` · ${nm(prof.range.comfortLow)}–${nm(prof.range.comfortHigh)}` : " · find your range"} ›`;
   }
 } catch {}
 
@@ -491,7 +491,7 @@ function draw() {
     ctx.stroke();
   }
 
-  statusEl.textContent = `${audioCtx.sampleRate} Hz · ${db.toFixed(0)} dB`;
+  statusEl.textContent = `${db.toFixed(0)} dB`;
 }
 
 // iOS keeps a page's audio-session type for the whole tab, so after the Sing or Voice
@@ -510,7 +510,7 @@ async function start() {
   const watchdog = setTimeout(() => {
     if (gen !== startGen || button.dataset.recording === "true") return;
     button.disabled = false;
-    statusEl.textContent = "mic not answering — tap Start again, or reload the page";
+    statusEl.textContent = "mic not answering — tap Start again or reload";
   }, 8000);
   try {
     const s = await navigator.mediaDevices.getUserMedia({
@@ -562,7 +562,7 @@ async function start() {
     // After stop(), which resets the status to "idle" (that used to hide every mic error).
     statusEl.textContent = err.name === "NotAllowedError"
       ? "mic blocked — allow it for this site (Safari: aA → Website Settings)"
-      : `mic error: ${err.name || err.message} — try again, or reload the page`;
+      : `mic error: ${err.name || err.message} — try again or reload`;
   } finally {
     clearTimeout(watchdog);
   }

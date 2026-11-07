@@ -2,10 +2,10 @@
 // notes you sang, and play it back (your voice and/or the notes on piano).
 // Song-based scoring lives on the Sing page (sing.js).
 
-import { noteName as nameOf, BLACK, median, centsLabel } from "./music.js?v=58";
-import { openMic, ANALYSIS_LAG } from "./pitch.js?v=58";
-import { startCapture, playVoice } from "./capture.js?v=58";
-import { loadPiano, pianoReady, playPiano } from "./piano.js?v=58";
+import { noteName as nameOf, BLACK, median, centsLabel } from "./music.js?v=59";
+import { openMic, ANALYSIS_LAG } from "./pitch.js?v=59";
+import { startCapture, playVoice } from "./capture.js?v=59";
+import { loadPiano, pianoReady, playPiano } from "./piano.js?v=59";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("roll");
@@ -435,7 +435,7 @@ async function stopRecording() {
   try { await wakeLock?.release(); } catch {}
   wakeLock = null;
   liveMidi = null;
-  recBtn.textContent = segments.length ? "Record again" : "Record";
+  recBtn.textContent = "Record";
   recBtn.dataset.recording = "false";
   timerEl.dataset.rec = "false";
   statusEl.textContent = "idle";
@@ -635,7 +635,7 @@ copyBtn.addEventListener("click", async () => {
 
 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
   recBtn.disabled = true;
-  statusEl.textContent = "mic API unavailable — open over HTTPS";
+  statusEl.textContent = "no mic — use HTTPS";
 }
 
 renderTranscript();

@@ -48,20 +48,17 @@
         <a class="nav-link" href="record.html">Record</a>
         <a class="nav-link" href="sing.html">Sing</a>
       </div>
-      <span id="version" class="mono">v58</span>
+      <span id="version" class="mono">v59</span>
     </header>
     <main>
       <a class="tool" href="pdf-import.html">
         <h2>PDF → Song <span class="tag">HEAVY</span></h2>
-        <p>Turn sheet-music PDFs into songs for the Sing page. Runs the Audiveris music-recognition program
-          inside your browser — one-time download, then about half a minute to a minute per page.</p>
+        <p>Sheet music → a song to sing. Audiveris, in your browser · ~60 MB once · ~½–1 min per page.</p>
       </a>
       <section class="tool">
         <h2>Device check</h2>
-        <p>What this browser supports, for when something doesn't work.</p>
         <ul id="checks" class="mono"></ul>
       </section>
-      <p class="note">Experimental tools live here.</p>
     </main>
     <script type="module">
       const checks = document.getElementById("checks");
@@ -74,15 +71,15 @@
       };
       const simd = (() => { try { return WebAssembly.validate(new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11])); } catch { return false; } })();
       row(typeof WebAssembly === "object", "WebAssembly");
-      row(simd, "WebAssembly SIMD", simd ? "fast OCR" : "OCR still works, slower");
-      row(typeof OffscreenCanvas === "function", "OffscreenCanvas", "PDF page rendering");
+      row(simd, "WebAssembly SIMD", simd ? "fast OCR" : "slower OCR");
+      row(typeof OffscreenCanvas === "function", "OffscreenCanvas", "PDF pages");
       row(typeof DecompressionStream === "function", "DecompressionStream", "gzip/zip support");
       row(!!window.indexedDB, "IndexedDB", "My songs + engine cache");
       row(!!navigator.mediaDevices?.getUserMedia, "Microphone API", window.isSecureContext ? "" : "needs HTTPS");
-      row("wakeLock" in navigator, "Screen wake lock", "keeps long jobs running");
+      row("wakeLock" in navigator, "Screen wake lock", "long jobs");
       row(true, `${navigator.hardwareConcurrency || "?"} CPU threads`);
       if (navigator.storage?.estimate) {
-        navigator.storage.estimate().then(({ usage, quota }) => row(true, "Storage", `${(usage / 1e6).toFixed(0)} MB used of ${(quota / 1e9).toFixed(1)} GB`));
+        navigator.storage.estimate().then(({ usage, quota }) => row(true, "Storage", `${(usage / 1e6).toFixed(0)} MB / ${(quota / 1e9).toFixed(1)} GB`));
       }
       if (performance.memory) row(true, "JS heap limit", `${Math.round(performance.memory.jsHeapSizeLimit / 1e6)} MB`);
     </script>

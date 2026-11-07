@@ -2,19 +2,19 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=58";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=58";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=58";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=58";
-import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=58";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=58";
-import { startCapture, playVoice } from "./capture.js?v=58";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN } from "./piano.js?v=58";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=58";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=58";
-import { fixOmrScore } from "./omr/fixscore.js?v=58";
-import { activeProfile } from "./profiles.js?v=58";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=58";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=59";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=59";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=59";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=59";
+import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=59";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=59";
+import { startCapture, playVoice } from "./capture.js?v=59";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN } from "./piano.js?v=59";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=59";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=59";
+import { fixOmrScore } from "./omr/fixscore.js?v=59";
+import { activeProfile } from "./profiles.js?v=59";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=59";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -248,7 +248,7 @@ function fillTempoOptions() {
     return g;
   };
   if (tmap) {
-    const g = group("Recording's timing (tapped)");
+    const g = group("Tapped timing");
     const rs = !useMap || MAP_RATES.includes(rate) ? MAP_RATES : [...MAP_RATES, rate].sort((a, b) => b - a);
     for (const r of rs) g.append(new Option(r === 1 ? "Tapped" : `Tapped · ${Math.round(r * 100)}%`, `m:${r}`));
   }
@@ -340,7 +340,7 @@ function fillKeyOptions() {
       for (const o of good) add(g, optLabel(o), value(o));
     }
     if (close.length) {
-      const g = group(good.length ? "Close — a little outside" : `Closest for ${name}`);
+      const g = group(good.length ? "Close" : `Closest for ${name}`);
       for (const o of close) add(g, `${optLabel(o)} · ${pctOut(o.outside)} out`, value(o));
     }
   } else {
@@ -499,25 +499,25 @@ async function importXml(xml, name) {
   await refreshLibrary();
   store(K.verse, null);
   await selectSong(id);
-  const notes = sc.notes.length;
-  const bits = [`${notes} notes`, sc.verses.length ? `${sc.verses.length} verse${sc.verses.length > 1 ? "s" : ""}` : "no lyrics found — notes only"];
-  if (!sc.tempoFromScore) bits.push(`no tempo in the file, using ♩=${sc.tempo}`);
-  if (sc.partName) bits.push(`melody from “${sc.partName}”`);
-  const kept = (await persistent()) ? "" : " (this browser won't keep it after reload)";
-  showMsg(`Loaded “${sc.title}”: ${bits.join(", ")}.${kept}`, "ok");
+  const bits = [`✓ ${sc.title}`];
+  if (!sc.verses.length) bits.push("no lyrics");
+  if (!sc.tempoFromScore) bits.push(`no tempo, ♩=${sc.tempo}`);
+  if (sc.partName) bits.push(`melody: ${sc.partName}`);
+  if (!(await persistent())) bits.push("not kept after reload");
+  showMsg(bits.join(" · "), "ok");
 }
 
 // Explain the common wrong-format cases instead of a generic parse error.
 function formatHint(name) {
   const ext = (name.match(/\.([a-z0-9]+)$/i) || [])[1]?.toLowerCase();
   const hints = {
-    mscz: "That's a MuseScore file — in MuseScore use File → Export → MusicXML, then open the .musicxml/.mxl.",
-    mscx: "That's a MuseScore file — in MuseScore use File → Export → MusicXML, then open the .musicxml/.mxl.",
-    mid: "MIDI files aren't supported (no lyrics) — export MusicXML from your notation app instead.",
-    midi: "MIDI files aren't supported (no lyrics) — export MusicXML from your notation app instead.",
-    pdf: "PDF sheet music can't be read — it needs MusicXML (.musicxml, .xml or .mxl).",
-    sib: "That's a Sibelius file — export it as MusicXML first.",
-    gp: "Guitar Pro files aren't supported — export MusicXML first.",
+    mscz: "MuseScore file — in MuseScore: File → Export → MusicXML.",
+    mscx: "MuseScore file — in MuseScore: File → Export → MusicXML.",
+    mid: "MIDI has no lyrics — export MusicXML instead.",
+    midi: "MIDI has no lyrics — export MusicXML instead.",
+    pdf: "convert PDFs with Tools → PDF → Song.",
+    sib: "Sibelius file — export it as MusicXML.",
+    gp: "Guitar Pro file — export it as MusicXML.",
   };
   return hints[ext] || null;
 }
@@ -527,7 +527,7 @@ async function importFile(file) {
   try {
     const hint = formatHint(file.name);
     if (hint) throw new Error(hint);
-    if (file.size > 20 * 1024 * 1024) throw new Error("file is over 20 MB — that's not a single song score");
+    if (file.size > 20 * 1024 * 1024) throw new Error("over 20 MB — not a song score");
     const xml = await readScoreFile(file);
     await importXml(xml, file.name);
   } catch (err) {
@@ -551,13 +551,13 @@ function normalizeLink(url) {
 }
 
 async function importLink() {
-  const raw = prompt("Paste a link to a MusicXML file (.musicxml, .xml or .mxl):");
+  const raw = prompt("MusicXML link (.musicxml, .xml, .mxl):");
   if (!raw || !raw.trim()) return;
   let url;
   try {
     url = normalizeLink(raw.trim());
   } catch {
-    showMsg("That doesn't look like a link.", "error");
+    showMsg("Not a link.", "error");
     return;
   }
   const name = decodeURIComponent(new URL(url).pathname.split("/").pop() || "Linked song");
@@ -569,12 +569,12 @@ async function importLink() {
     try {
       res = await fetch(url);
     } catch {
-      throw new Error("that site doesn't let other pages download its files. Download the file to your device and use Open instead.");
+      throw new Error("the site blocks this — download the file and use Open.");
     }
     if (!res.ok) throw new Error(`the link returned ${res.status}`);
     const blob = await res.blob();
     const xml = await readScoreFile(new File([blob], name));
-    if (/^\s*<!doctype html|^\s*<html/i.test(xml)) throw new Error("the link is a web page, not a MusicXML file — use the site's direct download link.");
+    if (/^\s*<!doctype html|^\s*<html/i.test(xml)) throw new Error("that's a web page — use the direct download link.");
     await importXml(xml, name);
   } catch (err) {
     console.error(err);
@@ -825,7 +825,7 @@ async function stopSing() {
   try { take.rhythm = rhythmOf(s, v, cal, stopAt, settings); } catch (err) { console.warn("rhythm", err); take.rhythm = null; }
   try { await s.wakeLock?.release(); } catch {}
   await s.mic.close();
-  statusEl.textContent = "idle";
+  statusEl.textContent = "";
   if (s.part) {
     renderAll();
     s.endRes(take);
@@ -964,7 +964,7 @@ async function beginPlay(kind, from, opts) {
     statusEl.textContent = "the sound didn't start — tap again";
     return;
   }
-  if (statusEl.textContent.startsWith("the sound didn't")) statusEl.textContent = "idle";
+  if (statusEl.textContent.startsWith("the sound didn't")) statusEl.textContent = "";
   const mode = opts.mode ?? playMode;
   // A take stopped before any note (in the count-in) holds nothing of yours to play back: the
   // melody instead, the whole song, in any mode (Voice used to play the song through in silence).
@@ -981,7 +981,7 @@ async function beginPlay(kind, from, opts) {
       (kind === "listen" ? listenBtn : playBtn).textContent = "Loading…";
     }
     try { piano = await loadPiano(ac); } catch (err) { console.warn(err); }
-    statusEl.textContent = "idle";
+    statusEl.textContent = "";
     if (gen !== playGen) { updateButtons(); return; }
   }
   const nodes = [];
@@ -1165,7 +1165,7 @@ function makeChip(j) {
     else if (g?.status === "missed") res = "missed";
     else if (g?.status === "unclear") res = "unclear";
     b.querySelector("small").textContent = res || " ";
-    b.title = "Press and hold to hear this note";
+    b.title = "Hold to hear";
     b.addEventListener("pointerdown", (e) => {
       if (e.button !== 0 || session) return; // left mouse button (touch and pen report 0); Listen: see click
       if (e.pointerType === "touch" && performance.now() - lastChipScroll < 150) return; // stopping a fling
@@ -1251,7 +1251,7 @@ async function pressKey(j, id, held) {
     ac = await getPlayCtx("press");
     piano = await loading;
   } catch (err) { console.warn(err); }
-  if (statusEl.textContent === "loading piano…") statusEl.textContent = "idle";
+  if (statusEl.textContent === "loading piano…") statusEl.textContent = "";
   if (keys.get(id) !== key) return; // pressed again, let go too long ago, or silenced
   if (session) return dropKey(key, true); // Listen / Sing started meanwhile
   if (!piano || ac !== playCtx) {
@@ -1463,7 +1463,7 @@ async function micStart(m) {
     console.warn(error);
     monitorOff();
     showMsg(error.name === "NotAllowedError"
-      ? "The microphone is blocked for this site — allow it (Safari: aA → Website Settings) to see your pitch."
+      ? "Mic blocked — allow it: Safari aA → Website Settings → Microphone."
       : `Couldn't open the microphone: ${error.message || error.name}`, "error");
     return;
   }
@@ -1764,7 +1764,7 @@ function reviewLine(r, full) {
   tx.type = "button";
   tx.className = "rv-text";
   tx.textContent = r.text || "…";
-  tx.title = "Show this line on the lane";
+  tx.title = "Show on the lane";
   tx.addEventListener("click", () => showLine(r));
   top.append(mk, tx);
   // Closer than last time: said, without a number; worse never is.
@@ -1803,7 +1803,7 @@ function reviewLine(r, full) {
   const lb = document.createElement("button");
   lb.type = "button";
   lb.textContent = "⟳ Loop";
-  lb.title = "Practise this line: hear it, sing it, again";
+  lb.title = "Hear it, sing it, repeat";
   lb.addEventListener("click", () => startLoop(r.li));
   btns.append(lb);
   el.append(btns);
@@ -1889,7 +1889,7 @@ function renderSummary() {
   if (!take || take.endT === null) {
     scorePctEl.textContent = "";
     summaryEl.textContent = score
-      ? `${score.title.toUpperCase()} · ${meterAt(entryIdx).join("/")} · ${useMap && tmap ? `TAPPED TIMING ♩≈${Math.round(60 / (tmap.avg / rate))}` : `♩=${Math.round(score.tempo * rate)}${score.tempoFromScore ? "" : " (no tempo in score)"}`}${notes.length ? ` · ${lowest().name}–${highest().name}` : ""}`
+      ? `${score.title.toUpperCase()} · ${meterAt(entryIdx).join("/")} · ${useMap && tmap ? `TAPPED TIMING ♩≈${Math.round(60 / (tmap.avg / rate))}` : `♩=${Math.round(score.tempo * rate)}${score.tempoFromScore ? "" : " (default)"}`}${notes.length ? ` · ${lowest().name}–${highest().name}` : ""}`
       : "";
     return;
   }
@@ -2217,7 +2217,7 @@ tempoSelect.addEventListener("change", () => {
     if (v === "type") typeTempo();
     else if (v === "tap") openTapTempo();
     else if (v === "tapmap") openTapAlong();
-    else if (confirm("Forget the timing you tapped for this song?")) {
+    else if (confirm("Forget the tapped timing?")) {
       saveTiming({ segs: [], use: false });
       stopSession();
       applySong();
@@ -2240,15 +2240,14 @@ function setTiming(r, map, bpm = null) {
 // Type a tempo: quarter notes per minute, kept as this song's own (like a tapped one).
 function typeTempo() {
   const now = Math.round(useMap && tmap ? 60 / (tmap.avg / rate) : score.tempo * rate);
-  const answer = prompt(`Tempo for this song, in quarter notes per minute (♩ =).\nThe score says ♩=${Math.round(score.tempo)}; it's ♩=${now} now.`, String(now));
+  const answer = prompt(`♩ per minute (score: ♩=${Math.round(score.tempo)}):`, String(now));
   if (answer === null) return;
   const bpm = Math.round(Number(String(answer).replace(",", ".").replace(/[^\d.]/g, "")));
   if (!(bpm >= 20 && bpm <= 400)) {
-    showMsg("That tempo didn't look right — type a number between 20 and 400.", "error");
+    showMsg("♩ didn't look right — use 20–400.", "error");
     return;
   }
   setTiming(null, false, bpm);
-  showMsg(`Tempo set to ♩=${bpm}.`, "ok");
 }
 
 // ---------------------------------------------------------------------------
@@ -2288,7 +2287,6 @@ $("tt-use").addEventListener("click", () => {
   if (!tappedBpm) return;
   $("taptempo").hidden = true;
   setTiming(null, false, Math.round(tappedBpm));
-  showMsg(`Tempo set to ♩=${Math.round(tappedBpm)}.`, "ok");
 });
 $("tt-close").addEventListener("click", () => { $("taptempo").hidden = true; });
 
@@ -2323,7 +2321,7 @@ function prepTapAlong() {
 function renderTapAlong() {
   const a = tapAlong;
   for (const b of $("ta-mode").querySelectorAll("button")) b.dataset.active = b.dataset.mode === a.mode ? "true" : "false";
-  $("ta-start").textContent = `Start at line ${a.startLine + 1} of ${lines.length}`;
+  $("ta-start").textContent = `From line ${a.startLine + 1} / ${lines.length}`;
   const next = a.targets[a.taps.length];
   const li = next === undefined ? lines.length - 1 : lineOf[next];
   const nowEl = $("ta-now");
@@ -2379,7 +2377,7 @@ $("ta-save").addEventListener("click", () => {
   stopSession();
   applySong();
   const skipped = pauses.map((p) => `${Math.round(p.s)} s`).join(", ");
-  showMsg(`Timing saved — the clicks, Listen and grading follow the recording now.${skipped ? ` (A pause of ${skipped} in the tapping was left out.)` : ""} The tempo menu goes back to a steady tempo, or slows this timing down.`, "ok");
+  if (skipped) showMsg(`Pause left out: ${skipped}`);
 });
 guideSelect.addEventListener("change", () => {
   guide = guideSelect.value;
@@ -2399,7 +2397,6 @@ removeBtn.addEventListener("click", async () => {
   if (!confirm(`Remove “${title}” from My songs?`)) return;
   await removeSong(id);
   await refreshLibrary();
-  showMsg(`Removed “${title}”.`);
   await selectSong("amazing-grace");
 });
 

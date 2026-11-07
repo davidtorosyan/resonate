@@ -5,10 +5,10 @@
 // then does the same going up. The lowest and highest notes held are your limits; the
 // comfortable range starts a few notes inside them and can be adjusted by hand.
 
-import { openMic, createReader, FFT_SIZE } from "./pitch.js?v=58";
-import { loadPiano, holdPiano } from "./piano.js?v=58";
-import { noteName, median } from "./music.js?v=58";
-import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=58";
+import { openMic, createReader, FFT_SIZE } from "./pitch.js?v=59";
+import { loadPiano, holdPiano } from "./piano.js?v=59";
+import { noteName, median } from "./music.js?v=59";
+import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=59";
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
@@ -74,8 +74,8 @@ function render() {
 
 function renderVol(prof) {
   $("vol-text").textContent = prof.vol
-    ? `Quiet ${Math.round(prof.vol.floor)} dB · loud ${Math.round(prof.vol.ceiling)} dB. The Tuner's volume meter uses this (1 = quiet, 10 = loud).`
-    : "Not calibrated. Sing your quietest and loudest sounds so the Tuner's volume meter fits your voice.";
+    ? `Quiet ${Math.round(prof.vol.floor)} dB · loud ${Math.round(prof.vol.ceiling)} dB`
+    : "Not calibrated";
   $("vol-btn").textContent = prof.vol ? "Calibrate again" : "Calibrate volume";
 }
 
@@ -85,13 +85,10 @@ function renderRange(prof) {
   $("range-btn").textContent = r ? "Test again" : "Find my range";
   if (!r) {
     $("range-text").textContent =
-      "Not measured yet. The piano plays a note, you sing it back and hold it; it walks down, then up, " +
-      "until you can't. A minute or two — use headphones or a quiet room.";
+      "Not measured · ~2 min, quiet room";
   } else {
-    const when = r.at ? ` (measured ${new Date(r.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })})` : " (set by hand)";
-    $("range-text").textContent =
-      `You can hold ${noteName(r.low)} to ${noteName(r.high)}${when}. Songs are fitted to the comfortable part — ` +
-      "tap a note to hear it, and move the edges if a note felt strained.";
+    const when = r.at ? `Tested ${new Date(r.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : "Preset";
+    $("range-text").textContent = `${when} · tap a note to hear it`;
     for (const el of document.querySelectorAll(".stepper")) renderStepper(el, r);
   }
   renderStrip(r);
@@ -175,20 +172,20 @@ async function hear(midi) {
 $("create-btn").addEventListener("click", () => {
   createProfile($("create-name").value);
   render();
-  showMsg("Profile created. Find your range next — or start from a voice type.");
+  showMsg("");
 });
 $("create-name").addEventListener("keydown", (e) => { if (e.key === "Enter") $("create-btn").click(); });
 $("profile-select").addEventListener("change", (e) => {
   setActiveProfile(e.target.value);
   render();
-  showMsg(`Using ${current().name}'s profile (Tuner and Sing use it too).`);
+  showMsg("");
 });
 $("new-btn").addEventListener("click", () => {
-  const name = prompt("Name for the new profile:");
+  const name = prompt("New profile name:");
   if (name === null) return;
   createProfile(name);
   render();
-  showMsg("Profile created.");
+  showMsg("");
 });
 $("rename-btn").addEventListener("click", () => {
   const prof = current();
@@ -199,10 +196,10 @@ $("rename-btn").addEventListener("click", () => {
 });
 $("delete-btn").addEventListener("click", () => {
   const prof = current();
-  if (!confirm(`Delete ${prof.name}'s profile? Its volume calibration and range are lost.`)) return;
+  if (!confirm(`Delete ${prof.name}'s profile?`)) return;
   deleteProfile(prof.id);
   render();
-  showMsg("Profile deleted.");
+  showMsg("");
 });
 for (const [name, [low, high, comfortLow, comfortHigh]] of Object.entries(PRESETS)) {
   const b = document.createElement("button");
@@ -211,10 +208,10 @@ for (const [name, [low, high, comfortLow, comfortHigh]] of Object.entries(PRESET
   b.title = `${noteName(low)}–${noteName(high)}, comfortable ${noteName(comfortLow)}–${noteName(comfortHigh)}`;
   b.addEventListener("click", () => {
     const prof = current();
-    if (prof.range && !confirm(`Replace ${prof.name}'s range with a typical ${name.toLowerCase()} range?`)) return;
+    if (prof.range && !confirm(`Replace ${prof.name}'s range with ${name}?`)) return;
     updateProfile(prof.id, { range: { low, high, comfortLow, comfortHigh, at: null } });
     renderRange(current());
-    showMsg(`Typical ${name.toLowerCase()} range set — a range test makes it yours.`);
+    showMsg("");
   });
   $("presets").append(b);
 }
@@ -358,7 +355,7 @@ function beginAnchor() {
   run.window = [];
   tStep.textContent = "Range test";
   tTitle.textContent = "Sing a comfortable note";
-  tText.textContent = "Any note in the middle of your voice, on “ah” — hold it steady.";
+  tText.textContent = "On “ah” — hold it steady.";
   tTarget.textContent = "—";
   tTarget.dataset.state = "";
   tReplay.hidden = tLimit.hidden = true;
@@ -395,7 +392,7 @@ function rangeFrame(fr, now, dt) {
       if (Math.abs(c) <= ON_CENTS) run.onMs += dt;
       const oct = Math.round((sm - run.target) / 12);
       tHint.textContent = oct && Math.abs(sm - run.target - 12 * oct) <= 0.5
-        ? `That's the right note an octave ${oct > 0 ? "higher" : "lower"} — match the piano's octave`
+        ? `An octave ${oct > 0 ? "high" : "low"} — match the piano`
         : run.retry ? "One more try" : "";
     } else {
       tYou.textContent = "";
@@ -505,7 +502,7 @@ async function finishRange() {
   if (!prof) return;
   updateProfile(prof.id, { range });
   render();
-  showMsg(`Range saved: ${noteName(low)}–${noteName(high)}, comfortable ${noteName(range.comfortLow)}–${noteName(range.comfortHigh)}.`);
+  showMsg(`✓ Range ${noteName(low)}–${noteName(high)}`);
 }
 
 function addLadder(m, ok) {
@@ -527,8 +524,8 @@ function beginVol(which) {
   tStep.textContent = `Volume · ${which === "quiet" ? "1" : "2"} of 2`;
   tTitle.textContent = which === "quiet" ? "Your quietest" : "Your loudest";
   tText.textContent = which === "quiet"
-    ? "Sing your quietest comfortable sound and hold it until the bar fills."
-    : "Now your loudest — full voice, no shouting — and hold it until the bar fills.";
+    ? "Soft but steady, until the bar fills."
+    : "Full voice, no shouting, until the bar fills.";
   meter(0);
 }
 
@@ -563,7 +560,7 @@ function volFrame(fr, now, dt) {
   if (!prof) return;
   updateProfile(prof.id, { vol: { floor, ceiling } });
   render();
-  showMsg(`Volume saved: quiet ${Math.round(floor)} dB, loud ${Math.round(ceiling)} dB.`);
+  showMsg("✓ Volume saved");
 }
 
 // ---------------------------------------------------------------------------
@@ -578,12 +575,12 @@ tLimit.addEventListener("click", () => {
 });
 tStop.addEventListener("click", () => {
   stopRun();
-  showMsg("Stopped — nothing changed.");
+  showMsg("");
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && run) {
     stopRun();
-    showMsg("Stopped (the page went to the background) — nothing changed.", "error");
+    showMsg("Stopped (page hidden)", "error");
   }
 });
 // Leaving the page: stop a test and give the tab's audio session back. iOS keeps its type
