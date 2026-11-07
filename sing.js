@@ -2,19 +2,19 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=59";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=59";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=59";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=59";
-import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=59";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=59";
-import { startCapture, playVoice } from "./capture.js?v=59";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN } from "./piano.js?v=59";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=59";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=59";
-import { fixOmrScore } from "./omr/fixscore.js?v=59";
-import { activeProfile } from "./profiles.js?v=59";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=59";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=60";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=60";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=60";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=60";
+import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=60";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=60";
+import { startCapture, playVoice } from "./capture.js?v=60";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN } from "./piano.js?v=60";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=60";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=60";
+import { fixOmrScore } from "./omr/fixscore.js?v=60";
+import { activeProfile } from "./profiles.js?v=60";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=60";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -617,6 +617,14 @@ function countInBeats(mi = entryIdx) {
   return n + (firstQ < barQ - 1e-6 ? (barQ - firstQ) / bq : 0);
 }
 
+// The count-in number shown at song time t: it changes on each click (a fractional count —
+// a pickup that isn't whole beats — starts from the next whole number).
+function countInLeft(s, t) {
+  const n = Math.ceil(s.count - 1e-9);
+  const k = Math.floor((t - (s.start - s.count * s.beatSec)) / s.beatSec + 1e-9); // clicks gone − 1
+  return Math.min(n, Math.max(1, n - k));
+}
+
 // Every beat of the song: [{ t (s), accent, q }]. A pickup bar (the song's first bar, and its
 // replays after a repeat) counts back from its barline: an eighth pickup in 4/4 has no beat of
 // its own; a 1½-beat pickup has one, half a beat in.
@@ -702,7 +710,11 @@ async function beginSing(part) {
   const start = part ? part.from : entryT;
   const end = part ? part.until : songEnd + END_PAD;
   const [j0, j1] = part ? part.range : [0, notes.length];
-  const count = part ? feltBeat(meter).n : countInBeats();
+  // (a loop round on a line in the song's pickup bar gets the pickup's missing beats too)
+  const pickLen = (score.measures[startM + 1] ?? score.length) - score.measures[startM];
+  const fbm = feltBeat(meter);
+  const pickupFill = part && pickLen < fbm.n * fbm.q - 1e-6 && (score.measureOf?.[startM] ?? startM) === 0 ? (fbm.n * fbm.q - pickLen) / fbm.q : 0;
+  const count = part ? fbm.n + pickupFill : countInBeats();
   const barBeats = feltBeat(meter).n;
   const t0 = ac.currentTime + 0.3;
   const songT0 = t0 + count * beatSec - start; // song time `start` sounds right after the count-in
@@ -794,6 +806,7 @@ async function stopSing() {
   const s = session;
   if (!s || s.kind !== "sing") return;
   session = null;
+  const tk = take;
   let settings = null;
   try { settings = s.mic.stream.getAudioTracks()[0]?.getSettings() || null; } catch {}
   // The mic stops now (the recording still flushes what it has): iOS keeps playback on the
@@ -804,6 +817,13 @@ async function stopSing() {
   const stopAt = s.ac.currentTime;
   take.endT = stopAt - s.songT0 - ANALYSIS_LAG - s.latency;
   const v = await s.capture.finish();
+  if (take !== tk) { // replaced while the recording flushed (a loop stopped mid-round): drop this one
+    try { await s.wakeLock?.release(); } catch {}
+    await s.mic.close();
+    if (!session && starting === null) statusEl.textContent = "";
+    s.endRes(null);
+    return;
+  }
   // The count-in clicks in the recording measure the real round trip (output + input
   // latency; the browser's estimate can be well off — Bluetooth). With it, the pitch frames
   // and the recording are placed where they were really sung against what was heard.
@@ -1114,7 +1134,7 @@ function renderLyrics(t) {
   const counting = perform && nowT < entryT;
   if (countinEl.hidden === counting) countinEl.hidden = !counting;
   if (counting) {
-    const left = String(Math.min(Math.ceil(session.count), Math.max(1, Math.ceil((entryT - nowT) / session.beatSec))));
+    const left = String(countInLeft(session, nowT));
     if (countinEl.textContent !== left) countinEl.textContent = left;
   }
   const cur = session ? noteAt(t) : preview ? preview.j : -1;
@@ -1614,6 +1634,14 @@ async function runLoop(d) {
     const t = await session?.ended;
     if (!alive() || !t) return;
     const row = analyzeLines(notes, [lines[d.li]], t.grades, { text: () => lineText(d.li), name: noteName, syl: (j) => sylText(notes[j], j), rhythm: t.rhythm, lineIndex: [d.li] })[0];
+    if (row && t.rhythm?.trust === "ok") {
+      for (const o of t.rhythm.obs) {
+        if (o.scope !== "take" || o.tone !== "try" || (o.kind !== "behind" && o.kind !== "ahead")) continue;
+        row.reasons.push({ kind: o.kind, text: rhythmText(o, () => ""), rhythm: true });
+        row.good = false;
+        row.weak = true;
+      }
+    }
     d.last = row || null;
     d.scores.push(row ? row.score : null);
     d.phase = "result";
@@ -2077,7 +2105,7 @@ function renderLane() {
       ctx.setLineDash([]);
     }
     const tNow = performance.now() / 1000;
-    const colour = (m) => j < 0 ? "rgba(255,255,255,0.85)" : Math.abs(fold(m - ref)) * 100 <= OK_CENTS ? "rgba(74,222,128,0.95)" : "rgba(255,120,120,0.95)";
+    const colour = (m) => j < 0 ? "rgba(255,255,255,0.85)" : Math.abs(fold(m - ref)) * 100 <= OK_CENTS ? "rgba(74,222,128,0.95)" : "rgba(245,170,90,0.95)";
     const disp = (m) => m + 12 * Math.round((ref - m) / 12);
     ctx.lineWidth = 2.5;
     ctx.lineJoin = ctx.lineCap = "round";
@@ -2110,7 +2138,7 @@ function renderLane() {
 
   // Count-in overlay.
   if (session?.kind === "sing" && nowT < session.start) {
-    const left = Math.min(Math.ceil(session.count), Math.max(1, Math.ceil((session.start - nowT) / session.beatSec)));
+    const left = countInLeft(session, nowT);
     ctx.fillStyle = "rgba(255,230,160,0.9)";
     ctx.font = "800 44px system-ui, sans-serif";
     ctx.textAlign = "center";

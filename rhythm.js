@@ -136,7 +136,8 @@ export function findClicks(pcm, sr, start, clicks, beat, wave, gain) {
   for (let i = 0; i < n; i++) if (sum[i] > best) best = sum[i];
   const mags = Array.from(sum).sort((a, b) => a - b);
   const noise = mags[mags.length >> 1] || 1e-12;
-  if (best / noise < 6) return null; // ~16 dB above the correlation's own noise
+  // Mic hiss alone scores up to ~14 here (2 clicks); a click 40 dB down scores ≥ 70.
+  if (best / noise < 25) return null;
   // the earliest lag at half the best (a reflection or the next click comes later), then its local top
   let at = 0;
   while (at < n && sum[at] < best / 2) at++;
@@ -153,6 +154,7 @@ export function findClicks(pcm, sr, start, clicks, beat, wave, gain) {
     if (k >= 0 && b >= 0.5 * m) { agree++; amps.push(b / c.norm); }
   }
   if (agree < Math.max(2, curves.length / 2)) return null;
+  if (at + L0 < Math.round(0.003 * sr)) return null; // no real output + input round trip is ≤ 3 ms
   return { rt: (at + L0) / sr, coupling: median(amps), n: agree };
 }
 
@@ -182,8 +184,8 @@ function envelope(e) {
   // The floor: the quiet between phrases (10th percentile) — unless the recording has hardly
   // any quiet in it (sung all through), then 20 dB under its middle level.
   const sorted = Float32Array.from(L).sort();
-  const p10 = sorted[Math.floor(sorted.length * 0.1)] ?? -100, p50 = sorted[sorted.length >> 1] ?? -100;
-  return { L, floor: p50 - p10 < 15 ? p50 - 20 : p10 };
+  const p10 = sorted[Math.floor(sorted.length * 0.1)] ?? -100, p50 = sorted[sorted.length >> 1] ?? -100, p90 = sorted[Math.floor(sorted.length * 0.9)] ?? -100;
+  return { L, floor: p50 - p10 < 15 && p90 - p50 < 10 ? p50 - 20 : p10 };
 }
 
 // Syllable onsets in the vowel band: a rise of ≥ ATTACK_MIN dB within ~40 ms that stays up.
@@ -385,7 +387,8 @@ export function findOnsets(notes, feat, start, frames, metric, { songT0, rt, lat
     if (!live[j] || out[j].dev === null || n.d < 2 * (m.beat ?? 0.6) || (next && !next.restBefore && !m.lineEnd)) return;
     if (n.t + n.d + 0.3 > Math.min(endT, heardTo)) return; // the take stopped around here: can't tell
     const on = n.t + out[j].dev;
-    const stop = Math.min(n.t + n.d + 0.6, next ? next.t + lead - 0.05 : Infinity, endT);
+    const end = n.t + n.d + lead; // the written end on the singer's own clock
+    const stop = Math.min(end + 0.6, next ? next.t + lead - 0.05 : Infinity, endT);
     const i0 = lowerBound(t, on + 0.1), i1 = lowerBound(t, stop);
     if (i1 - i0 < 10) return;
     const level = median(Array.from(L.subarray(i0, Math.min(i1, lowerBound(t, on + Math.max(0.3, n.d / 2))))));
@@ -393,10 +396,11 @@ export function findOnsets(notes, feat, start, frames, metric, { songT0, rt, lat
     const need = Math.round(0.06 / hopS);
     let runLen = 0;
     for (let i = i0; i < i1; i++) {
-      runLen = L[i] < (floor < level - 26 ? Math.max(level - 20, floor + 6) : level - 20) ? runLen + 1 : 0;
-      if (runLen >= need) { out[j].rel = t[i - need + 1] - (n.t + n.d); break; }
+      // 20 dB under the note — or, in a noisy room, 6 dB over the noise (but well under the note)
+      runLen = L[i] < Math.min(level - 8, Math.max(level - 20, floor + 6)) ? runLen + 1 : 0;
+      if (runLen >= need) { out[j].rel = t[i - need + 1] - end; break; }
     }
-    if (out[j].rel === undefined && t[Math.min(i1, t.length) - 1] >= n.t + n.d + 0.55) out[j].rel = 0.6; // still going into the rest
+    if (out[j].rel === undefined && t[Math.min(i1, t.length) - 1] >= end + 0.55) out[j].rel = 0.6; // still going into the rest
   });
   return { notes: out, lead };
 }
