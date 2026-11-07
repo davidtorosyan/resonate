@@ -79,8 +79,7 @@ export function analyzeLines(notes, lines, grades, { text, name, syl = null, rhy
     if (off.length) {
       const j = off[0], n = notes[j], g = grades[j];
       const sang = name(Math.round(n.midi + g.dev));
-      const more = off.length > 1 ? ` +${off.length - 1}` : "";
-      reasons.push({ kind: "note", text: `${n.melisma ? "Held note" : n.text ? `“${n.text.replace(/[,.;:!?]+$/, "")}”` : "This note"}: aim for ${n.name} (you sang ${sang})${more}` });
+      reasons.push({ kind: "note", extra: off.length - 1, text: `${n.melisma ? "Held note" : n.text ? `“${n.text.replace(/[,.;:!?]+$/, "")}”` : "This note"}: aim for ${n.name} (you sang ${sang})` });
     }
     const inTune = pitched.filter((j) => grades[j].status !== "off");
     if (inTune.length >= 2) {
@@ -145,7 +144,8 @@ export function feedback(rows, { rhythm = null, prev = null, pct = null, whole =
   for (const r of workOn(rows)) tries.push({ text: r.reasons[0]?.text || "Again, a little closer", li: r.li, row: r });
   const takeObs = rhythm ? rhythm.obs.filter((o) => o.scope === "take" && o.tone === "try") : [];
   const tip = takeObs.length ? rhythmText(takeObs[0], w) : null;
-  const headline = !tries.length && !tip ? (rows.some((r) => !r.complete) ? "Those lines sat well." : "That one sat really well.")
+  const singTip = takeObs.some((o) => o.kind !== "headphones"); // (the 🎧 hint is about the setup, not the singing)
+  const headline = !tries.length && !singTip ? (rows.some((r) => !r.complete) ? "Those lines sat well." : "That one sat really well.")
     : wins.length ? "Nice — a few things to polish." : "Here's what to try next.";
   return { headline, wins: wins.slice(0, 3), tries: tries.slice(0, WORK_ON), tip };
 }

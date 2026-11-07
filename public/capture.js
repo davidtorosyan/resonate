@@ -13,7 +13,7 @@ export async function startCapture(ac, source, { keepSeconds = Infinity, onChunk
   let flushed = null;
   let node, sink;
   try {
-    if (!modules.has(ac)) modules.set(ac, ac.audioWorklet.addModule("recorder-worklet.js?v=59"));
+    if (!modules.has(ac)) modules.set(ac, ac.audioWorklet.addModule("recorder-worklet.js?v=60"));
     await modules.get(ac); // (once per context: the phrase loop records every round)
     node = new AudioWorkletNode(ac, "pcm-recorder");
     sink = ac.createGain();
@@ -42,7 +42,9 @@ export async function startCapture(ac, source, { keepSeconds = Infinity, onChunk
       node.port.postMessage("flush");
       setTimeout(res, 400);
     });
-    try { node.disconnect(); sink.disconnect(); } catch {}
+    try { node.disconnect(); sink.disconnect(); source.disconnect(node); } catch {}
+    node.port.onmessage = null; // (its closure held this take's chunks and the rhythm features)
+    try { node.port.close(); } catch {}
     const len = chunks.reduce((a, c) => a + c.length, 0);
     if (!len || start === null) return null;
     const data = new Float32Array(len);
