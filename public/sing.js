@@ -2,18 +2,18 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=56";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=56";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=56";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=56";
-import { analyzeLines, workOn, lineDelta } from "./coach.js?v=56";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=56";
-import { startCapture, playVoice } from "./capture.js?v=56";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.js?v=56";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=56";
-import { fixOmrScore } from "./omr/fixscore.js?v=56";
-import { activeProfile } from "./profiles.js?v=56";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=56";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=57";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=57";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=57";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=57";
+import { analyzeLines, workOn, lineDelta } from "./coach.js?v=57";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=57";
+import { startCapture, playVoice } from "./capture.js?v=57";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.js?v=57";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=57";
+import { fixOmrScore } from "./omr/fixscore.js?v=57";
+import { activeProfile } from "./profiles.js?v=57";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=57";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -823,24 +823,32 @@ async function stopSing() {
 
 let playCtx = null;
 
-// The playback context, ready to play — called in the tap that starts the sound. iOS: after a
-// mic was open the session type is re-applied (going through "auto": setting "playback" when
-// it already says so changes nothing, and set while a take's mic was still closing it left
-// the page on the quiet earpiece output); a context iOS left "interrupted" (or closed) is
-// replaced by a fresh one now, while the tap still allows audio to start; and a resume that
-// doesn't settle no longer leaves every later Play waiting on it.
+// The playback context, ready to play. iOS: after a mic was open the session type is
+// re-applied (going through "auto": setting "playback" when it already says so changes
+// nothing, and set while a take's mic was still closing it left the page on the quiet
+// earpiece output); a context iOS left "interrupted" (or closed) is replaced by a fresh one in
+// a touch, which can then start it; and a resume that doesn't settle no longer leaves every
+// later Play waiting on it. `how`:
+//   "tap"   — a tap that starts the sound (Play, Listen, a key's lift): a resume still pending
+//             after 1.5 s marks the context stuck, and the next tap starts over with a new one;
+//   "press" — a key's touch-down: iOS starts audio only at the lift, so a long hold isn't stuck;
+//   "auto"  — no touch at all (the loop's later rounds): keep the context a tap started (a new
+//             one couldn't start), give its resume 4 s.
 let micWasOpen = false; // a mic has been open since the session was last set to playback
-let playCtxStuck = false; // its last resume didn't get it running: the next tap makes a new one
-// (Synchronous, so a tap can make the context it may then start.)
-function freshPlayCtx() {
-  if (!playCtx || (playCtxStuck && playCtx.state !== "running") || playCtx.state === "closed" || playCtx.state === "interrupted") {
+let playCtxStuck = false; // its last resume in a tap didn't get it running
+// (Synchronous, so a touch can make the context it may then start.)
+function freshPlayCtx(how = "tap") {
+  if (playCtx?.state === "running") playCtxStuck = false;
+  const bad = !playCtx || playCtx.state === "closed"
+    || (how !== "auto" && (playCtxStuck || playCtx.state === "interrupted"));
+  if (bad) {
     if (playCtx && playCtx.state !== "closed") playCtx.close().catch(() => {});
     playCtx = new (window.AudioContext || window.webkitAudioContext)();
     playCtxStuck = false;
   }
   return playCtx;
 }
-async function getPlayCtx() {
+async function getPlayCtx(how = "tap") {
   try {
     if (navigator.audioSession) {
       if (micWasOpen && navigator.audioSession.type === "playback") navigator.audioSession.type = "auto";
@@ -848,10 +856,9 @@ async function getPlayCtx() {
     }
   } catch {}
   micWasOpen = false;
-  freshPlayCtx();
-  const ac = playCtx;
-  if (ac.state !== "running") await Promise.race([ac.resume().catch(() => {}), new Promise((r) => setTimeout(r, 1500))]);
-  if (ac === playCtx && ac.state !== "running") playCtxStuck = true;
+  const ac = freshPlayCtx(how);
+  if (ac.state !== "running") await Promise.race([ac.resume().catch(() => {}), new Promise((r) => setTimeout(r, how === "auto" ? 4000 : 1500))]);
+  if (ac === playCtx) playCtxStuck = how !== "press" && ac.state !== "running";
   return ac;
 }
 
@@ -869,19 +876,22 @@ async function beginPlay(kind, from, opts) {
   stopKeys();
   stopSession();
   const gen = ++playGen;
-  const ac = await getPlayCtx();
+  const ac = await getPlayCtx(opts.how);
   if (gen !== playGen) return;
   if (ac.state !== "running") {
     statusEl.textContent = "the sound didn't start — tap again";
     return;
   }
+  if (statusEl.textContent.startsWith("the sound didn't")) statusEl.textContent = "idle";
   const mode = opts.mode ?? playMode;
-  // (A take stopped before any note — in the count-in — has nothing to play back: the melody.)
-  const sungTo = take && take.endT !== null && notes.length && take.endT > notes[0].t + 0.2 ? take.endT : songEnd;
-  const end = opts.until ?? (kind === "playback" && take ? Math.max(sungTo, 0) : songEnd);
+  // A take stopped before any note (in the count-in) holds nothing of yours to play back: the
+  // melody instead, the whole song, in any mode (Voice used to play the song through in silence).
+  const reached = !!take && take.endT !== null && notes.length > 0 && take.endT > notes[0].t + 0.2;
+  const end = opts.until ?? (kind === "playback" && reached ? Math.max(take.endT, 0) : songEnd);
   if (from >= end - 0.05 || from < entryT - 1) from = entryT;
-  const wantMelody = kind === "listen" || mode !== "voice" || !take?.voice;
-  const wantVoice = kind === "playback" && take?.voice && mode !== "melody";
+  const voice = kind === "playback" && reached ? take.voice : null;
+  const wantMelody = kind === "listen" || mode !== "voice" || !voice;
+  const wantVoice = kind === "playback" && voice && mode !== "melody";
   let piano = null;
   if (wantMelody) {
     if (!pianoReady(ac)) {
@@ -903,7 +913,7 @@ async function beginPlay(kind, from, opts) {
       playPiano(ac, piano, songT0 + st, n.t + n.d - st, n.midi, wantVoice ? 0.8 : 1.4, nodes);
     }
   }
-  if (wantVoice) playVoice(ac, take.voice, start, from, nodes);
+  if (wantVoice) playVoice(ac, voice, start, from, nodes);
   let endRes;
   const ended = new Promise((r) => { endRes = r; });
   session = { kind, ac, nodes, songT0, raf: null, end, line: opts.line ?? null, mode, ended, endRes };
@@ -1151,12 +1161,12 @@ async function pressKey(j, id, held) {
   scrollT = nowT = Math.max(-1, Math.min(n.t - 0.4, songEnd));
   showKeys();
   // The samples can load and decode before audio may start (first touch on a phone).
-  const loading = loadPiano(freshPlayCtx());
+  const loading = loadPiano(freshPlayCtx("press"));
   loading.catch(() => {});
   if (!pianoReady(playCtx)) statusEl.textContent = "loading piano…";
   let ac = null, piano = null;
   try {
-    ac = await getPlayCtx();
+    ac = await getPlayCtx("press");
     piano = await loading;
   } catch (err) { console.warn(err); }
   if (statusEl.textContent === "loading piano…") statusEl.textContent = "idle";
@@ -1508,7 +1518,7 @@ async function runLoop(d) {
     d.phase = "listen";
     renderLoop();
     if (!notes[d.range[0]]) return stopLoop();
-    await startPlay("listen", Math.max(0, notes[d.range[0]].t - 0.3), { until: d.until - MAX_SHIFT, line: d.li, range: d.range });
+    await startPlay("listen", Math.max(0, notes[d.range[0]].t - 0.3), { until: d.until - MAX_SHIFT, line: d.li, range: d.range, how: d.round > 1 ? "auto" : "tap" });
     if (!alive()) return;
     const heard = await session?.ended;
     if (!alive()) return;
@@ -1769,13 +1779,13 @@ for (const r of optionsEl.querySelectorAll('input[name="view"]')) {
 
 reviewBtn.addEventListener("click", openReview);
 $("rv-close").addEventListener("click", closeReview);
-// The dimmed backdrop closes the review. A tap there on a playback control showing through
+// The dimmed backdrop closes the review. A tap there on Play or Listen showing through
 // (Play peeks out above a short sheet) also does what it says: it used to only close the
 // sheet, so after a take a tap on Play "didn't play".
 reviewEl.addEventListener("click", (e) => {
   if (e.target !== reviewEl) return;
   closeReview();
-  const under = document.elementFromPoint(e.clientX, e.clientY)?.closest("#play, #play-modes button, #listen");
+  const under = document.elementFromPoint(e.clientX, e.clientY)?.closest("#play, #listen"); // (not the modes: a stored choice)
   if (under && !under.disabled) under.click();
 });
 document.addEventListener("keydown", (e) => {
