@@ -207,7 +207,8 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
         // Drop verse numbers ("1. "), and old-style spaced contractions ("I 'm").
         // NFKC turns typographic ligatures (common in OCR'd scores: "ﬁ") into plain letters.
         const clean = t.normalize("NFKC").replace(/^\s*\d+\.\s*/, "").replace(/(\w)\s(['’](?:m|s|t|ll|re|ve|d)\b)/g, "$1$2").trim();
-        if (!clean) continue;
+        // (A performance direction read as a syllable — "sim." under a piano part.)
+        if (!clean || /^(sim\.|simile|cresc\.|decresc\.|rit\.|rall\.|accel\.)$/i.test(clean)) continue;
         verses[num] = { text: clean, syllabic: text(ly.querySelector("syllabic")) || "single" };
         verseSet.add(num);
       }
