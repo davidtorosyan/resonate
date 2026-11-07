@@ -46,7 +46,7 @@ self.onmessage = async (e) => {
 
 async function run(job) {
   // OCR engine first: its download/initialization overlaps Java's startup.
-  importScripts(`${job.base}ocr-engine.js?v=60`);
+  importScripts(`${job.base}ocr-engine.js?v=61`);
   self.OmrOcr.configure({ coreDir: `${job.base}tesseract`, tessdataPath: `${job.base}tessdata` });
   const ocrReady = self.OmrOcr.warmup('eng');
 

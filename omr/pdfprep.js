@@ -97,7 +97,10 @@ export function textLines(content) {
 // letters (Finale's Maestro, Sibelius's Opus Text…: w whole, h half, q quarter, e eighth,
 // x sixteenth, "." the dot) — the text layer then reads "h. = 58" (Piano Man: 𝅗𝅥. = 58, a
 // fast three "in one", i.e. ♩ = 174); otherwise null (the meter decides later). A range
-// "= 92-96" takes its first number.
+// "= 92-96" takes its first number; "= about 76", "= ca. 76", "≈ 76" read as 76. With no note
+// symbol in the text, the marking's own words may still say where the beat is: "in 2" / "in
+// one" (`felt`: beats per bar — The Longest Time: "Bright rock and roll, in 2 (𝅗𝅥 = about 76)",
+// the half note drawn as a picture; ♩ = 152).
 export function tempoMark(content) {
   const rows = new Map();
   for (const it of content.items || []) {
@@ -105,9 +108,15 @@ export function tempoMark(content) {
     const y = Math.round(it.transform[5] / 3);
     rows.set(y, `${rows.get(y) || ""} ${it.str}`);
   }
-  for (const row of rows.values()) {
-    const m = /(\S*)\s*=\s*(\d{2,3})(?!\d)/.exec(row);
+  const ys = [...rows.keys()].sort((a, b) => b - a); // top to bottom
+  for (const y of ys) {
+    const row = rows.get(y);
+    const m = /(\S*)\s*(?:=|≈|~)\s*(?:(?:about|approx\.?|approximately|ca\.?|circa|c\.)\s*)?(\d{2,3})(?!\d)/i.exec(row);
     if (!m || Number(m[2]) < 30 || Number(m[2]) > 300) continue;
+    // "in 2" / "in one" on this row or the one above it (the tempo words often wrap)
+    const above = ys[ys.indexOf(y) - 1] !== undefined && ys[ys.indexOf(y) - 1] - y <= 12 ? rows.get(ys[ys.indexOf(y) - 1]) : "";
+    const inN = /\bin\s+(one|two|three|four|1|2|3|4)\b/i.exec(`${above} ${row}`);
+    const felt = inN ? { one: 1, two: 2, three: 3, four: 4 }[inN[1].toLowerCase()] ?? Number(inN[1]) : null;
     const g = m[1];
     let unit = /[\u{1D15E}]/u.test(g) ? "half" : /[♩]/u.test(g) ? "quarter" : /[♪]/u.test(g) ? "eighth" : null;
     let dotted = !!unit && /[.]/u.test(g);
@@ -117,7 +126,7 @@ export function tempoMark(content) {
       unit = { w: "whole", h: "half", q: "quarter", e: "eighth", x: "16th" }[letter[1]];
       dotted = !!letter[2];
     }
-    return { bpm: Number(m[2]), unit, dotted };
+    return { bpm: Number(m[2]), unit, dotted, ...(felt && !unit ? { felt } : {}) };
   }
   return null;
 }

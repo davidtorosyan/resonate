@@ -45,17 +45,25 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
 
   // Pick the part + voice that carries the most lyric syllables (the sung
   // melody). Fall back to the first part's voice 1 for lyric-less scores.
+  // Within a part, a voice with nearly as many syllables (≥ 70%) but a higher pitch is the tune:
+  // recognition hands some syllables to the accompaniment under it (a piano right hand), and a
+  // hymn's alto carries the same words as its soprano.
   let best = null;
   for (const part of parts) {
-    const counts = {};
+    const counts = {}, pitch = {};
     for (const n of part.querySelectorAll("note")) {
-      if (!n.querySelector("lyric")) continue;
       const v = text(n.querySelector("voice")) || "1";
-      counts[v] = (counts[v] || 0) + 1;
+      const st = n.querySelector("pitch");
+      if (st) {
+        const midi = (Number(text(st.querySelector("octave"))) + 1) * 12 + (STEP_PC[text(st.querySelector("step"))] ?? 0);
+        (pitch[v] ||= []).push(midi);
+      }
+      if (n.querySelector("lyric")) counts[v] = (counts[v] || 0) + 1;
     }
-    for (const [voice, c] of Object.entries(counts)) {
-      if (!best || c > best.count) best = { part, voice, count: c };
-    }
+    const med = (v) => { const a = (pitch[v] || []).slice().sort((x, y) => x - y); return a.length ? a[a.length >> 1] : -Infinity; };
+    const top = Math.max(0, ...Object.values(counts));
+    const near = Object.entries(counts).filter(([, c]) => c >= 0.7 * top).sort((a, b) => med(b[0]) - med(a[0]) || b[1] - a[1]);
+    if (near.length && (!best || top > best.count)) best = { part, voice: near[0][0], count: top };
   }
   if (!best) best = { part: parts[0], voice: text(parts[0].querySelector("note > voice")) || "1", count: 0 };
 
@@ -83,7 +91,43 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
   }
 
   const melodyMeasures = [...best.part.querySelectorAll(":scope > measure")];
+  // The melody's staff (a piano part's right hand, when the tune is in the piano).
+  const staffCount = {};
+  for (const n of best.part.querySelectorAll("note")) {
+    if ((text(n.querySelector("voice")) || "1") !== best.voice) continue;
+    const st = text(n.querySelector("staff")) || "1";
+    staffCount[st] = (staffCount[st] || 0) + 1;
+  }
+  const melodyStaff = Object.entries(staffCount).sort((a, b) => b[1] - a[1])[0]?.[0] || "1";
   melodyMeasures.forEach((measure, mi) => {
+    // Syllables printed under the melody's staff but attached to another voice there: sheet-
+    // music recognition hands a syllable to the chord nearest the words, which in a piano part
+    // is often the accompaniment under the tune (The Longest Time: "For the long-est" came out
+    // "For ‿ long ‿", "the" and "est" on the off-beat chords). They go to the melody note that
+    // starts at the same moment, when it has none of its own.
+    const orphans = new Map(); // onset in the measure (rounded) → { verse: lyric element }
+    {
+      let pos = 0, lastStart = 0, div = divisions;
+      for (const el of measure.children) {
+        const name = el.nodeName;
+        if (name === "attributes") { const d = text(el.querySelector("divisions")); if (d) div = Number(d) || 1; continue; }
+        if (name === "backup") { pos -= (Number(text(el.querySelector("duration"))) || 0) / div; continue; }
+        if (name === "forward") { pos += (Number(text(el.querySelector("duration"))) || 0) / div; continue; }
+        if (name !== "note") continue;
+        const isChord = !!el.querySelector(":scope > chord"), isGrace = !!el.querySelector(":scope > grace");
+        const dur = isGrace ? 0 : (Number(text(el.querySelector(":scope > duration"))) || 0) / div;
+        const start = isChord ? lastStart : pos;
+        if (!isChord) { lastStart = pos; pos += dur; }
+        if ((text(el.querySelector("voice")) || "1") === best.voice || (text(el.querySelector("staff")) || "1") !== melodyStaff) continue;
+        for (const ly of el.querySelectorAll(":scope > lyric")) {
+          const key = Math.round(start * 1e4);
+          const o = orphans.get(key) || {};
+          const num = ly.getAttribute("number") || "1";
+          if (!o[num]) o[num] = ly;
+          orphans.set(key, o);
+        }
+      }
+    }
     const mNum = measure.getAttribute("number");
     measures.push(measureStart);
     meters.push(meter);
@@ -151,7 +195,10 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
 
       const tieTypes = [...el.querySelectorAll(":scope > tie")].map((t) => t.getAttribute("type"));
       const verses = {};
-      for (const ly of el.querySelectorAll(":scope > lyric")) {
+      const own = [...el.querySelectorAll(":scope > lyric")];
+      const ownNums = new Set(own.map((ly) => ly.getAttribute("number") || "1"));
+      const moved = Object.entries(orphans.get(Math.round(start * 1e4)) || {}).filter(([num]) => !ownNums.has(num)).map(([, ly]) => ly);
+      for (const ly of [...own, ...moved]) {
         const num = ly.getAttribute("number") || "1";
         // Elided syllables (<text>I</text><elision/><text>'m</text>): join
         // directly before an apostrophe, otherwise with a space.
@@ -439,7 +486,7 @@ function findTempo(root) {
   }
   const met = root.querySelector("metronome");
   if (met) {
-    const per = Number(text(met.querySelector("per-minute")));
+    const per = Number((/\d+(?:\.\d+)?/.exec(text(met.querySelector("per-minute"))) || [])[0]); // ("about 76", "c. 76")
     const unit = UNIT_QUARTERS[text(met.querySelector("beat-unit"))] || 1;
     const dotted = met.querySelector("beat-unit-dot") ? 1.5 : 1;
     if (per > 0) return per * unit * dotted;
