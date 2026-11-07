@@ -121,15 +121,14 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v58</span>
+        <span id="version">v59</span>
         <span id="status">idle</span>
       </div>
     </header>
     <main>
       <section class="card" id="create-card" hidden>
         <h2>Create your voice profile</h2>
-        <p>A profile remembers your volume calibration and your vocal range — the notes you can
-          hold, and where singing is comfortable. The Sing page can then transpose a song to fit you.</p>
+        <p>Your range and volume, so songs fit your voice.</p>
         <div class="row">
           <input id="create-name" placeholder="Name (e.g. Dave)" maxlength="30" autocomplete="off" />
           <button id="create-btn" class="primary" type="button">Create</button>
@@ -151,9 +150,9 @@
         <p id="range-text"></p>
         <div id="strip"></div>
         <div class="edit" id="range-edit">
-          <div class="lbl">Comfortable — where songs are fitted</div>
+          <div class="lbl">Comfortable</div>
           <div class="pair"><span class="stepper" data-k="comfortLow"></span><span class="to">to</span><span class="stepper" data-k="comfortHigh"></span></div>
-          <div class="lbl">Limits — the lowest and highest notes you can hold</div>
+          <div class="lbl">Limits</div>
           <div class="pair"><span class="stepper" data-k="low"></span><span class="to">to</span><span class="stepper" data-k="high"></span></div>
         </div>
         <div class="row">
@@ -190,6 +189,6 @@
         </div>
       </div>
     </div>
-    <script type="module" src="voice.js?v=58"></script>
+    <script type="module" src="voice.js?v=59"></script>
   </body>
 </html>

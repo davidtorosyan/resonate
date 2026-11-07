@@ -2,9 +2,9 @@
 // resulting MusicXML to My songs. No settings: pages without staves are skipped
 // automatically, English OCR for lyrics, the title is taken from the score.
 
-import { readScoreFile, parseMusicXml } from "./musicxml.js?v=58";
-import { addSong } from "./library.js?v=58";
-import { fixOmrScore, joinMovements } from "./omr/fixscore.js?v=58";
+import { readScoreFile, parseMusicXml } from "./musicxml.js?v=59";
+import { addSong } from "./library.js?v=59";
+import { fixOmrScore, joinMovements } from "./omr/fixscore.js?v=59";
 
 const $ = (id) => document.getElementById(id);
 const chooseBtn = $("choose");
@@ -71,7 +71,7 @@ function onProgress(p) {
   } else if (p.phase === "engine") {
     setStep("engine");
     $("stage").textContent = "Starting the recognition engine";
-    $("detail").textContent = "first time: downloading — later runs start faster";
+    $("detail").textContent = "~60 MB download the first time";
     setBar(0.03);
   } else if (p.phase === "recognize") {
     setStep("recognize");
@@ -86,7 +86,7 @@ function onProgress(p) {
     if (sheetTimes.length) {
       const avg = sheetTimes.reduce((a, b) => a + b, 0) / sheetTimes.length;
       const left = avg * (p.sheets - p.sheet + 1) - (now - sheetStart.at) / 1000;
-      $("eta").textContent = `about ${fmt(left)} left`;
+      $("eta").textContent = `~${fmt(left)} left`;
     } else {
       $("eta").textContent = "estimating time…";
     }
@@ -198,7 +198,7 @@ async function run(file) {
   appendLog(logHead.trimEnd());
 
   try {
-    const omr = await import("./omr/omr.js?v=58");
+    const omr = await import("./omr/omr.js?v=59");
     const res = await omr.convertPdf(file, { onProgress, onLog: appendLog });
 
     setStep("save");
@@ -230,15 +230,15 @@ async function run(file) {
     $("result-title").textContent = `“${score.title}”`;
     const read = res.pages.filter((p) => !res.failed.some((f) => f.page === p));
     $("result-detail").textContent =
-      `${score.notes.length} melody notes, ${lyrics} with lyrics${score.verses.length > 1 ? ` (${score.verses.length} verses)` : ""}, ` +
-      `from ${read.length} page${read.length === 1 ? "" : "s"} (${read.join(", ")}) in ${fmt((performance.now() - t0) / 1000)}. Saved to My songs.`;
+      `${score.notes.length} notes · ${lyrics} with lyrics${score.verses.length > 1 ? ` · ${score.verses.length} verses` : ""} · ` +
+      `page${read.length === 1 ? "" : "s"} ${read.join(", ")} · saved to My songs`;
     if (res.failed.length) {
       const pages = res.failed.map((f) => f.page);
       $("result-missing").hidden = false;
       $("result-missing").textContent =
-        `Couldn't read page${pages.length === 1 ? "" : "s"} ${pages.join(", ")}, so ${pages.length === 1 ? "it's" : "they're"} ` +
-        "left out of the song" + (firstFailed ? " (the title, tempo and time signature come from the first page, so they may be off)" : "") +
-        ". Details → Copy log says why.";
+        `Page${pages.length === 1 ? "" : "s"} ${pages.join(", ")} couldn't be read, left out` +
+        (firstFailed ? "; title, tempo and time signature may be off" : "") +
+        ". Why: Details → Copy log.";
     }
   } catch (err) {
     fail(err);

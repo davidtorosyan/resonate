@@ -216,7 +216,7 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v58</span>
+        <span id="version">v59</span>
         <span id="status">idle</span>
       </div>
     </header>
@@ -232,9 +232,9 @@
       <section id="playbar" hidden>
         <button id="play" type="button">▶ Play</button>
         <span id="play-modes" class="seg" role="group" aria-label="Playback">
-          <button type="button" data-mode="voice" title="Your recording">Voice</button>
-          <button type="button" data-mode="notes" title="A piano note for each detected note">Notes</button>
-          <button type="button" data-mode="both" title="Your recording + detected notes">Both</button>
+          <button type="button" data-mode="voice">Voice</button>
+          <button type="button" data-mode="notes" title="On piano">Notes</button>
+          <button type="button" data-mode="both" title="Voice + piano">Both</button>
         </span>
       </section>
       <section id="transcript-wrap">
@@ -245,12 +245,12 @@
             <button id="copy" class="chip-btn" type="button" disabled>Copy</button>
           </span>
         </div>
-        <div id="transcript" data-empty="Hit Record and sing — notes will appear here."></div>
+        <div id="transcript" data-empty="No notes yet"></div>
       </section>
     </main>
     <footer>
       <button id="rec" type="button">Record</button>
     </footer>
-    <script type="module" src="record.js?v=58"></script>
+    <script type="module" src="record.js?v=59"></script>
   </body>
 </html>
