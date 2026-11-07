@@ -2,18 +2,18 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=55";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=55";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=55";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=55";
-import { analyzeLines, workOn, lineDelta } from "./coach.js?v=55";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=55";
-import { startCapture, playVoice } from "./capture.js?v=55";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.js?v=55";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=55";
-import { fixOmrScore } from "./omr/fixscore.js?v=55";
-import { activeProfile } from "./profiles.js?v=55";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=55";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=56";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=56";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=56";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=56";
+import { analyzeLines, workOn, lineDelta } from "./coach.js?v=56";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=56";
+import { startCapture, playVoice } from "./capture.js?v=56";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.js?v=56";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=56";
+import { fixOmrScore } from "./omr/fixscore.js?v=56";
+import { activeProfile } from "./profiles.js?v=56";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=56";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -673,6 +673,7 @@ async function beginSing(part) {
     if (part) stopLoop(`Couldn't open the microphone: ${err.message || err.name}`);
     return;
   }
+  micWasOpen = true;
   if (part && drill?.token !== part.token) { await mic.close(); return; } // the loop stopped meanwhile
   const ac = mic.ac;
   let piano = null;
@@ -786,6 +787,9 @@ async function stopSing() {
   const s = session;
   if (!s || s.kind !== "sing") return;
   session = null;
+  // The mic stops now (the recording still flushes what it has): iOS keeps playback on the
+  // quiet earpiece while a capture is live, so a Play tapped right after Stop was silent.
+  s.mic.stream.getTracks().forEach((t) => t.stop());
   cancelAnimationFrame(s.raf);
   for (const n of s.nodes) try { n.stop(); } catch {}
   const endT = s.ac.currentTime - s.songT0 - ANALYSIS_LAG - s.latency;
@@ -819,11 +823,36 @@ async function stopSing() {
 
 let playCtx = null;
 
-async function getPlayCtx() {
-  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch {}
-  if (!playCtx || playCtx.state === "closed") playCtx = new (window.AudioContext || window.webkitAudioContext)();
-  if (playCtx.state !== "running") await playCtx.resume(); // suspended, or "interrupted" (iOS)
+// The playback context, ready to play — called in the tap that starts the sound. iOS: after a
+// mic was open the session type is re-applied (going through "auto": setting "playback" when
+// it already says so changes nothing, and set while a take's mic was still closing it left
+// the page on the quiet earpiece output); a context iOS left "interrupted" (or closed) is
+// replaced by a fresh one now, while the tap still allows audio to start; and a resume that
+// doesn't settle no longer leaves every later Play waiting on it.
+let micWasOpen = false; // a mic has been open since the session was last set to playback
+let playCtxStuck = false; // its last resume didn't get it running: the next tap makes a new one
+// (Synchronous, so a tap can make the context it may then start.)
+function freshPlayCtx() {
+  if (!playCtx || (playCtxStuck && playCtx.state !== "running") || playCtx.state === "closed" || playCtx.state === "interrupted") {
+    if (playCtx && playCtx.state !== "closed") playCtx.close().catch(() => {});
+    playCtx = new (window.AudioContext || window.webkitAudioContext)();
+    playCtxStuck = false;
+  }
   return playCtx;
+}
+async function getPlayCtx() {
+  try {
+    if (navigator.audioSession) {
+      if (micWasOpen && navigator.audioSession.type === "playback") navigator.audioSession.type = "auto";
+      navigator.audioSession.type = "playback";
+    }
+  } catch {}
+  micWasOpen = false;
+  freshPlayCtx();
+  const ac = playCtx;
+  if (ac.state !== "running") await Promise.race([ac.resume().catch(() => {}), new Promise((r) => setTimeout(r, 1500))]);
+  if (ac === playCtx && ac.state !== "running") playCtxStuck = true;
+  return ac;
 }
 
 // kind: "listen" (melody) or "playback" (per playMode).
@@ -842,8 +871,14 @@ async function beginPlay(kind, from, opts) {
   const gen = ++playGen;
   const ac = await getPlayCtx();
   if (gen !== playGen) return;
+  if (ac.state !== "running") {
+    statusEl.textContent = "the sound didn't start — tap again";
+    return;
+  }
   const mode = opts.mode ?? playMode;
-  const end = opts.until ?? (kind === "playback" && take ? Math.max(take.endT ?? songEnd, 0) : songEnd);
+  // (A take stopped before any note — in the count-in — has nothing to play back: the melody.)
+  const sungTo = take && take.endT !== null && notes.length && take.endT > notes[0].t + 0.2 ? take.endT : songEnd;
+  const end = opts.until ?? (kind === "playback" && take ? Math.max(sungTo, 0) : songEnd);
   if (from >= end - 0.05 || from < entryT - 1) from = entryT;
   const wantMelody = kind === "listen" || mode !== "voice" || !take?.voice;
   const wantVoice = kind === "playback" && take?.voice && mode !== "melody";
@@ -1116,8 +1151,7 @@ async function pressKey(j, id, held) {
   scrollT = nowT = Math.max(-1, Math.min(n.t - 0.4, songEnd));
   showKeys();
   // The samples can load and decode before audio may start (first touch on a phone).
-  if (!playCtx || playCtx.state === "closed") playCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const loading = loadPiano(playCtx);
+  const loading = loadPiano(freshPlayCtx());
   loading.catch(() => {});
   if (!pianoReady(playCtx)) statusEl.textContent = "loading piano…";
   let ac = null, piano = null;
@@ -1227,8 +1261,7 @@ chipsEl.addEventListener("scroll", () => { lastChipScroll = performance.now(); }
 function unlockPlay(e) {
   if (!e.isTrusted || session?.kind === "sing" || e.target.closest?.("#sing, #tapalong, #taptempo")) return;
   for (const t of ["pointerup", "keydown"]) document.removeEventListener(t, unlockPlay, true);
-  if (!playCtx || playCtx.state === "closed") playCtx = new (window.AudioContext || window.webkitAudioContext)();
-  if (playCtx.state !== "running") playCtx.resume().catch(() => {});
+  if (freshPlayCtx().state !== "running") playCtx.resume().catch(() => {});
   loadPiano(playCtx).catch(() => {});
 }
 for (const t of ["pointerup", "keydown"]) document.addEventListener(t, unlockPlay, true);
@@ -1342,6 +1375,7 @@ async function micStart(m) {
       : `Couldn't open the microphone: ${error.message || error.name}`, "error");
     return;
   }
+  micWasOpen = true;
   m.stream = stream;
   m.source = m.micCtx.createMediaStreamSource(stream);
   m.source.connect(m.analyser);
@@ -1735,7 +1769,15 @@ for (const r of optionsEl.querySelectorAll('input[name="view"]')) {
 
 reviewBtn.addEventListener("click", openReview);
 $("rv-close").addEventListener("click", closeReview);
-reviewEl.addEventListener("click", (e) => { if (e.target === reviewEl) closeReview(); }); // the dimmed backdrop
+// The dimmed backdrop closes the review. A tap there on a playback control showing through
+// (Play peeks out above a short sheet) also does what it says: it used to only close the
+// sheet, so after a take a tap on Play "didn't play".
+reviewEl.addEventListener("click", (e) => {
+  if (e.target !== reviewEl) return;
+  closeReview();
+  const under = document.elementFromPoint(e.clientX, e.clientY)?.closest("#play, #play-modes button, #listen");
+  if (under && !under.disabled) under.click();
+});
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (!reviewEl.hidden) closeReview();

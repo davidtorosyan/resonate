@@ -7,7 +7,7 @@ export async function startCapture(ac, source) {
   let flushed = null;
   let node, sink;
   try {
-    await ac.audioWorklet.addModule("recorder-worklet.js?v=55");
+    await ac.audioWorklet.addModule("recorder-worklet.js?v=56");
     node = new AudioWorkletNode(ac, "pcm-recorder");
     sink = ac.createGain();
     sink.gain.value = 0; // keep the node pulled without hearing yourself
