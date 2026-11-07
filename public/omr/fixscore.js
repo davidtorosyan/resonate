@@ -247,8 +247,12 @@ function restoreTempo(doc, log, changes, fromText) {
     source = "the PDF's text (the engine didn't read the mark)";
   } else if (!doc.querySelector("sound[tempo], metronome")) {
     for (const line of log) {
-      const m = /metronome line "[^"]*?=\s*(\d{2,3})\b/.exec(line);
-      if (m && Number(m[1]) >= 30 && Number(m[1]) <= 300) { mark = { bpm: Number(m[1]) }; break; }
+      const m = /metronome line "([^"]*?)(?:=|≈|~)\s*(?:(?:about|approx\.?|approximately|ca\.?|circa|c\.)\s*)?(\d{2,3})\b/i.exec(line);
+      if (m && Number(m[2]) >= 30 && Number(m[2]) <= 300) {
+        const inN = /\bin\s+(one|two|three|four|1|2|3|4)\b/i.exec(m[1]);
+        mark = { bpm: Number(m[2]), ...(inN ? { felt: { one: 1, two: 2, three: 3, four: 4 }[inN[1].toLowerCase()] ?? Number(inN[1]) } : {}) };
+        break;
+      }
     }
     source = "the engine log (the note symbol wasn't read)";
   }
@@ -257,7 +261,12 @@ function restoreTempo(doc, log, changes, fromText) {
   if (!unit) {
     const time = doc.querySelector("time");
     const beats = Number(time?.querySelector("beats")?.textContent), type = Number(time?.querySelector("beat-type")?.textContent);
-    if (type === 8 && beats >= 6 && beats % 3 === 0) { unit = "quarter"; dotted = true; }
+    // "in 2" / "in one" in the marking: the bar divided into that many beats.
+    const barQ = beats && type ? (beats * 4) / type : null;
+    const beatQ = mark.felt && barQ ? barQ / mark.felt : null;
+    const asUnit = { 4: ["whole", false], 3: ["half", true], 2: ["half", false], 1.5: ["quarter", true], 1: ["quarter", false], 0.75: ["eighth", true], 0.5: ["eighth", false] }[beatQ];
+    if (asUnit) [unit, dotted] = asUnit;
+    else if (type === 8 && beats >= 6 && beats % 3 === 0) { unit = "quarter"; dotted = true; }
     else if (time?.getAttribute("symbol") === "cut" || (beats === 2 && type === 2)) unit = "half";
     else unit = "quarter";
   }
