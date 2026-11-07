@@ -6,6 +6,12 @@ A vocal pitch + waveform web app served over LAN so it can be used from a phone.
 
 Push to `main` → `.github/workflows/deploy.yml` publishes `public/` to the `gh-pages` branch → live on GitHub Pages (HTTPS, so the mic works on a phone with no cert hassle). This is the normal iteration loop: make the change, bump the version badge, push to `main`, tell the user when the deploy finishes. The local server below is only for offline testing.
 
+## UI principles (standing — the user's direction, see docs/ROADMAP.md)
+
+- **Feedback coaches; it doesn't grade.** This is for learning to sing, not a game. Keep every number (scores, cents, timing) in the data (history, sync, the AI coach), but don't put grade-like numbers in front of the singer: no percentages after a line or a take, no scoreboard counts, no red "fail" marks. Lead with what went well, then at most a few concrete things to try, each with a way to hear it. Build this into the data model (observations with a tone), not as a skin over scores.
+- **Few words.** Don't explain what the user just did or what a control obviously does. Show the facts that matter compactly (e.g. a song's range before → after a key change, not a paragraph about fitting a profile). Prefer a short label, a symbol or a number with a unit over a sentence.
+- **Everything works signed out.** GitHub Pages is the host; signing in (planned) only adds cloud sync and the AI/MCP connection.
+
 ## Pages
 
 - `index.html` + `app.js` — the tuner (hold a note, see note/cents/volume/waveform). Classic script with its own YIN — deliberately untouched by the other pages. Header links to Record and Sing. Start sets `navigator.audioSession.type = "play-and-record"` before `getUserMedia` (**iOS keeps a page's audio-session type for the whole tab**: after Sing set `playback` for the piano, the Tuner's Start used to fail silently — its error was also overwritten by stop()'s "idle"; now shown after stop()), Stop/pagehide set `auto`; an 8 s watchdog re-enables Start if the mic never answers (a late answer still starts unless Start was tapped again — `startGen`). Every page that sets the session (Sing, Record, Voice) sets `auto` and closes its playback context on `pagehide`. tools/tunerfix.cjs. iOS Safari asks for the mic once per page load unless the site is set to Allow (aA → Website Settings → Microphone).
