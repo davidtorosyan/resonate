@@ -1,13 +1,20 @@
-// Capture a take's raw mic audio (for playback) via recorder-worklet.js.
+// Capture a take's raw mic audio (for playback and rhythm) via recorder-worklet.js.
+// opts: keepSeconds (keep only the first so many seconds — a loop round keeps its count-in, for
+// finding the clicks), onChunk(chunk) (every chunk as it arrives: rhythm.js features).
 // Returns { finish } — await finish() for { data, sampleRate, start (audio-clock s), gain } or null.
 
-export async function startCapture(ac, source) {
+const modules = new WeakMap(); // AudioContext → its addModule promise
+
+export async function startCapture(ac, source, { keepSeconds = Infinity, onChunk = null } = {}) {
   const chunks = [];
+  const keep = keepSeconds * ac.sampleRate;
+  let kept = 0;
   let start = null;
   let flushed = null;
   let node, sink;
   try {
-    await ac.audioWorklet.addModule("recorder-worklet.js?v=57");
+    if (!modules.has(ac)) modules.set(ac, ac.audioWorklet.addModule("recorder-worklet.js?v=58"));
+    await modules.get(ac); // (once per context: the phrase loop records every round)
     node = new AudioWorkletNode(ac, "pcm-recorder");
     sink = ac.createGain();
     sink.gain.value = 0; // keep the node pulled without hearing yourself
@@ -16,11 +23,15 @@ export async function startCapture(ac, source) {
     sink.connect(ac.destination);
     node.port.onmessage = (e) => {
       const d = e.data;
-      if (d instanceof Float32Array) chunks.push(d);
+      if (d instanceof Float32Array) {
+        if (kept < keep) { chunks.push(d); kept += d.length; }
+        if (onChunk) try { onChunk(d); } catch (err) { console.warn(err); }
+      }
       else if (d.start !== undefined) start = d.start;
       else if (d.done && flushed) flushed();
     };
   } catch (err) {
+    modules.delete(ac);
     console.warn("Take audio capture unavailable — no voice playback", err);
     return { finish: async () => null };
   }

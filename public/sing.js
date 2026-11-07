@@ -2,18 +2,19 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=57";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=57";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=57";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=57";
-import { analyzeLines, workOn, lineDelta } from "./coach.js?v=57";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=57";
-import { startCapture, playVoice } from "./capture.js?v=57";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick } from "./piano.js?v=57";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=57";
-import { fixOmrScore } from "./omr/fixscore.js?v=57";
-import { activeProfile } from "./profiles.js?v=57";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=57";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=58";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=58";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=58";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=58";
+import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=58";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=58";
+import { startCapture, playVoice } from "./capture.js?v=58";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN } from "./piano.js?v=58";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=58";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=58";
+import { fixOmrScore } from "./omr/fixscore.js?v=58";
+import { activeProfile } from "./profiles.js?v=58";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=58";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -140,11 +141,14 @@ const qToT = (q) => (useMap && tmap ? tmap.qToT(q) / rate : q * secPerQuarter())
 // "Freely" intro in 4/4, then 3/4.)
 const meterAt = (mi) => score.meters?.[mi] || [score.beats, score.beatType];
 const measureAt = (q) => { let m = 0; score.measures.forEach((x, i) => { if (x <= q + 1e-6) m = i; }); return m; };
-const beatQ = (mi = entryIdx) => 4 / meterAt(mi)[1];
+// The beat you feel (clicked and counted): a dotted quarter in 6/8, 9/8, 12/8 (a dotted
+// eighth in 6/16…), else the meter's own unit (a half in 2/2). → { q (quarters), n (per bar) }
+const feltBeat = ([b, t]) => (b > 3 && b % 3 === 0 && t >= 8 ? { q: 12 / t, n: b / 3 } : { q: 4 / t, n: b });
+const beatQ = (mi = entryIdx) => feltBeat(meterAt(mi)).q;
 function beatSecAt(q, limit = score.length, meter = meterAt(measureAt(q))) {
-  const bq = 4 / meter[1];
+  const bq = feltBeat(meter).q;
   if (!(useMap && tmap)) return qToT(q + bq) - qToT(q);
-  const bar = meter[0] * bq;
+  const bar = feltBeat(meter).n * bq;
   const span = Math.min(2 * bar, limit - q);
   if (span < bar) return (tmap.avg / rate) * bq;
   return ((qToT(q + span) - qToT(q)) / span) * bq;
@@ -191,7 +195,6 @@ function applySong() {
   shifts = noteShifts();
   shiftSig = shifts.join(",");
   flats = transposeKey(score.fifths, fit ? fit.key : shifts[0] ?? 0).fifths < 0;
-  if (typeof transpose === "string") showFitMsg();
   notes = notesForVerse(score, verse).map((n, i) => ({
     midi: n.midi + shifts[i],
     name: spellTransposed(n, shifts[i], transposeKey(score.fifths, shifts[i]).steps, flats).name,
@@ -210,6 +213,7 @@ function applySong() {
   songEnd = notes.length ? Math.max(...notes.map((n) => n.t + n.d)) : 0;
   const mids = notes.map((n) => n.midi);
   range = { lo: Math.min(...mids) - 4, hi: Math.max(...mids) + 4 };
+  showFitMsg();
   fillTempoOptions();
   fillKeyOptions();
   if (take && !takeFits(take)) take = null; // grades no longer apply
@@ -284,35 +288,22 @@ const signed = (t) => (t ? `${t > 0 ? "+" : "−"}${Math.abs(t)}` : "±0");
 const keyOf = (t) => keyName(transposeKey(score.fifths, t).fifths, minor);
 const pctOut = (f) => `${Math.round(f * 100) || "<1"}%`;
 
-// Under the song bar: how the chosen transposition sits in the voice profile's range.
+// Under the song bar, when the key moved or there's a voice range: the song's range as
+// written → as sung, and the comfortable range ("C3–F4 → A2–D4 · Dave C3–E4 ✓").
 function showFitMsg() {
-  const prof = profile;
-  if (!prof?.range) {
-    return showMsg("To see which keys fit your voice, set up a voice profile with your range:", "info", { href: "voice.html", text: "Voice profile" });
-  }
-  if (!fit) return showMsg("");
-  const r = prof.range;
-  const span = (n) => {
-    const o = Math.floor(n / 12), r = n % 12;
-    const oct = o === 1 ? "an octave" : o ? `${o} octaves` : "";
-    const semi = r ? `${r} semitone${r > 1 ? "s" : ""}` : "";
-    return oct && semi ? `${oct} and ${semi}` : oct || semi;
-  };
-  const move = (t) => (t ? `${t > 0 ? "up" : "down"} ${span(Math.abs(t))}` : "as written");
-  const comfy = `${prof.name}'s comfortable range (${nameOf(r.comfortLow, flats)}–${nameOf(r.comfortHigh, flats)})`;
-  const key = keyOf(fit.key);
-  // Two groups = two parts (a duet on one staff): the one moved up more was the low part.
-  const byShift = [...fit.moves].sort((a, b) => b.shift - a.shift);
-  const phr = (m) => `${m.phrases} phrase${m.phrases > 1 ? "s" : ""}`;
-  const how = !fit.split
-    ? `${move(fit.key)}, in ${key}${fit.key && fit.s === 0 ? " (the song's own key)" : ""}`
-    : fit.moves.length === 2
-      ? `the low part (${phr(byShift[0])}) ${move(byShift[0].shift)}, the high part (${phr(byShift[1])}) ${move(byShift[1].shift)} — both in ${key}`
-      : `${byShift.map((m) => `${phr(m)} ${move(m.shift)}`).join(", ")} — all in ${key}`;
-  const out = fit.outside >= 0.005
-    ? `${pctOut(fit.outside)} of the singing is outside ${comfy}${fit.beyond >= 0.005 ? ` (${pctOut(fit.beyond)} beyond your limits)` : ""}.`
-    : `Fits ${comfy}.`;
-  showMsg(`${how[0].toUpperCase()}${how.slice(1)}. ${out}`, fit.outside < 0.02 && !fit.beyond ? "ok" : "info");
+  const r = profile?.range;
+  if (!r && typeof transpose === "string") return showMsg("", "info", { href: "voice.html", text: "Set your range" });
+  const moved = shifts.some((x) => x);
+  if (!notes.length || (!r && !moved)) return showMsg("");
+  const written = notesForVerse(score, verseSelect.value || score.verses[0] || "1");
+  const steps = transposeKey(score.fifths, 0).steps;
+  const wName = (n) => spellTransposed(n, 0, steps, score.fifths < 0).name;
+  const lo = written.reduce((a, n) => (n.midi < a.midi ? n : a)), hi = written.reduce((a, n) => (n.midi > a.midi ? n : a));
+  const span = `${wName(lo)}–${wName(hi)}${moved ? ` → ${lowest().name}–${highest().name}` : ""}`;
+  if (!r) return showMsg(span);
+  const ok = fit && fit.outside < 0.02 && !fit.beyond;
+  const yours = `${profile.name} ${nameOf(r.comfortLow, flats)}–${nameOf(r.comfortHigh, flats)}`;
+  showMsg(`${span} · ${yours}${!fit ? "" : ok ? " ✓" : ` · ${pctOut(fit.outside)} out`}`, ok ? "ok" : "info");
 }
 
 // The transpose menu. With a voice range: "Fits Dave (C3–E4)" — every option that keeps
@@ -491,7 +482,7 @@ function showMsg(text, kind = "info", link = null) {
     songMsgEl.append(" ", a);
   }
   songMsgEl.dataset.kind = kind;
-  songMsgEl.hidden = !text;
+  songMsgEl.hidden = !text && !link;
 }
 
 async function refreshLibrary() {
@@ -615,24 +606,33 @@ function countInMeter(mi = entryIdx) {
   const firstQ = (score.measures[mi + 1] ?? score.length) - score.measures[mi];
   return firstQ < own[0] * (4 / own[1]) - 1e-6 ? meterAt(Math.min(mi + 1, score.measures.length - 1)) : own;
 }
-// A bar of clicks in that meter, plus the missing beats when the first bar is a pickup.
+// A bar of clicks in that meter, plus the missing beats when the first bar is a pickup —
+// fractional for a pickup that isn't whole beats (an eighth in 4/4: 7½, so the pickup lands
+// on the "and" of 4 and the downbeat on the next click's time; rounding put the song half a
+// beat late against its own count-in, and the clicks jumped half a beat after the pickup).
 function countInBeats(mi = entryIdx) {
-  const [beats, type] = countInMeter(mi);
-  const beatQ = 4 / type;
-  const barQ = beats * beatQ;
+  const { q: bq, n } = feltBeat(countInMeter(mi));
+  const barQ = n * bq;
   const firstQ = (score.measures[mi + 1] ?? score.length) - score.measures[mi];
-  // Pickup bar: count a full bar, then the rest of the pickup bar's beats.
-  const pickupFill = firstQ < barQ - 1e-6 ? Math.round((barQ - firstQ) / beatQ) : 0;
-  return beats + pickupFill;
+  return n + (firstQ < barQ - 1e-6 ? (barQ - firstQ) / bq : 0);
 }
 
-// Every beat of the song: [{ t (s), accent }]
+// Every beat of the song: [{ t (s), accent, q }]. A pickup bar (the song's first bar, and its
+// replays after a repeat) counts back from its barline: an eighth pickup in 4/4 has no beat of
+// its own; a 1½-beat pickup has one, half a beat in.
 function beatGrid() {
   const out = [];
   score.measures.forEach((m, i) => {
     const bq = beatQ(i);
     const end = score.measures[i + 1] ?? score.length;
-    for (let q = m; q < end - 1e-6; q += bq) out.push({ t: qToT(q), accent: q === m && i > 0 });
+    const short = end - m < feltBeat(meterAt(i)).n * bq - 1e-6;
+    if (short && (score.measureOf?.[i] ?? i) === 0) {
+      const qs = [];
+      for (let q = end - bq; q >= m - 1e-6; q -= bq) qs.unshift(q);
+      for (const q of qs) out.push({ t: qToT(q), accent: false, q });
+      return;
+    }
+    for (let q = m; q < end - 1e-6; q += bq) out.push({ t: qToT(q), accent: q === m && i > 0, q });
   });
   return out;
 }
@@ -681,7 +681,10 @@ async function beginSing(part) {
     statusEl.textContent = "loading piano…";
     try { piano = await loadPiano(ac); } catch (err) { console.warn(err); }
   }
-  const capture = part ? { finish: async () => null } : await startCapture(ac, mic.source);
+  // The recording: a take's for playback; a loop round keeps just its count-in (to find the
+  // clicks). Both stream into the rhythm features as they arrive.
+  const features = makeFeatures(ac.sampleRate);
+  const capture = await startCapture(ac, mic.source, { keepSeconds: part ? 10 : Infinity, onChunk: (c) => features.push(c) });
   let wakeLock = null;
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
   if (part && drill?.token !== part.token) { // the loop stopped while the piano loaded
@@ -699,11 +702,15 @@ async function beginSing(part) {
   const start = part ? part.from : entryT;
   const end = part ? part.until : songEnd + END_PAD;
   const [j0, j1] = part ? part.range : [0, notes.length];
-  const count = part ? meter[0] : countInBeats();
-  const barBeats = meter[0];
+  const count = part ? feltBeat(meter).n : countInBeats();
+  const barBeats = feltBeat(meter).n;
   const t0 = ac.currentTime + 0.3;
   const songT0 = t0 + count * beatSec - start; // song time `start` sounds right after the count-in
-  for (let k = 0; k < count; k++) playClick(ac, t0 + k * beatSec, k % barBeats === 0, nodes);
+  const countClicks = [];
+  for (let k = 0; k < count; k++) {
+    countClicks.push({ t: t0 + k * beatSec, accent: k % barBeats === 0 });
+    playClick(ac, t0 + k * beatSec, k % barBeats === 0, nodes);
+  }
   if (guide === "click") for (const b of beatGrid()) if (b.t >= start - 1e-6 && b.t < end) playClick(ac, songT0 + b.t, b.accent, nodes);
   if (piano) for (const n of notes.slice(j0, j1)) playPiano(ac, piano, songT0 + n.t, n.d, n.midi, 0.9, nodes);
 
@@ -713,7 +720,7 @@ async function beginSing(part) {
   take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, timing: timingSig(), rate, verse: verseSelect.value || score.verses[0] || "1", octave: 0, range: [j0, j1], part: !!part, guide };
   let endRes;
   const ended = new Promise((r) => { endRes = r; });
-  session = { kind: "sing", ac, nodes, songT0, latency, mic, capture, wakeLock, raf: null, part, start, beatSec, count, ended, endRes };
+  session = { kind: "sing", ac, nodes, songT0, latency, mic, capture, features, countClicks, wakeLock, raf: null, part, start, beatSec, count, ended, endRes };
   stopKeys(); // a key pressed while the mic was opening
   singBtn.disabled = false;
   updateButtons();
@@ -728,7 +735,7 @@ async function beginSing(part) {
     gradeUpTo(ft);
     nowT = songT;
     renderYou();
-    statusEl.textContent = songT < start ? `count-in ${Math.max(1, Math.min(count, Math.floor((songT - start + count * beatSec) / beatSec) + 1))}` : `${r.db.toFixed(0)} dB`;
+    statusEl.textContent = songT < start ? `count-in ${Math.max(1, Math.min(Math.ceil(count), Math.floor((songT - start + count * beatSec) / beatSec) + 1))}` : `${r.db.toFixed(0)} dB`;
     renderLive();
     if (songT > end) { stopSing(); return; }
     session.raf = requestAnimationFrame(tick);
@@ -787,19 +794,35 @@ async function stopSing() {
   const s = session;
   if (!s || s.kind !== "sing") return;
   session = null;
+  let settings = null;
+  try { settings = s.mic.stream.getAudioTracks()[0]?.getSettings() || null; } catch {}
   // The mic stops now (the recording still flushes what it has): iOS keeps playback on the
   // quiet earpiece while a capture is live, so a Play tapped right after Stop was silent.
   s.mic.stream.getTracks().forEach((t) => t.stop());
   cancelAnimationFrame(s.raf);
   for (const n of s.nodes) try { n.stop(); } catch {}
-  const endT = s.ac.currentTime - s.songT0 - ANALYSIS_LAG - s.latency;
-  take.endT = endT;
-  gradeFinal(endT);
+  const stopAt = s.ac.currentTime;
+  take.endT = stopAt - s.songT0 - ANALYSIS_LAG - s.latency;
+  const v = await s.capture.finish();
+  // The count-in clicks in the recording measure the real round trip (output + input
+  // latency; the browser's estimate can be well off — Bluetooth). With it, the pitch frames
+  // and the recording are placed where they were really sung against what was heard.
+  let cal = null;
+  try { if (v) cal = findClicks(v.data, v.sampleRate, v.start, s.countClicks, s.beatSec, (a) => clickWave(v.sampleRate, a), (a) => CLICK_GAIN[a ? "accent" : "plain"]); } catch (err) { console.warn("clicks", err); }
+  Object.assign(take, { ctxStart: v ? v.start : null, est: s.latency, beatSec: s.beatSec, countClicks: s.countClicks });
+  if (cal) {
+    const d = s.latency - cal.rt;
+    for (const f of take.frames) f.t += d;
+    take.endT += d;
+    take.latency = cal.rt;
+    take.frameShift = d;
+  }
+  gradeFinal(take.endT);
   const octs = take.grades.filter((g) => g && g.octave !== undefined).map((g) => g.octave);
   take.octave = octs.length ? Math.round(median(octs)) : 0;
-  const v = await s.capture.finish();
-  // Line the recording up with the score: shift by the recording latency.
-  if (v) take.voice = { ...v, start: v.start - s.songT0 - s.latency };
+  // Line the recording up with the score: shift by the round trip.
+  if (v && !s.part) take.voice = { ...v, start: v.start - s.songT0 - take.latency };
+  try { take.rhythm = rhythmOf(s, v, cal, stopAt, settings); } catch (err) { console.warn("rhythm", err); take.rhythm = null; }
   try { await s.wakeLock?.release(); } catch {}
   await s.mic.close();
   statusEl.textContent = "idle";
@@ -816,6 +839,65 @@ async function stopSing() {
   s.endRes(take);
   recordTake();
   openReview();
+}
+
+// ---------------------------------------------------------------------------
+// Rhythm (rhythm.js): when each note came in, from the take's recording
+
+// Per note, where it sits in the beat: { beat (s), u (the beat's division, s), off (not on a
+// felt beat), level ("beat" | "div" | "sub"), toBeat (s to the next beat), entry (first note,
+// or after a rest ≥ ½ beat), rest (s), lineEnd }. A pickup bar counts back from its barline.
+function metricOf() {
+  const lineEnd = new Set(lines.map((l) => l[l.length - 1]));
+  return notes.map((n, j) => {
+    const mi = measureAt(n.q), meter = meterAt(mi), fb = feltBeat(meter);
+    const m0 = score.measures[mi], end = score.measures[mi + 1] ?? score.length;
+    const pickup = end - m0 < fb.n * fb.q - 1e-6 && (score.measureOf?.[mi] ?? mi) === 0;
+    const origin = pickup ? end - fb.n * fb.q : m0;
+    const pos = (n.q - origin) / fb.q, frac = pos - Math.floor(pos + 1e-6);
+    const div = fb.q === 4 / meter[1] ? 2 : 3; // a compound beat divides in three
+    const off = frac > 1e-6;
+    const level = !off ? "beat" : Math.abs(frac * div - Math.round(frac * div)) < 1e-6 ? "div" : "sub";
+    const beat = qToT(n.q + fb.q) - qToT(n.q);
+    const prev = notes[j - 1];
+    const rest = prev ? n.t - (prev.t + prev.d) : Infinity;
+    return {
+      beat, u: beat / div, off, level,
+      toBeat: off ? qToT(origin + Math.ceil(pos - 1e-6) * fb.q) - n.t : 0,
+      entry: !prev || (n.restBefore && rest >= beat / 2), rest: Math.min(rest, 9), lineEnd: lineEnd.has(j),
+    };
+  });
+}
+
+// After a take: each note's onset and what the timing says, from the recording (cal: the
+// count-in clicks found in it, or null). → take.rhythm = { calibrated, rt, trust, lead, steady,
+// drift, notes: [{ dev, rdev, cls, rel, kind, conf, u } | null], obs: [observation], diag }.
+function rhythmOf(s, v, cal, stopAt, settings) {
+  if (!v) return null;
+  const [j0, j1] = take.range;
+  const diag = { coupling: cal ? cal.coupling : null, clicks: cal ? cal.n : 0, est: s.latency, out: s.ac.outputLatency ?? null, base: s.ac.baseLatency ?? null, settings };
+  // The melody guide from a speaker the mic can hear (the count-in clicks were found): its
+  // piano lands right on time in the recording, so the timing can't be judged. Headphones fix it.
+  if (take.guide === "melody" && cal) {
+    return { calibrated: true, rt: cal.rt, trust: "speaker-guide", lead: null, notes: notes.map(() => null), obs: [{ kind: "headphones", tone: "try", scope: "take" }], diag };
+  }
+  const trip = cal ? cal.rt : s.latency;
+  const ns = notes.slice(j0, j1);
+  const met = metricOf().slice(j0, j1);
+  const ls = lines.map((l) => l.filter((j) => j >= j0 && j < j1).map((j) => j - j0));
+  const unsung = ns.map((_, k) => ["unsung", "missed"].includes(take.grades[j0 + k]?.status));
+  const on = findOnsets(ns, s.features.result(), v.start, take.frames, met, { songT0: s.songT0, rt: cal ? cal.rt : null, latency: take.latency, endT: stopAt - s.songT0 - trip, unsung });
+  // Saying the whole take was behind/ahead needs a measured round trip that's short (with a
+  // long one — Bluetooth — the singer may be following the screen, which runs ahead of the
+  // sound), the click guide, and no tapped timing map (the taps carry their own error).
+  const st = rhythmStats(ns, on, met, ls, { calibrated: !!cal && cal.rt <= 0.1 && take.guide === "click" && !(useMap && tmap) });
+  const obs = rhythmObservations(st, ls).map((o) => (o.j !== undefined ? { ...o, j: o.j + j0 } : o));
+  const per = notes.map((_, j) => {
+    if (j < j0 || j >= j1) return null;
+    const x = st.notes[j - j0], o = on.notes[j - j0];
+    return x.dev === null ? null : { dev: x.dev, rdev: x.rdev, cls: x.cls, rel: x.rel, kind: o.kind, conf: o.conf, u: met[j - j0].u };
+  });
+  return { calibrated: !!cal, rt: cal ? cal.rt : null, trust: "ok", lead: on.lead, steady: st.steady, drift: st.drift, notes: per, obs, diag };
 }
 
 // ---------------------------------------------------------------------------
@@ -1010,7 +1092,8 @@ function renderLyrics(t) {
     lineHtml(li + 1, lyricNextEl, false);
     shownLine = li;
   }
-  // Perform: the line just sung stays above, coloured by how it went once it's all graded.
+  // Perform: the line just sung stays above; once it's all graded, a quiet ✓ if it went well
+  // (nothing otherwise — no score mid-song).
   const prevKey = perform ? li - 1 : -1;
   if (shownPrev !== prevKey) {
     lineHtml(prevKey, lyricPrevEl, false);
@@ -1020,19 +1103,18 @@ function renderLyrics(t) {
   }
   if (prevKey >= 0) {
     const js = lines[prevKey];
-    const done = js.every((j) => take.grades[j]);
-    const sc = done ? takeScore(js.map((j) => notes[j]), js.map((j) => take.grades[j])) : undefined;
-    const tune = sc === undefined ? "" : tuneOf(sc);
+    const sc = js.every((j) => take.grades[j]) ? takeScore(js.map((j) => notes[j]), js.map((j) => take.grades[j])) : null;
+    const tune = sc !== null && sc >= 0.85 ? "good" : "";
     if (lyricPrevEl.dataset.tune !== tune) {
       lyricPrevEl.dataset.tune = tune;
-      lyricPrevEl.querySelector(".pct").textContent = sc === undefined ? "" : sc === null ? "?" : `${Math.round(sc * 100)}%`;
+      lyricPrevEl.querySelector(".pct").textContent = tune ? "✓" : "";
     }
   }
   // Perform: the count-in in big numbers (the lane, which shows it otherwise, is hidden).
   const counting = perform && nowT < entryT;
   if (countinEl.hidden === counting) countinEl.hidden = !counting;
   if (counting) {
-    const left = String(Math.min(session.count, Math.max(1, Math.ceil((entryT - nowT) / session.beatSec))));
+    const left = String(Math.min(Math.ceil(session.count), Math.max(1, Math.ceil((entryT - nowT) / session.beatSec))));
     if (countinEl.textContent !== left) countinEl.textContent = left;
   }
   const cur = session ? noteAt(t) : preview ? preview.j : -1;
@@ -1531,7 +1613,7 @@ async function runLoop(d) {
     if (!alive()) return;
     const t = await session?.ended;
     if (!alive() || !t) return;
-    const row = analyzeLines(notes, [lines[d.li]], t.grades, { text: () => lineText(d.li), name: noteName, syl: (j) => sylText(notes[j], j) })[0];
+    const row = analyzeLines(notes, [lines[d.li]], t.grades, { text: () => lineText(d.li), name: noteName, syl: (j) => sylText(notes[j], j), rhythm: t.rhythm, lineIndex: [d.li] })[0];
     d.last = row || null;
     d.scores.push(row ? row.score : null);
     d.phase = "result";
@@ -1559,18 +1641,18 @@ function stopLoop(msg) {
 function renderLoop() {
   const d = drill;
   if (!d) return;
-  const text = $("lp-text"), trail = $("lp-scores");
+  const text = $("lp-text");
   let line = "", tune = "";
   if (d.phase === "listen") line = `Round ${d.round} · listen…`;
-  else if (d.phase === "sing") line = `Round ${d.round} · your turn — sing it`;
+  else if (d.phase === "sing") line = `Round ${d.round} · your turn`;
   else if (d.phase === "result") {
+    // A next step, or ✓ — never a score (d.scores keeps the numbers, as data).
     const r = d.last;
-    tune = tuneOf(r ? r.score : null);
-    line = `${pctText(r ? r.score : null)} — ${r?.reasons[0]?.text || (r?.score >= 0.85 ? "nice, that's it" : "again")}`;
+    tune = r?.good ? "good" : "";
+    line = r?.good ? "✓ That's it" : r?.reasons[0]?.text || "Again";
   }
   text.textContent = line;
   text.dataset.tune = tune;
-  trail.textContent = d.scores.map((x) => (x === null ? "?" : Math.round(x * 100))).join(" → ");
   updateButtons();
 }
 
@@ -1592,11 +1674,9 @@ function cursorToLine(li) {
 let reviewRows = [];
 
 const lineText = (li) => (lines[li] || []).map((i) => sylText(notes[i], i)).join("").trim();
-const tuneOf = (x) => (x === null ? "none" : x >= 0.85 ? "good" : x >= 0.6 ? "ok" : "off");
-const pctText = (x) => (x === null ? "?" : `${Math.round(x * 100)}%`);
 const historySig = () => `${verseSelect.value || "1"}|${notes.length}|${lines.length}`;
 
-const analyzeTake = () => analyzeLines(notes, lines, take.grades, { text: lineText, name: noteName, lead: timingLead(), syl: (j) => sylText(notes[j], j) });
+const analyzeTake = () => analyzeLines(notes, lines, take.grades, { text: lineText, name: noteName, lead: timingLead(), syl: (j) => sylText(notes[j], j), rhythm: take.rhythm });
 // The take's steady lead (s, − = early), when it's big enough to mention.
 const timingLead = () => { const t = timingTendency(take.grades); return Math.abs(t) >= 0.08 ? t : 0; };
 
@@ -1621,7 +1701,7 @@ function recordTake() {
   reviewRows = analyzeTake();
   const whole = reviewRows.filter((r) => r.complete).length >= 0.8 * lines.length;
   take.whole = whole;
-  full.push({ sig, at: Date.now(), pct, whole, lines: lines.map((_, li) => reviewRows.find((r) => r.li === li)?.score ?? null) });
+  full.push({ sig, at: Date.now(), pct, whole, lines: lines.map((_, li) => reviewRows.find((r) => r.li === li)?.score ?? null), rhythm: rhythmSummary() });
   const keep = new Set(full.filter((h) => h.sig === sig).slice(-10));
   all[songId] = full.filter((h) => h.sig !== sig || keep.has(h)).slice(-40);
   store(K.history, JSON.stringify(all));
@@ -1640,33 +1720,33 @@ function closeReview() {
   reviewEl.hidden = true;
 }
 
+// The review (coach.js feedback): a headline, what went well, a take-wide tip, the next
+// steps (each line can be heard and looped), then every line. No scores: the numbers are in
+// the take and its history only.
 function renderReview() {
   const pct = takeScore(notes, take.grades);
-  $("rv-pct").textContent = pctText(pct);
-  const d = take.prev && pct !== null && take.whole ? Math.round((pct - take.prev.pct) * 100) : null;
-  const dEl = $("rv-delta");
-  dEl.textContent = pct === null ? `Couldn't score this take${take.prev ? ` (last take: ${pctText(take.prev.pct)})` : ""}`
-    : !take.whole ? "Part of the song" + (take.prev ? ` (last whole take: ${pctText(take.prev.pct)})` : "")
-    : d === null ? "First take of this song" : d === 0 ? "Same as last take" : `${d > 0 ? "▲" : "▼"} ${Math.abs(d)} from last take (${pctText(take.prev.pct)})`;
-  dEl.dataset.dir = d > 0 ? "up" : d < 0 ? "down" : "";
-  $("rv-sum").textContent = summaryEl.textContent;
-  const lead = timingLead();
+  const wordOf = (j) => { let i = j; while (i > 0 && notes[i].melisma) i--; return `“${sylText(notes[i], i).trim().replace(/[,.;:!?]+$/, "")}”`; };
+  const fb = feedback(reviewRows, { rhythm: take.rhythm, prev: take.prev && take.prevLines ? { pct: take.prev.pct, lines: take.prevLines } : null, pct, whole: take.whole !== false, w: wordOf });
+  $("rv-save").hidden = !take.voice;
+  $("rv-headline").textContent = pct === null ? "Couldn't hear the notes clearly — closer to the mic?" : fb.headline;
+  const wins = $("rv-wins");
+  wins.textContent = "";
+  for (const w of fb.wins) {
+    const li = document.createElement("li");
+    li.textContent = w.text;
+    if (w.li !== undefined) {
+      li.dataset.li = w.li;
+      li.addEventListener("click", () => showLine(reviewRows.find((r) => r.li === w.li)));
+    }
+    wins.append(li);
+  }
   const tip = $("rv-tip");
-  tip.hidden = Math.abs(lead) < 0.1;
-  const cue = take.guide === "melody" ? "the piano" : take.guide === "click" ? "the click" : "the beat (keep counting from the count-in)";
-  tip.textContent = lead < 0
-    ? `You sang about ${Math.abs(lead).toFixed(2)} s ahead of the beat all the way through — let ${cue} lead, and wait for it.`
-    : `You sang about ${lead.toFixed(2)} s behind the beat all the way through — come in right with ${cue}.`;
-  const work = workOn(reviewRows);
+  tip.hidden = !fb.tip;
+  tip.textContent = fb.tip || "";
   const workEl = $("rv-work"), linesEl = $("rv-lines");
   workEl.textContent = linesEl.textContent = "";
-  if (!work.length) {
-    const p = document.createElement("p");
-    p.className = "rv-empty";
-    p.textContent = take.whole === false ? "The lines you sang went well." : "Nothing stands out — every line went well. Try it a little faster next time.";
-    workEl.append(p);
-  }
-  for (const r of work) workEl.append(reviewLine(r, true));
+  $("rv-title").hidden = !fb.tries.length;
+  for (const t of fb.tries) workEl.append(reviewLine(t.row, true));
   for (const r of reviewRows) linesEl.append(reviewLine(r, false));
   showReviewPlaying();
 }
@@ -1677,28 +1757,27 @@ function reviewLine(r, full) {
   el.dataset.li = r.li;
   const top = document.createElement("div");
   top.className = "rv-top";
-  const sc = document.createElement("span");
-  sc.className = "rv-score";
-  sc.dataset.tune = tuneOf(r.score);
-  sc.textContent = pctText(r.score);
+  const mk = document.createElement("span");
+  mk.className = "rv-mark";
+  mk.textContent = r.good ? "✓" : "";
   const tx = document.createElement("button");
   tx.type = "button";
   tx.className = "rv-text";
   tx.textContent = r.text || "…";
   tx.title = "Show this line on the lane";
   tx.addEventListener("click", () => showLine(r));
-  top.append(sc, tx);
+  top.append(mk, tx);
+  // Closer than last time: said, without a number; worse never is.
   const delta = lineDelta({ lines: take.prevLines }, r);
-  if (delta !== null && Math.abs(delta) >= 0.05) {
+  if (delta !== null && delta >= 0.1) {
     const dd = document.createElement("span");
     dd.className = "rv-d";
-    dd.dataset.dir = delta > 0 ? "up" : "down";
-    dd.textContent = `${delta > 0 ? "▲" : "▼"}${Math.round(Math.abs(delta) * 100)}`;
-    dd.title = "Compared with the previous take";
+    dd.textContent = "↑";
+    dd.title = "Closer than last time";
     top.append(dd);
   }
   el.append(top);
-  const reasons = full ? r.reasons : r.reasons.slice(0, 1);
+  const reasons = full ? r.reasons.slice(0, 2) : r.reasons.slice(0, 1);
   if (reasons.length) {
     const ul = document.createElement("ul");
     ul.className = "rv-why";
@@ -1729,6 +1808,18 @@ function reviewLine(r, full) {
   btns.append(lb);
   el.append(btns);
   return el;
+}
+
+// The timing facts kept with a take in the history (data for progress, sync and an AI coach).
+function rhythmSummary() {
+  const rh = take.rhythm;
+  if (!rh) return null;
+  const r3 = (x) => (x === null || x === undefined ? null : Math.round(x * 1000) / 1000);
+  return {
+    cal: rh.calibrated, trust: rh.trust, guide: take.guide, timing: take.timing,
+    lead: rh.calibrated ? r3(rh.lead) : null, steady: r3(rh.steady), drift: r3(rh.drift),
+    obs: rh.obs.map((o) => ({ kind: o.kind, tone: o.tone, scope: o.scope, li: o.li, beats: o.beats })),
+  };
 }
 
 // Hear a line: from just before it to just after it.
@@ -1802,20 +1893,12 @@ function renderSummary() {
       : "";
     return;
   }
+  // After a take: the song's facts, plus the octave it was sung in — no counts or score.
   const graded = take.grades.filter((g) => g && g.status !== "unsung");
-  const score01 = takeScore(notes, take.grades);
-  if (!graded.length || score01 === null) {
-    scorePctEl.textContent = "";
-    summaryEl.textContent = graded.length ? "COULDN'T HEAR THE NOTES CLEARLY" : "NO NOTES SUNG";
-    return;
-  }
-  const c = (s) => graded.filter((g) => g.status === s).length;
-  scorePctEl.textContent = `${Math.round(score01 * 100)}%`;
-  let t = `${c("good")} GOOD · ${c("ok")} CLOSE · ${c("off")} OFF · ${c("missed")} MISSED`;
-  if (c("unclear")) t += ` · ${c("unclear")} UNCLEAR`;
+  scorePctEl.textContent = "";
+  if (!graded.length) { summaryEl.textContent = "NO NOTES SUNG"; return; }
+  let t = `${score.title.toUpperCase()} · ${lowest().name}–${highest().name}`;
   if (take.octave) t += take.octave < 0 ? " · SUNG 8VB" : " · SUNG 8VA";
-  const lead = timingTendency(take.grades);
-  if (Math.abs(lead) >= 0.08) t += ` · ${lead < 0 ? "EARLY" : "LATE"} ~${Math.abs(lead).toFixed(2)} S`;
   summaryEl.textContent = t;
 }
 
@@ -1847,7 +1930,7 @@ function updateButtons() {
 const TUNE = {
   good: ["rgba(74,222,128,0.45)", "rgba(74,222,128,0.95)"],
   ok: ["rgba(166,79,255,0.45)", "rgba(166,79,255,0.95)"],
-  off: ["rgba(255,111,111,0.4)", "rgba(255,111,111,0.95)"],
+  off: ["rgba(245,170,90,0.4)", "rgba(245,170,90,0.95)"], // warm amber: a note to aim at, not a "fail"
   missed: ["rgba(255,255,255,0.04)", "rgba(255,255,255,0.35)"],
   unclear: ["rgba(160,170,255,0.08)", "rgba(160,170,255,0.5)"],
   todo: ["rgba(255,255,255,0.12)", "rgba(255,255,255,0.4)"],
@@ -1931,8 +2014,18 @@ function renderLane() {
     ctx.fill();
     ctx.stroke();
     ctx.setLineDash([]);
-    // Sung early or late: a line over the bar where you actually sang it.
-    if (g?.from !== undefined && Math.abs(g.shift) >= 0.08 && ["good", "ok", "off"].includes(g.status)) {
+    // Sung early or late: a line over the bar where you actually came in (rhythm.js; else the
+    // pitch grading's moved slot). Measured against your own steady timing, unless the whole
+    // take was clearly behind/ahead of the click.
+    const rh = take?.rhythm?.notes?.[j];
+    if (rh) {
+      const abs = take.rhythm.calibrated && take.rhythm.obs.some((o) => o.kind === "behind" || o.kind === "ahead");
+      const off = abs ? rh.dev : rh.rdev;
+      if (off !== null && Math.abs(off) >= tolOn(rh.u)) {
+        ctx.fillStyle = stroke;
+        ctx.fillRect(xOf(n.t + off) + 1, y - barH / 2 - 4, Math.max(2, xOf(n.t + n.d + off) - xOf(n.t + off) - 2), 2);
+      }
+    } else if (!take?.rhythm && g?.from !== undefined && Math.abs(g.shift) >= 0.08 && ["good", "ok", "off"].includes(g.status)) {
       ctx.fillStyle = stroke;
       ctx.fillRect(xOf(g.from) + 1, y - barH / 2 - 4, Math.max(2, xOf(g.to) - xOf(g.from) - 2), 2);
     }
@@ -1957,7 +2050,7 @@ function renderLane() {
     for (const f of take.frames) {
       if (f.t < tMin - 0.1 || f.t > upTo + 0.05 || f.disp === null) { prev = null; continue; }
       if (prev && Math.abs(prev.disp - f.disp) < 1.5 && f.t - prev.t < 0.1) {
-        ctx.strokeStyle = f.ok === true ? "rgba(74,222,128,0.95)" : f.ok === false ? "rgba(255,120,120,0.95)" : "rgba(255,255,255,0.8)";
+        ctx.strokeStyle = f.ok === true ? "rgba(74,222,128,0.95)" : f.ok === false ? "rgba(245,170,90,0.95)" : "rgba(255,255,255,0.8)";
         ctx.beginPath();
         ctx.moveTo(xOf(prev.t), yOf(prev.disp));
         ctx.lineTo(xOf(f.t), yOf(f.disp));
@@ -2017,7 +2110,7 @@ function renderLane() {
 
   // Count-in overlay.
   if (session?.kind === "sing" && nowT < session.start) {
-    const left = Math.min(session.count, Math.max(1, Math.ceil((session.start - nowT) / session.beatSec)));
+    const left = Math.min(Math.ceil(session.count), Math.max(1, Math.ceil((session.start - nowT) / session.beatSec)));
     ctx.fillStyle = "rgba(255,230,160,0.9)";
     ctx.font = "800 44px system-ui, sans-serif";
     ctx.textAlign = "center";
@@ -2037,7 +2130,7 @@ function renderLane() {
       ctx.fillText(`target ${notes[i].name}`, w - 8, 6);
       if (f && f.midi !== null) {
         const c = Math.round(fold(f.midi - notes[i].midi) * 100);
-        ctx.fillStyle = Math.abs(c) <= OK_CENTS ? "#4ade80" : "#ff7878";
+        ctx.fillStyle = Math.abs(c) <= OK_CENTS ? "#4ade80" : "#f5a85a";
         ctx.fillText(`you ${noteName(Math.round(f.midi))} ${centsLabel(c)}`, w - 8, 22);
       }
     }
@@ -2115,8 +2208,7 @@ keySelect.addEventListener("change", () => {
   else delete keys[songId];
   store(K.keys, JSON.stringify(keys));
   stopSession();
-  applySong(); // (a split or "fit me" explains itself there)
-  if (typeof transpose === "number") profile?.range ? showFitMsg() : showMsg("");
+  applySong(); // (shows the range before → after)
 });
 tempoSelect.addEventListener("change", () => {
   const v = tempoSelect.value;
@@ -2330,24 +2422,63 @@ saveBtn.addEventListener("click", async () => {
   } catch (err) {
     return showMsg(`Couldn't read the song: ${err.message}`, "error");
   }
-  const name = `${(title || "song").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim() || "song"}.musicxml`;
-  const file = new File([xml], name, { type: "application/xml" });
-  if (matchMedia("(pointer: coarse)").matches && navigator.canShare?.({ files: [file] })) {
+  const name = `${safeName(title || "song")}.musicxml`;
+  await shareFiles([new File([xml], name, { type: "application/xml" })], name);
+});
+
+const safeName = (t) => t.replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim() || "song";
+// Phones: the share sheet (Save to Files, AirDrop, another app); elsewhere plain downloads.
+async function shareFiles(files, title) {
+  if (matchMedia("(pointer: coarse)").matches && navigator.canShare?.({ files })) {
     try {
-      await navigator.share({ files: [file], title: name });
+      await navigator.share({ files, title });
       return;
     } catch (err) {
       if (err.name === "AbortError") return; // closed the share sheet
     }
   }
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(file);
-  a.download = name;
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-});
+  for (const file of files) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(file);
+    a.download = file.name;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+}
+
+// Save this take: its recording (16-bit WAV) and what the page knew about it (JSON: notes,
+// count-in clicks, clocks, pitch frames, grades, rhythm) — so a real take can be sent back and
+// replayed through the analysis. It's your voice: only ever shared by you, from here.
+function wavOf(data, sr) {
+  const buf = new ArrayBuffer(44 + data.length * 2), v = new DataView(buf);
+  const str = (o, x) => { for (let i = 0; i < x.length; i++) v.setUint8(o + i, x.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + data.length * 2, true); str(8, "WAVE"); str(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, sr, true);
+  v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, data.length * 2, true);
+  for (let i = 0; i < data.length; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, data[i])) * 32767, true);
+  return new Blob([buf], { type: "audio/wav" });
+}
+async function saveTake() {
+  if (!take?.voice) return;
+  const r = (x, k) => (x === null || x === undefined ? null : Math.round(x * 10 ** k) / 10 ** k);
+  const base = `${safeName(score.title || "take")} take ${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}`;
+  const meta = {
+    app: $("version")?.textContent || null, title: score.title, songId, verse: take.verse, rate: take.rate, timing: take.timing, guide: take.guide, view,
+    clock: { ctxStart: take.ctxStart, songT0: take.songT0, est: take.est, latency: take.latency, beatSec: take.beatSec, countClicks: take.countClicks, frameShift: take.frameShift ?? 0 },
+    notes: notes.map((n) => ({ t: r(n.t, 4), d: r(n.d, 4), q: n.q, dq: n.dq, midi: n.midi, text: n.text, melisma: n.melisma, restBefore: n.restBefore })),
+    lines, range: take.range, endT: take.endT, metric: metricOf(),
+    frames: take.frames.map((f) => [r(f.t, 4), r(f.midi, 3), r(f.rms, 5)]),
+    grades: take.grades.map((g) => g && { status: g.status, dev: r(g.dev, 3), hit: r(g.hit, 3), shift: r(g.shift, 3) }),
+    rhythm: take.rhythm,
+  };
+  await shareFiles([
+    new File([wavOf(take.voice.data, take.voice.sampleRate)], `${base}.wav`, { type: "audio/wav" }),
+    new File([JSON.stringify(meta)], `${base}.json`, { type: "application/json" }),
+  ], base);
+}
+$("rv-save").addEventListener("click", saveTake);
 
 // Drag and drop a file anywhere on the page (desktop).
 let dragDepth = 0;
