@@ -103,16 +103,13 @@
       #loopbar[hidden] { display: none; }
       #lp-text { font-weight: 700; font-size: 0.98rem; }
       #lp-text[data-tune="good"] { color: #4ade80; }
-      #lp-text[data-tune="ok"] { color: #c49bff; }
-      #lp-text[data-tune="off"] { color: #ff8a9a; }
-      #lp-scores { font-size: 0.72rem; color: rgba(255,255,255,0.6); }
       #lyric-now { font-size: 1.35rem; font-weight: 700; line-height: 1.35; min-height: 1.35em; }
       #lyric-next { font-size: 0.9rem; opacity: 0.45; min-height: 1.35em; margin-top: 0.15rem; }
       .syl { transition: color 0.1s ease; color: rgba(255,255,255,0.75); }
       .syl[data-state="current"] { color: #ffe6a0; text-shadow: 0 0 12px rgba(255,230,160,0.5); }
       .syl[data-state="good"] { color: #4ade80; }
       .syl[data-state="ok"] { color: #c49bff; }
-      .syl[data-state="off"] { color: #ff6f6f; }
+      .syl[data-state="off"] { color: #f5a85a; }
       .syl[data-state="missed"] { color: rgba(255,255,255,0.35); }
       .syl[data-state="unclear"] { color: rgba(170,180,255,0.7); }
 
@@ -139,13 +136,13 @@
       #you-note { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; min-width: 2.4ch; text-align: right; }
       #you[data-state="good"] #you-note { color: #4ade80; }
       #you[data-state="ok"] #you-note { color: #c49bff; }
-      #you[data-state="off"] #you-note { color: #ff6f6f; }
+      #you[data-state="off"] #you-note { color: #f5a85a; }
       #you[data-state="hear"] #you-note { color: #ffe6a0; }
       #you[data-state="wait"] #you-note { opacity: 0.35; }
       .you-detail { display: flex; flex-direction: column; font-size: 0.68rem; line-height: 1.3; color: rgba(255,255,255,0.7); min-width: 4.6rem; }
       #you[data-state="good"] #you-vs { color: #4ade80; }
       #you[data-state="ok"] #you-vs { color: #c49bff; }
-      #you[data-state="off"] #you-vs { color: #ff8a9a; }
+      #you[data-state="off"] #you-vs { color: #f5b066; }
       #monitor[aria-pressed="true"] { background: rgba(74,222,128,0.16); border-color: rgba(74,222,128,0.6); }
       #playbar { display: flex; align-items: center; gap: 0.5rem; }
       #playbar[hidden] { display: none; }
@@ -173,29 +170,23 @@
         box-shadow: 0 -12px 40px rgba(0,0,0,0.45);
       }
       .rv-head { display: flex; align-items: center; gap: 0.7rem; position: sticky; top: -0.9rem; margin: -0.9rem -1rem 0.2rem; padding: 0.9rem 1rem 0.5rem; background: #1d1d40; z-index: 1; }
-      #rv-pct { font-size: 2rem; font-weight: 800; letter-spacing: -0.02em; }
-      .rv-headtext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
-      #rv-delta { font-size: 0.8rem; font-weight: 600; }
-      #rv-delta[data-dir="up"] { color: #4ade80; }
-      #rv-delta[data-dir="down"] { color: #ff8a9a; }
-      #rv-sum { font-size: 0.66rem; letter-spacing: 0.06em; color: rgba(255,255,255,0.55); }
+      #rv-headline { flex: 1; min-width: 0; font-size: 1.15rem; font-weight: 700; line-height: 1.3; }
+      #rv-wins { list-style: none; margin: 0.2rem 0 0; padding: 0; font-size: 0.88rem; line-height: 1.4; }
+      #rv-wins:empty { display: none; }
+      #rv-wins li::before { content: "✓ "; color: #4ade80; font-weight: 700; }
+      #rv-wins li[data-li] { cursor: pointer; }
+      #rv-tip { margin: 0.6rem 0 0; font-size: 0.88rem; line-height: 1.4; color: #ffe6a0; }
       .overlay h3 { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.55); margin: 0.9rem 0 0.45rem; font-weight: 600; }
       .rv-line { border: 1px solid rgba(255,255,255,0.1); border-radius: 0.8rem; padding: 0.55rem 0.65rem; margin-bottom: 0.45rem; background: rgba(255,255,255,0.03); }
       .rv-line.work { border-color: rgba(255,214,120,0.35); background: rgba(255,214,120,0.05); }
       .rv-line[data-playing="true"] { border-color: #ffe6a0; }
       .rv-top { display: flex; align-items: baseline; gap: 0.55rem; }
-      .rv-score { font-weight: 800; font-size: 1rem; min-width: 2.9rem; font-variant-numeric: tabular-nums; }
-      .rv-score[data-tune="good"] { color: #4ade80; }
-      .rv-score[data-tune="ok"] { color: #c49bff; }
-      .rv-score[data-tune="off"] { color: #ff8a9a; }
-      .rv-score[data-tune="none"] { color: rgba(170,180,255,0.8); }
+      .rv-mark { font-weight: 700; font-size: 0.95rem; min-width: 1.1rem; color: #4ade80; }
       .rv-text { flex: 1; min-width: 0; font-size: 0.92rem; line-height: 1.3; background: none; border: 0; color: inherit; font: inherit; text-align: left; padding: 0; cursor: pointer; }
-      .rv-d { font-size: 0.72rem; font-weight: 600; white-space: nowrap; }
-      .rv-d[data-dir="up"] { color: #4ade80; }
-      .rv-d[data-dir="down"] { color: #ff8a9a; }
-      .rv-why { margin: 0.3rem 0 0 3.45rem; padding: 0; list-style: none; font-size: 0.78rem; line-height: 1.35; color: rgba(255,255,255,0.75); }
+      .rv-d { font-size: 0.72rem; font-weight: 600; white-space: nowrap; color: #4ade80; }
+      .rv-why { margin: 0.3rem 0 0 1.65rem; padding: 0; list-style: none; font-size: 0.78rem; line-height: 1.35; color: rgba(255,255,255,0.75); }
       .rv-why li::before { content: "· "; color: rgba(255,214,120,0.8); }
-      .rv-btns { display: flex; gap: 0.35rem; margin: 0.45rem 0 0 3.45rem; flex-wrap: wrap; }
+      .rv-btns { display: flex; gap: 0.35rem; margin: 0.45rem 0 0 1.65rem; flex-wrap: wrap; }
       .rv-btns button { font: inherit; font-size: 0.76rem; color: #e8e8f0; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; padding: 0.3rem 0.65rem; cursor: pointer; }
       .rv-btns button[data-on="true"] { background: #ffe6a0; color: #14142c; border-color: #ffe6a0; }
       .rv-btns button:disabled { opacity: 0.35; }
@@ -227,12 +218,10 @@
       /* Perform: a take shows just the lyrics (the lane, chips and readout come back after). */
       #lyric-prev { font-size: 0.95rem; min-height: 0; transition: color 0.3s ease; }
       #lyric-prev:empty { display: none; }
-      #lyric-prev[data-tune="good"] { color: #4ade80; }
-      #lyric-prev[data-tune="ok"] { color: #c49bff; }
-      #lyric-prev[data-tune="off"] { color: #ff8a9a; }
-      #lyric-prev[data-tune="none"], #lyric-prev[data-tune=""] { color: rgba(255,255,255,0.45); }
+      #lyric-prev { color: rgba(255,255,255,0.45); }
+      #lyric-prev[data-tune="good"] { color: rgba(74,222,128,0.85); }
       #lyric-prev .syl { color: inherit; }
-      #lyric-prev .pct { font-size: 0.75em; opacity: 0.8; margin-left: 0.4em; font-weight: 700; }
+      #lyric-prev .pct { font-size: 0.75em; margin-left: 0.4em; font-weight: 700; }
       #countin { font-size: 3.4rem; font-weight: 800; color: #ffe6a0; line-height: 1.1; }
       #countin[hidden] { display: none; }
       body[data-perform="true"] #lane, body[data-perform="true"] #results { display: none; }
@@ -287,7 +276,7 @@
       .chip small { font-size: 0.6rem; opacity: 0.65; font-variant-numeric: tabular-nums; min-height: 1.1em; }
       .chip[data-tune="good"] { border-color: rgba(74,222,128,0.5); }
       .chip[data-tune="ok"] { border-color: rgba(166,79,255,0.55); }
-      .chip[data-tune="off"] { border-color: rgba(255,111,111,0.55); }
+      .chip[data-tune="off"] { border-color: rgba(245,170,90,0.6); }
       .chip[data-tune="missed"] { border-style: dashed; border-color: rgba(255,255,255,0.35); opacity: 0.75; }
       .chip[data-tune="unsung"] { opacity: 0.45; }
       .chip[data-tune="unclear"] { border-style: dotted; border-color: rgba(170,180,255,0.6); }
@@ -336,7 +325,7 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v57</span>
+        <span id="version">v58</span>
         <span id="status">idle</span>
       </div>
     </header>
@@ -372,7 +361,6 @@
       <section id="results">
         <div id="loopbar" hidden>
           <span id="lp-text"></span>
-          <span id="lp-scores" class="mono"></span>
         </div>
         <div class="results-head">
           <span id="score-pct"></span>
@@ -465,17 +453,18 @@
     <div id="review" class="overlay" hidden>
       <div class="sheet" role="dialog" aria-labelledby="rv-title">
         <div class="rv-head">
-          <span id="rv-pct"></span>
-          <span class="rv-headtext"><span id="rv-delta"></span><span id="rv-sum" class="mono"></span></span>
+          <span id="rv-headline"></span>
+          <button id="rv-save" class="tool-btn" type="button" title="Save this take (audio + timing data)" aria-label="Save this take">⤓</button>
           <button id="rv-close" class="tool-btn" type="button" aria-label="Close the review">✕</button>
         </div>
-        <p id="rv-tip" class="rv-empty" hidden></p>
-        <h3 id="rv-title">Work on these</h3>
+        <ul id="rv-wins"></ul>
+        <p id="rv-tip" hidden></p>
+        <h3 id="rv-title">Try next</h3>
         <div id="rv-work"></div>
         <h3>Every line</h3>
         <div id="rv-lines"></div>
       </div>
     </div>
-    <script type="module" src="sing.js?v=57"></script>
+    <script type="module" src="sing.js?v=58"></script>
   </body>
 </html>

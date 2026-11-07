@@ -112,21 +112,48 @@ export function holdPiano(ac, piano, when, midi, level, { sustain = true } = {})
 
 // Metronome click: a short filtered noise burst. Noise has no pitch, so the
 // mic picking it up doesn't register as singing.
+// The metronome click: a 30 ms noise burst, high-passed (4th order) at 2.5 kHz, 3.5 kHz for
+// an accent — no pitch, so speaker bleed into the mic isn't read as a note, and almost
+// nothing below 1 kHz, where rhythm.js listens for vowels. The noise is seeded, so the exact
+// waveform is known (clickWave): rhythm.js finds the count-in clicks in a take's recording
+// with it (a matched filter) to measure the real output + input latency.
+export function clickWave(sampleRate, accent) {
+  const len = Math.floor(sampleRate * 0.03);
+  const out = new Float32Array(len);
+  let seed = accent ? 0x9e3779b9 : 0x7f4a7c15;
+  const rnd = () => { seed ^= seed << 13; seed >>>= 0; seed ^= seed >> 17; seed ^= seed << 5; seed >>>= 0; return seed / 2147483648 - 1; };
+  for (let i = 0; i < len; i++) out[i] = rnd() * Math.exp(-i / (len / 6));
+  const f = accent ? 3500 : 2500;
+  for (const Q of [0.5412, 1.3066]) { // two Butterworth sections
+    const w = (2 * Math.PI * f) / sampleRate, c = Math.cos(w), a = Math.sin(w) / (2 * Q), a0 = 1 + a;
+    const b0 = (1 + c) / 2 / a0, b1 = -(1 + c) / a0, b2 = b0, a1 = (-2 * c) / a0, a2 = (1 - a) / a0;
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < len; i++) { const x = out[i], y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = x; y2 = y1; y1 = y; out[i] = y; }
+  }
+  let peak = 0;
+  for (const x of out) peak = Math.max(peak, Math.abs(x));
+  for (let i = 0; i < len; i++) out[i] /= peak || 1;
+  return out;
+}
+export const CLICK_GAIN = { accent: 0.83, plain: 0.38 }; // as loud (RMS) as the old band-passed click
+const clickBufs = new WeakMap(); // AudioContext → { accent, plain }
 export function playClick(ac, when, accent, nodes) {
-  const len = Math.floor(ac.sampleRate * 0.03);
-  const buf = ac.createBuffer(1, len, ac.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (len / 6));
+  let bufs = clickBufs.get(ac);
+  if (!bufs) {
+    bufs = {};
+    for (const k of ["accent", "plain"]) {
+      const w = clickWave(ac.sampleRate, k === "accent");
+      bufs[k] = ac.createBuffer(1, w.length, ac.sampleRate);
+      bufs[k].copyToChannel(w, 0);
+    }
+    clickBufs.set(ac, bufs);
+  }
+  const k = accent ? "accent" : "plain";
   const src = ac.createBufferSource();
-  src.buffer = buf;
-  const bp = ac.createBiquadFilter();
-  bp.type = "bandpass";
-  bp.frequency.value = accent ? 3200 : 2200;
-  bp.Q.value = 1.2;
+  src.buffer = bufs[k];
   const g = ac.createGain();
-  g.gain.value = accent ? 1.6 : 0.9;
-  src.connect(bp);
-  bp.connect(g);
+  g.gain.value = CLICK_GAIN[k];
+  src.connect(g);
   g.connect(ac.destination);
   src.start(when);
   nodes.push(src);

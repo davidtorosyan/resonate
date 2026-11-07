@@ -426,6 +426,7 @@ function unfold(score, { order, passes }) {
     length: t,
     verses: notes.some((n) => n.verses[1]) ? ["1"] : [],
     unfolded: { written: score.measures.length, played: order.length, passes: maxPass },
+    measureOf: order, // each played measure's written measure (a pickup's replays: 0)
   };
 }
 
