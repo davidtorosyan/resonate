@@ -6,8 +6,8 @@
 // (adopt); signing in to an existing account shelves it and brings the account's from the cloud
 // (enter, then sync.js); signing out removes the account's data from the device and brings the
 // shelved data back (leave).
-import { supabase, accountUrl, savedUser, STORAGE_KEY } from "./auth.js?v=72";
-import { ensureSpace, activeSpace, adopt, enter, leave, park } from "./space.js?v=72";
+import { supabase, accountUrl, savedUser, STORAGE_KEY } from "./auth.js?v=73";
+import { ensureSpace, activeSpace, adopt, enter, leave, park } from "./space.js?v=73";
 
 const ADOPT = "resonate.adopt"; // { email, at }: an account being made on this device (sign up)
 const SYNC_OFF = "resonate.sync.off"; // (sync.js OFF_KEY: this device doesn't sync)
@@ -64,6 +64,9 @@ function render() {
   if (session && (recovering || changing)) {
     show("newpw");
     $("newpw-cancel").hidden = recovering;
+    // (A reset link proves who you are; changing it while signed in needs the current one.)
+    $("curpw-row").hidden = recovering;
+    $("curpw").required = !recovering;
     $("newpw").focus();
   } else if (session) {
     show("in");
@@ -79,13 +82,14 @@ function render() {
 // approved account can turn the sync off on this device.
 async function showCloud() {
   const el = $("cloud"), id = session?.user?.id;
-  if (el.dataset.uid !== id) { el.hidden = true; $("sync-row").hidden = true; } // (another account's, until read)
+  if (el.dataset.uid !== id) { el.hidden = true; $("sync-row").hidden = true; $("assistants-link").hidden = true; } // (another account's, until read)
   if (!id || !sb) return;
   const { data, error } = await sb.from("accounts").select("approved").maybeSingle();
   if (session?.user?.id !== id) return;
   el.dataset.uid = id;
   el.hidden = !!error || !data;
   $("sync-row").hidden = el.hidden || !data?.approved;
+  $("assistants-link").hidden = el.hidden || !data?.approved;
   if (el.hidden) return;
   el.dataset.on = String(data.approved);
   el.textContent = data.approved ? "Cloud: on" : "Cloud: waiting for approval";
@@ -116,7 +120,7 @@ async function settle(s) {
 }
 async function startSync() {
   try {
-    const m = await import("./sync.js?v=72");
+    const m = await import("./sync.js?v=73");
     if (!m.syncOff()) m.start();
     return m;
   } catch (err) { console.warn("sync", err); return null; }
@@ -209,9 +213,9 @@ $("back").addEventListener("click", () => { say(); show("out"); });
 $("v-newpw").addEventListener("submit", (e) => {
   e.preventDefault();
   busy(async () => {
-    const { error } = await sb.auth.updateUser({ password: $("newpw").value });
+    const { error } = await sb.auth.updateUser(recovering ? { password: $("newpw").value } : { password: $("newpw").value, current_password: $("curpw").value });
     if (error) return sayError(error);
-    $("newpw").value = "";
+    $("newpw").value = $("curpw").value = "";
     recovering = changing = false;
     say("Password saved.", "ok");
     render();
@@ -235,7 +239,7 @@ $("signout").addEventListener("click", () => busy(async () => {
     if (text && !confirm(text)) return;
   }
   // No sync from here on (a pass under way could otherwise write into the data coming back).
-  if (m || window.resonateSync) { try { await (m || await import("./sync.js?v=72")).stop(); } catch {} }
+  if (m || window.resonateSync) { try { await (m || await import("./sync.js?v=73")).stop(); } catch {} }
   // The account's data goes before the session does: other tabs, told of the sign-out, then
   // find nothing to put away (space.js park). (Another account found active is parked.)
   // This device only — other devices stay signed in. (Offline, or when the server fails, the

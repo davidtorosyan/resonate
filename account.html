@@ -33,9 +33,11 @@
       button.primary { background: #a64fff; border-color: #a64fff; color: #fff; }
       button:disabled { opacity: 0.5; }
       .link { border: 0; padding: 0; font-weight: 400; font-size: 0.85rem; color: rgba(255,255,255,0.65); text-decoration: underline; align-self: flex-start; }
+      a.link[hidden] { display: none; }
       #who { font-size: 1rem; overflow-wrap: anywhere; }
       #cloud { font-size: 0.85rem; opacity: 0.7; margin-top: -0.35rem; }
       #cloud[data-on="true"] { color: #8ee6a8; opacity: 1; }
+      label[hidden] { display: none; }
       label.check { flex-direction: row; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
       label.check[hidden] { display: none; }
       label.check input { width: 1.05rem; height: 1.05rem; padding: 0; accent-color: #a64fff; }
@@ -52,7 +54,7 @@
         <a class="nav-link" href="./">Tuner</a>
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
-      <span id="version" class="mono">v72</span>
+      <span id="version" class="mono">v73</span>
     </header>
     <main>
       <form id="v-out" class="card" hidden>
@@ -76,6 +78,7 @@
 
       <form id="v-newpw" class="card" hidden>
         <h2>New password</h2>
+        <label id="curpw-row">Current password <input id="curpw" type="password" autocomplete="current-password" /></label>
         <label>Password <input id="newpw" type="password" autocomplete="new-password" minlength="8" required /></label>
         <div class="row">
           <button class="primary" type="submit">Save</button>
@@ -87,6 +90,7 @@
         <div id="who" class="mono"></div>
         <div id="cloud" hidden></div>
         <label id="sync-row" class="check" hidden><input id="sync-on" type="checkbox" checked /> Sync this device</label>
+        <a id="assistants-link" class="link" href="assistants.html" hidden>Assistants (ChatGPT, Claude) ›</a>
         <div class="row">
           <button id="change" type="button">Change password</button>
           <button id="signout" type="button">Sign out</button>
@@ -96,6 +100,6 @@
       <div id="msg" role="status"></div>
       <p class="hint">Optional — everything works signed out.</p>
     </main>
-    <script type="module" src="account.js?v=72"></script>
+    <script type="module" src="account.js?v=73"></script>
   </body>
 </html>

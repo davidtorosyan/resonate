@@ -40,6 +40,12 @@
         border-radius: 999px;
       }
       .header-right { display: flex; align-items: baseline; gap: 0.6rem; }
+      /* 📡 Remote: off = a quiet icon; on = clearly lit (an assistant can act on this page). */
+      /* (above the sheets and overlays: the switch can always be reached) */
+      .remote-btn { position: relative; z-index: 60; font: inherit; font-size: 0.75rem; color: #e8e8f0; background: transparent; border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; padding: 0.15rem 0.5rem; cursor: pointer; opacity: 0.65; touch-action: manipulation; }
+      .remote-btn[data-on="true"] { opacity: 1; background: #a64fff; border-color: #c48bff; box-shadow: 0 0 0 0.2rem rgba(166,79,255,0.25); font-weight: 600; animation: remote-pulse 2.4s ease-in-out infinite; }
+      @keyframes remote-pulse { 50% { box-shadow: 0 0 0 0.35rem rgba(166,79,255,0.08); } }
+      @media (prefers-reduced-motion: reduce) { .remote-btn[data-on="true"] { animation: none; } }
       #version { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; color: #a64fff; opacity: 0.9; }
       #status { font-size: 0.75rem; opacity: 0.55; }
       main {
@@ -329,7 +335,8 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v72</span>
+        <button id="remote-btn" class="remote-btn" type="button" hidden aria-pressed="false">📡</button>
+        <span id="version">v73</span>
         <span id="status"></span>
       </div>
     </header>
@@ -468,7 +475,7 @@
         <div id="rv-lines"></div>
       </div>
     </div>
-    <script type="module" src="nav.js?v=72"></script>
-    <script type="module" src="sing.js?v=72"></script>
+    <script type="module" src="nav.js?v=73"></script>
+    <script type="module" src="sing.js?v=73"></script>
   </body>
 </html>
