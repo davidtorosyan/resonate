@@ -266,12 +266,19 @@ async function apply(sb, row, meta, changed, uid) {
         guard();
         await putSong({ id, title, xml, added: Number(data.added) || Date.now(), ...(data.source ? { source: String(data.source) } : {}) }, { quiet: true });
       } else if (have.title !== title) { guard(); await putSong({ ...have, title }, { quiet: true }); }
-      // Its original PDF (PDF → Song), when the cloud has it and this device doesn't.
+      // Its original PDF (PDF → Song), when the cloud has it and this device doesn't — on a
+      // best-effort basis: a PDF that can't be had (no room here…) never holds up the pull.
       if (typeof data.pdf?.path === "string" && !(await getPdf(id))) {
-        const f = await sb.storage.from(BUCKET).download(data.pdf.path);
-        if (f.error && !notFound(f.error)) throw f.error;
-        if (!f.error) { const buf = await f.data.arrayBuffer(); guard(); await putPdf(id, buf, String(data.pdf.name ?? ""), { quiet: true }); }
+        try {
+          const f = await sb.storage.from(BUCKET).download(data.pdf.path);
+          if (f.error && !notFound(f.error)) throw f.error;
+          if (!f.error) { const buf = await f.data.arrayBuffer(); guard(); await putPdf(id, buf, String(data.pdf.name ?? ""), { quiet: true }); }
+        } catch (err) {
+          if (!current(uid)) throw err;
+          console.warn("sync: pdf", id, err);
+        }
       }
+      dropOrphans(meta, uid, id); // (its files are live)
       meta.info[id] = { sha: String(data.sha ?? ""), source: data.source ?? null, pdf: !!data.pdf };
       // What this device now has, in its sync form (so nothing echoes back as a change).
       const stored = await getSong(id);
@@ -450,6 +457,11 @@ async function removeFiles(sb, meta, paths) {
   meta.orphans = [...left];
 }
 const songFiles = (uid, id) => [`${uid}/${id}.xml.gz`, `${uid}/${id}.pdf`];
+// A song live in the cloud again: its files are no longer leftovers.
+function dropOrphans(meta, uid, id) {
+  const mine = new Set(songFiles(uid, id));
+  if (meta.orphans?.length) meta.orphans = meta.orphans.filter((p) => !mine.has(p));
+}
 
 async function push(sb, uid, meta, items, changed) {
   if (meta.orphans?.length) await removeFiles(sb, meta, [...meta.orphans]);
@@ -479,8 +491,10 @@ async function push(sb, uid, meta, items, changed) {
     if (!kept) dropped.push(r.key);
     // A song's files go once its delete is in (never before: a delete the server refused
     // would leave a song without its file).
-    else if (r.row.kind === "song" && r.row.deleted) removeFiles(sb, meta, songFiles(uid, r.row.id));
-    else if (r.row.kind === "song") meta.info[r.row.id] = { ...(meta.info[r.row.id] || {}), pdf: !!r.row.data?.pdf };
+    // (Noted as leftovers first: the removal is checked at the end of the push, and whatever
+    // didn't go is tried again next pass.)
+    else if (r.row.kind === "song" && r.row.deleted) meta.orphans = [...new Set([...(meta.orphans || []), ...songFiles(uid, r.row.id)])];
+    else if (r.row.kind === "song") { meta.info[r.row.id] = { ...(meta.info[r.row.id] || {}), pdf: !!r.row.data?.pdf }; dropOrphans(meta, uid, r.row.id); }
   };
   // The server answers with the rows it kept: one it didn't was older than the cloud's.
   const sent = async (batch) => {
@@ -501,7 +515,8 @@ async function push(sb, uid, meta, items, changed) {
     if (up.error) return up.error;
     if (up.data?.length) { mark(r, true); return null; }
     // Nothing updated: no such row (the limit is real), or the cloud's is newer (dropped).
-    const { data: row } = await sb.from("sync_items").select("deleted").eq("kind", kind).eq("id", id).maybeSingle();
+    const { data: row, error: e2 } = await sb.from("sync_items").select("deleted").eq("kind", kind).eq("id", id).maybeSingle();
+    if (e2) return e2; // (not known: tried again next pass — never taken for "no room")
     if (row && !row.deleted) { mark(r, false); return null; }
     return error;
   };
@@ -536,6 +551,7 @@ async function push(sb, uid, meta, items, changed) {
     meta.items[key].m = Math.min(meta.items[key].m, Date.parse(row.modified_at) - 1);
     await take1(sb, row, meta, changed, uid);
   }
+  if (meta.orphans?.length && current(uid)) await removeFiles(sb, meta, [...meta.orphans]);
   saveMeta(meta);
 }
 
@@ -617,6 +633,8 @@ export function syncNow() {
 export async function unsynced() {
   const uid = activeSpace();
   if (uid === "anon") return { songs: 0, changes: 0, recordings: 0, calibration: false };
+  // This page can't read the songs (storage unavailable): it can't say what's safe — assume something isn't.
+  if (!(await persistent())) return { songs: 0, changes: 1, recordings: 0, calibration: false };
   const meta = loadMeta(uid);
   const local = await localItems(meta);
   if (meta.cursor) noteChanges(meta, local, Date.now());

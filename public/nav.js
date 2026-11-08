@@ -33,7 +33,7 @@ if (!handing && user && activeSpace() === user.id) {
 // spaceChanged() tells it not to save the user's data).
 const activeAtLoad = activeSpace();
 let changed = false, reloading = false;
-export const spaceChanged = () => changed;
+export const spaceChanged = () => changed || activeSpace() !== activeAtLoad;
 function followSpace() {
   if (reloading || !changed) return;
   if (window.resonateBusy?.()) { setTimeout(followSpace, 1000); return; }

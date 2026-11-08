@@ -146,11 +146,18 @@ export async function enter(uid) {
   let s = read() || fresh();
   if (s.active === uid) return false;
   if (s.active !== "anon") { if (!park()) return false; s = read(); }
-  if (!stash(SHELF, false)) return false;
+  // (What an earlier unshelve couldn't write back stays in the shelf: the keys here win.)
+  try { localStorage.setItem(SHELF, JSON.stringify({ ...(readJson(SHELF) || {}), ...readKeys(false) })); } catch { return false; }
+  dropKeys(false);
   anonDb(s);
   localStorage.removeItem(SYNC_META);
   const parked = readJson(PARKED(uid));
-  if (parked && putKeys(parked)) localStorage.removeItem(PARKED(uid));
+  if (parked) {
+    if (putKeys(parked)) localStorage.removeItem(PARKED(uid));
+    // Partly written back (storage full): without its sync state the sync starts over, the cloud
+    // first — nothing missing here is taken for deleted.
+    else localStorage.removeItem(SYNC_META);
+  }
   const isNew = !s.db[uid];
   if (isNew) s.db[uid] = `resonate-${uid}`;
   s.active = uid;

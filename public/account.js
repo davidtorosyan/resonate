@@ -105,10 +105,14 @@ async function settle(s) {
   const uid = s?.user?.id;
   if (!uid) return;
   if (activeSpace() !== uid) {
-    await withSyncLock(() => (activeSpace() === "anon" && adopting(s) ? adopt(uid) : enter(uid)));
+    // (Inside the lock: not if this account was signed out meanwhile — in another tab, which
+    // holds the lock from removing the account's data until its session is gone.)
+    const done = await withSyncLock(() => (savedUser()?.id !== uid ? false : activeSpace() === "anon" && adopting(s) ? adopt(uid) : enter(uid)));
+    if (done === false && savedUser()?.id !== uid) return false; // (signed out meanwhile)
   }
   localStorage.removeItem(ADOPT);
   startSync();
+  return true;
 }
 async function startSync() {
   try {
@@ -123,13 +127,9 @@ async function startSync() {
 // ended without Sign out (expired, signed out in another tab) puts the account's data away.
 if (!saved && activeSpace() !== "anon") park();
 ensureSpace(saved?.id);
-// Another tab switched the space (signed in or out there): show what's true now.
-let requests = 0;
-window.addEventListener("storage", (e) => {
-  if (e.key !== "resonate.space") return;
-  const reload = () => (requests ? setTimeout(reload, 500) : location.reload());
-  reload();
-});
+// (Another tab signing in or out reaches this page as the library's own events — SIGNED_IN,
+// SIGNED_OUT — not by reloading: a reload in the middle of that tab's Sign out would take the
+// session it's about to remove.)
 session = saved && !recovering ? { user: saved } : null;
 render();
 if (linkError) say(LINK_ERRORS[linkError] || "That link didn't work — try again.", "error");
@@ -141,13 +141,12 @@ const ready = supabase(); // (the buttons work while it loads: each request wait
 async function busy(fn) {
   const buttons = [...document.querySelectorAll("button")];
   buttons.forEach((b) => { b.disabled = true; });
-  requests++;
   try {
     sb = sb || await ready; // (the page shows before the library has loaded)
     return await fn();
   }
   catch (err) { console.error(err); sayError(err); }
-  finally { requests--; buttons.forEach((b) => { b.disabled = false; }); }
+  finally { buttons.forEach((b) => { b.disabled = false; }); }
 }
 const email = () => $("email").value.trim();
 const notConfirmed = (e) => e?.code === "email_not_confirmed" || /not confirmed/i.test(e?.message || "");
@@ -239,11 +238,14 @@ $("signout").addEventListener("click", () => busy(async () => {
   if (m || window.resonateSync) { try { await (m || await import("./sync.js?v=71")).stop(); } catch {} }
   // The account's data goes before the session does: other tabs, told of the sign-out, then
   // find nothing to put away (space.js park). (Another account found active is parked.)
-  await withSyncLock(() => leave(uid));
   // This device only — other devices stay signed in. (Offline, or when the server fails, the
-  // library keeps the session; signing out here only ever concerns this device.)
-  const { error } = await sb.auth.signOut({ scope: "local" });
-  if (error) localStorage.removeItem(STORAGE_KEY);
+  // library keeps the session; signing out here only ever concerns this device.) Both under the
+  // lock: another tab doesn't sign back in to the account in between.
+  await withSyncLock(async () => {
+    await leave(uid);
+    const { error } = await sb.auth.signOut({ scope: "local" });
+    if (error) localStorage.removeItem(STORAGE_KEY);
+  });
   session = null; say(); render();
 }));
 
@@ -289,16 +291,17 @@ sb.auth.onAuthStateChange((event, s) => {
     withSyncLock(() => park()); // (signed out in another tab, or the session ended: the account's data is put away)
   }
   setTimeout(async () => {
-    if (event === "SIGNED_IN" && s) await settle(s);
+    if (event === "SIGNED_IN" && s && (await settle(s)) === false) s = null;
     session = s;
     render();
   }, 0);
 });
 const { data, error: initError } = await sb.auth.getSession();
 if (data.session || !(initError && offline(initError) && saved)) {
-  if (data.session) await settle(data.session);
-  else await withSyncLock(() => park()); // (the saved session couldn't be refreshed: it has ended)
-  session = data.session;
+  let s0 = data.session;
+  if (s0 && (await settle(s0)) === false) s0 = null;
+  if (!s0) await withSyncLock(() => park()); // (the saved session couldn't be refreshed: it has ended)
+  session = s0;
   render();
 } else say("No connection.", "error"); // (keeps the saved account shown; the library retries)
 if (!linkError && linkType === "signup" && session) say("Email confirmed.", "ok");

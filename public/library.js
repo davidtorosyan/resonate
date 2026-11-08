@@ -51,7 +51,8 @@ export function dbGen() {
 function openDb(name, gen, upgrade) {
   if (mode === "memory") return Promise.resolve(null);
   if (!conns.has(name)) {
-    const p = new Promise((resolve, reject) => {
+    let p; // (declared first: an open that throws at once calls fail() before p is assigned)
+    p = new Promise((resolve, reject) => {
       const fail = () => { // (not kept: tried again next time)
         if (conns.get(name) === p) conns.delete(name);
         if (mode === "idb") reject(new Error("storage unavailable — reload the page"));

@@ -921,6 +921,7 @@ async function finishSing(s) {
   recordTake();
   openReview();
   saveLastTake(tk, sid);
+  if (spaceChanged()) showMsg("Not kept: signed in or out in another tab.", "error");
 }
 
 // ---------------------------------------------------------------------------
@@ -2713,7 +2714,8 @@ function queueRemote({ songs = false, profiles = false, state = [], takes = [] }
   for (const id of takes) p.takes.add(id);
 }
 window.addEventListener("resonate:remote", (e) => { queueRemote(e.detail || {}); flushRemote(); });
-const busyNow = () => !!(session || drill || starting || finishing);
+// (After another tab signed in or out, the reload also waits for an open review to close.)
+const busyNow = () => !!(session || drill || starting || finishing || (spaceChanged() && !reviewEl.hidden));
 window.resonateBusy = busyNow; // (nav.js: a reload for another tab's sign-in/out waits for it)
 function flushRemote() {
   if (!pendingRemote) return;
@@ -2721,14 +2723,15 @@ function flushRemote() {
     const p = pendingRemote;
     if (!p || busyNow()) return; // (flushed again when that ends)
     pendingRemote = null;
+    let gone = false;
     if (p.songs) {
       await refreshLibrary();
       if (songId) songSelect.value = songId;
-      const gone = songId && !SAMPLES[songId] && ![...mySongsEl.querySelectorAll("option")].some((o) => o.value === songId);
+      gone = !!songId && !SAMPLES[songId] && ![...mySongsEl.querySelectorAll("option")].some((o) => o.value === songId);
       if (gone && !busyNow()) return selectSong("amazing-grace");
     }
     const sid = songId;
-    if (!score || scoreId !== sid || busyNow()) return queueRemote({ ...p, songs: false }); // (setScore flushes)
+    if (!score || scoreId !== sid || busyNow()) return queueRemote({ ...p, songs: gone }); // (setScore flushes; a song gone meanwhile is closed later)
     if (p.takes.has(sid)) {
       const t = reviveTake(await getTake(sid, { voice: true }).catch(() => null));
       if (sid !== songId || scoreId !== sid || busyNow()) return queueRemote({ takes: [sid], state: p.state, profiles: p.profiles });
