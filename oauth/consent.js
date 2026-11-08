@@ -3,7 +3,7 @@
 // (Site URL + the project's authorization path /oauth/consent). Signed in → Allow / Deny; not
 // signed in (the assistant's own sign-in window has no Resonate session) → sign in first, and
 // that sign-in is only for this: it's removed again once the answer is given.
-import { supabase, SUPABASE_URL, SUPABASE_KEY } from "../auth.js?v=73";
+import { supabase, SUPABASE_URL, SUPABASE_KEY } from "../auth.js?v=74";
 
 const $ = (id) => document.getElementById(id);
 const msg = $("msg");
@@ -60,7 +60,7 @@ $("v-signin").addEventListener("submit", async (e) => {
   try {
     // A client of its own, its session in memory only: the app's saved session, other tabs and
     // whose data this device shows are left alone.
-    const { createClient } = await import("../vendor/supabase-2.118.0.js?v=73");
+    const { createClient } = await import("../vendor/supabase-2.118.0.js?v=74");
     const mem = new Map();
     const temp = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: false, detectSessionInUrl: false, storageKey: "resonate.consent",
       storage: { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => { mem.set(k, v); }, removeItem: (k) => { mem.delete(k); } } } });

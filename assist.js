@@ -13,8 +13,8 @@
 // their `device_commands` row. Only for a signed-in, approved account whose data is on this
 // device and whose sync is on (as sync.js); nothing at all otherwise.
 
-import { supabase, savedUser } from "./auth.js?v=73";
-import { activeSpace } from "./space.js?v=73";
+import { supabase, savedUser } from "./auth.js?v=74";
+import { activeSpace } from "./space.js?v=74";
 
 const SYNC_OFF = "resonate.sync.off";
 const DEVICE_KEY = "resonate.device"; // { id, name }
@@ -125,6 +125,7 @@ export function renameDevice(name) {
 // remote.start({ run(action, args) → { ok, … }, state() → {…}, changed(on) }) on the Sing page.
 export const remote = {
   available: false, // signed in, approved, sync on
+  settings: { start_delay_s: 4, review_after_remote: false }, // the Assistants page's (assistant_settings)
   on: false,        // this device takes commands
   async start(hooks) {
     this.hooks = hooks;
@@ -135,6 +136,9 @@ export const remote = {
     const me = device();
     const { data } = await c.sb.from("devices").select("remote").eq("id", me.id).maybeSingle();
     this.on = !!data?.remote;
+    // The assistant active lately (the page shows it by 📡).
+    c.sb.from("assistant_activity").select("name,logo,last_at,last_tool").order("last_at", { ascending: false }).limit(1)
+      .then(({ data: a }) => { if (a?.[0]) hooks.assistant?.({ name: a[0].name, logo: a[0].logo, tool: a[0].last_tool, at: a[0].last_at }); }, () => {});
     await this.beat();
     await this.listen();
     // (old commands go: an hour is plenty to look back on)
@@ -167,6 +171,7 @@ export const remote = {
     if (!stillMine(c)) return;
     const me = device();
     const state = { ...this.state(), ...(leaving ? { visible: false, left: true } : {}) };
+    if (!leaving) c.sb.from("assistant_settings").select("start_delay_s,review_after_remote").maybeSingle().then(({ data: st }) => { if (st) this.settings = st; }, () => {});
     const { data, error } = await c.sb.from("devices").upsert({ id: me.id, name: me.name, seen_at: new Date().toISOString(), state }, { onConflict: "user_id,id" }).select("remote").maybeSingle();
     if (!error && data && !!data.remote !== this.on) { this.on = !!data.remote; this.hooks?.changed?.(this.on); } // (switched on elsewhere)
   },
@@ -178,6 +183,7 @@ export const remote = {
     const since = Date.now() - 60000;
     this.channel = c.sb.channel(`user:${c.uid}`, { config: { private: true, broadcast: { replay: { since, limit: 25 } } } })
       .on("broadcast", { event: "command" }, (m) => this.handle(m.payload))
+      .on("broadcast", { event: "assistant" }, (m) => this.hooks?.assistant?.({ ...m.payload, received: Date.now() }))
       .subscribe((status) => { if (status === "SUBSCRIBED") this.catchUp(); });
   },
   // Commands that came while the page couldn't hear them (hidden, reconnecting).
