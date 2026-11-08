@@ -2,9 +2,9 @@
 // resulting MusicXML to My songs. No settings: pages without staves are skipped
 // automatically, English OCR for lyrics, the title is taken from the score.
 
-import { readScoreFile, parseMusicXml } from "./musicxml.js?v=70";
-import { addSong } from "./library.js?v=70";
-import { fixOmrScore, joinMovements } from "./omr/fixscore.js?v=70";
+import { readScoreFile, parseMusicXml } from "./musicxml.js?v=71";
+import { addSong } from "./library.js?v=71";
+import { fixOmrScore, joinMovements } from "./omr/fixscore.js?v=71";
 
 const $ = (id) => document.getElementById(id);
 const chooseBtn = $("choose");
@@ -198,7 +198,7 @@ async function run(file) {
   appendLog(logHead.trimEnd());
 
   try {
-    const omr = await import("./omr/omr.js?v=70");
+    const omr = await import("./omr/omr.js?v=71");
     const res = await omr.convertPdf(file, { onProgress, onLog: appendLog });
 
     setStep("save");
@@ -220,7 +220,10 @@ async function run(file) {
       appendLog(`[fix] key mode from the file name: ${mode}`);
     }
     const score = parseMusicXml(finalXml, title);
-    const id = await addSong(score.title, finalXml);
+    // The original PDF is kept with the song (and synced with it, up to 10 MB, when signed in).
+    let pdf = null;
+    try { pdf = await file.arrayBuffer(); } catch {}
+    const id = await addSong(score.title, finalXml, { source: "pdf", ...(pdf ? { pdf, pdfName: file.name } : {}) });
     try { localStorage.setItem("resonate.sing.song", id); localStorage.removeItem("resonate.sing.verse"); } catch {}
     setBar(1);
 

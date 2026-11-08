@@ -1,7 +1,16 @@
 // Account page: sign in / create an account with email + password, reset a forgotten
 // password, change it, sign out. Email links (confirm the address, reset the password) come
 // back here with the session in the URL fragment; supabase-js reads it (auth.js).
-import { supabase, accountUrl, savedUser, STORAGE_KEY } from "./auth.js?v=70";
+//
+// What's on the device (space.js): creating an account takes the signed-out data with it
+// (adopt); signing in to an existing account shelves it and brings the account's from the cloud
+// (enter, then sync.js); signing out removes the account's data from the device and brings the
+// shelved data back (leave).
+import { supabase, accountUrl, savedUser, STORAGE_KEY } from "./auth.js?v=71";
+import { ensureSpace, activeSpace, adopt, enter, leave } from "./space.js?v=71";
+
+const ADOPT = "resonate.adopt"; // the address an account is being made for on this device
+const SYNC_OFF = "resonate.sync.off"; // (sync.js OFF_KEY: this device doesn't sync)
 
 const $ = (id) => document.getElementById(id);
 const msg = $("msg");
@@ -45,21 +54,48 @@ function render() {
 }
 
 // Invite-only: an account's cloud features stay off until the owner approves it (public.accounts,
-// supabase/migrations). Shown under the email; nothing when it can't be read (offline).
+// supabase/migrations). Shown under the email; nothing when it can't be read (offline). An
+// approved account can turn the sync off on this device.
 async function showCloud() {
   const el = $("cloud"), id = session?.user?.id;
+  if (el.dataset.uid !== id) { el.hidden = true; $("sync-row").hidden = true; } // (another account's, until read)
   if (!id || !sb) return;
   const { data, error } = await sb.from("accounts").select("approved").maybeSingle();
   if (session?.user?.id !== id) return;
+  el.dataset.uid = id;
   el.hidden = !!error || !data;
+  $("sync-row").hidden = el.hidden || !data?.approved;
   if (el.hidden) return;
   el.dataset.on = String(data.approved);
   el.textContent = data.approved ? "Cloud: on" : "Cloud: waiting for approval";
+  $("sync-on").checked = localStorage.getItem(SYNC_OFF) !== "1";
+}
+
+// A session arrived (signed in, an account made, an email link): make the device's data the
+// account's, then sync.
+async function settle(s) {
+  const uid = s?.user?.id;
+  if (!uid) return;
+  if (activeSpace() !== uid) {
+    const pending = localStorage.getItem(ADOPT);
+    if (pending && pending === (s.user.email || "").toLowerCase() && activeSpace() === "anon") adopt(uid);
+    else await enter(uid);
+    localStorage.removeItem(ADOPT);
+  }
+  startSync();
+}
+async function startSync() {
+  try {
+    const m = await import("./sync.js?v=71");
+    if (!m.syncOff()) m.start();
+    return m;
+  } catch (err) { console.warn("sync", err); return null; }
 }
 
 // Shown at once from the saved session (a page left for a while first refreshes its token,
 // which can take a moment — or fail offline); the library's answer follows.
 const saved = savedUser();
+ensureSpace(saved?.id);
 session = saved && !recovering ? { user: saved } : null;
 render();
 if (linkError) say(LINK_ERRORS[linkError] || "That link didn't work — try again.", "error");
@@ -99,8 +135,14 @@ $("signup").addEventListener("click", () => {
   if ($("password").value.length < MIN_PW) return say(`Password: ${MIN_PW}+ characters.`, "error");
   busy(async () => {
     say();
+    // A new account takes what's on this device (settle, once its session arrives — now, or
+    // after the email is confirmed and the account signs in here).
+    localStorage.setItem(ADOPT, email().toLowerCase());
     const { data, error } = await sb.auth.signUp({ email: email(), password: $("password").value, options: { emailRedirectTo: accountUrl() } });
-    if (error) return error.code === "user_already_exists" ? say("That email has an account — sign in.", "error") : sayError(error);
+    if (error) {
+      localStorage.removeItem(ADOPT);
+      return error.code === "user_already_exists" ? say("That email has an account — sign in.", "error") : sayError(error);
+    }
     if (data.session) return; // no confirmation needed: signed in
     // An address that already has an account comes back with no identities (and no email is sent).
     if (data.user && data.user.identities?.length === 0) return say("That email has an account — sign in.", "error");
@@ -141,13 +183,33 @@ $("newpw-cancel").addEventListener("click", () => { changing = false; say(); ren
 $("change").addEventListener("click", () => { changing = true; say(); render(); });
 
 $("signout").addEventListener("click", () => busy(async () => {
+  // The account's data leaves this device: the last changes go up first, and what can't (songs
+  // past the cloud's limit, changes that haven't reached it) is said before it's removed.
+  if (activeSpace() === session?.user?.id) {
+    const m = await startSync();
+    if (m) {
+      if (!m.syncOff()) await m.syncNow();
+      const u = await m.unsynced();
+      const text = u.songs ? `${u.songs} song${u.songs > 1 ? "s" : ""} on this device aren't in the cloud and will be removed from it. Sign out?`
+        : u.changes ? "Some changes haven't reached the cloud and will be lost. Sign out?" : null;
+      if (text && !confirm(text)) return;
+    }
+  }
+  // No sync from here on (a pass under way could otherwise write into the data coming back).
+  if (window.resonateSync) { try { await (await import("./sync.js?v=71")).stop(); } catch {} }
   // This device only — other devices stay signed in.
   const { error } = await sb.auth.signOut({ scope: "local" });
   if (error && !offline(error)) return sayError(error);
   // (Offline the library keeps the session; signing out here only ever concerns this device.)
   if (error) localStorage.removeItem(STORAGE_KEY);
+  await leave();
   session = null; say(); render();
 }));
+
+$("sync-on").addEventListener("change", () => {
+  if ($("sync-on").checked) { localStorage.removeItem(SYNC_OFF); startSync().then((m) => m?.syncNow()); }
+  else localStorage.setItem(SYNC_OFF, "1");
+});
 
 window.resonateDebug = () => ({ view, email: session?.user?.email || null, recovering, changing, ready: !!sb, cloud: $("cloud").hidden ? null : $("cloud").textContent });
 
@@ -169,10 +231,15 @@ sb.auth.onAuthStateChange((event, s) => {
   if (event === "PASSWORD_RECOVERY" && linkType === "recovery") recovering = true;
   if (event === "USER_UPDATED") recovering = false;
   if (event === "SIGNED_OUT") recovering = changing = false;
-  setTimeout(() => { session = s; render(); }, 0);
+  setTimeout(async () => {
+    if (event === "SIGNED_IN" && s) await settle(s);
+    session = s;
+    render();
+  }, 0);
 });
 const { data, error: initError } = await sb.auth.getSession();
 if (data.session || !(initError && offline(initError) && saved)) {
+  if (data.session) await settle(data.session);
   session = data.session;
   render();
 } else say("No connection.", "error"); // (keeps the saved account shown; the library retries)

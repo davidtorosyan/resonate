@@ -5,10 +5,10 @@
 // then does the same going up. The lowest and highest notes held are your limits; the
 // comfortable range starts a few notes inside them and can be adjusted by hand.
 
-import { openMic, createReader, FFT_SIZE } from "./pitch.js?v=70";
-import { loadPiano, holdPiano } from "./piano.js?v=70";
-import { noteName, median } from "./music.js?v=70";
-import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=70";
+import { openMic, createReader, FFT_SIZE } from "./pitch.js?v=71";
+import { loadPiano, holdPiano } from "./piano.js?v=71";
+import { noteName, median } from "./music.js?v=71";
+import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=71";
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
@@ -593,5 +593,7 @@ window.addEventListener("pagehide", () => {
 });
 if (!navigator.mediaDevices?.getUserMedia) statusEl.textContent = "mic API unavailable — open over HTTPS";
 
+// Profiles changed by the cloud sync (sync.js): show them, unless a test is running.
+window.addEventListener("resonate:remote", (e) => { if (e.detail?.profiles && !run) render(); });
 render();
 window.resonateDebug = () => ({ run: run && { kind: run.kind, phase: run.phase, target: run.target, dir: run.dir, best: run.best, anchor: run.anchor, mic: !!(run.stream || run.mic) }, profiles: loadProfiles() });

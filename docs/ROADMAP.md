@@ -89,7 +89,10 @@ statistics locally (per note: pitch and timing; per line; per take). This is sma
 it's the base for sync and the AI coach. Recordings: maybe keep some (opt-in or recent
 only), not every take.
 
-## 5. Cloud sync (sign-in unlocks it)
+## 5. Cloud sync (sign-in unlocks it) — v1 built (v71)
+
+**Built 2026-11-08:** songs (XML + PDF, 10 per account), per-song key/tempo/timing/history, each song's last take (data only), voice profiles; local spaces (shelve on sign-in, adopt on sign-up, restore on sign-out). One generic `sync_items` document table instead of the typed tables planned below (simpler sync; the MCP server can read the same documents). Details in CLAUDE.md "Cloud sync". Next: an owner screen for approvals and limits, recordings (opt-in), real-time push instead of polling.
+
 
 - Use any device without re-uploading or re-processing sheet music: songs (MusicXML plus
   the cleaned-up copy) shared across devices.
