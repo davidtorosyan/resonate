@@ -98,7 +98,9 @@ only), not every take.
   the cleaned-up copy) shared across devices.
 - Take statistics (and maybe some recordings) shared across devices.
 
-## 6. AI coach over MCP
+## 6. AI coach over MCP — v1 built (v73)
+
+**Built 2026-11-08 (v73):** an MCP server (Edge Function `mcp`) with OAuth through Supabase Auth, read tools (songs, takes line by line — live during a take —, coaching, progress, voice profile, devices) and one acting tool (`control_resonate`) for the device with 📡 Remote on; the Assistants page (URL to copy, connected assistants, devices); details in CLAUDE.md "Assistants". Next: test with the owner's ChatGPT plan (which plans run the acting tool; voice mode), Claude's voice mode once it calls connectors, an in-app voice coach (no MCP), recordings opt-in.
 
 An MCP server that exposes the statistics of recent songs and takes, so an AI agent
 (including a voice agent, which can't hear pitch well) can tell the singer what to work

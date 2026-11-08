@@ -186,14 +186,24 @@ export const remote = {
       .eq("device_id", device().id).eq("status", "sent").gte("created_at", new Date(Date.now() - 60000).toISOString()).order("created_at");
     for (const r of data || []) this.handle({ id: r.id, device: r.device_id, action: r.action, args: r.args, at: r.created_at });
   },
-  async handle(cmd) {
+  // One command at a time, in the order they came; each once — a command replayed after a
+  // reload (Realtime keeps the last minute) is run only if its row still says "sent".
+  queue: Promise.resolve(),
+  handle(cmd) {
     if (!cmd?.id || this.seen.has(cmd.id) || cmd.device !== device().id) return;
     this.seen.add(cmd.id);
+    this.queue = this.queue.then(() => this.run1(cmd)).catch((err) => console.warn("assist: command", err));
+  },
+  async run1(cmd) {
     const c = this.ctx;
     if (!stillMine(c)) return;
+    const { data: row } = await c.sb.from("device_commands").select("status").eq("id", cmd.id).maybeSingle();
+    if (row?.status !== "sent") return;
     const answer = (status, result) => c.sb.from("device_commands").update({ status, result, updated_at: new Date().toISOString() }).eq("id", cmd.id);
     if (!this.on) return answer("failed", { error: "Remote control is off on this device." });
-    if (Date.now() - Date.parse(cmd.at) > 60000) return answer("expired", { error: "Too old." });
+    // Something that starts sound or the mic is only done right away, never long after it was asked.
+    const starts = ["listen", "play_take", "sing", "loop_line"].includes(cmd.action);
+    if (Date.now() - Date.parse(cmd.at) > (starts ? 15000 : 60000)) return answer("expired", { error: "It came too late — ask again." });
     let r;
     try { r = (await this.hooks.run(cmd.action, cmd.args || {})) || { ok: true }; }
     catch (err) { r = { ok: false, error: err.message || String(err) }; }
