@@ -2,33 +2,45 @@
 // default, off per device on the Account page. What syncs:
 //   • songs: the MusicXML (and the original PDF from PDF → Song) — up to SONG_LIMIT: the ones
 //     already in the cloud stay, the newest others fill free places; the rest stay on the device;
-//   • each song's settings (key, tempo %, tapped timing / own tempo) and take history;
+//   • each song's settings (key, tempo %, tapped timing / own tempo — one row per field, so a
+//     change to one on a device doesn't undo another device's change to another) and its take
+//     history (merged, never replaced);
 //   • each song's last take — all its data, compressed, but not the recording (this device only);
 //   • voice profiles (name and range; the volume calibration is per device — it's the mic's).
 // Server: public.sync_items (one JSON document per thing, last writer wins by modified_at,
 // deletes as tombstones) and the private Storage bucket "songs" — see
-// supabase/migrations/20261108180000_sync.sql. Local: what the pages already use (library.js,
-// localStorage) in the active space (space.js), plus resonate.sync (what was last synced).
+// supabase/migrations/20261108180000_sync.sql and …200000_sync_fixes.sql. Local: what the pages
+// already use (library.js, localStorage) in the active space (space.js), plus resonate.sync
+// (what was last synced).
 //
 // A pass (syncNow): note local changes (each thing's fingerprint against the last synced one;
 // a change is stamped when it's first seen), pull the cloud's changes since the last pass
-// (newer wins; history lists are merged), push what's left. Passes run on page load, after the
+// (newer wins; histories are merged), push what's left. Passes run on page load, after the
 // pages' "resonate:data" events (debounced), when the page becomes visible, and every 2 minutes
 // while it's open — one at a time across tabs (Web Locks).
 
 import { supabase, savedUser } from "./auth.js?v=71";
 import { activeSpace, SYNC_META } from "./space.js?v=71";
-import { listSongs, getSong, putSong, removeSong, getPdf, listTakes, getTake, putTake, removeTake, persistent } from "./library.js?v=71";
+import { listSongs, getSong, putSong, removeSong, getPdf, listTakes, getTake, putTake, removeTake, persistent, dbGen } from "./library.js?v=71";
 
 export const SONG_LIMIT = 10;
 const FILE_LIMIT = 10 * 1024 * 1024;
+const TEXT_LIMIT = 64 * 1024 * 1024; // a downloaded file never unpacks to more than this
 export const OFF_KEY = "resonate.sync.off"; // this device doesn't sync (a device setting)
 const L = { keys: "resonate.sing.keys", rates: "resonate.sing.rates", timing: "resonate.sing.timing", history: "resonate.sing.history", profiles: "resonate.profiles" };
+const FIELDS = { key: L.keys, rate: L.rates, timing: L.timing }; // a song's settings: song_state "<song>|<field>"
 const BUCKET = "songs";
+const COLS = "kind,id,data,deleted,modified_at,updated_at";
+const PAGE = (() => { try { return Number(localStorage.getItem("resonate.sync.page")) || 100; } catch { return 100; } })(); // (tests use a small page)
 
 const readJson = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } };
 const writeJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 const isLibraryId = (id) => /^s[0-9a-z]{6,}$/.test(id); // library.js ids; anything else is a bundled sample
+const validId = (id) => typeof id === "string" && id.length >= 1 && id.length <= 100;
+const splitKey = (key) => { const i = key.indexOf(":"); return [key.slice(0, i), key.slice(i + 1)]; };
+// The song a settings / history / take row belongs to.
+const songOf = (kind, id) => (kind === "song_state" ? id.slice(0, id.lastIndexOf("|")) : id);
+const PER_SONG = ["song_state", "history", "take"];
 
 // A stable fingerprint of a JSON value (key order doesn't matter).
 function stable(v) {
@@ -44,12 +56,14 @@ export function fingerprint(v) {
 }
 
 // --- What's here ------------------------------------------------------------------------
-// meta = { uid, cursor, items: { "kind:id": { h, m (ms), up (pushed), del } }, info: { songId: { sha, source } },
+// meta = { uid, gen (the songs' database generation, library.js), cursor,
+//          items: { "kind:id": { h, m (ms), up (pushed), del } }, info: { songId: { sha, source } },
 //          held: { songId: why } — songs that stay on this device: "full" (the cloud had no room
-//          when pushed: tried again once songs change there) or "large" (over the file limit) }
+//          when pushed: tried again once songs change there) or "large" (over the file limit),
+//          missing: { songId: modified ms } — in the cloud, but its file couldn't be found }
 function loadMeta(uid) {
   const m = readJson(SYNC_META, null);
-  const fresh = { uid, cursor: null, items: {}, info: {}, held: {} };
+  const fresh = { uid, gen: null, cursor: null, items: {}, info: {}, held: {}, missing: {} };
   return m && m.uid === uid ? { ...fresh, ...m } : fresh;
 }
 const saveMeta = (m) => writeJson(SYNC_META, m);
@@ -62,8 +76,9 @@ async function sha256(text) {
 // The local things in their sync form ("kind:id" → { kind, id, data }), and which songs go.
 async function localItems(meta) {
   const items = new Map();
-  const put = (kind, id, data) => { if (typeof id === "string" && id.length >= 1 && id.length <= 100) items.set(`${kind}:${id}`, { kind, id, data }); };
+  const put = (kind, id, data) => { if (validId(id)) items.set(`${kind}:${id}`, { kind, id, data }); };
   const songs = await listSongs(); // newest first
+  const here = new Set(songs.map((s) => s.id));
   const cloud = (id) => { const m = meta.items[`song:${id}`]; return !!m && !m.del; };
   let room = SONG_LIMIT - Object.entries(meta.items).filter(([k, m]) => k.startsWith("song:") && !m.del).length;
   const synced = new Set();
@@ -76,25 +91,24 @@ async function localItems(meta) {
     let info = meta.info[s.id];
     if (!info) {
       const full = await getSong(s.id);
-      if (!full) continue;
+      if (!full) { synced.delete(s.id); continue; }
       info = meta.info[s.id] = { sha: await sha256(full.xml), source: full.source || null };
     }
     put("song", s.id, { title: s.title, added: s.added, source: info.source, sha: info.sha });
   }
   // Settings, history and the last take: for songs in the cloud and the bundled samples.
-  const keys = readJson(L.keys, {}), rates = readJson(L.rates, {}), timing = readJson(L.timing, {}), history = readJson(L.history, {});
   const ok = (id) => synced.has(id) || !isLibraryId(id);
-  for (const id of new Set([...Object.keys(keys), ...Object.keys(rates), ...Object.keys(timing), ...Object.keys(history)])) {
-    if (!ok(id)) continue;
-    put("song_state", id, { key: keys[id] ?? null, rate: rates[id] ?? null, timing: timing[id] ?? null, history: history[id] ?? null });
+  for (const [field, key] of Object.entries(FIELDS)) {
+    for (const [id, v] of Object.entries(readJson(key, {}))) if (ok(id) && v !== null && v !== undefined && !String(id).includes("|")) put("song_state", `${id}|${field}`, { v });
   }
+  for (const [id, list] of Object.entries(readJson(L.history, {}))) if (ok(id) && Array.isArray(list) && list.length) put("history", id, { list });
   for (const t of await listTakes()) if (ok(t.songId) && t.takeId) put("take", t.songId, { takeId: t.takeId, at: t.at });
   const prof = readJson(L.profiles, null);
   if (prof && Array.isArray(prof.list)) {
     for (const p of prof.list) put("profile", p.id, { name: p.name ?? "", range: p.range ?? null });
     put("prefs", "prefs", { activeProfile: prof.active ?? null });
   }
-  return { items, synced };
+  return { items, synced, here };
 }
 
 // The sync form of what the cloud sent (what localItems would make of it once applied).
@@ -106,19 +120,33 @@ function norm(kind, data) {
   return data;
 }
 
-// Note local changes: anything whose fingerprint moved is stamped now and waits to be pushed;
-// anything synced before and now gone becomes a delete.
-function noteChanges(meta, items, now) {
+// Note local changes: anything whose fingerprint moved is stamped and waits to be pushed;
+// anything synced before and now gone becomes a delete. A stamp is the time the change was
+// first seen (a take: when it was sung, so an older take never beats a newer one), and always
+// later than the last version this device knew, so the server takes it.
+function noteChanges(meta, { items, synced, here }, now) {
   let n = 0;
   for (const [key, it] of items) {
     const h = fingerprint(it.data);
     const m = meta.items[key];
-    if (!m || m.del || m.h !== h) { meta.items[key] = { h, m: now, up: false }; n++; }
+    if (m && !m.del && m.h === h) continue;
+    const when = it.kind === "take" && typeof it.data.at === "number" ? it.data.at : now;
+    meta.items[key] = { h, m: Math.max(when, (m?.m || 0) + 1), up: false };
+    n++;
   }
-  for (const [key, m] of Object.entries(meta.items)) {
-    if (items.has(key) || m.del) continue;
-    // A song that just isn't synced from here (room) is "gone" only if it was in the cloud.
-    meta.items[key] = { h: null, m: now, up: false, del: true };
+  // Songs first: whether a song is gone decides for its settings, history and take.
+  const gone = Object.entries(meta.items).filter(([key, m]) => !items.has(key) && !m.del);
+  gone.sort(([a], [b]) => (b.startsWith("song:") ? 1 : 0) - (a.startsWith("song:") ? 1 : 0));
+  for (const [key, m] of gone) {
+    const [kind, id] = splitKey(key);
+    if (kind === "song" && (meta.missing[id] || meta.held[id])) continue; // (not here, not deleted)
+    if (PER_SONG.includes(kind)) {
+      const sid = songOf(kind, id);
+      // A song that isn't here (not downloaded, held, …): nothing is known about its things.
+      if (isLibraryId(sid) && !synced.has(sid) && !here.has(sid) && !meta.items[`song:${sid}`]?.del) continue;
+      if (isLibraryId(sid) && !synced.has(sid) && here.has(sid)) continue;
+    }
+    meta.items[key] = { h: null, m: Math.max(now, m.m + 1), up: false, del: true };
     n++;
   }
   return n;
@@ -135,7 +163,7 @@ function setIn(key, id, val) {
 // sing.js's recordTake (10 per verse, 40 per song).
 export function mergeHistory(a = [], b = []) {
   const seen = new Map();
-  for (const h of [...(a || []), ...(b || [])]) if (h && typeof h.at === "number") seen.set(`${h.at}|${h.sig}`, h);
+  for (const h of [...(a || []), ...(b || [])]) if (h && typeof h === "object" && typeof h.at === "number" && typeof h.sig === "string") seen.set(`${h.at}|${h.sig}`, h);
   const all = [...seen.values()].sort((x, y) => x.at - y.at);
   const perSig = new Map();
   for (const h of all) perSig.set(h.sig, [...(perSig.get(h.sig) || []), h]);
@@ -143,50 +171,126 @@ export function mergeHistory(a = [], b = []) {
   return all.filter((h) => keep.has(h)).slice(-40);
 }
 
+// What a setting may be (anything else from the cloud is ignored).
+const num = (x, lo, hi) => (typeof x === "number" && Number.isFinite(x) && x >= lo && x <= hi ? x : null);
+function cleanField(field, v) {
+  if (field === "key") return typeof v === "string" ? (/^fit(:-?\d{1,2})?$/.test(v) ? v : null) : num(v, -48, 48);
+  if (field === "rate") return num(v, 0.1, 4);
+  if (field === "timing") {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+    const segs = Array.isArray(v.segs) ? v.segs.filter((s) => Array.isArray(s) && s.length === 2 && s.every((x) => Number.isFinite(x))) : [];
+    const out = { sig: String(v.sig ?? ""), segs, use: !!v.use };
+    if (num(v.bpm, 10, 1000) !== null) out.bpm = v.bpm;
+    return segs.length || out.bpm ? out : null;
+  }
+  return null;
+}
+function cleanRange(r) {
+  if (!r || typeof r !== "object") return null;
+  const out = {};
+  for (const k of ["low", "high", "comfortLow", "comfortHigh"]) { out[k] = num(r[k], 0, 127); if (out[k] === null) return null; }
+  out.at = num(r.at, 0, 1e15); // (null: a preset, not measured)
+  return out;
+}
+
+const permanent = (msg) => Object.assign(new Error(msg), { permanent: true });
 async function gunzipText(bytes) {
   const s = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
-  return new Response(s).text();
+  const reader = s.getReader(), parts = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > TEXT_LIMIT) { reader.cancel().catch(() => {}); throw permanent("unpacks too large"); }
+      parts.push(value);
+    }
+  } catch (err) { throw err.permanent ? err : permanent(`not gzip: ${err.message}`); }
+  return new TextDecoder().decode(await new Blob(parts).arrayBuffer());
 }
 async function gzipBytes(text) {
   const s = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
   return new Uint8Array(await new Response(s).arrayBuffer());
 }
 const toB64 = (u8) => { let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000)); return btoa(s); };
-const fromB64 = (b) => Uint8Array.from(atob(b), (c) => c.charCodeAt(0));
+const fromB64 = (b) => { try { return Uint8Array.from(atob(b), (c) => c.charCodeAt(0)); } catch { throw permanent("bad base64"); } };
+const notFound = (e) => e && (e.status === 404 || String(e.statusCode) === "404" || /not.?found/i.test(e.message || ""));
 
+// One row from the cloud, applied here. Throws when it should be tried again (a download cut
+// off…); a row that can never be applied (a broken document) throws `permanent` and is passed by.
 async function apply(sb, row, meta, changed) {
-  const { kind, id, data, deleted } = row;
+  const { kind, id, deleted } = row;
+  // A delete of something this version doesn't know (another form, a test's): nothing to do.
+  const known = kind === "song" ? isLibraryId(id) : kind === "song_state" ? !!FIELDS[id.slice(id.lastIndexOf("|") + 1)] && id.includes("|") : true;
+  if (deleted && !known) return;
+  const data = deleted ? null : row.data;
+  if (!deleted && (!data || typeof data !== "object")) throw permanent("no data");
+  const m = Date.parse(row.modified_at);
+  let h = deleted ? null : fingerprint(norm(kind, data));
+  let up = true;
   if (kind === "song") {
+    if (!isLibraryId(id)) throw permanent("not a song id");
+    delete meta.missing[id];
     if (deleted) {
       await removeSong(id, { quiet: true });
-      for (const k of [L.keys, L.rates, L.timing, L.history]) setIn(k, id, null);
+      for (const k of [L.keys, L.rates, L.timing, L.history]) setIn(k, id, null); // (removeSong took its take and PDF)
       delete meta.info[id];
+      delete meta.held[id];
     } else {
       const have = await getSong(id);
+      const title = String(data.title ?? "").slice(0, 300) || "Song";
       if (!have) {
+        if (typeof data.xml?.path !== "string") throw permanent("no file");
         const blob = await sb.storage.from(BUCKET).download(data.xml.path);
+        if (blob.error && notFound(blob.error)) {
+          // Not there (yet, or any more): this song stays in the cloud, just not here.
+          meta.missing[id] = m;
+          meta.items[`song:${id}`] = { h, m, up: true };
+          return;
+        }
         if (blob.error) throw blob.error;
         const xml = await gunzipText(await blob.data.arrayBuffer());
-        await putSong({ id, title: data.title, xml, added: data.added, ...(data.source ? { source: data.source } : {}) }, { quiet: true });
-      } else if (have.title !== data.title) await putSong({ ...have, title: data.title }, { quiet: true });
-      meta.info[id] = { sha: data.sha, source: data.source ?? null };
+        await putSong({ id, title, xml, added: Number(data.added) || Date.now(), ...(data.source ? { source: String(data.source) } : {}) }, { quiet: true });
+      } else if (have.title !== title) await putSong({ ...have, title }, { quiet: true });
+      meta.info[id] = { sha: String(data.sha ?? ""), source: data.source ?? null };
     }
     for (const [sid, why] of Object.entries(meta.held)) if (why === "full") delete meta.held[sid];
     changed.songs = true;
   } else if (kind === "song_state") {
-    const d = data || {};
-    setIn(L.keys, id, deleted ? null : d.key);
-    setIn(L.rates, id, deleted ? null : d.rate);
-    setIn(L.timing, id, deleted ? null : d.timing);
+    const sid = songOf(kind, id), field = id.slice(sid.length + 1);
+    if (!sid || !FIELDS[field]) throw permanent("unknown setting");
+    const v = deleted ? null : cleanField(field, data.v);
+    if (!deleted && v === null) throw permanent("bad setting");
+    setIn(FIELDS[field], sid, v);
+    (changed.state ||= new Set()).add(sid);
+  } else if (kind === "history") {
     const local = readJson(L.history, {})[id];
-    setIn(L.history, id, deleted ? null : (d.history || local) ? mergeHistory(local, d.history) : null);
+    if (deleted) setIn(L.history, id, null);
+    else {
+      if (!Array.isArray(data.list)) throw permanent("bad history");
+      const merged = mergeHistory(local, data.list);
+      setIn(L.history, id, merged.length ? merged : null);
+      // (A merge that differs from the cloud's goes back up: noteChanges sees the difference.)
+    }
     (changed.state ||= new Set()).add(id);
   } else if (kind === "take") {
-    if (deleted) await removeTake(id, { quiet: true });
-    else {
-      const local = await getTake(id);
+    const local = await getTake(id);
+    if (deleted) {
+      // A take sung here after the cloud's delete stays (and goes up).
+      if (local && local.at > m) { meta.items[`take:${id}`] = { h: fingerprint({ takeId: local.takeId, at: local.at }), m: Math.max(local.at, m + 1), up: false }; return; }
+      await removeTake(id, { quiet: true });
+    } else {
+      if (typeof data.takeId !== "string" || typeof data.at !== "number") throw permanent("bad take");
+      if (local && local.takeId !== data.takeId && local.at > data.at) {
+        // Ours was sung later: it stays, and goes up.
+        meta.items[`take:${id}`] = { h: fingerprint({ takeId: local.takeId, at: local.at }), m: Math.max(local.at, m + 1), up: false };
+        return;
+      }
       if (local?.takeId !== data.takeId) {
-        const take = JSON.parse(await gunzipText(fromB64(data.gz)));
+        let take;
+        try { take = JSON.parse(await gunzipText(fromB64(String(data.gz ?? "")))); } catch (err) { throw err.permanent ? err : permanent("bad take data"); }
+        if (!take || typeof take !== "object") throw permanent("bad take data");
         await putTake({ songId: id, takeId: data.takeId, at: data.at, data: take, voice: null }, { quiet: true });
       }
     }
@@ -194,45 +298,58 @@ async function apply(sb, row, meta, changed) {
   } else if (kind === "profile" || kind === "prefs") {
     const p = readJson(L.profiles, { active: null, list: [] });
     if (!Array.isArray(p.list)) p.list = [];
-    if (kind === "prefs") { if (!deleted && data) p.active = data.activeProfile ?? p.active; }
+    if (kind === "prefs") { if (!deleted && typeof data.activeProfile === "string") p.active = data.activeProfile; }
     else if (deleted) p.list = p.list.filter((x) => x.id !== id);
     else {
       const old = p.list.find((x) => x.id === id);
-      const prof = { id, name: data.name ?? "", vol: old?.vol ?? null, range: data.range ?? null }; // (vol: this device's)
+      const prof = { id, name: String(data.name ?? "").slice(0, 60), vol: old?.vol ?? null, range: cleanRange(data.range) }; // (vol: this device's)
       p.list = old ? p.list.map((x) => (x.id === id ? prof : x)) : [...p.list, prof];
       if (!p.active) p.active = id;
     }
     writeJson(L.profiles, p);
     changed.profiles = true;
-  }
-  // What this thing now is here: the cloud's version (a merged history differs from it, and
+  } else throw permanent("unknown kind");
+  // What this thing now is here: the cloud's version (a merged history may differ from it, and
   // so goes back up on the next push).
-  meta.items[`${kind}:${id}`] = { h: deleted ? null : fingerprint(norm(kind, data)), m: Date.parse(row.modified_at), up: true, ...(deleted ? { del: true } : {}) };
+  meta.items[`${kind}:${id}`] = { h, m, up, ...(deleted ? { del: true } : {}) };
 }
 
+// A row from the cloud: applied unless ours is the same change or a newer one (still to go up).
+// false: stop pulling here (tried again next pass — skipping it could make what follows wrong).
+async function take1(sb, row, meta, changed) {
+  const key = `${row.kind}:${row.id}`;
+  const m = meta.items[key];
+  if (!validId(row.id) || (m && Date.parse(row.modified_at) <= m.m)) return true;
+  try { await apply(sb, row, meta, changed); return true; }
+  catch (err) {
+    console.warn("sync: couldn't apply", key, err);
+    return !!err.permanent; // a broken row is passed by; anything else is tried again
+  }
+}
+
+// The rows changed since the last pass, oldest first. Pages are keyed on (updated_at, kind, id),
+// so rows written together (one batch has one updated_at) are never split and lost between pages.
 async function pull(sb, meta, uid) {
   const changed = {};
-  let since = meta.cursor ? new Date(Date.parse(meta.cursor) - 3000).toISOString() : "1970-01-01T00:00:00Z";
-  for (let page = 0; page < 50; page++) {
-    const { data: rows, error } = await sb.from("sync_items").select("kind,id,data,deleted,modified_at,updated_at")
-      .gt("updated_at", since).order("updated_at", { ascending: true }).limit(100);
+  const since = meta.cursor ? new Date(Date.parse(meta.cursor) - 3000).toISOString() : "1970-01-01T00:00:00Z";
+  let after = null; // the last row read: { t, kind, id }
+  const q = (v) => `"${String(v).replace(/["\\]/g, "")}"`;
+  for (let page = 0; page < 200; page++) {
+    let req = sb.from("sync_items").select(COLS);
+    req = after
+      ? req.or(`updated_at.gt.${q(after.t)},and(updated_at.eq.${q(after.t)},kind.gt.${q(after.kind)}),and(updated_at.eq.${q(after.t)},kind.eq.${q(after.kind)},id.gt.${q(after.id)})`)
+      : req.gt("updated_at", since);
+    const { data: rows, error } = await req.order("updated_at", { ascending: true }).order("kind", { ascending: true }).order("id", { ascending: true }).limit(PAGE);
     if (error) throw error;
     for (const row of rows) {
       if (!current(uid)) return changed;
-      const key = `${row.kind}:${row.id}`;
-      const m = meta.items[key];
-      // Ours is the same change or a newer one (still to be pushed): keep ours.
-      if (!(m && Date.parse(row.modified_at) <= m.m)) {
-        // A failure (a download cut off…) stops here: the cursor stays before it, so it's
-        // tried again next time — skipping it could make what follows it look deleted.
-        try { await apply(sb, row, meta, changed); }
-        catch (err) { console.warn("sync: couldn't apply", key, err); saveMeta(meta); return changed; }
-      }
+      if (!(await take1(sb, row, meta, changed))) { saveMeta(meta); return changed; }
       if (!meta.cursor || row.updated_at > meta.cursor) meta.cursor = row.updated_at;
     }
     saveMeta(meta);
-    if (rows.length < 100) break;
-    since = rows[rows.length - 1].updated_at;
+    if (rows.length < PAGE) break;
+    const last = rows[rows.length - 1];
+    after = { t: last.updated_at, kind: last.kind, id: last.id };
   }
   return changed;
 }
@@ -264,20 +381,21 @@ async function wireData(sb, uid, it) {
   return it.data;
 }
 
-// A song that stays on this device: forget that it was going up (with its settings and take),
-// so it's neither retried every pass nor taken for a delete.
+// A song that stays on this device: forget that it was going up (with its settings, history
+// and take), so it's neither retried every pass nor taken for a delete.
 function hold(meta, id, why) {
   meta.held[id] = why;
-  for (const k of ["song", "song_state", "take"]) if (!meta.items[`${k}:${id}`]?.up) delete meta.items[`${k}:${id}`];
-  if (meta.items[`song:${id}`]?.up && why === "large") return; // (already in the cloud)
+  for (const key of Object.keys(meta.items)) {
+    const [kind, kid] = splitKey(key);
+    if ((kind === "song" ? kid === id : PER_SONG.includes(kind) && songOf(kind, kid) === id) && !meta.items[key].up) delete meta.items[key];
+  }
 }
 
-async function push(sb, uid, meta, items) {
-  const pending = Object.entries(meta.items).filter(([, m]) => !m.up);
+async function push(sb, uid, meta, items, changed) {
   const rows = [];
-  for (const [key, m] of pending) {
-    const [kind, ...rest] = key.split(":");
-    const id = rest.join(":");
+  for (const [key, m] of Object.entries(meta.items)) {
+    if (m.up) continue;
+    const [kind, id] = splitKey(key);
     const it = items.get(key);
     let data = null;
     if (!m.del) {
@@ -289,33 +407,53 @@ async function push(sb, uid, meta, items) {
         continue;
       }
       if (!data) continue;
-    } else if (kind === "song") {
-      sb.storage.from(BUCKET).remove([`${uid}/${id}.xml.gz`, `${uid}/${id}.pdf`]).catch(() => {});
     }
-    rows.push({ key, row: { user_id: uid, kind, id, data, deleted: !!m.del, modified_at: new Date(m.m).toISOString() } });
+    rows.push({ key, m: m.m, row: { user_id: uid, kind, id, data, deleted: !!m.del, modified_at: new Date(m.m).toISOString() } });
   }
+  const dropped = [];
+  // The server answers with the rows it kept: one it didn't was older than the cloud's.
+  const sent = async (batch) => {
+    const { data, error } = await sb.from("sync_items").upsert(batch.map((r) => r.row), { onConflict: "user_id,kind,id" }).select("kind,id,deleted");
+    if (error) return error;
+    const kept = new Set((data || []).map((x) => `${x.kind}:${x.id}`));
+    for (const r of batch) {
+      const now = meta.items[r.key];
+      if (!now || now.m !== r.m) continue; // (changed again meanwhile: goes up next pass)
+      now.up = true;
+      if (!kept.has(r.key)) dropped.push(r.key);
+      // A song's files go once its delete is in (never before: a delete the server refused
+      // would leave a song without its file).
+      else if (r.row.kind === "song" && r.row.deleted) sb.storage.from(BUCKET).remove([`${uid}/${r.row.id}.xml.gz`, `${uid}/${r.row.id}.pdf`]).catch(() => {});
+    }
+    return null;
+  };
   // Songs one at a time (the cloud may be full: that one stays on this device, with its
-  // settings and take), the rest together.
-  const songs = rows.filter((r) => r.row.kind === "song");
-  for (const r of songs) {
+  // settings and take), the rest in batches.
+  for (const r of rows.filter((x) => x.row.kind === "song")) {
     if (!current(uid)) return;
-    const { error } = await sb.from("sync_items").upsert(r.row, { onConflict: "user_id,kind,id" });
-    if (!error) meta.items[r.key].up = true;
-    else if (error.hint === "resonate:limit:song") hold(meta, r.row.id, "full");
-    else console.warn("sync: push", r.key, error);
+    const error = await sent([r]);
+    if (error?.hint === "resonate:limit:song") hold(meta, r.row.id, "full");
+    else if (error) console.warn("sync: push", r.key, error);
   }
-  const rest = rows.filter((r) => r.row.kind !== "song" && meta.items[r.key]);
+  const rest = rows.filter((x) => x.row.kind !== "song" && meta.items[x.key] && !meta.items[x.key].up);
   for (let i = 0; i < rest.length; i += 20) {
     if (!current(uid)) break;
     const batch = rest.slice(i, i + 20);
-    const { error } = await sb.from("sync_items").upsert(batch.map((r) => r.row), { onConflict: "user_id,kind,id" });
-    if (!error) { for (const r of batch) meta.items[r.key].up = true; continue; }
+    if (!(await sent(batch))) continue;
     // One bad thing mustn't hold the others back: one at a time.
     for (const r of batch) {
-      const { error: e } = await sb.from("sync_items").upsert(r.row, { onConflict: "user_id,kind,id" });
-      if (!e) meta.items[r.key].up = true;
-      else console.warn("sync: push", r.key, e);
+      const e = await sent([r]);
+      if (e) console.warn("sync: push", r.key, e);
     }
+  }
+  // What the server kept instead of ours: fetched and applied now.
+  for (const key of dropped) {
+    if (!current(uid)) break;
+    const [kind, id] = splitKey(key);
+    const { data: row, error } = await sb.from("sync_items").select(COLS).eq("kind", kind).eq("id", id).maybeSingle();
+    if (error || !row) continue;
+    meta.items[key].m = Math.min(meta.items[key].m, Date.parse(row.modified_at) - 1);
+    await take1(sb, row, meta, changed);
   }
   saveMeta(meta);
 }
@@ -350,17 +488,22 @@ async function pass() {
   // Songs only in memory (no IndexedDB — some private modes) would look deleted: no sync then.
   if (!(await persistent())) return { skipped: true };
   const { sb, uid } = ctx;
-  const meta = loadMeta(uid);
-  let { items } = await localItems(meta);
-  noteChanges(meta, items, Date.now());
+  let meta = loadMeta(uid);
+  // The songs' database is a new one (the browser cleared it, …): what was synced before says
+  // nothing about what's here now — start over, the cloud's copy first (nothing looks deleted).
+  const gen = dbGen();
+  if (meta.gen !== gen) meta = { ...loadMeta(null), uid, gen };
+  // Changes made here since the last pass are stamped before the pull, so a pulled older change
+  // doesn't overwrite them (a fresh start has nothing to compare: the cloud comes first).
+  if (meta.cursor) noteChanges(meta, await localItems(meta), Date.now());
   saveMeta(meta);
   const changed = await pull(sb, meta, uid);
   if (!current(uid)) return { skipped: true };
   // What the pull changed here (a merged history, a song now in the cloud…) is noted again.
-  ({ items } = await localItems(meta));
-  noteChanges(meta, items, Date.now());
+  const local = await localItems(meta);
+  noteChanges(meta, local, Date.now());
   saveMeta(meta);
-  await push(sb, uid, meta, items);
+  await push(sb, uid, meta, local.items, changed);
   if (Object.keys(changed).length) {
     try { window.dispatchEvent(new CustomEvent("resonate:remote", { detail: changed })); } catch {}
   }
@@ -378,22 +521,26 @@ export function syncNow() {
       return state.last;
     } finally {
       state.running = null;
-      if (state.again) { state.again = false; syncNow(); }
+      if (state.again && !stopped) { state.again = false; syncNow(); }
     }
   };
   state.running = run();
   return state.running;
 }
 
-// What would be lost if this device forgot the account's data now (Sign out).
+// What would be lost if this device forgot the active account's data now (Sign out): songs
+// not confirmed in the cloud, and other changes not yet pushed.
 export async function unsynced() {
-  const user = savedUser();
-  if (!user || activeSpace() !== user.id) return { songs: 0, changes: 0 };
-  const meta = loadMeta(user.id);
-  const { items, synced } = await localItems(meta);
-  noteChanges(meta, items, Date.now());
-  const songs = (await listSongs()).filter((s) => !synced.has(s.id)).length;
-  const changes = Object.values(meta.items).filter((m) => !m.up).length;
+  const uid = activeSpace();
+  if (uid === "anon") return { songs: 0, changes: 0 };
+  const meta = loadMeta(uid);
+  const local = await localItems(meta);
+  if (meta.cursor) noteChanges(meta, local, Date.now());
+  const inCloud = (id) => { const m = meta.items[`song:${id}`]; return !!m && m.up && !m.del; };
+  const songs = (await listSongs()).filter((s) => !inCloud(s.id)).length;
+  const changes = meta.cursor
+    ? Object.entries(meta.items).filter(([key, m]) => !m.up && !key.startsWith("song:")).length
+    : [...local.items.keys()].filter((key) => !key.startsWith("song:")).length;
   return { songs, changes };
 }
 
@@ -408,6 +555,7 @@ let started = false, timer = null;
 export function start() {
   if (started) return;
   started = true;
+  try { navigator.storage?.persist?.().catch(() => {}); } catch {} // (less likely to be cleared by the browser)
   let soon = null;
   window.addEventListener("resonate:data", () => { clearTimeout(soon); soon = setTimeout(syncNow, 1500); });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) syncNow(); });

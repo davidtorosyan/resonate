@@ -2,9 +2,6 @@
 // caps out around 5 MB. Falls back to an in-memory list (songs then last only
 // until reload) if IndexedDB is unavailable, e.g. some private-browsing modes.
 //   song = { id, title, xml, added (ms), source?, clean?: { xml, ver } }
-// Next to each song (v71): its original PDF when it came from PDF → Song (store "pdfs",
-// { id, pdf: ArrayBuffer, name, bytes }) and its last take (store "takes", { songId, … },
-// see sing.js saveLastTake) — the Sing page's own recording stays on this device only.
 //
 // The list of songs (id, title, added) is also kept as a small index in localStorage, so
 // showing My songs never reads the songs themselves: each is often 1–2 MB of MusicXML, and
@@ -12,50 +9,73 @@
 // The index is rebuilt from the database whenever it doesn't match the database's keys
 // (cleared site data, first run after this change, another tab's older copy of the page).
 //
-// Whose songs: the database belongs to the active space (space.js) — the signed-out user's
-// ("resonate", as always) or an account's. Every change announces itself with a
-// "resonate:data" event so the cloud sync (sync.js), when it runs, can follow.
+// Next to the songs (v71), in a second database "<songs db>-files" (version 1 — the songs'
+// database keeps its version, so an older page in another tab never blocks an upgrade):
+//   pdfs   { id, pdf: ArrayBuffer, name, bytes }   a song's original PDF (PDF → Song)
+//   takes  { songId, takeId, at, data }             each song's last take (sing.js), indexed
+//                                                   by [takeId, at] so listing reads no data
+//   voices { songId, takeId, pcm, sampleRate, start, gain }  its recording — this device only
+// Whose songs: the databases belong to the active space (space.js). Each database pair has a
+// generation (localStorage resonate.dbgen.<name>), renewed whenever one is created: the sync
+// (sync.js) starts over when it changes — a database that came back empty (evicted, cleared)
+// must not read as "every song deleted". Every change announces itself with a "resonate:data"
+// event so the sync, when it runs, can follow.
 
 import { dbName } from "./space.js?v=71";
 
 const STORE = "songs";
 const INDEX_KEY = "resonate.songs.index"; // [{ id, title, added }]
-let dbPromise = null, dbFor = null;
-const memory = { songs: new Map(), takes: new Map(), pdfs: new Map() };
-const KEYPATH = { songs: "id", takes: "songId", pdfs: "id" };
+const FILES = ["takes", "voices", "pdfs"];
+const memory = { songs: new Map(), takes: new Map(), voices: new Map(), pdfs: new Map() };
+const conns = new Map(); // database name → Promise<IDBDatabase | null>
 
-function open() {
+const GEN = (name) => `resonate.dbgen.${name}`;
+function newGen(name) {
+  try { localStorage.setItem(GEN(name), `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`); } catch {}
+}
+// The songs' generation (the active space's databases).
+export function dbGen() {
   const name = dbName();
-  if (!dbPromise || dbFor !== name) {
-    const old = dbPromise;
-    if (old) old.then((db) => db?.close());
-    dbFor = name;
-    dbPromise = new Promise((resolve) => {
-      try {
-        const req = indexedDB.open(name, 2);
-        req.onupgradeneeded = () => {
-          for (const s of ["songs", "takes", "pdfs"]) {
-            if (!req.result.objectStoreNames.contains(s)) req.result.createObjectStore(s, { keyPath: KEYPATH[s] });
-          }
-        };
-        req.onsuccess = () => {
-          const db = req.result;
-          db.onversionchange = () => db.close(); // (a space being deleted, a newer page)
-          resolve(db);
-        };
-        req.onerror = () => resolve(null);
-        // An older page in another tab still has it open at the old version: give it a moment.
-        req.onblocked = () => setTimeout(() => resolve(null), 3000);
-      } catch {
-        resolve(null);
-      }
-    });
-  }
-  return dbPromise;
+  let g = null;
+  try { g = localStorage.getItem(GEN(name)); } catch {}
+  if (!g) { newGen(name); try { g = localStorage.getItem(GEN(name)); } catch {} }
+  return g;
 }
 
+function openDb(name, gen, upgrade) {
+  if (!conns.has(name)) {
+    const p = new Promise((resolve) => {
+      const fail = () => { if (conns.get(name) === p) conns.delete(name); resolve(null); }; // (not kept: tried again next time)
+      try {
+        const req = indexedDB.open(name, 1);
+        let created = false;
+        req.onupgradeneeded = (e) => { created = e.oldVersion === 0; upgrade(req.result, req.transaction); };
+        req.onsuccess = () => {
+          const db = req.result;
+          const forget = () => { if (conns.get(name) === p) conns.delete(name); };
+          db.onversionchange = () => { db.close(); forget(); }; // (a space being deleted)
+          db.onclose = forget;
+          if (created) newGen(gen);
+          resolve(db);
+        };
+        req.onerror = fail;
+      } catch { fail(); }
+    });
+    conns.set(name, p);
+  }
+  return conns.get(name);
+}
+const openSongs = () => openDb(dbName(), dbName(), (db) => {
+  if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: "id" });
+});
+const openFiles = () => openDb(`${dbName()}-files`, dbName(), (db) => {
+  if (!db.objectStoreNames.contains("takes")) db.createObjectStore("takes", { keyPath: "songId" }).createIndex("meta", ["takeId", "at"]);
+  if (!db.objectStoreNames.contains("voices")) db.createObjectStore("voices", { keyPath: "songId" });
+  if (!db.objectStoreNames.contains("pdfs")) db.createObjectStore("pdfs", { keyPath: "id" });
+});
+
 function run(mode, fn, store = STORE) {
-  return open().then(
+  return (FILES.includes(store) ? openFiles() : openSongs()).then(
     (db) =>
       new Promise((resolve, reject) => {
         if (!db) {
@@ -87,7 +107,7 @@ const entry = ({ id, title, added }) => ({ id, title, added });
 
 // Newest first, without the (possibly large) XML.
 export async function listSongs() {
-  if (!(await open())) return [...memory.songs.values()].map(entry).sort((a, b) => b.added - a.added);
+  if (!(await openSongs())) return [...memory.songs.values()].map(entry).sort((a, b) => b.added - a.added);
   let list = readIndex();
   // The keys alone are cheap to read: rebuild the index when it doesn't match them (missing,
   // or a song saved or removed by an older copy of the page in another tab).
@@ -149,8 +169,7 @@ export async function saveClean(id, xml, ver) {
 
 export async function removeSong(id, { quiet = false } = {}) {
   await run("readwrite", (s, mem) => (s ? s.delete(id) : (mem.delete(id), {})));
-  await run("readwrite", (s, mem) => (s ? s.delete(id) : (mem.delete(id), {})), "pdfs");
-  await run("readwrite", (s, mem) => (s ? s.delete(id) : (mem.delete(id), {})), "takes");
+  for (const st of FILES) await run("readwrite", (s, mem) => (s ? s.delete(id) : (mem.delete(id), {})), st);
   const list = readIndex();
   if (list) writeIndex(list.filter((x) => x.id !== id));
   if (!quiet) changed("song", id);
@@ -166,24 +185,46 @@ export async function putPdf(id, pdf, name = "", { quiet = false } = {}) {
   if (!quiet) changed("pdf", id);
 }
 
-// The last take of a song (sing.js): { songId, takeId, at, data, voice? }.
-export async function getTake(songId) {
-  return run("readonly", (s, mem) => (s ? s.get(songId) : { result: mem.get(songId) }), "takes");
+// The last take of a song (sing.js): { songId, takeId, at, data, voice? } — the recording
+// (voice) is read only when asked for, and only if it belongs to that take.
+export async function getTake(songId, { voice = false } = {}) {
+  const rec = await run("readonly", (s, mem) => (s ? s.get(songId) : { result: mem.get(songId) }), "takes");
+  if (!rec || !voice) return rec;
+  const v = await run("readonly", (s, mem) => (s ? s.get(songId) : { result: mem.get(songId) }), "voices");
+  return v && v.takeId === rec.takeId ? { ...rec, voice: v } : rec;
 }
-export async function putTake(rec, { quiet = false } = {}) {
+export async function putTake({ voice, ...rec }, { quiet = false } = {}) {
   await run("readwrite", (s, mem) => (s ? s.put(rec) : (mem.set(rec.songId, rec), {})), "takes");
+  if (voice?.pcm) {
+    const v = { ...voice, songId: rec.songId, takeId: rec.takeId };
+    await run("readwrite", (s, mem) => (s ? s.put(v) : (mem.set(rec.songId, v), {})), "voices");
+  } else await run("readwrite", (s, mem) => (s ? s.delete(rec.songId) : (mem.delete(rec.songId), {})), "voices");
   if (!quiet) changed("take", rec.songId);
 }
 export async function removeTake(songId, { quiet = false } = {}) {
-  await run("readwrite", (s, mem) => (s ? s.delete(songId) : (mem.delete(songId), {})), "takes");
+  for (const st of ["takes", "voices"]) await run("readwrite", (s, mem) => (s ? s.delete(songId) : (mem.delete(songId), {})), st);
   if (!quiet) changed("take", songId);
 }
-// Every stored take without its recording (the sync reads these).
+// Every stored take as { songId, takeId, at } — from the index's keys: no data is read.
 export async function listTakes() {
-  const all = await run("readonly", (s, mem) => (s ? s.getAll() : { result: [...mem.values()] }), "takes");
-  return (all || []).map(({ voice, ...rest }) => rest);
+  const db = await openFiles();
+  if (!db) return [...memory.takes.values()].map(({ songId, takeId, at }) => ({ songId, takeId, at }));
+  return new Promise((resolve, reject) => {
+    const out = [];
+    const tx = db.transaction("takes", "readonly");
+    const req = tx.objectStore("takes").index("meta").openKeyCursor();
+    req.onsuccess = () => {
+      const c = req.result;
+      if (!c) return;
+      out.push({ songId: c.primaryKey, takeId: c.key[0], at: c.key[1] });
+      c.continue();
+    };
+    tx.oncomplete = () => resolve(out);
+    tx.onerror = () => reject(tx.error);
+  });
 }
 
+// Songs (and their files) are really kept — not just in memory.
 export async function persistent() {
-  return !!(await open());
+  return !!(await openSongs()) && !!(await openFiles());
 }

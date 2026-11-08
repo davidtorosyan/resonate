@@ -441,6 +441,7 @@ function setScore(sc, stored = null) {
   closeReview();
   practiceJ = -1;
   applySong();
+  flushRemote(); // (cloud changes that came while it loaded)
 }
 
 // id: a sample key, or a saved song's id (from library.js). Its last take comes back with it.
@@ -453,7 +454,7 @@ async function selectSong(id) {
   songSelect.value = id;
   store(K.song, id);
   removeBtn.hidden = !!SAMPLES[id];
-  const stored = getTake(id).catch(() => null);
+  const stored = getTake(id, { voice: true }).catch(() => null);
   try {
     let sc;
     if (SAMPLES[id]) {
@@ -685,7 +686,7 @@ let starting = null;
 async function startSing(part = null) {
   starting = "sing";
   monitorSync();
-  try { await beginSing(part); } finally { starting = null; monitorSync(MON_RESUME); }
+  try { await beginSing(part); } finally { starting = null; monitorSync(MON_RESUME); flushRemote(); }
 }
 
 async function beginSing(part) {
@@ -902,6 +903,7 @@ async function stopSing() {
   recordTake();
   openReview();
   saveLastTake(tk, sid);
+  flushRemote();
 }
 
 // ---------------------------------------------------------------------------
@@ -1012,7 +1014,7 @@ async function getPlayCtx(how = "tap") {
 async function startPlay(kind, from, opts = {}) {
   starting = "play";
   monitorSync();
-  try { await beginPlay(kind, from, opts); } finally { starting = null; monitorSync(MON_RESUME); }
+  try { await beginPlay(kind, from, opts); } finally { starting = null; monitorSync(MON_RESUME); flushRemote(); }
 }
 
 let playGen = 0; // bumped by every start and stop: a start still loading checks it's current
@@ -1090,6 +1092,7 @@ function stopSession() {
   renderAll();
   monitorSync(MON_RESUME);
   s.endRes?.(!!s.natural); // true: it played to its end (not stopped)
+  flushRemote();
 }
 
 // ---------------------------------------------------------------------------
@@ -1713,6 +1716,7 @@ function stopLoop(msg) {
   renderAll();
   monitorSync(MON_RESUME);
   if (msg) showMsg(msg, "error");
+  flushRemote();
 }
 
 function renderLoop() {
@@ -2682,31 +2686,42 @@ window.addEventListener("pageshow", (e) => {
 
 guideSelect.value = guide;
 // The cloud sync brought changes (sync.js): the song list, the open song's settings, its last
-// take. Nothing changes under a take or a loop.
-window.addEventListener("resonate:remote", async (e) => {
-  const d = e.detail || {};
-  if (d.songs) {
-    await refreshLibrary();
-    if (songId) songSelect.value = songId;
-    const gone = songId && !SAMPLES[songId] && ![...mySongsEl.querySelectorAll("option")].some((o) => o.value === songId);
-    if (gone && !session && !drill) return selectSong("amazing-grace");
-  }
-  if (session || drill || starting || !score) return;
-  if (d.state?.has(songId)) {
-    const savedKey = readKeys()[songId];
-    transpose = typeof savedKey === "string" && savedKey.startsWith("fit") ? savedKey : Number(savedKey) || 0;
-    applySong();
-  }
-  if (d.takes?.has(songId)) {
-    const t = reviveTake(await getTake(songId).catch(() => null));
-    if (t && !session && !drill && (!take || (take.at || 0) < t.at)) {
-      take = t;
-      reviewRows = [];
-      closeReview();
+// take. Nothing changes under a take, a loop or a playback: what arrives then waits for its end.
+let pendingRemote = null; // { songs, state: Set, takes: Set } — song ids
+function queueRemote({ songs = false, state = [], takes = [] }) {
+  const p = (pendingRemote ||= { songs: false, state: new Set(), takes: new Set() });
+  p.songs ||= !!songs;
+  for (const id of state) p.state.add(id);
+  for (const id of takes) p.takes.add(id);
+}
+window.addEventListener("resonate:remote", (e) => { queueRemote(e.detail || {}); flushRemote(); });
+const busyNow = () => !!(session || drill || starting);
+function flushRemote() {
+  if (!pendingRemote) return;
+  setTimeout(async () => {
+    const p = pendingRemote;
+    if (!p || busyNow()) return; // (flushed again when that ends)
+    pendingRemote = null;
+    if (p.songs) {
+      await refreshLibrary();
+      if (songId) songSelect.value = songId;
+      const gone = songId && !SAMPLES[songId] && ![...mySongsEl.querySelectorAll("option")].some((o) => o.value === songId);
+      if (gone && !busyNow()) return selectSong("amazing-grace");
+    }
+    const sid = songId;
+    if (!score || busyNow()) return queueRemote(p);
+    if (p.takes.has(sid)) {
+      const t = reviveTake(await getTake(sid, { voice: true }).catch(() => null));
+      if (sid !== songId || busyNow()) return queueRemote({ takes: [sid], state: p.state });
+      if (t && (!take || (take.at || 0) < t.at)) { take = t; reviewRows = []; closeReview(); }
+    }
+    if (p.state.has(sid) || p.takes.has(sid)) {
+      const savedKey = readKeys()[sid];
+      transpose = typeof savedKey === "string" && savedKey.startsWith("fit") ? savedKey : Number(savedKey) || 0;
       applySong();
     }
-  }
-});
+  }, 0);
+}
 
 if (!navigator.mediaDevices?.getUserMedia) {
   statusEl.textContent = "mic API unavailable — open over HTTPS";

@@ -7,9 +7,9 @@
 // (enter, then sync.js); signing out removes the account's data from the device and brings the
 // shelved data back (leave).
 import { supabase, accountUrl, savedUser, STORAGE_KEY } from "./auth.js?v=71";
-import { ensureSpace, activeSpace, adopt, enter, leave } from "./space.js?v=71";
+import { ensureSpace, activeSpace, adopt, enter, leave, park } from "./space.js?v=71";
 
-const ADOPT = "resonate.adopt"; // the address an account is being made for on this device
+const ADOPT = "resonate.adopt"; // { email, at }: an account being made on this device (sign up)
 const SYNC_OFF = "resonate.sync.off"; // (sync.js OFF_KEY: this device doesn't sync)
 
 const $ = (id) => document.getElementById(id);
@@ -24,7 +24,16 @@ const MIN_PW = 8;
 // error is shown as a fixed message by its code — never the link's own text (anyone can make
 // a link to this page that says anything).
 const hash = new URLSearchParams(location.hash.slice(1));
-const linkType = hash.get("type"); // signup | recovery | …
+let linkType = hash.get("type"); // signup | recovery | …
+const saved = savedUser();
+// A link signed in as someone else than the account signed in here (another account's reset
+// link, or a link made to sign this device in to a stranger's account): not taken — the
+// library would quietly switch accounts.
+const linkSub = (() => {
+  try { return JSON.parse(atob(hash.get("access_token").split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).sub || null; } catch { return null; }
+})();
+const foreignLink = !!hash.get("access_token") && !!saved && linkSub !== saved.id;
+if (foreignLink) { history.replaceState(null, "", location.pathname + location.search); linkType = null; }
 const linkError = hash.get("error_code") || hash.get("error") || (hash.get("error_description") ? "error" : null);
 if (linkError) history.replaceState(null, "", location.pathname + location.search);
 const LINK_ERRORS = { otp_expired: "That link has expired — ask for a new one." };
@@ -72,16 +81,22 @@ async function showCloud() {
 }
 
 // A session arrived (signed in, an account made, an email link): make the device's data the
-// account's, then sync.
+// account's, then sync. What's here signed out goes with the account only when that account was
+// made here (signed up on this device, then signed in — now, or after confirming the email).
+function adopting(s) {
+  let p = null;
+  try { p = JSON.parse(localStorage.getItem(ADOPT)); } catch {}
+  const made = Date.parse(s.user.created_at || "");
+  return !!p && typeof p.at === "number" && p.email === (s.user.email || "").toLowerCase() && made >= p.at - 60000;
+}
 async function settle(s) {
   const uid = s?.user?.id;
   if (!uid) return;
   if (activeSpace() !== uid) {
-    const pending = localStorage.getItem(ADOPT);
-    if (pending && pending === (s.user.email || "").toLowerCase() && activeSpace() === "anon") adopt(uid);
+    if (activeSpace() === "anon" && adopting(s)) adopt(uid);
     else await enter(uid);
-    localStorage.removeItem(ADOPT);
   }
+  localStorage.removeItem(ADOPT);
   startSync();
 }
 async function startSync() {
@@ -93,12 +108,14 @@ async function startSync() {
 }
 
 // Shown at once from the saved session (a page left for a while first refreshes its token,
-// which can take a moment — or fail offline); the library's answer follows.
-const saved = savedUser();
+// which can take a moment — or fail offline); the library's answer follows. A session that
+// ended without Sign out (expired, signed out in another tab) puts the account's data away.
+if (!saved && activeSpace() !== "anon") park();
 ensureSpace(saved?.id);
 session = saved && !recovering ? { user: saved } : null;
 render();
 if (linkError) say(LINK_ERRORS[linkError] || "That link didn't work — try again.", "error");
+else if (foreignLink) say("Sign out first to use this link.", "error");
 
 const ready = supabase(); // (the buttons work while it loads: each request waits for it)
 
@@ -137,15 +154,18 @@ $("signup").addEventListener("click", () => {
     say();
     // A new account takes what's on this device (settle, once its session arrives — now, or
     // after the email is confirmed and the account signs in here).
-    localStorage.setItem(ADOPT, email().toLowerCase());
-    const { data, error } = await sb.auth.signUp({ email: email(), password: $("password").value, options: { emailRedirectTo: accountUrl() } });
+    localStorage.setItem(ADOPT, JSON.stringify({ email: email().toLowerCase(), at: Date.now() }));
+    let res;
+    try { res = await sb.auth.signUp({ email: email(), password: $("password").value, options: { emailRedirectTo: accountUrl() } }); }
+    catch (err) { localStorage.removeItem(ADOPT); throw err; }
+    const { data, error } = res;
     if (error) {
       localStorage.removeItem(ADOPT);
       return error.code === "user_already_exists" ? say("That email has an account — sign in.", "error") : sayError(error);
     }
     if (data.session) return; // no confirmation needed: signed in
     // An address that already has an account comes back with no identities (and no email is sent).
-    if (data.user && data.user.identities?.length === 0) return say("That email has an account — sign in.", "error");
+    if (data.user && data.user.identities?.length === 0) { localStorage.removeItem(ADOPT); return say("That email has an account — sign in.", "error"); }
     $("sent-to").textContent = email();
     show("sent");
   });
@@ -185,24 +205,29 @@ $("change").addEventListener("click", () => { changing = true; say(); render(); 
 $("signout").addEventListener("click", () => busy(async () => {
   // The account's data leaves this device: the last changes go up first, and what can't (songs
   // past the cloud's limit, changes that haven't reached it) is said before it's removed.
-  if (activeSpace() === session?.user?.id) {
-    const m = await startSync();
+  const mine = activeSpace() === session?.user?.id;
+  const m = mine ? await startSync() : null;
+  if (mine) {
+    let text = "Changes on this device may not be in the cloud and will be removed from it. Sign out?";
     if (m) {
       if (!m.syncOff()) await m.syncNow();
       const u = await m.unsynced();
-      const text = u.songs ? `${u.songs} song${u.songs > 1 ? "s" : ""} on this device aren't in the cloud and will be removed from it. Sign out?`
+      const songs = u.songs ? `${u.songs} song${u.songs > 1 ? "s" : ""}` : "";
+      text = songs && u.changes ? `${songs} and some changes aren't in the cloud and will be removed from this device. Sign out?`
+        : songs ? `${songs} on this device ${u.songs > 1 ? "aren't" : "isn't"} in the cloud and will be removed from it. Sign out?`
         : u.changes ? "Some changes haven't reached the cloud and will be lost. Sign out?" : null;
-      if (text && !confirm(text)) return;
     }
+    if (text && !confirm(text)) return;
   }
   // No sync from here on (a pass under way could otherwise write into the data coming back).
-  if (window.resonateSync) { try { await (await import("./sync.js?v=71")).stop(); } catch {} }
-  // This device only — other devices stay signed in.
-  const { error } = await sb.auth.signOut({ scope: "local" });
-  if (error && !offline(error)) return sayError(error);
-  // (Offline the library keeps the session; signing out here only ever concerns this device.)
-  if (error) localStorage.removeItem(STORAGE_KEY);
+  if (m || window.resonateSync) { try { await (m || await import("./sync.js?v=71")).stop(); } catch {} }
+  // The account's data goes before the session does: other tabs, told of the sign-out, then
+  // find nothing to put away (space.js park).
   await leave();
+  // This device only — other devices stay signed in. (Offline, or when the server fails, the
+  // library keeps the session; signing out here only ever concerns this device.)
+  const { error } = await sb.auth.signOut({ scope: "local" });
+  if (error) localStorage.removeItem(STORAGE_KEY);
   session = null; say(); render();
 }));
 
@@ -230,7 +255,10 @@ sb.auth.onAuthStateChange((event, s) => {
   // Only the tab the reset link opened asks for a new password (the event reaches every tab).
   if (event === "PASSWORD_RECOVERY" && linkType === "recovery") recovering = true;
   if (event === "USER_UPDATED") recovering = false;
-  if (event === "SIGNED_OUT") recovering = changing = false;
+  if (event === "SIGNED_OUT") {
+    recovering = changing = false;
+    park(); // (signed out in another tab, or the session ended: the account's data is put away)
+  }
   setTimeout(async () => {
     if (event === "SIGNED_IN" && s) await settle(s);
     session = s;
@@ -240,6 +268,7 @@ sb.auth.onAuthStateChange((event, s) => {
 const { data, error: initError } = await sb.auth.getSession();
 if (data.session || !(initError && offline(initError) && saved)) {
   if (data.session) await settle(data.session);
+  else park(); // (the saved session couldn't be refreshed: it has ended)
   session = data.session;
   render();
 } else say("No connection.", "error"); // (keeps the saved account shown; the library retries)
