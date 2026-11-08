@@ -40,12 +40,12 @@ interface SongRef { id: string; title: string; library: boolean }
 // Every song the account knows: My songs (synced) and any song or sample the app has shared.
 async function songs(sb: Sb): Promise<SongRef[]> {
   const [lib, scores] = await Promise.all([
-    sb.from("sync_items").select("id,data").eq("kind", "song").eq("deleted", false),
+    sb.from("sync_items").select("id,data,deleted").eq("kind", "song"),
     sb.from("song_scores").select("song_id,title:data->>title"),
   ]);
-  const out = new Map<string, SongRef>();
-  for (const r of lib.data || []) out.set(r.id, { id: r.id, title: String((r.data as Json)?.title ?? r.id), library: true });
-  for (const r of scores.data || []) if (!out.has(r.song_id)) out.set(r.song_id, { id: r.song_id, title: String(r.title ?? r.song_id), library: LIB_ID.test(r.song_id) });
+  const out = new Map<string, SongRef>(), gone = new Set<string>();
+  for (const r of lib.data || []) { if (r.deleted) gone.add(r.id); else out.set(r.id, { id: r.id, title: String((r.data as Json)?.title ?? r.id), library: true }); }
+  for (const r of scores.data || []) if (!out.has(r.song_id) && !gone.has(r.song_id)) out.set(r.song_id, { id: r.song_id, title: String(r.title ?? r.song_id), library: LIB_ID.test(r.song_id) });
   return [...out.values()];
 }
 async function findSong(sb: Sb, q: string): Promise<SongRef | null> {
@@ -139,7 +139,12 @@ export async function getProgress(sb: Sb, q: string) {
   const { data } = await sb.from("sync_items").select("data").eq("kind", "song_state").eq("id", `${s.id}|history`).eq("deleted", false).maybeSingle();
   const list = ((data?.data as Json)?.list as Json[]) || [];
   return ok({ song: s.id, title: s.title, note: "Scores are 0–1, for your reasoning only — never say them as grades.",
-    takes: list.slice(-20).map((h) => ({ when: ago(Number(h.at)), at: new Date(Number(h.at)).toISOString(), score: h.pct, whole_song: h.whole !== false, line_scores: h.lines, rhythm: h.rhythm ?? null })) });
+    takes: list.slice(-20).map((h) => {
+      const rh = (h.rhythm as Json) || null;
+      return { when: ago(Number(h.at)), at: new Date(Number(h.at)).toISOString(), score: h.pct, whole_song: h.whole !== false,
+        line_scores: ((h.lines as unknown[]) || []).map((score, i) => ({ line: i + 1, score })),
+        rhythm: rh ? { ...rh, obs: ((rh.obs as Json[]) || []).map(({ li, ...o }) => ({ ...o, ...(typeof li === "number" ? { line: li + 1 } : {}) })) } : null };
+    }) });
 }
 
 export async function getVoiceProfile(sb: Sb) {
@@ -179,6 +184,12 @@ export async function control(sb: Sb, args: Json) {
   const { action, ...rest } = args;
   const clean: Json = {};
   for (const [k, v] of Object.entries(rest)) if (v !== undefined && v !== null) clean[k] = v;
+  // The song resolved here, so the page gets an exact id (not its own guess at the title).
+  if (action === "open_song" && clean.song) {
+    const s = await findSong(sb, String(clean.song));
+    if (!s) return fail(`No song like “${clean.song}”.`, { songs: (await songs(sb)).map((x) => x.title) });
+    clean.song = s.id;
+  }
   const { data: cmd, error } = await sb.from("device_commands").insert({ device_id: d.id, action, args: clean }).select("id").single();
   if (error || !cmd) return fail(`Couldn't send it: ${error?.message ?? "no answer"}`);
   const until = Date.now() + 12000;
@@ -190,5 +201,7 @@ export async function control(sb: Sb, args: Json) {
       return row.status === "done" ? ok({ done: action, on: d.name, ...r }) : fail(String(r.error ?? row.status), { on: d.name, ...r });
     }
   }
-  return ok({ sent: action, on: d.name, note: online(d) ? "No answer yet — it may still be loading." : `${d.name} isn't in front right now; it will run this when it is (within a minute).` });
+  const starts = ["listen", "play_take", "sing", "loop_line"].includes(String(action));
+  return ok({ sent: action, on: d.name, note: online(d) ? "No answer yet — it may still be loading."
+    : starts ? `${d.name} isn't in front right now — this won't start later; ask again once it is.` : `${d.name} isn't in front right now; it will do this when it is (within a minute).` });
 }

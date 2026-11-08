@@ -37,6 +37,7 @@
       #who { font-size: 1rem; overflow-wrap: anywhere; }
       #cloud { font-size: 0.85rem; opacity: 0.7; margin-top: -0.35rem; }
       #cloud[data-on="true"] { color: #8ee6a8; opacity: 1; }
+      label[hidden] { display: none; }
       label.check { flex-direction: row; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
       label.check[hidden] { display: none; }
       label.check input { width: 1.05rem; height: 1.05rem; padding: 0; accent-color: #a64fff; }
@@ -77,6 +78,7 @@
 
       <form id="v-newpw" class="card" hidden>
         <h2>New password</h2>
+        <label id="curpw-row">Current password <input id="curpw" type="password" autocomplete="current-password" /></label>
         <label>Password <input id="newpw" type="password" autocomplete="new-password" minlength="8" required /></label>
         <div class="row">
           <button class="primary" type="submit">Save</button>

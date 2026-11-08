@@ -72,11 +72,12 @@ function build(sb: Parameters<typeof R.listSongs>[0]) {
 
   server.registerTool("control_resonate", {
     title: "Control Resonate",
-    description: "Act in the Resonate Sing page on the device whose 📡 Remote switch is on: open_song {song}, set_key {semitones -12…12}, set_tempo {percent: 50,60,70,80,90,100,110,125}, listen {line?, only_line?} (the melody), play_take {mode?: voice|melody|both, line?}, sing {} (start a take; it counts in), loop_line {line} (listen + sing one line over and over), go_to_line {line}, review {} (open the take's review), stop {}. Returns what the page now shows, or why it couldn't.",
+    description: "Act in the Resonate Sing page on the device whose 📡 Remote switch is on: open_song {song}, set_key {semitones -24…24, or fit: true = the best fit for the voice profile}, set_tempo {percent: 50,60,70,80,90,100,110,125}, listen {line?, only_line?} (the melody), play_take {mode?: voice|melody|both, line?}, sing {} (start a take; it counts in), loop_line {line} (listen + sing one line over and over), go_to_line {line}, review {} (open the take's review), stop {}. Returns what the page now shows, or why it couldn't.",
     inputSchema: z.object({
       action: z.enum(R.ACTIONS),
       song: z.string().optional(),
-      semitones: z.number().int().min(-12).max(12).optional(),
+      semitones: z.number().int().min(-24).max(24).optional(),
+      fit: z.boolean().optional(),
       percent: z.number().optional(),
       line: z.number().int().min(1).optional(),
       only_line: z.boolean().optional(),
@@ -93,9 +94,14 @@ const PUBLISHABLE = (() => {
 })() || Deno.env.get("SUPABASE_PUBLISHABLE_KEY") || Deno.env.get("SUPABASE_ANON_KEY") || "";
 async function sessionAlive(req: Request): Promise<boolean> {
   const auth = req.headers.get("authorization") || "";
-  const r = await fetch(`${Deno.env.get("SUPABASE_URL")}/auth/v1/user`, { headers: { Authorization: auth, apikey: PUBLISHABLE } });
-  await r.body?.cancel();
-  return r.ok;
+  // Either answers only for a live session (a removed connection: 403 session_not_found). /user
+  // may refuse OAuth tokens in a later Auth release; userinfo may want the openid scope.
+  const ask = async (path: string) => {
+    const r = await fetch(`${Deno.env.get("SUPABASE_URL")}/auth/v1/${path}`, { headers: { Authorization: auth, apikey: PUBLISHABLE } });
+    await r.body?.cancel();
+    return r.ok;
+  };
+  return (await ask("user")) || (await ask("oauth/userinfo"));
 }
 
 const handler = pipeline(

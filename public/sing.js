@@ -1966,10 +1966,12 @@ const lineArg = (a) => {
 const songOptions = () => [...songSelect.querySelectorAll("option")].map((o) => ({ id: o.value, title: o.textContent.trim() }));
 async function runRemote(action, a) {
   const done = (extra = {}) => ({ ok: true, ...remoteState(), ...extra });
+  // (a take still being finished — recording, rhythm, review — is let finish first)
+  for (let i = 0; i < 100 && finishing; i++) await new Promise((r) => setTimeout(r, 100));
   if (spaceChanged()) return { ok: false, error: "This page is out of date (signed in or out elsewhere) and is reloading." };
   switch (action) {
     case "stop":
-      if (drill) stopLoop(); else if (session) stopSession();
+      if (drill) stopLoop(); else if (session?.kind === "sing") await stopSing(); else if (session) stopSession();
       return done();
     case "open_song": {
       const want = String(a.song ?? "").trim().toLowerCase();
@@ -1977,7 +1979,7 @@ async function runRemote(action, a) {
       const hit = all.find((o) => o.id.toLowerCase() === want) || all.find((o) => o.title.toLowerCase() === want) || all.find((o) => o.title.toLowerCase().includes(want));
       if (!want || !hit) return { ok: false, error: `No song like “${a.song ?? ""}”.`, songs: all.map((o) => o.title) };
       if (drill) stopLoop();
-      if (session) stopSession();
+      if (session?.kind === "sing") await stopSing(); else if (session) stopSession();
       await selectSong(hit.id);
       return done();
     }

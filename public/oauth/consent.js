@@ -3,7 +3,7 @@
 // (Site URL + the project's authorization path /oauth/consent). Signed in → Allow / Deny; not
 // signed in (the assistant's own sign-in window has no Resonate session) → sign in first, and
 // that sign-in is only for this: it's removed again once the answer is given.
-import { supabase } from "../auth.js?v=73";
+import { supabase, SUPABASE_URL, SUPABASE_KEY } from "../auth.js?v=73";
 
 const $ = (id) => document.getElementById(id);
 const msg = $("msg");
@@ -29,13 +29,13 @@ async function ask() {
   const { data: { session } } = await sb.auth.getSession();
   $("who").textContent = session?.user?.email || data?.user?.email || "";
   let host = "";
-  try { host = new URL(data?.redirect_uri || "").host; } catch {}
+  try { const u = new URL(data?.redirect_uri || ""); host = u.protocol === "https:" ? u.host : `${u.protocol}//${u.host}`; } catch {}
   $("to").textContent = host ? `Then back to ${host}` : "";
   show("ask");
 }
 
 async function finish(url) {
-  // (A sign-in made only to answer this goes again: this browser stays as it was.)
+  // (A sign-in made only to answer this lived in memory only: this browser stays as it was.)
   if (signedInHere) { try { await sb.auth.signOut({ scope: "local" }); } catch {} }
   location.assign(url);
 }
@@ -58,8 +58,15 @@ $("v-signin").addEventListener("submit", async (e) => {
   e.preventDefault();
   for (const b of document.querySelectorAll("button")) b.disabled = true;
   try {
-    const { error } = await sb.auth.signInWithPassword({ email: $("email").value.trim(), password: $("password").value });
+    // A client of its own, its session in memory only: the app's saved session, other tabs and
+    // whose data this device shows are left alone.
+    const { createClient } = await import("../vendor/supabase-2.118.0.js?v=73");
+    const mem = new Map();
+    const temp = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: false, detectSessionInUrl: false, storageKey: "resonate.consent",
+      storage: { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => { mem.set(k, v); }, removeItem: (k) => { mem.delete(k); } } } });
+    const { error } = await temp.auth.signInWithPassword({ email: $("email").value.trim(), password: $("password").value });
     if (error) return sayError(error);
+    sb = temp;
     signedInHere = true;
     await ask();
   } finally { for (const b of document.querySelectorAll("button")) b.disabled = false; }

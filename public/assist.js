@@ -137,6 +137,8 @@ export const remote = {
     this.on = !!data?.remote;
     await this.beat();
     await this.listen();
+    // (old commands go: an hour is plenty to look back on)
+    c.sb.from("device_commands").delete().lt("created_at", new Date(Date.now() - 3600000).toISOString()).then(() => {}, () => {});
     setInterval(() => { if (!document.hidden) this.beat(); }, 30000);
     document.addEventListener("visibilitychange", () => { this.beat(); if (!document.hidden) this.catchUp(); });
     window.addEventListener("pagehide", () => this.beat(true));
@@ -189,6 +191,7 @@ export const remote = {
   // One command at a time, in the order they came; each once — a command replayed after a
   // reload (Realtime keeps the last minute) is run only if its row still says "sent".
   queue: Promise.resolve(),
+  tab: Math.random().toString(36).slice(2, 10),
   handle(cmd) {
     if (!cmd?.id || this.seen.has(cmd.id) || cmd.device !== device().id) return;
     this.seen.add(cmd.id);
@@ -197,13 +200,16 @@ export const remote = {
   async run1(cmd) {
     const c = this.ctx;
     if (!stillMine(c)) return;
-    const { data: row } = await c.sb.from("device_commands").select("status").eq("id", cmd.id).maybeSingle();
-    if (row?.status !== "sent") return;
+    // Claimed by one page (another Sing tab of this device may have it too): the row's result is
+    // set only where it's still empty.
+    const { data: claimed } = await c.sb.from("device_commands").update({ result: { claimed: this.tab } }).eq("id", cmd.id).eq("status", "sent").is("result", null).select("id");
+    if (!claimed?.length) return;
     const answer = (status, result) => c.sb.from("device_commands").update({ status, result, updated_at: new Date().toISOString() }).eq("id", cmd.id);
     if (!this.on) return answer("failed", { error: "Remote control is off on this device." });
     // Something that starts sound or the mic is only done right away, never long after it was asked.
     const starts = ["listen", "play_take", "sing", "loop_line"].includes(cmd.action);
     if (Date.now() - Date.parse(cmd.at) > (starts ? 15000 : 60000)) return answer("expired", { error: "It came too late — ask again." });
+    if (document.hidden && ["sing", "loop_line"].includes(cmd.action)) return answer("failed", { error: "The page isn't in front on this device — bring it up and ask again." });
     let r;
     try { r = (await this.hooks.run(cmd.action, cmd.args || {})) || { ok: true }; }
     catch (err) { r = { ok: false, error: err.message || String(err) }; }

@@ -64,6 +64,9 @@ function render() {
   if (session && (recovering || changing)) {
     show("newpw");
     $("newpw-cancel").hidden = recovering;
+    // (A reset link proves who you are; changing it while signed in needs the current one.)
+    $("curpw-row").hidden = recovering;
+    $("curpw").required = !recovering;
     $("newpw").focus();
   } else if (session) {
     show("in");
@@ -210,9 +213,9 @@ $("back").addEventListener("click", () => { say(); show("out"); });
 $("v-newpw").addEventListener("submit", (e) => {
   e.preventDefault();
   busy(async () => {
-    const { error } = await sb.auth.updateUser({ password: $("newpw").value });
+    const { error } = await sb.auth.updateUser(recovering ? { password: $("newpw").value } : { password: $("newpw").value, current_password: $("curpw").value });
     if (error) return sayError(error);
-    $("newpw").value = "";
+    $("newpw").value = $("curpw").value = "";
     recovering = changing = false;
     say("Password saved.", "ok");
     render();
