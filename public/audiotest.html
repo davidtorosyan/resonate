@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f0f1e" />
+    <title>Resonate · Audio test</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; -webkit-tap-highlight-color: transparent; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: radial-gradient(ellipse at top, #1a1a3e, #0f0f1e 70%) fixed;
+        color: #e8e8f0;
+        padding-top: env(safe-area-inset-top);
+      }
+      .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace; }
+      header { padding: 0.9rem 1.25rem 0.5rem; display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; }
+      .header-left { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+      h1 { font-size: 1.25rem; margin: 0 0.25rem 0 0; font-weight: 600; letter-spacing: 0.02em; opacity: 0.95; }
+      .nav-link { font-size: 0.8rem; color: rgba(255,255,255,0.6); text-decoration: none; padding: 0.2rem 0.6rem; border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; }
+      #version { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; color: #a64fff; opacity: 0.9; }
+      main { max-width: 640px; margin: 0 auto; padding: 0.5rem 1rem calc(2rem + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 0.6rem; }
+      .hint { font-size: 0.85rem; opacity: 0.7; margin: 0 0 0.2rem; }
+      .test { display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.8rem; align-items: center; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 0.9rem; padding: 0.7rem 0.9rem; }
+      .test button { grid-row: span 2; min-width: 3.2rem; font: inherit; font-weight: 700; font-size: 1.05rem; color: #fff; background: #a64fff; border: 0; border-radius: 0.7rem; padding: 0.6rem 0.8rem; }
+      .test button:disabled { opacity: 0.4; }
+      .test b { font-size: 0.95rem; }
+      .test .out { font-size: 0.72rem; opacity: 0.7; min-height: 1em; overflow-wrap: anywhere; }
+      .test[data-state="playing"] { border-color: #a64fff; }
+      #copy { align-self: flex-start; font: inherit; font-size: 0.85rem; color: #e8e8f0; background: none; border: 1px solid rgba(255,255,255,0.25); border-radius: 999px; padding: 0.35rem 0.9rem; }
+      #status { font-size: 0.8rem; opacity: 0.6; min-height: 1.2em; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="header-left">
+        <h1>Audio test</h1>
+        <a class="nav-link" href="tools.html">Tools</a>
+        <a class="nav-link" href="sing.html">Sing</a>
+      </div>
+      <span id="version" class="mono">v66</span>
+    </header>
+    <main>
+      <p class="hint">Same note, 6 ways. Which crackle?</p>
+      <div id="tests"></div>
+      <div id="status" class="mono"></div>
+      <button id="copy" type="button">Copy results</button>
+    </main>
+    <script type="module" src="audiotest.js?v=66"></script>
+  </body>
+</html>

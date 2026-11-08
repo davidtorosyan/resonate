@@ -2,19 +2,19 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=65";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=65";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=65";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=65";
-import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=65";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=65";
-import { startCapture, playVoice } from "./capture.js?v=65";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=65";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=65";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=65";
-import { fixOmrScore } from "./omr/fixscore.js?v=65";
-import { activeProfile } from "./profiles.js?v=65";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=65";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=66";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=66";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=66";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=66";
+import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=66";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=66";
+import { startCapture, playVoice } from "./capture.js?v=66";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=66";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=66";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=66";
+import { fixOmrScore } from "./omr/fixscore.js?v=66";
+import { activeProfile } from "./profiles.js?v=66";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=66";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -945,6 +945,31 @@ let playCtx = null;
 //             one couldn't start), give its resume 4 s.
 let micWasOpen = false; // a mic has been open since the session was last set to playback
 let playCtxStuck = false; // its last resume in a tap didn't get it running
+// A context should be made on the output it plays to. The first-tap unlock makes one with the
+// session left alone ("auto" — for Web Audio alone that's iOS's mixable "ambient" category),
+// and setting "playback" afterwards can move it to another route: over CarPlay even a single
+// held key crackled and dropped out every few seconds on such a context (fine on the phone's
+// speaker, where both are the same output). So a context made under another session type, or
+// before the devices changed (CarPlay / Bluetooth connected), is replaced in the next tap that
+// starts sound — Play, Listen, a key's lift — and the old one is closed once its notes are done.
+let routeGen = 0;
+try { navigator.mediaDevices?.addEventListener?.("devicechange", () => { routeGen++; }); } catch {}
+const offRoute = (ac) => !!ac && ac.state !== "closed"
+  && ((!!navigator.audioSession && ac.bornAs !== navigator.audioSession.type) || ac.routeGen !== routeGen);
+function makePlayCtx() {
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  ac.bornAs = navigator.audioSession?.type;
+  ac.routeGen = routeGen;
+  return ac;
+}
+// Close a replaced context once nothing sounds on it (a key's release tail, a session).
+function retire(ac) {
+  const t = setInterval(() => {
+    if ([...keys.values()].some((k) => k.ac === ac) || session?.ac === ac) return;
+    clearInterval(t);
+    setTimeout(() => { if (ac.state !== "closed") ac.close().catch(() => {}); }, 1000);
+  }, 500);
+}
 // (Synchronous, so a touch can make the context it may then start.)
 function freshPlayCtx(how = "tap") {
   if (playCtx?.state === "running") playCtxStuck = false;
@@ -952,8 +977,12 @@ function freshPlayCtx(how = "tap") {
     || (how !== "auto" && (playCtxStuck || playCtx.state === "interrupted"));
   if (bad) {
     if (playCtx && playCtx.state !== "closed") playCtx.close().catch(() => {});
-    playCtx = new (window.AudioContext || window.webkitAudioContext)();
+    playCtx = makePlayCtx();
     playCtxStuck = false;
+  } else if (how === "tap" && playCtx.state === "running" && offRoute(playCtx) && navigator.audioSession?.type !== "auto") {
+    // (one not started yet is resumed instead: a first press's note may be waiting on it)
+    retire(playCtx);
+    playCtx = makePlayCtx();
   }
   return playCtx;
 }
@@ -1273,13 +1302,15 @@ async function pressKey(j, id, held) {
   if (held) key.cap = setTimeout(() => releaseKey(id), MAX_HOLD);
   scrollT = nowT = Math.max(-1, Math.min(n.t - 0.4, songEnd));
   showKeys();
-  // The samples can load and decode before audio may start (first touch on a phone).
-  const loading = loadPiano(freshPlayCtx("press"));
+  // The samples can load and decode before audio may start (first touch on a phone). (The
+  // session is set before a context is made: getPlayCtx's first, synchronous part.)
+  const ready = getPlayCtx("press");
+  const loading = loadPiano(playCtx);
   loading.catch(() => {});
   if (!pianoReady(playCtx)) statusEl.textContent = "loading piano…";
   let ac = null, piano = null;
   try {
-    ac = await getPlayCtx("press");
+    ac = await ready;
     piano = await loading;
   } catch (err) { console.warn(err); }
   if (statusEl.textContent === "loading piano…") statusEl.textContent = "";
@@ -1369,8 +1400,9 @@ function showKeys() {
 // was replaced meanwhile and so no longer reaches the window).
 function onPointerUp(e) {
   if (!keys.has(e.pointerId)) return;
-  // A touch's end is when phones allow audio to start: resume it here if the press couldn't.
-  if (!playCtx || playCtx.state !== "running") getPlayCtx();
+  // A touch's end is when phones allow audio to start: resume it here if the press couldn't —
+  // or start a context made for this output, for the next key (see offRoute).
+  if (!playCtx || playCtx.state !== "running" || offRoute(playCtx)) getPlayCtx().then((ac) => loadPiano(ac).catch(() => {}));
   releaseKey(e.pointerId);
 }
 window.addEventListener("pointerup", onPointerUp);
