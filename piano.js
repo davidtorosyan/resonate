@@ -51,6 +51,44 @@ export function playPiano(ac, piano, when, dur, midi, level, nodes) {
   return g;
 }
 
+// Schedule a long run of sounds (a song's notes, its clicks) a few seconds at a time instead of
+// all at once. WebKit (Safari, every iOS browser) works through every source still waiting to
+// start on each render quantum (128 frames, 2.7 ms), and the cost grows faster than the count:
+// in WebKitGTK, 600 waiting notes took 150 µs a quantum, 1200 took 490 µs (an empty graph: 8)
+// — on a phone that is also streaming to CarPlay, enough to miss the audio deadline, and the
+// melody came out choppy. items: [{ when, end }] in audio-clock seconds, sorted by `when`;
+// play(item) schedules one. Pushes a { stop } into `nodes`, so stopping the session's nodes
+// stops the scheduling too. Something held up past its end (a throttled timer) is skipped.
+export function scheduleAhead(ac, items, play, nodes, { ahead = 5, every = 500 } = {}) {
+  let i = 0, timer = null;
+  const pump = () => {
+    const now = ac.currentTime, until = now + ahead;
+    while (i < items.length && items[i].when < until) {
+      const it = items[i++];
+      if ((it.end ?? it.when) < now) continue;
+      try { play(it); } catch (err) { console.warn(err); }
+    }
+    if (i >= items.length) clearInterval(timer);
+  };
+  pump();
+  if (i < items.length) timer = setInterval(pump, every);
+  nodes.push({ stop: () => { clearInterval(timer); i = items.length; } });
+}
+
+// While something plays, keep the output from going digitally silent between sounds (an
+// inaudible 1e-7 offset): WebKit flips a page between "playing audio" and not at every
+// silent gap (twice per click with the click guide), and each flip goes round the page,
+// the media session and the UI process; a page that stops being audible in the background
+// also loses its exemption from timer throttling.
+export function keepAlive(ac, nodes) {
+  if (!ac.createConstantSource) return;
+  const src = ac.createConstantSource();
+  src.offset.value = 1e-7;
+  src.connect(ac.destination);
+  src.start();
+  nodes.push(src);
+}
+
 // Hold a note down like a piano key, until release(at). The samples die away fast (mid
 // and high notes are ~40 dB down within a second, and they end at 3 s), so with
 // `sustain` a soft steady tone at the same pitch fades in under the piano to keep a held

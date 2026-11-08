@@ -2,10 +2,10 @@
 // notes you sang, and play it back (your voice and/or the notes on piano).
 // Song-based scoring lives on the Sing page (sing.js).
 
-import { noteName as nameOf, BLACK, median, centsLabel } from "./music.js?v=63";
-import { openMic, ANALYSIS_LAG } from "./pitch.js?v=63";
-import { startCapture, playVoice } from "./capture.js?v=63";
-import { loadPiano, pianoReady, playPiano } from "./piano.js?v=63";
+import { noteName as nameOf, BLACK, median, centsLabel } from "./music.js?v=64";
+import { openMic, ANALYSIS_LAG } from "./pitch.js?v=64";
+import { startCapture, playVoice } from "./capture.js?v=64";
+import { loadPiano, pianoReady, playPiano, scheduleAhead, keepAlive } from "./piano.js?v=64";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("roll");
@@ -474,16 +474,21 @@ async function startPlayback(from) {
   if (from >= duration - 0.05) from = 0;
   const start = ac.currentTime + 0.08;
   const withVoice = mode !== "notes";
+  keepAlive(ac, playNodes);
   if (withVoice) playVoice(ac, voice, start, from, playNodes);
   if (piano) {
     const level = withVoice ? 0.9 : 1.6;
+    const items = [];
     for (const s of segments) {
       // Detected notes trail the audio by about half an analysis window.
       const s0 = s.start - ANALYSIS_LAG, e0 = s.end - ANALYSIS_LAG;
       if (e0 <= from) continue;
       const st = Math.max(s0, from);
-      playPiano(ac, piano, start + (st - from), e0 - st, s.note, level, playNodes);
+      items.push({ when: start + (st - from), end: start + (e0 - from), midi: s.note });
     }
+    items.sort((a, b) => a.when - b.when);
+    // (a few seconds ahead at a time: a long take's notes all at once made WebKit choppy)
+    scheduleAhead(ac, items, (it) => playPiano(ac, piano, it.when, it.end - it.when, it.midi, level, playNodes), playNodes);
   }
   playing = true;
   playFrom = from;
