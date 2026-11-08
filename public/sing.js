@@ -2,21 +2,22 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=72";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=72";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=72";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=72";
-import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=72";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=72";
-import { startCapture, playVoice } from "./capture.js?v=72";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=72";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=72";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean, getTake, putTake } from "./library.js?v=72";
-import { fixOmrScore } from "./omr/fixscore.js?v=72";
-import { activeProfile } from "./profiles.js?v=72";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=72";
-import { DATA_KEYS } from "./space.js?v=72";
-import { spaceChanged } from "./nav.js?v=72";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=73";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=73";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=73";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=73";
+import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=73";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=73";
+import { startCapture, playVoice } from "./capture.js?v=73";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=73";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=73";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean, getTake, putTake } from "./library.js?v=73";
+import { fixOmrScore } from "./omr/fixscore.js?v=73";
+import { activeProfile } from "./profiles.js?v=73";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=73";
+import { DATA_KEYS } from "./space.js?v=73";
+import { spaceChanged } from "./nav.js?v=73";
+import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=73";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -250,6 +251,8 @@ function applySong() {
   lastChip = -1;
   scrollT = entryT;
   renderAll();
+  assistSong();
+  remote.changedSoon();
 }
 
 // A take's grades hold only for the notes, timing and verse it was sung to (a stored take
@@ -778,6 +781,8 @@ async function beginSing(part) {
   // late (input latency); a pitch frame lags its audio (analysis window).
   const latency = (ac.outputLatency || ac.baseLatency || 0) + INPUT_LATENCY;
   take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, timing: timingSig(), rate, verse: verseSelect.value || score.verses[0] || "1", octave: 0, range: [j0, j1], part: !!part, guide };
+  // A whole take is shared with assistants line by line as it's sung (assist.js).
+  if (!part && !spaceChanged()) { take.coachId = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`; take.coachSent = new Set(); takeStarted(take.coachId, songId, assistMeta()); }
   let endRes;
   const ended = new Promise((r) => { endRes = r; });
   session = { kind: "sing", ac, nodes, songT0, latency, mic, capture, features, countClicks, wakeLock, raf: null, part, start, beatSec, count, ended, endRes };
@@ -826,6 +831,12 @@ function gradeUpTo(t) {
     take.grades[j] = gradeLive(notes, take.frames, j, { endT: t, gate: MIN_RMS });
     const old = chipsEl.querySelectorAll(".chip")[j];
     if (old) old.replaceWith(makeChip(j));
+    // A line whose notes are all graded goes to the assistants at once.
+    const li = lineOf[j];
+    if (take.coachId && li !== undefined && !take.coachSent.has(li) && lines[li].every((k) => take.grades[k] || k < j0 || k >= j1)) {
+      take.coachSent.add(li);
+      lineDone(take.coachId, li, assistLine(li));
+    }
   });
 }
 
@@ -877,6 +888,7 @@ async function finishSing(s) {
   const stopAt = s.ac.currentTime;
   take.endT = stopAt - s.songT0 - ANALYSIS_LAG - s.latency;
   const v = await s.capture.finish();
+  if (take !== tk && tk.coachId) takeEnded(tk.coachId, { status: "stopped", meta: assistMeta(), review: null, lines: [] });
   if (take !== tk) { // replaced while the recording flushed (a loop stopped mid-round): drop this one
     try { await s.wakeLock?.release(); } catch {}
     await s.mic.close();
@@ -906,7 +918,7 @@ async function finishSing(s) {
   try { await s.wakeLock?.release(); } catch {}
   await s.mic.close();
   statusEl.textContent = "";
-  if (take !== tk) { s.endRes(null); return; } // a new take started while the mic closed
+  if (take !== tk) { if (tk.coachId) takeEnded(tk.coachId, { status: "stopped", meta: assistMeta(), review: null, lines: [] }); s.endRes(null); return; } // a new take started while the mic closed
   if (s.part) {
     renderAll();
     s.endRes(take);
@@ -922,6 +934,7 @@ async function finishSing(s) {
   openReview();
   saveLastTake(tk, sid);
   if (spaceChanged()) showMsg("Not kept: signed in or out in another tab.", "error");
+  else if (tk.coachId) assistTakeEnded(tk);
 }
 
 // ---------------------------------------------------------------------------
@@ -1878,6 +1891,163 @@ function deriveTake(tk) {
   tk.derived = true;
 }
 
+// --- Assistants (assist.js, the MCP server) ------------------------------------------------
+// The open song as the page reads it, and each whole take line by line — notes as written in
+// the key sung (target), the note sung, cents off it, the grade, timing (ms, + late) — with the
+// page's own next steps. Assistants read them; scores stay data (never shown as grades here).
+const r3 = (x) => Math.round(x * 1000) / 1000;
+const optText = (sel) => sel.selectedOptions[0]?.textContent?.trim() || "";
+const bpmNow = () => (useMap && tmap ? Math.round(60 / (tmap.avg / rate)) : Math.round(score.tempo * rate));
+function assistMeta() {
+  return { title: score?.title || "", verse: verseSelect.value || score?.verses[0] || "1", key: optText(keySelect), tempo: optText(tempoSelect), bpm: score ? bpmNow() : null,
+    guide, view, lines: lines.length, notes: notes.length, notesSig: notesSig(), app: $("version")?.textContent || "" };
+}
+function assistSong() {
+  if (!score || !notes.length || !songId || spaceChanged()) return;
+  shareSong(songId, {
+    v: 1, ...assistMeta(), verses: score.verses, meter: meterAt(entryIdx).join("/"), range: `${lowest().name}–${highest().name}`,
+    lines: lines.map((idx, li) => ({ li, text: lineText(li), at: r3(notes[idx[0]].t), notes: idx.map((j) => [notes[j].name, r3(notes[j].dq), notes[j].melisma ? "_" : (notes[j].text || "")]) })),
+  });
+}
+// One line of the take: rows = the review's (final) or worked out now from the live grades.
+function assistLine(li, rows = null) {
+  const idx = lines[li] || [];
+  const rdev = take.rhythm?.notes;
+  const row = rows ? rows.find((r) => r.li === li)
+    : analyzeLines(notes, [idx], take.grades, { text: lineText, name: noteName, syl: (j) => sylText(notes[j], j), rhythm: null, lineIndex: [li], lead: timingLead() })[0];
+  return {
+    text: lineText(li), from: r3(notes[idx[0]]?.t ?? 0),
+    notes: idx.map((j) => {
+      const n = notes[j], g = take.grades[j];
+      const dev = g && typeof g.dev === "number" ? g.dev : null;
+      const dt = rdev?.[j]?.dev ?? (g && typeof g.shift === "number" ? g.shift : null);
+      return [n.name, dev === null ? null : noteName(Math.round(n.midi + dev)), dev === null ? null : Math.round(dev * 100), g?.status ?? null, dt === null ? null : Math.round(dt * 1000), n.melisma ? "_" : (n.text || "")];
+    }),
+    steps: row ? row.reasons.map((r) => r.text) : [], ok: !!row?.good, score: row?.score ?? null, octave: take.octave || 0,
+  };
+}
+function assistTakeEnded(tk) {
+  if (take !== tk) return;
+  let review = null;
+  if (reviewRows.length) {
+    const { pct, fb } = reviewFeedback();
+    const rh = take.rhythm;
+    review = { headline: pct === null ? "Couldn't hear the notes clearly" : fb.headline, wins: fb.wins.map((w) => ({ text: w.text, line: w.li === undefined ? null : w.li + 1 })),
+      tries: fb.tries.map((t) => ({ text: t.text, line: t.li === undefined ? null : t.li + 1 })), tip: fb.tip || null, score: pct,
+      timing: rh ? { trust: rh.trust, calibrated: !!rh.calibrated, lead_ms: rh.lead === undefined || rh.lead === null ? null : Math.round(rh.lead * 1000), steady: rh.steady ?? null } : null };
+  }
+  const sung = lines.map((_, li) => li).filter((li) => lines[li].some((j) => take.grades[j] && take.grades[j].status !== "unsung"));
+  takeEnded(tk.coachId, { status: take.whole === false ? "stopped" : "done", meta: assistMeta(), review, lines: sung.map((li) => ({ li, data: assistLine(li, reviewRows) })) });
+}
+
+// --- Remote control (assist.js remote) ----------------------------------------------------
+// The 📡 switch in the header: on, an assistant can run these on this page (one device at a
+// time). Lines are numbered from 1 here, as people say them.
+const remoteBtn = $("remote-btn");
+function showRemote(on) {
+  remoteBtn.hidden = !remote.available;
+  remoteBtn.dataset.on = String(!!on);
+  remoteBtn.textContent = on ? "📡 Remote on" : "📡";
+  remoteBtn.title = on ? "An assistant can control this page — tap to stop" : "Let an assistant control this page";
+  remoteBtn.setAttribute("aria-pressed", String(!!on));
+}
+remoteBtn.addEventListener("click", () => { remoteBtn.disabled = true; remote.set(!remote.on).finally(() => { remoteBtn.disabled = false; }); });
+function remoteState() {
+  return { page: "sing", song: songId && score ? { id: songId, title: score.title } : null, key: score ? optText(keySelect) : null, tempo: score ? optText(tempoSelect) : null,
+    doing: drill ? "loop" : session?.kind || (starting ? "starting" : "idle"), line: shownLine >= 0 ? shownLine + 1 : null, lines: lines.length,
+    take: take && take.endT !== null ? "reviewable" : null, sound: playCtx ? playCtx.state : "none" };
+}
+const lineArg = (a) => {
+  if (a.line === undefined || a.line === null) return null;
+  const li = Math.round(Number(a.line)) - 1;
+  if (!(li >= 0 && li < lines.length)) throw new Error(`No line ${a.line} (lines 1–${lines.length}).`);
+  return li;
+};
+const songOptions = () => [...songSelect.querySelectorAll("option")].map((o) => ({ id: o.value, title: o.textContent.trim() }));
+async function runRemote(action, a) {
+  const done = (extra = {}) => ({ ok: true, ...remoteState(), ...extra });
+  if (spaceChanged()) return { ok: false, error: "This page is out of date (signed in or out elsewhere) and is reloading." };
+  switch (action) {
+    case "stop":
+      if (drill) stopLoop(); else if (session) stopSession();
+      return done();
+    case "open_song": {
+      const want = String(a.song ?? "").trim().toLowerCase();
+      const all = songOptions();
+      const hit = all.find((o) => o.id.toLowerCase() === want) || all.find((o) => o.title.toLowerCase() === want) || all.find((o) => o.title.toLowerCase().includes(want));
+      if (!want || !hit) return { ok: false, error: `No song like “${a.song ?? ""}”.`, songs: all.map((o) => o.title) };
+      if (drill) stopLoop();
+      if (session) stopSession();
+      await selectSong(hit.id);
+      return done();
+    }
+    case "set_key": {
+      if (session?.kind === "sing" || drill) return { ok: false, error: "Not while singing — stop first." };
+      const opts = [...keySelect.querySelectorAll("option")];
+      const want = a.semitones !== undefined && a.semitones !== null ? String(Math.round(Number(a.semitones))) : null;
+      const o = opts.find((x) => x.value === want) || (a.fit ? opts.find((x) => x.value.startsWith("fit")) : null);
+      if (!o) return { ok: false, error: "That key isn't offered.", keys: opts.map((x) => x.textContent.trim()) };
+      if (session) stopSession();
+      keySelect.value = o.value;
+      keySelect.dispatchEvent(new Event("change"));
+      return done();
+    }
+    case "set_tempo": {
+      if (session?.kind === "sing" || drill) return { ok: false, error: "Not while singing — stop first." };
+      const r = Number(a.percent) / 100;
+      const o = [...tempoSelect.querySelectorAll("option")].find((x) => x.value === `r:${r}`);
+      if (!o) return { ok: false, error: "That tempo isn't offered.", percents: RATES.map((x) => Math.round(x * 100)) };
+      if (session) stopSession();
+      tempoSelect.value = o.value;
+      tempoSelect.dispatchEvent(new Event("change"));
+      return done();
+    }
+    case "go_to_line": {
+      const li = lineArg(a);
+      if (li === null) return { ok: false, error: "Which line?" };
+      if (session || drill) return { ok: false, error: "Stop first." };
+      cursorToLine(li);
+      renderAll();
+      return done();
+    }
+    case "listen":
+    case "play_take": {
+      if (session?.kind === "sing" || drill) return { ok: false, error: "Not while singing — stop first." };
+      if (action === "play_take" && !(take && take.endT !== null)) return { ok: false, error: "No take to play back yet." };
+      const li = lineArg(a);
+      if (li !== null) cursorToLine(li);
+      const opts = { how: "auto" };
+      if (li !== null && a.only_line) { const last = notes[lines[li][lines[li].length - 1]]; opts.until = last.t + last.d + 0.3; }
+      if (action === "play_take" && ["voice", "melody", "both"].includes(a.mode)) opts.mode = a.mode;
+      await startPlay(action === "listen" ? "listen" : "playback", scrollT, opts);
+      if (session?.kind !== (action === "listen" ? "listen" : "playback")) return { ok: false, error: "The sound didn't start on this device — someone needs to tap the page once.", ...remoteState() };
+      return done();
+    }
+    case "sing": {
+      if (session?.kind === "sing" || drill) return { ok: false, error: "Already singing." };
+      if (session) stopSession();
+      await startSing();
+      if (session?.kind !== "sing") return { ok: false, error: "The microphone didn't open on this device — someone needs to tap Sing there.", ...remoteState() };
+      return done();
+    }
+    case "loop_line": {
+      const li = lineArg(a) ?? (shownLine >= 0 ? shownLine : null);
+      if (li === null) return { ok: false, error: "Which line?" };
+      if (session?.kind === "sing") return { ok: false, error: "Not while singing — stop first." };
+      if (session) stopSession();
+      startLoop(li);
+      return done({ doing: "loop" });
+    }
+    case "review":
+      if (!take || take.endT === null) return { ok: false, error: "No take to review yet." };
+      openReview();
+      return done({ review: reviewEl.hidden ? null : $("rv-headline").textContent });
+    default:
+      return { ok: false, error: `Unknown action “${action}”.` };
+  }
+}
+remote.start({ run: runRemote, state: remoteState, changed: showRemote }).catch((err) => console.warn("remote", err));
+
 function openReview() {
   if (!take || take.endT === null) return;
   if (!reviewRows.length) reviewRows = analyzeTake();
@@ -1894,10 +2064,13 @@ function closeReview() {
 // The review (coach.js feedback): a headline, what went well, a take-wide tip, the next
 // steps (each line can be heard and looped), then every line. No scores: the numbers are in
 // the take and its history only.
-function renderReview() {
+function reviewFeedback() {
   const pct = takeScore(notes, take.grades);
   const wordOf = (j) => { let i = j; while (i > 0 && notes[i].melisma) i--; return `“${sylText(notes[i], i).trim().replace(/[,.;:!?]+$/, "")}”`; };
-  const fb = feedback(reviewRows, { rhythm: take.rhythm, prev: take.prev && take.prevLines ? { pct: take.prev.pct, lines: take.prevLines } : null, pct, whole: take.whole !== false, w: wordOf });
+  return { pct, fb: feedback(reviewRows, { rhythm: take.rhythm, prev: take.prev && take.prevLines ? { pct: take.prev.pct, lines: take.prevLines } : null, pct, whole: take.whole !== false, w: wordOf }) };
+}
+function renderReview() {
+  const { pct, fb } = reviewFeedback();
   $("rv-save").hidden = !take.voice;
   $("rv-headline").textContent = pct === null ? "Couldn't hear the notes clearly — closer to the mic?" : fb.headline;
   const wins = $("rv-wins");
@@ -2074,6 +2247,7 @@ function renderSummary() {
 }
 
 function updateButtons() {
+  remote.changedSoon();
   const kind = session?.kind;
   const verb = view === "perform" ? "Perform" : "Sing";
   singBtn.textContent = drill ? "■ Stop loop" : kind === "sing" ? "■ Stop" : take?.endT != null ? `● ${verb} again` : `● ${verb}`;

@@ -20,6 +20,7 @@ const root = new URL("./public/", import.meta.url).pathname;
 const files = [
   ...readdirSync(root).filter((f) => /\.(html|js)$/.test(f)).map((f) => join(root, f)),
   ...readdirSync(join(root, "omr")).filter((f) => /\.js$/.test(f)).map((f) => join(root, "omr", f)),
+  ...readdirSync(join(root, "oauth")).filter((f) => /\.(html|js)$/.test(f)).map((f) => join(root, "oauth", f)),
 ];
 let changed = 0;
 for (const file of files) {

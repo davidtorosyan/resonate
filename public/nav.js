@@ -1,8 +1,8 @@
 // Every page: the account link says "Account" when signed in, "Sign in" when not (read from the
 // saved session, so the sign-in library isn't loaded on every page); the space and the cloud
 // sync start here (space.js, sync.js).
-import { savedUser } from "./auth.js?v=72";
-import { ensureSpace, activeSpace, park } from "./space.js?v=72";
+import { savedUser } from "./auth.js?v=73";
+import { ensureSpace, activeSpace, park } from "./space.js?v=73";
 
 // An email link (confirm / reset) that landed on another page than the account page — Supabase
 // sends it to the project's Site URL (the site's root) when the page that asked isn't on its
@@ -24,7 +24,7 @@ for (const a of document.querySelectorAll("[data-account-link]")) {
 // Cloud sync, for a signed-in account whose data is the one on this device (the library loads
 // only then: signed-out pages stay as light as before).
 if (!handing && user && activeSpace() === user.id) {
-  import("./sync.js?v=72").then((m) => { if (!m.syncOff()) m.start(); }).catch((err) => console.warn("sync", err));
+  import("./sync.js?v=73").then((m) => { if (!m.syncOff()) m.start(); }).catch((err) => console.warn("sync", err));
 }
 
 // Another tab switched whose data this device shows (signed in, out, …): this page still shows
