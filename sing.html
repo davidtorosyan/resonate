@@ -7,6 +7,10 @@
     <title>Resonate · Sing</title>
     <style>
       :root { color-scheme: dark; }
+      /* An open menu's list takes the option's own colours (Chrome on Windows drew the see-through
+         select background as white under the light text). */
+      option, optgroup { background: #1a1a30; color: #e8e8f0; }
+      option:disabled { color: #8a8aa0; }
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; overflow: hidden; -webkit-tap-highlight-color: transparent; }
       body {
@@ -325,7 +329,7 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
-        <span id="version">v71</span>
+        <span id="version">v72</span>
         <span id="status"></span>
       </div>
     </header>
@@ -464,7 +468,7 @@
         <div id="rv-lines"></div>
       </div>
     </div>
-    <script type="module" src="nav.js?v=71"></script>
-    <script type="module" src="sing.js?v=71"></script>
+    <script type="module" src="nav.js?v=72"></script>
+    <script type="module" src="sing.js?v=72"></script>
   </body>
 </html>

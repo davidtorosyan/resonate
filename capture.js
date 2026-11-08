@@ -13,7 +13,7 @@ export async function startCapture(ac, source, { keepSeconds = Infinity, onChunk
   let flushed = null;
   let node, sink;
   try {
-    if (!modules.has(ac)) modules.set(ac, ac.audioWorklet.addModule("recorder-worklet.js?v=71"));
+    if (!modules.has(ac)) modules.set(ac, ac.audioWorklet.addModule("recorder-worklet.js?v=72"));
     await modules.get(ac); // (once per context: the phrase loop records every round)
     node = new AudioWorkletNode(ac, "pcm-recorder");
     sink = ac.createGain();
