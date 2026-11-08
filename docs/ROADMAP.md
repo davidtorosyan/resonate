@@ -105,6 +105,8 @@ is off there".
 
 ## 7. Accounts / auth
 
+**Started 2026-11-08 (v68):** Supabase project `resonate` (Jimbo84 org, Free) and **email + password** sign-in (the owner's choice over email codes for now) on `account.html`; details in CLAUDE.md "Account". Email codes, Google/GitHub and Delete account can follow.
+
 OAuth, offloaded as much as possible (Supabase or an equivalent provider), as hands-off as
 possible. Needed for sync and for the MCP server, whose agents act on the user's own data.
 Hosting options to weigh: Supabase; an "MCP-oriented" database the user heard about (name
