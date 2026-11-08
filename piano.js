@@ -58,14 +58,15 @@ export function playPiano(ac, piano, when, dur, midi, level, nodes) {
 // — on a phone that is also streaming to CarPlay, enough to miss the audio deadline, and the
 // melody came out choppy. items: [{ when, end }] in audio-clock seconds, sorted by `when`;
 // play(item) schedules one. Pushes a { stop } into `nodes`, so stopping the session's nodes
-// stops the scheduling too. Something held up past its end (a throttled timer) is skipped.
+// stops the scheduling too. A sound whose start was missed by > 50 ms (the page held up for
+// more than the lookahead: a prompt() open, a throttled timer) is skipped, not started late.
 export function scheduleAhead(ac, items, play, nodes, { ahead = 5, every = 500 } = {}) {
   let i = 0, timer = null;
   const pump = () => {
     const now = ac.currentTime, until = now + ahead;
     while (i < items.length && items[i].when < until) {
       const it = items[i++];
-      if ((it.end ?? it.when) < now) continue;
+      if (it.when < now - 0.05) continue;
       try { play(it); } catch (err) { console.warn(err); }
     }
     if (i >= items.length) clearInterval(timer);
