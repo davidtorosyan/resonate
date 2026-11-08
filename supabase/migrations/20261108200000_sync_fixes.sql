@@ -1,14 +1,10 @@
--- Sync fixes after review (v71):
---   • the limits counted the row being written too, so an upsert of an existing song (a re-push)
---     failed once the account held 10: count only the *other* rows;
---   • take histories become their own kind ('history', id = song id) — merged, not replaced —
---     and a song's settings are split into one row per field (song_state ids "<song>|key",
---     "<song>|rate", "<song>|timing"), so a change to one doesn't undo another device's change
---     to another.
-
-alter table public.sync_items drop constraint sync_items_kind_check;
-alter table public.sync_items add constraint sync_items_kind_check
-  check (kind in ('song', 'song_state', 'history', 'take', 'profile', 'prefs'));
+-- OPTIONAL — not applied to the live project (the app doesn't need it; apply whenever convenient).
+--
+-- The sync limits count the row being written too: an upsert runs the INSERT trigger first, even
+-- for a row that already exists, so pushing a song again while the account holds 10 is refused
+-- as an insert. The app works around it (public/sync.js retries such a row as an update, which
+-- only counts a row that starts to count); this makes the limits count only the *other* rows.
+-- Limits unchanged (10 songs, 20 profiles, 400 rows).
 
 create or replace function private.sync_count(uid uuid, k text, ek text, eid text) returns integer
   language sql stable security definer set search_path = '' as $$
@@ -36,8 +32,8 @@ begin
       raise exception 'song limit reached (10)' using errcode = 'P0001', hint = 'resonate:limit:song';
     elsif new.kind = 'profile' and private.sync_count(new.user_id, 'profile', new.kind, new.id) >= 20 then
       raise exception 'profile limit reached (20)' using errcode = 'P0001', hint = 'resonate:limit:profile';
-    elsif private.sync_count(new.user_id, null, new.kind, new.id) >= 600 then
-      raise exception 'item limit reached (600)' using errcode = 'P0001', hint = 'resonate:limit:items';
+    elsif private.sync_count(new.user_id, null, new.kind, new.id) >= 400 then
+      raise exception 'item limit reached (400)' using errcode = 'P0001', hint = 'resonate:limit:items';
     end if;
   end if;
   return new;

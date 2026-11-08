@@ -2,14 +2,14 @@
 // default, off per device on the Account page. What syncs:
 //   • songs: the MusicXML (and the original PDF from PDF → Song) — up to SONG_LIMIT: the ones
 //     already in the cloud stay, the newest others fill free places; the rest stay on the device;
-//   • each song's settings (key, tempo %, tapped timing / own tempo — one row per field, so a
-//     change to one on a device doesn't undo another device's change to another) and its take
-//     history (merged, never replaced);
+//   • each song's settings (key, tempo %, tapped timing / own tempo) and its take history — one
+//     row each (song_state "<song>|key", "|rate", "|timing", "|history"), so a change to one on a
+//     device doesn't undo another device's change to another; histories are merged, never replaced;
 //   • each song's last take — all its data, compressed, but not the recording (this device only);
 //   • voice profiles (name and range; the volume calibration is per device — it's the mic's).
 // Server: public.sync_items (one JSON document per thing, last writer wins by modified_at,
 // deletes as tombstones) and the private Storage bucket "songs" — see
-// supabase/migrations/20261108180000_sync.sql and …200000_sync_fixes.sql. Local: what the pages
+// supabase/migrations/20261108180000_sync.sql. Local: what the pages
 // already use (library.js, localStorage) in the active space (space.js), plus resonate.sync
 // (what was last synced).
 //
@@ -28,7 +28,8 @@ const FILE_LIMIT = 10 * 1024 * 1024;
 const TEXT_LIMIT = 64 * 1024 * 1024; // a downloaded file never unpacks to more than this
 export const OFF_KEY = "resonate.sync.off"; // this device doesn't sync (a device setting)
 const L = { keys: "resonate.sing.keys", rates: "resonate.sing.rates", timing: "resonate.sing.timing", history: "resonate.sing.history", profiles: "resonate.profiles" };
-const FIELDS = { key: L.keys, rate: L.rates, timing: L.timing }; // a song's settings: song_state "<song>|<field>"
+const FIELDS = { key: L.keys, rate: L.rates, timing: L.timing }; // a song's settings: song_state "<song>|<field>", data { v }
+const HISTORY = "history"; // its take history: song_state "<song>|history", data { list }
 const BUCKET = "songs";
 const COLS = "kind,id,data,deleted,modified_at,updated_at";
 const PAGE = (() => { try { return Number(localStorage.getItem("resonate.sync.page")) || 100; } catch { return 100; } })(); // (tests use a small page)
@@ -40,7 +41,7 @@ const validId = (id) => typeof id === "string" && id.length >= 1 && id.length <=
 const splitKey = (key) => { const i = key.indexOf(":"); return [key.slice(0, i), key.slice(i + 1)]; };
 // The song a settings / history / take row belongs to.
 const songOf = (kind, id) => (kind === "song_state" ? id.slice(0, id.lastIndexOf("|")) : id);
-const PER_SONG = ["song_state", "history", "take"];
+const PER_SONG = ["song_state", "take"];
 
 // A stable fingerprint of a JSON value (key order doesn't matter).
 function stable(v) {
@@ -101,7 +102,7 @@ async function localItems(meta) {
   for (const [field, key] of Object.entries(FIELDS)) {
     for (const [id, v] of Object.entries(readJson(key, {}))) if (ok(id) && v !== null && v !== undefined && !String(id).includes("|")) put("song_state", `${id}|${field}`, { v });
   }
-  for (const [id, list] of Object.entries(readJson(L.history, {}))) if (ok(id) && Array.isArray(list) && list.length) put("history", id, { list });
+  for (const [id, list] of Object.entries(readJson(L.history, {}))) if (ok(id) && Array.isArray(list) && list.length && !String(id).includes("|")) put("song_state", `${id}|${HISTORY}`, { list });
   for (const t of await listTakes()) if (ok(t.songId) && t.takeId) put("take", t.songId, { takeId: t.takeId, at: t.at });
   const prof = readJson(L.profiles, null);
   if (prof && Array.isArray(prof.list)) {
@@ -222,7 +223,8 @@ const notFound = (e) => e && (e.status === 404 || String(e.statusCode) === "404"
 async function apply(sb, row, meta, changed) {
   const { kind, id, deleted } = row;
   // A delete of something this version doesn't know (another form, a test's): nothing to do.
-  const known = kind === "song" ? isLibraryId(id) : kind === "song_state" ? !!FIELDS[id.slice(id.lastIndexOf("|") + 1)] && id.includes("|") : true;
+  const field = id.slice(id.lastIndexOf("|") + 1);
+  const known = kind === "song" ? isLibraryId(id) : kind === "song_state" ? id.includes("|") && (!!FIELDS[field] || field === HISTORY) : true;
   if (deleted && !known) return;
   const data = deleted ? null : row.data;
   if (!deleted && (!data || typeof data !== "object")) throw permanent("no data");
@@ -257,23 +259,25 @@ async function apply(sb, row, meta, changed) {
     }
     for (const [sid, why] of Object.entries(meta.held)) if (why === "full") delete meta.held[sid];
     changed.songs = true;
+  } else if (kind === "song_state" && field === HISTORY) {
+    const sid = songOf(kind, id);
+    if (!sid) throw permanent("unknown setting");
+    const local = readJson(L.history, {})[sid];
+    if (deleted) setIn(L.history, sid, null);
+    else {
+      if (!Array.isArray(data.list)) throw permanent("bad history");
+      const merged = mergeHistory(local, data.list);
+      setIn(L.history, sid, merged.length ? merged : null);
+      // (A merge that differs from the cloud's goes back up: noteChanges sees the difference.)
+    }
+    (changed.state ||= new Set()).add(sid);
   } else if (kind === "song_state") {
-    const sid = songOf(kind, id), field = id.slice(sid.length + 1);
+    const sid = songOf(kind, id);
     if (!sid || !FIELDS[field]) throw permanent("unknown setting");
     const v = deleted ? null : cleanField(field, data.v);
     if (!deleted && v === null) throw permanent("bad setting");
     setIn(FIELDS[field], sid, v);
     (changed.state ||= new Set()).add(sid);
-  } else if (kind === "history") {
-    const local = readJson(L.history, {})[id];
-    if (deleted) setIn(L.history, id, null);
-    else {
-      if (!Array.isArray(data.list)) throw permanent("bad history");
-      const merged = mergeHistory(local, data.list);
-      setIn(L.history, id, merged.length ? merged : null);
-      // (A merge that differs from the cloud's goes back up: noteChanges sees the difference.)
-    }
-    (changed.state ||= new Set()).add(id);
   } else if (kind === "take") {
     const local = await getTake(id);
     if (deleted) {
@@ -411,27 +415,43 @@ async function push(sb, uid, meta, items, changed) {
     rows.push({ key, m: m.m, row: { user_id: uid, kind, id, data, deleted: !!m.del, modified_at: new Date(m.m).toISOString() } });
   }
   const dropped = [];
+  const mark = (r, kept) => {
+    const now = meta.items[r.key];
+    if (!now || now.m !== r.m) return; // (changed again meanwhile: goes up next pass)
+    now.up = true;
+    if (!kept) dropped.push(r.key);
+    // A song's files go once its delete is in (never before: a delete the server refused
+    // would leave a song without its file).
+    else if (r.row.kind === "song" && r.row.deleted) sb.storage.from(BUCKET).remove([`${uid}/${r.row.id}.xml.gz`, `${uid}/${r.row.id}.pdf`]).catch(() => {});
+  };
   // The server answers with the rows it kept: one it didn't was older than the cloud's.
   const sent = async (batch) => {
     const { data, error } = await sb.from("sync_items").upsert(batch.map((r) => r.row), { onConflict: "user_id,kind,id" }).select("kind,id,deleted");
     if (error) return error;
     const kept = new Set((data || []).map((x) => `${x.kind}:${x.id}`));
-    for (const r of batch) {
-      const now = meta.items[r.key];
-      if (!now || now.m !== r.m) continue; // (changed again meanwhile: goes up next pass)
-      now.up = true;
-      if (!kept.has(r.key)) dropped.push(r.key);
-      // A song's files go once its delete is in (never before: a delete the server refused
-      // would leave a song without its file).
-      else if (r.row.kind === "song" && r.row.deleted) sb.storage.from(BUCKET).remove([`${uid}/${r.row.id}.xml.gz`, `${uid}/${r.row.id}.pdf`]).catch(() => {});
-    }
+    for (const r of batch) mark(r, kept.has(r.key));
     return null;
+  };
+  // The server's limits count the row being written too (an upsert runs the insert check
+  // first): a row already in the cloud, pushed again while the account is at a limit, is
+  // refused as an insert — as an update it goes through.
+  const sendOne = async (r) => {
+    const error = await sent([r]);
+    if (!String(error?.hint || "").startsWith("resonate:limit:")) return error;
+    const { kind, id, data, deleted, modified_at } = r.row;
+    const up = await sb.from("sync_items").update({ data, deleted, modified_at }).eq("kind", kind).eq("id", id).select("kind,id,deleted");
+    if (up.error) return up.error;
+    if (up.data?.length) { mark(r, true); return null; }
+    // Nothing updated: no such row (the limit is real), or the cloud's is newer (dropped).
+    const { data: row } = await sb.from("sync_items").select("deleted").eq("kind", kind).eq("id", id).maybeSingle();
+    if (row && !row.deleted) { mark(r, false); return null; }
+    return error;
   };
   // Songs one at a time (the cloud may be full: that one stays on this device, with its
   // settings and take), the rest in batches.
   for (const r of rows.filter((x) => x.row.kind === "song")) {
     if (!current(uid)) return;
-    const error = await sent([r]);
+    const error = await sendOne(r);
     if (error?.hint === "resonate:limit:song") hold(meta, r.row.id, "full");
     else if (error) console.warn("sync: push", r.key, error);
   }
@@ -442,7 +462,7 @@ async function push(sb, uid, meta, items, changed) {
     if (!(await sent(batch))) continue;
     // One bad thing mustn't hold the others back: one at a time.
     for (const r of batch) {
-      const e = await sent([r]);
+      const e = await sendOne(r);
       if (e) console.warn("sync: push", r.key, e);
     }
   }
