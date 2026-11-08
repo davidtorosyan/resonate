@@ -46,6 +46,27 @@
       .remote-btn[data-on="true"] { opacity: 1; background: #a64fff; border-color: #c48bff; box-shadow: 0 0 0 0.2rem rgba(166,79,255,0.25); font-weight: 600; animation: remote-pulse 2.4s ease-in-out infinite; }
       @keyframes remote-pulse { 50% { box-shadow: 0 0 0 0.35rem rgba(166,79,255,0.08); } }
       @media (prefers-reduced-motion: reduce) { .remote-btn[data-on="true"] { animation: none; } }
+      /* An assistant connected lately (its name; the dot pulses while it's calling). */
+      .assistant-chip { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.72rem; color: #e8e8f0; opacity: 0.85; }
+      .assistant-chip[hidden] { display: none; }
+      .assistant-chip .nm { max-width: 6.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      @media (max-width: 420px) { .assistant-chip .nm { max-width: 3.6rem; } }
+      .assistant-chip img { width: 14px; height: 14px; border-radius: 3px; }
+      .assistant-chip .dot { width: 0.45rem; height: 0.45rem; border-radius: 50%; background: #8ee6a8; }
+      .assistant-chip[data-active="true"] .dot { animation: chip-pulse 1.2s ease-in-out infinite; }
+      @keyframes chip-pulse { 50% { opacity: 0.25; } }
+      @media (prefers-reduced-motion: reduce) { .assistant-chip[data-active="true"] .dot { animation: none; } }
+      /* A take that ends by itself after a line (an assistant's short performance). */
+      /* A take an assistant started with to_line: where it ends (by the lyrics, Practice and Perform). */
+      .take-end { position: absolute; top: -0.35rem; right: 0.25rem; z-index: 2; font-size: 0.72rem; color: #ffe6a0; background: rgba(15,15,30,0.85); border: 1px solid rgba(255,230,160,0.35); border-radius: 999px; padding: 0.05rem 0.5rem; }
+      .take-end[hidden] { display: none; }
+      .take-end[data-last="true"] { color: #ffb38a; font-weight: 600; }
+      /* "Get ready": a take an assistant started, before its count-in (tap to cancel). */
+      #getready { position: fixed; inset: 0; z-index: 55; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.4rem; background: rgba(8,8,20,0.55); cursor: pointer; }
+      #getready[hidden] { display: none; }
+      #getready .n { font-size: 4.5rem; font-weight: 800; color: #ffe6a0; line-height: 1; }
+      #getready .by { font-size: 0.95rem; opacity: 0.85; }
+      #getready .hint { font-size: 0.75rem; opacity: 0.55; }
       #version { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; color: #a64fff; opacity: 0.9; }
       #status { font-size: 0.75rem; opacity: 0.55; }
       main {
@@ -335,8 +356,9 @@
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">
+        <span id="assistant-chip" class="assistant-chip" hidden></span>
         <button id="remote-btn" class="remote-btn" type="button" hidden aria-pressed="false">📡</button>
-        <span id="version">v73</span>
+        <span id="version">v74</span>
         <span id="status"></span>
       </div>
     </header>
@@ -364,6 +386,7 @@
       <div id="song-msg" hidden></div>
       <section id="lyrics">
         <div id="countin" class="mono" hidden></div>
+        <span id="take-end" class="take-end mono" hidden></span>
         <div id="lyric-prev"></div>
         <div id="lyric-now"></div>
         <div id="lyric-next"></div>
@@ -402,6 +425,7 @@
       <button id="sing" type="button">● Sing</button>
     </footer>
     <div id="drop" hidden>Drop MusicXML here</div>
+    <div id="getready" hidden role="status"><div class="by"></div><div class="n mono"></div><div class="hint">tap to cancel</div></div>
     <div id="options" class="overlay" hidden>
       <div class="sheet" role="dialog" aria-labelledby="op-title">
         <div class="rv-head">
@@ -475,7 +499,7 @@
         <div id="rv-lines"></div>
       </div>
     </div>
-    <script type="module" src="nav.js?v=73"></script>
-    <script type="module" src="sing.js?v=73"></script>
+    <script type="module" src="nav.js?v=74"></script>
+    <script type="module" src="sing.js?v=74"></script>
   </body>
 </html>

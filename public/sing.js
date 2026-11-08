@@ -2,22 +2,22 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=73";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=73";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=73";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=73";
-import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=73";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=73";
-import { startCapture, playVoice } from "./capture.js?v=73";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=73";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=73";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean, getTake, putTake } from "./library.js?v=73";
-import { fixOmrScore } from "./omr/fixscore.js?v=73";
-import { activeProfile } from "./profiles.js?v=73";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=73";
-import { DATA_KEYS } from "./space.js?v=73";
-import { spaceChanged } from "./nav.js?v=73";
-import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=73";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=74";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=74";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=74";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=74";
+import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=74";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=74";
+import { startCapture, playVoice } from "./capture.js?v=74";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=74";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=74";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean, getTake, putTake } from "./library.js?v=74";
+import { fixOmrScore } from "./omr/fixscore.js?v=74";
+import { activeProfile } from "./profiles.js?v=74";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=74";
+import { DATA_KEYS } from "./space.js?v=74";
+import { spaceChanged } from "./nav.js?v=74";
+import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=74";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -783,6 +783,13 @@ async function beginSing(part) {
   take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, timing: timingSig(), rate, verse: verseSelect.value || score.verses[0] || "1", octave: 0, range: [j0, j1], part: !!part, guide };
   // A whole take is shared with assistants line by line as it's sung (assist.js).
   if (!part && !spaceChanged()) { take.coachId = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`; take.coachSent = new Set(); takeStarted(take.coachId, songId, assistMeta()); }
+  // A take an assistant started: who, and the line it ends after (a short performance).
+  if (!part && remoteTake) {
+    take.remoteBy = remoteTake.by;
+    // (only notes up to that line are graded: the next line may start inside the margin)
+    if (remoteTake.until !== null && lines[remoteTake.until]) { const idx = lines[remoteTake.until], jl = idx[idx.length - 1], last = notes[jl]; take.untilLine = remoteTake.until; take.untilT = last.t + last.d + 0.8; take.range = [take.range[0], Math.min(take.range[1], jl + 1)]; }
+  }
+  remoteTake = null;
   let endRes;
   const ended = new Promise((r) => { endRes = r; });
   session = { kind: "sing", ac, nodes, songT0, latency, mic, capture, features, countClicks, wakeLock, raf: null, part, start, beatSec, count, ended, endRes };
@@ -802,6 +809,13 @@ async function beginSing(part) {
     renderYou();
     statusEl.textContent = songT < start ? `count-in ${Math.max(1, Math.min(Math.ceil(count), Math.floor((songT - start + count * beatSec) / beatSec) + 1))}` : `${r.db.toFixed(0)} dB`;
     renderLive();
+    if (take.untilT !== undefined) {
+      const last = shownLine >= take.untilLine;
+      takeEndEl.hidden = false;
+      takeEndEl.dataset.last = String(last);
+      takeEndEl.textContent = last ? "last line" : `to line ${take.untilLine + 1}`;
+      if (songT > take.untilT) { stopSing(); return; }
+    }
     if (songT > end) { stopSing(); return; }
     session.raf = requestAnimationFrame(tick);
   };
@@ -874,6 +888,7 @@ async function stopSing() {
   if (!s || s.kind !== "sing") return;
   session = null;
   finishing = true;
+  takeEndEl.hidden = true;
   try { await finishSing(s); } finally { finishing = false; flushRemote(); }
 }
 async function finishSing(s) {
@@ -931,7 +946,8 @@ async function finishSing(s) {
   monitorSync(MON_RESUME);
   s.endRes(take);
   recordTake();
-  openReview();
+  // (After a take an assistant started, the assistant gives the feedback — the review stays a tap away.)
+  if (!tk.remoteBy || remote.settings.review_after_remote) openReview();
   saveLastTake(tk, sid);
   if (spaceChanged()) showMsg("Not kept: signed in or out in another tab.", "error");
   else if (tk.coachId) assistTakeEnded(tk);
@@ -1954,9 +1970,72 @@ function showRemote(on) {
 remoteBtn.addEventListener("click", () => { remoteBtn.disabled = true; remote.set(!remote.on).finally(() => { remoteBtn.disabled = false; }); });
 function remoteState() {
   return { page: "sing", song: songId && score ? { id: songId, title: score.title } : null, key: score ? optText(keySelect) : null, tempo: score ? optText(tempoSelect) : null,
-    doing: drill ? "loop" : session?.kind || (starting ? "starting" : "idle"), line: shownLine >= 0 ? shownLine + 1 : null, lines: lines.length,
+    doing: getReady ? "get-ready" : drill ? "loop" : session?.kind || (starting ? "starting" : "idle"), line: shownLine >= 0 ? shownLine + 1 : null, lines: lines.length,
     take: take && take.endT !== null ? "reviewable" : null, sound: playCtx ? playCtx.state : "none" };
 }
+// Takes an assistant starts: a "Get ready" countdown first (its own words land there, not over
+// the count-in), tap to cancel; then the take, maybe ending by itself after a line.
+let remoteTake = null; // { by, until (line index | null) } — for the next whole take
+let getReady = null;   // { timer, resolve }
+const getReadyEl = $("getready"), takeEndEl = $("take-end");
+function cancelGetReady() {
+  if (!getReady) return false;
+  clearInterval(getReady.timer);
+  const r = getReady.resolve;
+  getReady = null;
+  getReadyEl.hidden = true;
+  r(false);
+  remote.changedSoon();
+  return true;
+}
+function startGetReady(delay, by) {
+  cancelGetReady();
+  return new Promise((resolve) => {
+    let left = delay;
+    const show = () => { getReadyEl.querySelector(".n").textContent = String(left); getReadyEl.querySelector(".by").textContent = `${by} — get ready`; };
+    show();
+    getReadyEl.hidden = false;
+    getReady = { resolve, timer: setInterval(() => {
+      left--;
+      if (left > 0) return show();
+      clearInterval(getReady.timer);
+      getReady = null;
+      getReadyEl.hidden = true;
+      resolve(true);
+    }, 1000) };
+    remote.changedSoon();
+  });
+}
+getReadyEl.addEventListener("click", () => { if (cancelGetReady()) remoteTake = null; });
+function setView(v) {
+  view = v;
+  store(K.view, view);
+  for (const r of optionsEl.querySelectorAll('input[name="view"]')) r.checked = r.value === v;
+  updateButtons();
+}
+
+// Which assistant is connected: shown by 📡 for 2 minutes after its last call (the dot pulses
+// for 15 s after one).
+const assistantChip = $("assistant-chip");
+let assistantSeen = null;
+function showAssistant(info) {
+  if (info) assistantSeen = { ...info, t: info.received ?? Date.parse(info.at) };
+  const a = assistantSeen;
+  const age = a ? Date.now() - a.t : Infinity;
+  assistantChip.hidden = !(age < 120000);
+  if (assistantChip.hidden) return;
+  assistantChip.dataset.active = String(age < 15000);
+  if (assistantChip.dataset.name !== a.name || assistantChip.dataset.logo !== String(a.logo || "")) {
+    assistantChip.dataset.name = a.name;
+    assistantChip.dataset.logo = String(a.logo || "");
+    assistantChip.textContent = "";
+    if (a.logo) { const img = new Image(); img.src = a.logo; img.alt = ""; img.referrerPolicy = "no-referrer"; img.onerror = () => img.remove(); assistantChip.append(img); }
+    assistantChip.append(Object.assign(document.createElement("span"), { className: "nm", textContent: a.name }), Object.assign(document.createElement("span"), { className: "dot" }));
+  }
+  assistantChip.title = `${a.name} is connected`;
+}
+setInterval(() => showAssistant(), 5000);
+
 const lineArg = (a) => {
   if (a.line === undefined || a.line === null) return null;
   const li = Math.round(Number(a.line)) - 1;
@@ -1970,9 +2049,12 @@ async function runRemote(action, a) {
   for (let i = 0; i < 100 && finishing; i++) await new Promise((r) => setTimeout(r, 100));
   if (spaceChanged()) return { ok: false, error: "This page is out of date (signed in or out elsewhere) and is reloading." };
   switch (action) {
-    case "stop":
+    case "stop": {
+      const was = cancelGetReady() || drill || session;
       if (drill) stopLoop(); else if (session?.kind === "sing") await stopSing(); else if (session) stopSession();
+      if (was && a.by) showMsg(`Stopped by ${a.by}`);
       return done();
+    }
     case "open_song": {
       const want = String(a.song ?? "").trim().toLowerCase();
       const all = songOptions();
@@ -2026,11 +2108,21 @@ async function runRemote(action, a) {
       return done();
     }
     case "sing": {
-      if (session?.kind === "sing" || drill) return { ok: false, error: "Already singing." };
+      if (session?.kind === "sing" || drill || getReady) return { ok: false, error: "Already singing." };
       if (session) stopSession();
+      const until = a.to_line !== undefined && a.to_line !== null ? lineArg({ line: a.to_line }) : null;
+      if (a.view === "perform" || a.view === "practice") setView(a.view);
+      const delay = Math.max(0, Math.min(20, Math.round(Number(a.delay ?? 4)) || 0));
+      remoteTake = { by: String(a.by || "Assistant").slice(0, 60), until };
+      const end = until === null ? {} : { to_line: until + 1 };
+      if (delay > 0) {
+        // Answered now (the assistant talks during the countdown); the take starts after it.
+        startGetReady(delay, remoteTake.by).then((go) => { if (go) startSing(); else remoteTake = null; });
+        return done({ starts_in_s: delay, ...end });
+      }
       await startSing();
-      if (session?.kind !== "sing") return { ok: false, error: "The microphone didn't open on this device — someone needs to tap Sing there.", ...remoteState() };
-      return done();
+      if (session?.kind !== "sing") { remoteTake = null; return { ok: false, error: "The microphone didn't open on this device — someone needs to tap Sing there.", ...remoteState() }; }
+      return done(end);
     }
     case "loop_line": {
       const li = lineArg(a) ?? (shownLine >= 0 ? shownLine : null);
@@ -2048,7 +2140,7 @@ async function runRemote(action, a) {
       return { ok: false, error: `Unknown action “${action}”.` };
   }
 }
-remote.start({ run: runRemote, state: remoteState, changed: showRemote }).catch((err) => console.warn("remote", err));
+remote.start({ run: runRemote, state: remoteState, changed: showRemote, assistant: showAssistant }).catch((err) => console.warn("remote", err));
 
 function openReview() {
   if (!take || take.endT === null) return;
@@ -2530,7 +2622,7 @@ canvas.addEventListener("wheel", (e) => {
   renderLive();
 }, { passive: false });
 
-singBtn.addEventListener("click", () => (drill ? stopLoop() : session?.kind === "sing" ? stopSing() : startSing()));
+singBtn.addEventListener("click", () => (cancelGetReady() ? null : drill ? stopLoop() : session?.kind === "sing" ? stopSing() : startSing()));
 listenBtn.addEventListener("click", () => (session?.kind === "listen" ? stopSession() : startPlay("listen", Math.max(0, scrollT))));
 playBtn.addEventListener("click", () => (session?.kind === "playback" ? stopSession() : startPlay("playback", Math.max(0, scrollT))));
 playModesEl.addEventListener("click", (e) => {

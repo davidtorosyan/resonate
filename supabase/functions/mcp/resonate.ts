@@ -13,7 +13,21 @@ You are a singing coach working from Resonate's data:
 - Never read scores, percentages or cents out as grades. The numbers are for your reasoning only; speak in musical terms (a touch flat, came in late, held it short).
 - Lines are numbered from 1, as the user sees them. Notes are written in the key the user sang (target) with the note actually sung.
 - During a take, call get_live_lines repeatedly (after_line = the last line you've seen) to follow along line by line.
-- control_resonate acts in the app on the device whose 📡 Remote switch is on (Sing page). If nothing has it on, ask the user to tap 📡 on the device they're using. Starting sound or the microphone may need one tap on that device first (browsers require it).`;
+- control_resonate acts in the app on the device whose 📡 Remote switch is on (Sing page). If nothing has it on, ask the user to tap 📡 on the device they're using. Starting sound or the microphone may need one tap on that device first (browsers require it).
+- To start a take (the user says start, go, sing, perform, record, let me try…), call control_resonate with action "sing" straight away. Then say a word at most — a "Get ready" countdown and the count-in follow, and the user is singing. Stay quiet until the take ends; follow it with get_live_lines without speaking.
+- For a short performance, pass to_line (the take ends by itself after that line, and the page shows it) instead of stopping it yourself.
+- get_status carries the user's standing instructions for you: follow them.`;
+
+// The user's standing instructions (Assistants page), else these.
+export const DEFAULT_STANDING = "When you start a take, say only \"Go\" (or nothing) and stay quiet until it ends; follow along with get_live_lines without speaking. For a short performance, start it with to_line rather than stopping it yourself. After a take, give your feedback in two or three short sentences: what went well, then one thing to try.";
+export async function settings(sb: Sb) {
+  const { data } = await sb.from("assistant_settings").select("instructions,start_delay_s,review_after_remote").maybeSingle();
+  return { standing_instructions: (data?.instructions || "").trim() || DEFAULT_STANDING, start_delay_s: data?.start_delay_s ?? 4 };
+}
+// Records the call (the Sing page shows which assistant is active) → the assistant's name.
+export async function seen(sb: Sb, tool: string): Promise<string> {
+  try { const { data } = await sb.rpc("assistant_seen", { tool }); return String((data as Json)?.name || "Assistant"); } catch { return "Assistant"; }
+}
 
 const LIB_ID = /^s[0-9a-z]{6,}$/; // songs imported into My songs; anything else is a bundled sample
 const ONLINE_MS = 75000;
@@ -160,9 +174,10 @@ export async function getVoiceProfile(sb: Sb) {
 
 const online = (d: Json) => Date.now() - new Date(String(d.seen_at)).getTime() < ONLINE_MS && (d.state as Json)?.visible !== false && !(d.state as Json)?.left;
 export async function getStatus(sb: Sb) {
-  const [dev, live] = await Promise.all([
+  const [dev, live, st] = await Promise.all([
     sb.from("devices").select("id,name,remote,seen_at,state").order("seen_at", { ascending: false }),
     sb.from("coach_takes").select("id,song_id,status,started_at,updated_at,meta").eq("status", "live").order("started_at", { ascending: false }).limit(1),
+    settings(sb),
   ]);
   const devices = (dev.data || []).map((d) => ({ device: d.id, name: d.name, remote_on: d.remote, online: online(d as Json), seen: ago(d.seen_at), showing: d.state }));
   const remote = devices.find((d) => d.remote_on);
@@ -173,17 +188,21 @@ export async function getStatus(sb: Sb) {
     hint: remote ? (remote.online ? null : `${remote.name} has 📡 Remote on but isn't in front right now (closed, in the background or asleep) — commands wait until it is.`)
       : "No device has 📡 Remote on — ask the user to tap 📡 on the Sing page of the device they're using.",
     live_take: lt && takeStatus(lt) === "live" ? takeHead(lt) : null,
+    ...st,
   });
 }
 
 export const ACTIONS = ["open_song", "set_key", "set_tempo", "listen", "play_take", "sing", "loop_line", "go_to_line", "review", "stop"] as const;
-export async function control(sb: Sb, args: Json) {
+export async function control(sb: Sb, args: Json, by = "Assistant") {
   const { data: devs } = await sb.from("devices").select("id,name,remote,seen_at,state").eq("remote", true).limit(1);
   const d = devs?.[0] as Json | undefined;
   if (!d) return fail("No device has 📡 Remote on. Ask the user to tap 📡 on the Sing page of the device they're using.");
   const { action, ...rest } = args;
   const clean: Json = {};
   for (const [k, v] of Object.entries(rest)) if (v !== undefined && v !== null) clean[k] = v;
+  clean.by = by;
+  const st = await settings(sb);
+  if (action === "sing") clean.delay = st.start_delay_s;
   // The song resolved here, so the page gets an exact id (not its own guess at the title).
   if (action === "open_song" && clean.song) {
     const s = await findSong(sb, String(clean.song));
@@ -198,7 +217,8 @@ export async function control(sb: Sb, args: Json) {
     const { data: row } = await sb.from("device_commands").select("status,result").eq("id", cmd.id).maybeSingle();
     if (row && row.status !== "sent") {
       const r = (row.result as Json) || {};
-      return row.status === "done" ? ok({ done: action, on: d.name, ...r }) : fail(String(r.error ?? row.status), { on: d.name, ...r });
+      const say = action === "sing" ? { now: `Starts in ${st.start_delay_s} s (a "Get ready" countdown, then the count-in). Say a word at most — then stay quiet until the take ends.` } : {};
+      return row.status === "done" ? ok({ done: action, on: d.name, ...r, ...say, standing_instructions: st.standing_instructions }) : fail(String(r.error ?? row.status), { on: d.name, ...r });
     }
   }
   const starts = ["listen", "play_take", "sing", "loop_line"].includes(String(action));
