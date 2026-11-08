@@ -2,21 +2,21 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=71";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=71";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=71";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=71";
-import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=71";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=71";
-import { startCapture, playVoice } from "./capture.js?v=71";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=71";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=71";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean, getTake, putTake } from "./library.js?v=71";
-import { fixOmrScore } from "./omr/fixscore.js?v=71";
-import { activeProfile } from "./profiles.js?v=71";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=71";
-import { DATA_KEYS } from "./space.js?v=71";
-import { spaceChanged } from "./nav.js?v=71";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=72";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=72";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=72";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=72";
+import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=72";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=72";
+import { startCapture, playVoice } from "./capture.js?v=72";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=72";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=72";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean, getTake, putTake } from "./library.js?v=72";
+import { fixOmrScore } from "./omr/fixscore.js?v=72";
+import { activeProfile } from "./profiles.js?v=72";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=72";
+import { DATA_KEYS } from "./space.js?v=72";
+import { spaceChanged } from "./nav.js?v=72";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");

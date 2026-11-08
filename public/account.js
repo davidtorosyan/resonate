@@ -6,8 +6,8 @@
 // (adopt); signing in to an existing account shelves it and brings the account's from the cloud
 // (enter, then sync.js); signing out removes the account's data from the device and brings the
 // shelved data back (leave).
-import { supabase, accountUrl, savedUser, STORAGE_KEY } from "./auth.js?v=71";
-import { ensureSpace, activeSpace, adopt, enter, leave, park } from "./space.js?v=71";
+import { supabase, accountUrl, savedUser, STORAGE_KEY } from "./auth.js?v=72";
+import { ensureSpace, activeSpace, adopt, enter, leave, park } from "./space.js?v=72";
 
 const ADOPT = "resonate.adopt"; // { email, at }: an account being made on this device (sign up)
 const SYNC_OFF = "resonate.sync.off"; // (sync.js OFF_KEY: this device doesn't sync)
@@ -116,7 +116,7 @@ async function settle(s) {
 }
 async function startSync() {
   try {
-    const m = await import("./sync.js?v=71");
+    const m = await import("./sync.js?v=72");
     if (!m.syncOff()) m.start();
     return m;
   } catch (err) { console.warn("sync", err); return null; }
@@ -235,7 +235,7 @@ $("signout").addEventListener("click", () => busy(async () => {
     if (text && !confirm(text)) return;
   }
   // No sync from here on (a pass under way could otherwise write into the data coming back).
-  if (m || window.resonateSync) { try { await (m || await import("./sync.js?v=71")).stop(); } catch {} }
+  if (m || window.resonateSync) { try { await (m || await import("./sync.js?v=72")).stop(); } catch {} }
   // The account's data goes before the session does: other tabs, told of the sign-out, then
   // find nothing to put away (space.js park). (Another account found active is parked.)
   // This device only — other devices stay signed in. (Offline, or when the server fails, the
