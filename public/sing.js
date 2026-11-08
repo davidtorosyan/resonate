@@ -2,19 +2,19 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=63";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=63";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=63";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=63";
-import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=63";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=63";
-import { startCapture, playVoice } from "./capture.js?v=63";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN } from "./piano.js?v=63";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=63";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=63";
-import { fixOmrScore } from "./omr/fixscore.js?v=63";
-import { activeProfile } from "./profiles.js?v=63";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=63";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=64";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=64";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=64";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=64";
+import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=64";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=64";
+import { startCapture, playVoice } from "./capture.js?v=64";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=64";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=64";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=64";
+import { fixOmrScore } from "./omr/fixscore.js?v=64";
+import { activeProfile } from "./profiles.js?v=64";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=64";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -723,8 +723,13 @@ async function beginSing(part) {
     countClicks.push({ t: t0 + k * beatSec, accent: k % barBeats === 0 });
     playClick(ac, t0 + k * beatSec, k % barBeats === 0, nodes);
   }
-  if (guide === "click") for (const b of beatGrid()) if (b.t >= start - 1e-6 && b.t < end) playClick(ac, songT0 + b.t, b.accent, nodes);
-  if (piano) for (const n of notes.slice(j0, j1)) playPiano(ac, piano, songT0 + n.t, n.d, n.midi, 0.9, nodes);
+  // The guide, a few seconds ahead at a time (scheduleAhead: all at once choked WebKit).
+  const guideItems = [];
+  if (guide === "click") for (const b of beatGrid()) if (b.t >= start - 1e-6 && b.t < end) guideItems.push({ when: songT0 + b.t, end: songT0 + b.t + 0.03, accent: b.accent });
+  if (piano) for (const n of notes.slice(j0, j1)) guideItems.push({ when: songT0 + n.t, end: songT0 + n.t + n.d, n });
+  guideItems.sort((a, b) => a.when - b.when);
+  keepAlive(ac, nodes);
+  scheduleAhead(ac, guideItems, (it) => it.n ? playPiano(ac, piano, it.when, it.n.d, it.n.midi, 0.9, nodes) : playClick(ac, it.when, it.accent, nodes), nodes);
 
   // The singer follows what they hear (output latency); the mic hears them
   // late (input latency); a pitch frame lags its audio (analysis window).
@@ -1007,13 +1012,17 @@ async function beginPlay(kind, from, opts) {
   const nodes = [];
   const start = ac.currentTime + 0.1;
   const songT0 = start - from;
+  keepAlive(ac, nodes);
   if (piano) {
     const [j0, j1] = opts.range ?? [0, notes.length]; // (a line: just its notes — not the held note before it)
+    const items = [];
     for (const n of notes.slice(j0, j1)) {
       if (n.t + n.d <= from || n.t >= end) continue;
       const st = Math.max(n.t, from);
-      playPiano(ac, piano, songT0 + st, n.t + n.d - st, n.midi, wantVoice ? 0.8 : 1.4, nodes);
+      items.push({ when: songT0 + st, end: songT0 + n.t + n.d, n });
     }
+    // (a few seconds ahead at a time: a whole song's notes at once made WebKit choppy)
+    scheduleAhead(ac, items, (it) => playPiano(ac, piano, it.when, it.end - it.when, it.n.midi, wantVoice ? 0.8 : 1.4, nodes), nodes);
   }
   if (wantVoice) playVoice(ac, voice, start, from, nodes);
   let endRes;
