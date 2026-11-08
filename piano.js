@@ -6,24 +6,35 @@ const ONSET = 0.012;   // samples start ~12 ms in (recording + encoder delay)
 const RELEASE = 0.12;  // damper time constant when a note ends
 
 const cache = new WeakMap(); // AudioContext -> Promise<{ keys, buffers }>
+const files = new Map(); // sample name -> Promise<ArrayBuffer> (the mp3, fetched once per page)
 
 function sampleMidi(name) {
   const pc = { C: 0, Ds: 3, Fs: 6, A: 9 }[name.slice(0, -1)];
   return (Number(name.slice(-1)) + 1) * 12 + pc;
 }
 
+function sampleFile(name) {
+  if (!files.has(name)) {
+    const p = fetch(`piano/${name}.mp3`).then((res) => {
+      if (!res.ok) throw new Error(`piano sample ${name}: ${res.status}`);
+      return res.arrayBuffer();
+    });
+    p.catch(() => files.delete(name));
+    files.set(name, p);
+  }
+  return files.get(name);
+}
+
 export function pianoReady(ac) {
   return cache.has(ac);
 }
 
+// Decoded per context (at its own sample rate); a new context — one made for a new output —
+// only decodes, the files are kept. (decodeAudioData takes its buffer over: give it a copy.)
 export function loadPiano(ac) {
   if (!cache.has(ac)) {
     const p = Promise.all(
-      SAMPLES.map(async (name) => {
-        const res = await fetch(`piano/${name}.mp3`);
-        if (!res.ok) throw new Error(`piano sample ${name}: ${res.status}`);
-        return [sampleMidi(name), await ac.decodeAudioData(await res.arrayBuffer())];
-      }),
+      SAMPLES.map(async (name) => [sampleMidi(name), await ac.decodeAudioData((await sampleFile(name)).slice(0))]),
     ).then((entries) => ({ keys: entries.map((e) => e[0]).sort((a, b) => a - b), buffers: new Map(entries) }));
     p.catch(() => cache.delete(ac));
     cache.set(ac, p);
