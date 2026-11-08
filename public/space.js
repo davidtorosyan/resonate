@@ -7,13 +7,14 @@
 //     copied to resonate.shelf, its databases kept under their name) and the account's data
 //     comes back: what was parked here for it, else nothing — filled by the cloud sync (enter);
 //   • Sign out (the button) — the account's data leaves this device and the shelved state comes
-//     back (leave);
+//     back (leave; another account found active instead is parked, not deleted);
 //   • the session ended some other way (expired, signed out in another tab) — the account's data
 //     is parked: kept on the device, out of sight, and the shelved state comes back (park).
 //     Nothing is deleted without the Sign out button and its warning.
 // The songs' databases are per space (dbName, plus "<name>-files"): "resonate" for the
 // signed-out state as always, "resonate-<uid>" for an account signed in on top of it; an
-// adopted account keeps the databases it was signed out with.
+// adopted account keeps the databases it was signed out with, and the signed-out state gets
+// new ones. Moves are all-or-nothing: a copy is written before anything is removed.
 
 const SPACE = "resonate.space"; // { active: "anon" | uid, db: { [space]: database name } }
 const SHELF = "resonate.shelf"; // the shelved signed-out localStorage, while an account is active
@@ -45,15 +46,27 @@ function read() {
   return null;
 }
 function write(s) {
-  try { localStorage.setItem(SPACE, JSON.stringify(s)); } catch {}
+  try { localStorage.setItem(SPACE, JSON.stringify(s)); return true; } catch { return false; }
 }
 const fresh = () => ({ active: "anon", db: {} });
 const randomName = (p) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const owned = (s, name) => Object.entries(s.db).some(([k, v]) => k !== "anon" && v === name);
+// The signed-out space's databases: never ones an account owns (an adopted account keeps the
+// name the signed-out data had). Sets s.db.anon when it has to pick a new name.
+function anonDb(s) {
+  let n = s.db.anon || DEFAULT_DB;
+  if (owned(s, n)) n = s.db.anon = randomName(DEFAULT_DB);
+  return n;
+}
 
 export const activeSpace = () => read()?.active || "anon";
 export function dbName() {
   const s = read();
-  return (s && s.db[s.active]) || DEFAULT_DB;
+  if (!s) return DEFAULT_DB;
+  if (s.active !== "anon") return s.db[s.active] || `${DEFAULT_DB}-${s.active}`;
+  const before = s.db.anon, n = anonDb(s);
+  if (s.db.anon !== before) write(s);
+  return n;
 }
 export const isFresh = () => !read(); // no space was ever set up on this device
 
@@ -62,44 +75,54 @@ export const isFresh = () => !read(); // no space was ever set up on this device
 // adopts what's here. Afterwards the space only changes by signing up, in or out.
 export function ensureSpace(uid) {
   if (read()) return;
-  write(uid ? { active: uid, db: { [uid]: DEFAULT_DB } } : fresh());
+  write(uid ? { active: uid, db: { [uid]: DEFAULT_DB, anon: randomName(DEFAULT_DB) } } : fresh());
 }
 
-// Move the active localStorage DATA_KEYS (+ the sync state) out, into an object.
-function takeKeys(withSync) {
+// The active localStorage DATA_KEYS (+ the sync state), as an object (nothing removed).
+const keyList = (withSync) => [...DATA_KEYS, ...(withSync ? [SYNC_META] : [])];
+function readKeys(withSync) {
   const kept = {};
-  for (const k of [...DATA_KEYS, ...(withSync ? [SYNC_META] : [])]) {
+  for (const k of keyList(withSync)) {
     const v = localStorage.getItem(k);
     if (v !== null) kept[k] = v;
-    localStorage.removeItem(k);
   }
   return kept;
 }
+function dropKeys(withSync) {
+  for (const k of keyList(withSync)) { try { localStorage.removeItem(k); } catch {} }
+}
 function putKeys(kept) {
+  let ok = true;
   for (const [k, v] of Object.entries(kept || {})) {
-    try { localStorage.setItem(k, v); } catch {}
+    try { localStorage.setItem(k, v); } catch { ok = false; }
   }
+  return ok;
 }
 function readJson(k) {
   try { return JSON.parse(localStorage.getItem(k)); } catch { return null; }
 }
+// A copy kept under `key`, written before anything is removed: false when it couldn't be
+// (storage full) — then nothing moves.
+function stash(key, withSync) {
+  try { localStorage.setItem(key, JSON.stringify(readKeys(withSync))); } catch { return false; }
+  dropKeys(withSync);
+  return true;
+}
 
-// The signed-out state back from the shelf (the account's keys already moved out).
+// The signed-out state back from the shelf (the account's keys already moved out). The shelf
+// stays if it couldn't all be written back.
 function unshelve(s) {
-  putKeys(readJson(SHELF));
-  localStorage.removeItem(SHELF);
+  if (putKeys(readJson(SHELF))) localStorage.removeItem(SHELF);
   s.active = "anon";
+  anonDb(s);
 }
 
 // The session ended without Sign out: keep the account's data here, out of sight.
-// (Synchronous: it runs before a page reads anything.)
+// (Synchronous: it runs before a page reads anything.) false: nothing was moved.
 export function park() {
   const s = read();
   if (!s || s.active === "anon") return false;
-  const uid = s.active;
-  try { localStorage.setItem(PARKED(uid), JSON.stringify(takeKeys(true))); } catch {}
-  // An adopted account uses the signed-out databases' name: the signed-out state starts anew.
-  if ((s.db.anon || DEFAULT_DB) === s.db[uid]) s.db.anon = randomName(DEFAULT_DB);
+  if (!stash(PARKED(s.active), true)) return false;
   unshelve(s);
   write(s);
   return true;
@@ -109,9 +132,9 @@ export function park() {
 export function adopt(uid) {
   let s = read() || fresh();
   if (s.active === uid) return false;
-  if (s.active !== "anon") { park(); s = read(); }
-  s.db[uid] = s.db.anon || DEFAULT_DB;
-  delete s.db.anon;
+  if (s.active !== "anon") { if (!park()) return false; s = read(); }
+  s.db[uid] = anonDb(s);
+  s.db.anon = randomName(DEFAULT_DB); // (the signed-out space starts anew, in databases of its own)
   s.active = uid;
   write(s);
   return true;
@@ -122,38 +145,33 @@ export function adopt(uid) {
 export async function enter(uid) {
   let s = read() || fresh();
   if (s.active === uid) return false;
-  if (s.active !== "anon") { park(); s = read(); }
-  try { localStorage.setItem(SHELF, JSON.stringify(takeKeys(false))); } catch {}
-  s.db.anon = s.db.anon || DEFAULT_DB;
-  const parked = readJson(PARKED(uid));
-  if (parked && s.db[uid]) {
-    localStorage.removeItem(SYNC_META);
-    putKeys(parked);
-    localStorage.removeItem(PARKED(uid));
-    s.active = uid;
-    write(s);
-    return true;
-  }
+  if (s.active !== "anon") { if (!park()) return false; s = read(); }
+  if (!stash(SHELF, false)) return false;
+  anonDb(s);
   localStorage.removeItem(SYNC_META);
-  localStorage.removeItem(PARKED(uid));
-  s.db[uid] = `resonate-${uid}`;
+  const parked = readJson(PARKED(uid));
+  if (parked && putKeys(parked)) localStorage.removeItem(PARKED(uid));
+  const isNew = !s.db[uid];
+  if (isNew) s.db[uid] = `resonate-${uid}`;
   s.active = uid;
   write(s);
-  await deleteDbs(s.db[uid]); // (anything left from an earlier visit)
+  if (isNew) await deleteDbs(s.db[uid]); // (anything left from an earlier visit)
   return true;
 }
 
 // Sign out: the account's data leaves this device; the shelved signed-out state comes back.
-export async function leave() {
+// Only the account being signed out (uid) is removed: any other active account is parked.
+export async function leave(uid) {
   const s = read();
   if (!s || s.active === "anon") return false;
+  if (uid && s.active !== uid) return park();
   const db = s.db[s.active];
-  takeKeys(true);
+  dropKeys(true);
   delete s.db[s.active];
   unshelve(s);
+  // (Never reopen the databases being deleted: an older tab can hold the delete up.)
+  if (anonDb(s) === db) s.db.anon = randomName(DEFAULT_DB);
   write(s);
-  // (An adopted account's databases may have the signed-out ones' name: deleted all the same —
-  // the signed-out state starts anew, and opening them again makes them afresh.)
   if (db) await deleteDbs(db);
   return true;
 }

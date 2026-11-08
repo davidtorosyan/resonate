@@ -12,6 +12,7 @@ const fileInput = $("file");
 
 let wakeLock = null;
 let running = false;
+window.resonateBusy = () => running; // (nav.js: a reload for another tab's sign-in/out waits for the conversion)
 let t0 = 0;
 let timer = null;
 let lastFraction = 0;

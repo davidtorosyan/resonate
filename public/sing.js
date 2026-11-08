@@ -15,6 +15,8 @@ import { listSongs, getSong, addSong, removeSong, persistent, saveClean, getTake
 import { fixOmrScore } from "./omr/fixscore.js?v=71";
 import { activeProfile } from "./profiles.js?v=71";
 import { fitOptions, fitKey, fitToRange } from "./fit.js?v=71";
+import { DATA_KEYS } from "./space.js?v=71";
+import { spaceChanged } from "./nav.js?v=71";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -97,8 +99,12 @@ let range = { lo: 55, hi: 72 };
 
 // Every setting is written here; the user's own data (per-song key, tempo, timing, history…)
 // announces itself so the cloud sync (sync.js), when it runs, can follow.
+// After another tab switched whose data the device shows, nothing of the user's is written
+// here (it would land in the other space) — nav.js reloads the page as soon as it's idle.
 const SYNCED = new Set([K.keys, K.rates, K.timing, K.history]);
+const USER_DATA = new Set(DATA_KEYS);
 const store = (k, v) => {
+  if (USER_DATA.has(k) && spaceChanged()) return;
   try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {}
   if (SYNCED.has(k)) { try { window.dispatchEvent(new CustomEvent("resonate:data", { detail: { what: "settings", key: k } })); } catch {} }
 };
@@ -416,8 +422,10 @@ function readKeys() {
   try { return JSON.parse(recall(K.keys)) || {}; } catch { return {}; }
 }
 
+let scoreId = null; // the song the loaded score is (songId changes as soon as another is chosen)
 function setScore(sc, stored = null) {
   score = sc;
+  scoreId = songId;
   minor = guessMinor(sc);
   const savedKey = readKeys()[songId];
   transpose = typeof savedKey === "string" && savedKey.startsWith("fit") ? savedKey : Number(savedKey) || 0;
@@ -449,6 +457,9 @@ let songGen = 0; // a newer selectSong wins over one still loading
 async function selectSong(id) {
   stopLoop();
   stopSession();
+  $("taptempo").hidden = true; // (their taps belong to the song they were opened on)
+  $("tapalong").hidden = true;
+  tapAlong = null;
   const gen = ++songGen;
   songId = id;
   songSelect.value = id;
@@ -844,10 +855,17 @@ function recolour(tk) {
   });
 }
 
+// While a stopped take is still being finished (the recording flushing, the mic closing,
+// rhythm, grades), nothing from the cloud is applied: it could replace the take.
+let finishing = false;
 async function stopSing() {
   const s = session;
   if (!s || s.kind !== "sing") return;
   session = null;
+  finishing = true;
+  try { await finishSing(s); } finally { finishing = false; flushRemote(); }
+}
+async function finishSing(s) {
   const tk = take, sid = songId;
   let settings = null;
   try { settings = s.mic.stream.getAudioTracks()[0]?.getSettings() || null; } catch {}
@@ -903,7 +921,6 @@ async function stopSing() {
   recordTake();
   openReview();
   saveLastTake(tk, sid);
-  flushRemote();
 }
 
 // ---------------------------------------------------------------------------
@@ -1824,7 +1841,7 @@ function unpackVoice(p) {
 // A whole take that judged something becomes the song's last take (not a loop round, not a
 // stop in the count-in).
 function saveLastTake(tk, sid) {
-  if (!tk || tk.part || tk.endT === null || !sid || !tk.grades.some((g) => g && g.status !== "unsung")) return;
+  if (!tk || tk.part || tk.endT === null || !sid || !tk.grades.some((g) => g && g.status !== "unsung") || spaceChanged()) return;
   tk.at = tk.at || Date.now();
   tk.takeId = `${tk.at.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   let rec;
@@ -2687,15 +2704,17 @@ window.addEventListener("pageshow", (e) => {
 guideSelect.value = guide;
 // The cloud sync brought changes (sync.js): the song list, the open song's settings, its last
 // take. Nothing changes under a take, a loop or a playback: what arrives then waits for its end.
-let pendingRemote = null; // { songs, state: Set, takes: Set } — song ids
-function queueRemote({ songs = false, state = [], takes = [] }) {
-  const p = (pendingRemote ||= { songs: false, state: new Set(), takes: new Set() });
+let pendingRemote = null; // { songs, profiles, state: Set, takes: Set } — song ids
+function queueRemote({ songs = false, profiles = false, state = [], takes = [] }) {
+  const p = (pendingRemote ||= { songs: false, profiles: false, state: new Set(), takes: new Set() });
   p.songs ||= !!songs;
+  p.profiles ||= !!profiles;
   for (const id of state) p.state.add(id);
   for (const id of takes) p.takes.add(id);
 }
 window.addEventListener("resonate:remote", (e) => { queueRemote(e.detail || {}); flushRemote(); });
-const busyNow = () => !!(session || drill || starting);
+const busyNow = () => !!(session || drill || starting || finishing);
+window.resonateBusy = busyNow; // (nav.js: a reload for another tab's sign-in/out waits for it)
 function flushRemote() {
   if (!pendingRemote) return;
   setTimeout(async () => {
@@ -2709,13 +2728,14 @@ function flushRemote() {
       if (gone && !busyNow()) return selectSong("amazing-grace");
     }
     const sid = songId;
-    if (!score || busyNow()) return queueRemote(p);
+    if (!score || scoreId !== sid || busyNow()) return queueRemote({ ...p, songs: false }); // (setScore flushes)
     if (p.takes.has(sid)) {
       const t = reviveTake(await getTake(sid, { voice: true }).catch(() => null));
-      if (sid !== songId || busyNow()) return queueRemote({ takes: [sid], state: p.state });
-      if (t && (!take || (take.at || 0) < t.at)) { take = t; reviewRows = []; closeReview(); }
+      if (sid !== songId || scoreId !== sid || busyNow()) return queueRemote({ takes: [sid], state: p.state, profiles: p.profiles });
+      // (A take sung here that isn't recorded yet has no time: it's never replaced.)
+      if (t && (!take || (take.at && take.at < t.at))) { take = t; reviewRows = []; closeReview(); }
     }
-    if (p.state.has(sid) || p.takes.has(sid)) {
+    if (p.state.has(sid) || p.takes.has(sid) || p.profiles) {
       const savedKey = readKeys()[sid];
       transpose = typeof savedKey === "string" && savedKey.startsWith("fit") ? savedKey : Number(savedKey) || 0;
       applySong();

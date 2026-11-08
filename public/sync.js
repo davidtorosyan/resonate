@@ -21,7 +21,7 @@
 
 import { supabase, savedUser } from "./auth.js?v=71";
 import { activeSpace, SYNC_META } from "./space.js?v=71";
-import { listSongs, getSong, putSong, removeSong, getPdf, listTakes, getTake, putTake, removeTake, persistent, dbGen } from "./library.js?v=71";
+import { listSongs, getSong, putSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, listTakes, getTake, putTake, removeTake, persistent, dbGen } from "./library.js?v=71";
 
 export const SONG_LIMIT = 10;
 const FILE_LIMIT = 10 * 1024 * 1024;
@@ -58,16 +58,18 @@ export function fingerprint(v) {
 
 // --- What's here ------------------------------------------------------------------------
 // meta = { uid, gen (the songs' database generation, library.js), cursor,
-//          items: { "kind:id": { h, m (ms), up (pushed), del } }, info: { songId: { sha, source } },
+//          items: { "kind:id": { h, m (ms), up (pushed), del } }, info: { songId: { sha, source, pdf (in the cloud) } },
 //          held: { songId: why } — songs that stay on this device: "full" (the cloud had no room
 //          when pushed: tried again once songs change there) or "large" (over the file limit),
-//          missing: { songId: modified ms } — in the cloud, but its file couldn't be found }
+//          missing: { songId: modified ms } — in the cloud, but its file couldn't be found,
+//          orphans: [path] — files whose removal is still to be done }
 function loadMeta(uid) {
   const m = readJson(SYNC_META, null);
-  const fresh = { uid, gen: null, cursor: null, items: {}, info: {}, held: {}, missing: {} };
+  const fresh = { uid, gen: null, cursor: null, items: {}, info: {}, held: {}, missing: {}, orphans: [] };
   return m && m.uid === uid ? { ...fresh, ...m } : fresh;
 }
-const saveMeta = (m) => writeJson(SYNC_META, m);
+// (Only into the space it belongs to: a pass that outlives a switch writes nothing.)
+const saveMeta = (m) => { if (current(m.uid)) writeJson(SYNC_META, m); };
 
 async function sha256(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -82,6 +84,9 @@ async function localItems(meta) {
   const here = new Set(songs.map((s) => s.id));
   const cloud = (id) => { const m = meta.items[`song:${id}`]; return !!m && !m.del; };
   let room = SONG_LIMIT - Object.entries(meta.items).filter(([k, m]) => k.startsWith("song:") && !m.del).length;
+  // Room in the cloud again (a song deleted here or elsewhere): songs held for lack of it try again.
+  if (room > 0) for (const [sid, why] of Object.entries(meta.held)) if (why === "full") delete meta.held[sid];
+  const pdfs = new Set(await listPdfIds());
   const synced = new Set();
   for (const s of songs) {
     if (cloud(s.id)) synced.add(s.id);
@@ -95,7 +100,7 @@ async function localItems(meta) {
       if (!full) { synced.delete(s.id); continue; }
       info = meta.info[s.id] = { sha: await sha256(full.xml), source: full.source || null };
     }
-    put("song", s.id, { title: s.title, added: s.added, source: info.source, sha: info.sha });
+    put("song", s.id, { title: s.title, added: s.added, source: info.source, sha: info.sha, pdf: pdfs.has(s.id) });
   }
   // Settings, history and the last take: for songs in the cloud and the bundled samples.
   const ok = (id) => synced.has(id) || !isLibraryId(id);
@@ -109,13 +114,13 @@ async function localItems(meta) {
     for (const p of prof.list) put("profile", p.id, { name: p.name ?? "", range: p.range ?? null });
     put("prefs", "prefs", { activeProfile: prof.active ?? null });
   }
-  return { items, synced, here };
+  return { items, synced, here, pdfs };
 }
 
 // The sync form of what the cloud sent (what localItems would make of it once applied).
 function norm(kind, data) {
   if (!data) return null;
-  if (kind === "song") return { title: data.title, added: data.added, source: data.source ?? null, sha: data.sha };
+  if (kind === "song") return { title: data.title, added: data.added, source: data.source ?? null, sha: data.sha, pdf: !!data.pdf };
   if (kind === "take") return { takeId: data.takeId, at: data.at };
   if (kind === "profile") return { name: data.name ?? "", range: data.range ?? null };
   return data;
@@ -179,9 +184,11 @@ function cleanField(field, v) {
   if (field === "rate") return num(v, 0.1, 4);
   if (field === "timing") {
     if (!v || typeof v !== "object" || Array.isArray(v)) return null;
-    const segs = Array.isArray(v.segs) ? v.segs.filter((s) => Array.isArray(s) && s.length === 2 && s.every((x) => Number.isFinite(x))) : [];
+    // (A pace may be null: untapped there — the map's average, timing.js.)
+    const segs = Array.isArray(v.segs) ? v.segs.filter((s) => Array.isArray(s) && s.length === 2 && Number.isFinite(s[0]) && (s[1] === null || Number.isFinite(s[1]))) : [];
     const out = { sig: String(v.sig ?? ""), segs, use: !!v.use };
-    if (num(v.bpm, 10, 1000) !== null) out.bpm = v.bpm;
+    if (v.bpm === null) out.bpm = null;
+    else if (num(v.bpm, 10, 1000) !== null) out.bpm = v.bpm;
     return segs.length || out.bpm ? out : null;
   }
   return null;
@@ -220,8 +227,10 @@ const notFound = (e) => e && (e.status === 404 || String(e.statusCode) === "404"
 
 // One row from the cloud, applied here. Throws when it should be tried again (a download cut
 // off…); a row that can never be applied (a broken document) throws `permanent` and is passed by.
-async function apply(sb, row, meta, changed) {
+async function apply(sb, row, meta, changed, uid) {
   const { kind, id, deleted } = row;
+  // Before every write: the device still shows this account (a sign-out in another tab…).
+  const guard = () => { if (!current(uid)) throw new Error("the space changed"); };
   // A delete of something this version doesn't know (another form, a test's): nothing to do.
   const field = id.slice(id.lastIndexOf("|") + 1);
   const known = kind === "song" ? isLibraryId(id) : kind === "song_state" ? id.includes("|") && (!!FIELDS[field] || field === HISTORY) : true;
@@ -235,6 +244,7 @@ async function apply(sb, row, meta, changed) {
     if (!isLibraryId(id)) throw permanent("not a song id");
     delete meta.missing[id];
     if (deleted) {
+      guard();
       await removeSong(id, { quiet: true });
       for (const k of [L.keys, L.rates, L.timing, L.history]) setIn(k, id, null); // (removeSong took its take and PDF)
       delete meta.info[id];
@@ -253,9 +263,19 @@ async function apply(sb, row, meta, changed) {
         }
         if (blob.error) throw blob.error;
         const xml = await gunzipText(await blob.data.arrayBuffer());
+        guard();
         await putSong({ id, title, xml, added: Number(data.added) || Date.now(), ...(data.source ? { source: String(data.source) } : {}) }, { quiet: true });
-      } else if (have.title !== title) await putSong({ ...have, title }, { quiet: true });
-      meta.info[id] = { sha: String(data.sha ?? ""), source: data.source ?? null };
+      } else if (have.title !== title) { guard(); await putSong({ ...have, title }, { quiet: true }); }
+      // Its original PDF (PDF → Song), when the cloud has it and this device doesn't.
+      if (typeof data.pdf?.path === "string" && !(await getPdf(id))) {
+        const f = await sb.storage.from(BUCKET).download(data.pdf.path);
+        if (f.error && !notFound(f.error)) throw f.error;
+        if (!f.error) { const buf = await f.data.arrayBuffer(); guard(); await putPdf(id, buf, String(data.pdf.name ?? ""), { quiet: true }); }
+      }
+      meta.info[id] = { sha: String(data.sha ?? ""), source: data.source ?? null, pdf: !!data.pdf };
+      // What this device now has, in its sync form (so nothing echoes back as a change).
+      const stored = await getSong(id);
+      h = fingerprint({ title: stored?.title ?? title, added: stored?.added ?? data.added, source: meta.info[id].source, sha: meta.info[id].sha, pdf: !!(await getPdf(id)) });
     }
     for (const [sid, why] of Object.entries(meta.held)) if (why === "full") delete meta.held[sid];
     changed.songs = true;
@@ -263,6 +283,7 @@ async function apply(sb, row, meta, changed) {
     const sid = songOf(kind, id);
     if (!sid) throw permanent("unknown setting");
     const local = readJson(L.history, {})[sid];
+    guard();
     if (deleted) setIn(L.history, sid, null);
     else {
       if (!Array.isArray(data.list)) throw permanent("bad history");
@@ -276,13 +297,16 @@ async function apply(sb, row, meta, changed) {
     if (!sid || !FIELDS[field]) throw permanent("unknown setting");
     const v = deleted ? null : cleanField(field, data.v);
     if (!deleted && v === null) throw permanent("bad setting");
+    guard();
     setIn(FIELDS[field], sid, v);
+    if (!deleted) h = fingerprint({ v }); // (what was written: a cleaned value never echoes back)
     (changed.state ||= new Set()).add(sid);
   } else if (kind === "take") {
     const local = await getTake(id);
     if (deleted) {
       // A take sung here after the cloud's delete stays (and goes up).
       if (local && local.at > m) { meta.items[`take:${id}`] = { h: fingerprint({ takeId: local.takeId, at: local.at }), m: Math.max(local.at, m + 1), up: false }; return; }
+      guard();
       await removeTake(id, { quiet: true });
     } else {
       if (typeof data.takeId !== "string" || typeof data.at !== "number") throw permanent("bad take");
@@ -295,11 +319,13 @@ async function apply(sb, row, meta, changed) {
         let take;
         try { take = JSON.parse(await gunzipText(fromB64(String(data.gz ?? "")))); } catch (err) { throw err.permanent ? err : permanent("bad take data"); }
         if (!take || typeof take !== "object") throw permanent("bad take data");
+        guard();
         await putTake({ songId: id, takeId: data.takeId, at: data.at, data: take, voice: null }, { quiet: true });
       }
     }
     (changed.takes ||= new Set()).add(id);
   } else if (kind === "profile" || kind === "prefs") {
+    guard();
     const p = readJson(L.profiles, { active: null, list: [] });
     if (!Array.isArray(p.list)) p.list = [];
     if (kind === "prefs") { if (!deleted && typeof data.activeProfile === "string") p.active = data.activeProfile; }
@@ -309,6 +335,7 @@ async function apply(sb, row, meta, changed) {
       const prof = { id, name: String(data.name ?? "").slice(0, 60), vol: old?.vol ?? null, range: cleanRange(data.range) }; // (vol: this device's)
       p.list = old ? p.list.map((x) => (x.id === id ? prof : x)) : [...p.list, prof];
       if (!p.active) p.active = id;
+      h = fingerprint({ name: prof.name, range: prof.range });
     }
     writeJson(L.profiles, p);
     changed.profiles = true;
@@ -320,11 +347,26 @@ async function apply(sb, row, meta, changed) {
 
 // A row from the cloud: applied unless ours is the same change or a newer one (still to go up).
 // false: stop pulling here (tried again next pass — skipping it could make what follows wrong).
-async function take1(sb, row, meta, changed) {
+async function take1(sb, row, meta, changed, uid) {
   const key = `${row.kind}:${row.id}`;
   const m = meta.items[key];
-  if (!validId(row.id) || (m && Date.parse(row.modified_at) <= m.m)) return true;
-  try { await apply(sb, row, meta, changed); return true; }
+  if (!validId(row.id)) return true;
+  if (m && Date.parse(row.modified_at) <= m.m) {
+    // Ours is newer — but a history is merged all the same: what goes up must hold the cloud's
+    // entries too (they may be on no other device any more).
+    const field = row.id.slice(row.id.lastIndexOf("|") + 1);
+    if (row.kind === "song_state" && field === HISTORY && !row.deleted && Array.isArray(row.data?.list) && current(uid)) {
+      const sid = songOf(row.kind, row.id);
+      const local = readJson(L.history, {})[sid];
+      const merged = mergeHistory(local, row.data.list);
+      if (fingerprint(merged) !== fingerprint(local || [])) {
+        setIn(L.history, sid, merged.length ? merged : null);
+        (changed.state ||= new Set()).add(sid);
+      }
+    }
+    return true;
+  }
+  try { await apply(sb, row, meta, changed, uid); return true; }
   catch (err) {
     console.warn("sync: couldn't apply", key, err);
     return !!err.permanent; // a broken row is passed by; anything else is tried again
@@ -347,7 +389,7 @@ async function pull(sb, meta, uid) {
     if (error) throw error;
     for (const row of rows) {
       if (!current(uid)) return changed;
-      if (!(await take1(sb, row, meta, changed))) { saveMeta(meta); return changed; }
+      if (!(await take1(sb, row, meta, changed, uid))) { saveMeta(meta); return changed; }
       if (!meta.cursor || row.updated_at > meta.cursor) meta.cursor = row.updated_at;
     }
     saveMeta(meta);
@@ -373,6 +415,9 @@ async function wireData(sb, uid, it) {
     if (p?.pdf && p.bytes <= FILE_LIMIT) {
       const pdfPath = `${uid}/${it.id}.pdf`;
       const r = await sb.storage.from(BUCKET).upload(pdfPath, new Blob([p.pdf], { type: "application/pdf" }), { upsert: true, contentType: "application/pdf" });
+      // A refusal (the server said no) leaves the PDF on this device; anything else (no
+      // connection…) is tried again with the song next pass.
+      if (r.error && !(r.error.status >= 400 && r.error.status < 500)) throw r.error;
       if (!r.error) pdf = { path: pdfPath, bytes: p.bytes, name: p.name || "" };
     }
     return { ...it.data, xml: { path: xmlPath, bytes: gz.byteLength }, pdf };
@@ -395,7 +440,19 @@ function hold(meta, id, why) {
   }
 }
 
+// Files to remove: the server's answer is checked, and what didn't go is tried again next pass
+// (a leftover file still counts against the account's files).
+async function removeFiles(sb, meta, paths) {
+  if (!paths.length) return;
+  const { error } = await sb.storage.from(BUCKET).remove(paths).catch((err) => ({ error: err }));
+  const left = new Set(meta.orphans || []);
+  for (const p of paths) error ? left.add(p) : left.delete(p);
+  meta.orphans = [...left];
+}
+const songFiles = (uid, id) => [`${uid}/${id}.xml.gz`, `${uid}/${id}.pdf`];
+
 async function push(sb, uid, meta, items, changed) {
+  if (meta.orphans?.length) await removeFiles(sb, meta, [...meta.orphans]);
   const rows = [];
   for (const [key, m] of Object.entries(meta.items)) {
     if (m.up) continue;
@@ -422,7 +479,8 @@ async function push(sb, uid, meta, items, changed) {
     if (!kept) dropped.push(r.key);
     // A song's files go once its delete is in (never before: a delete the server refused
     // would leave a song without its file).
-    else if (r.row.kind === "song" && r.row.deleted) sb.storage.from(BUCKET).remove([`${uid}/${r.row.id}.xml.gz`, `${uid}/${r.row.id}.pdf`]).catch(() => {});
+    else if (r.row.kind === "song" && r.row.deleted) removeFiles(sb, meta, songFiles(uid, r.row.id));
+    else if (r.row.kind === "song") meta.info[r.row.id] = { ...(meta.info[r.row.id] || {}), pdf: !!r.row.data?.pdf };
   };
   // The server answers with the rows it kept: one it didn't was older than the cloud's.
   const sent = async (batch) => {
@@ -452,8 +510,11 @@ async function push(sb, uid, meta, items, changed) {
   for (const r of rows.filter((x) => x.row.kind === "song")) {
     if (!current(uid)) return;
     const error = await sendOne(r);
-    if (error?.hint === "resonate:limit:song") hold(meta, r.row.id, "full");
-    else if (error) console.warn("sync: push", r.key, error);
+    if (error?.hint === "resonate:limit:song") {
+      // No room: the files just uploaded for it go again, and it stays on this device.
+      if (!r.row.deleted) await removeFiles(sb, meta, songFiles(uid, r.row.id));
+      hold(meta, r.row.id, "full");
+    } else if (error) console.warn("sync: push", r.key, error);
   }
   const rest = rows.filter((x) => x.row.kind !== "song" && meta.items[x.key] && !meta.items[x.key].up);
   for (let i = 0; i < rest.length; i += 20) {
@@ -473,7 +534,7 @@ async function push(sb, uid, meta, items, changed) {
     const { data: row, error } = await sb.from("sync_items").select(COLS).eq("kind", kind).eq("id", id).maybeSingle();
     if (error || !row) continue;
     meta.items[key].m = Math.min(meta.items[key].m, Date.parse(row.modified_at) - 1);
-    await take1(sb, row, meta, changed);
+    await take1(sb, row, meta, changed, uid);
   }
   saveMeta(meta);
 }
@@ -519,6 +580,9 @@ async function pass() {
   saveMeta(meta);
   const changed = await pull(sb, meta, uid);
   if (!current(uid)) return { skipped: true };
+  // The songs' database still the one this pass started with, and still there: otherwise what's
+  // read now could look like "everything deleted".
+  if (!(await persistent()) || dbGen() !== gen) return { skipped: true };
   // What the pull changed here (a merged history, a song now in the cloud…) is noted again.
   const local = await localItems(meta);
   noteChanges(meta, local, Date.now());
@@ -552,16 +616,22 @@ export function syncNow() {
 // not confirmed in the cloud, and other changes not yet pushed.
 export async function unsynced() {
   const uid = activeSpace();
-  if (uid === "anon") return { songs: 0, changes: 0 };
+  if (uid === "anon") return { songs: 0, changes: 0, recordings: 0, calibration: false };
   const meta = loadMeta(uid);
   const local = await localItems(meta);
   if (meta.cursor) noteChanges(meta, local, Date.now());
   const inCloud = (id) => { const m = meta.items[`song:${id}`]; return !!m && m.up && !m.del; };
   const songs = (await listSongs()).filter((s) => !inCloud(s.id)).length;
-  const changes = meta.cursor
+  let changes = meta.cursor
     ? Object.entries(meta.items).filter(([key, m]) => !m.up && !key.startsWith("song:")).length
     : [...local.items.keys()].filter((key) => !key.startsWith("song:")).length;
-  return { songs, changes };
+  // A song in the cloud whose original PDF isn't (over the size limit, refused).
+  changes += [...local.pdfs].filter((id) => inCloud(id) && !meta.info[id]?.pdf).length;
+  // What only ever lives on this device: the recordings of the last takes, the mic calibration.
+  const recordings = await countVoices().catch(() => 0);
+  const prof = readJson(L.profiles, null);
+  const calibration = !!(prof?.list?.some?.((p) => p?.vol) || localStorage.getItem("resonate.volCal"));
+  return { songs, changes, recordings, calibration };
 }
 
 // Signing out: no more passes; wait for one under way (it stops at its next step).

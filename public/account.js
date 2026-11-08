@@ -34,6 +34,18 @@ const linkSub = (() => {
 })();
 const foreignLink = !!hash.get("access_token") && !!saved && linkSub !== saved.id;
 if (foreignLink) { history.replaceState(null, "", location.pathname + location.search); linkType = null; }
+// Sign-in tokens are only ever taken from the fragment (auth.js); any in the query string go.
+if (/(^|[?&])(access_token|refresh_token)=/.test(location.search)) history.replaceState(null, "", location.pathname + location.hash);
+
+// Switching whose data the device shows waits for a sync pass under way in any tab (they hold
+// this lock), so none writes into the space that comes next (at most 20 s).
+function withSyncLock(fn) {
+  if (!navigator.locks) return Promise.resolve().then(fn);
+  let signal;
+  try { signal = AbortSignal.timeout(20000); } catch {}
+  return navigator.locks.request("resonate-sync", signal ? { signal } : {}, fn)
+    .catch((err) => (err?.name === "TimeoutError" || err?.name === "AbortError" ? fn() : Promise.reject(err)));
+}
 const linkError = hash.get("error_code") || hash.get("error") || (hash.get("error_description") ? "error" : null);
 if (linkError) history.replaceState(null, "", location.pathname + location.search);
 const LINK_ERRORS = { otp_expired: "That link has expired — ask for a new one." };
@@ -93,8 +105,7 @@ async function settle(s) {
   const uid = s?.user?.id;
   if (!uid) return;
   if (activeSpace() !== uid) {
-    if (activeSpace() === "anon" && adopting(s)) adopt(uid);
-    else await enter(uid);
+    await withSyncLock(() => (activeSpace() === "anon" && adopting(s) ? adopt(uid) : enter(uid)));
   }
   localStorage.removeItem(ADOPT);
   startSync();
@@ -112,6 +123,13 @@ async function startSync() {
 // ended without Sign out (expired, signed out in another tab) puts the account's data away.
 if (!saved && activeSpace() !== "anon") park();
 ensureSpace(saved?.id);
+// Another tab switched the space (signed in or out there): show what's true now.
+let requests = 0;
+window.addEventListener("storage", (e) => {
+  if (e.key !== "resonate.space") return;
+  const reload = () => (requests ? setTimeout(reload, 500) : location.reload());
+  reload();
+});
 session = saved && !recovering ? { user: saved } : null;
 render();
 if (linkError) say(LINK_ERRORS[linkError] || "That link didn't work — try again.", "error");
@@ -123,12 +141,13 @@ const ready = supabase(); // (the buttons work while it loads: each request wait
 async function busy(fn) {
   const buttons = [...document.querySelectorAll("button")];
   buttons.forEach((b) => { b.disabled = true; });
+  requests++;
   try {
     sb = sb || await ready; // (the page shows before the library has loaded)
     return await fn();
   }
   catch (err) { console.error(err); sayError(err); }
-  finally { buttons.forEach((b) => { b.disabled = false; }); }
+  finally { requests--; buttons.forEach((b) => { b.disabled = false; }); }
 }
 const email = () => $("email").value.trim();
 const notConfirmed = (e) => e?.code === "email_not_confirmed" || /not confirmed/i.test(e?.message || "");
@@ -205,31 +224,41 @@ $("change").addEventListener("click", () => { changing = true; say(); render(); 
 $("signout").addEventListener("click", () => busy(async () => {
   // The account's data leaves this device: the last changes go up first, and what can't (songs
   // past the cloud's limit, changes that haven't reached it) is said before it's removed.
-  const mine = activeSpace() === session?.user?.id;
+  const uid = session?.user?.id;
+  const mine = !!uid && activeSpace() === uid;
   const m = mine ? await startSync() : null;
   if (mine) {
     let text = "Changes on this device may not be in the cloud and will be removed from it. Sign out?";
     if (m) {
       if (!m.syncOff()) await m.syncNow();
-      const u = await m.unsynced();
-      const songs = u.songs ? `${u.songs} song${u.songs > 1 ? "s" : ""}` : "";
-      text = songs && u.changes ? `${songs} and some changes aren't in the cloud and will be removed from this device. Sign out?`
-        : songs ? `${songs} on this device ${u.songs > 1 ? "aren't" : "isn't"} in the cloud and will be removed from it. Sign out?`
-        : u.changes ? "Some changes haven't reached the cloud and will be lost. Sign out?" : null;
+      text = signOutWarning(await m.unsynced());
     }
     if (text && !confirm(text)) return;
   }
   // No sync from here on (a pass under way could otherwise write into the data coming back).
   if (m || window.resonateSync) { try { await (m || await import("./sync.js?v=71")).stop(); } catch {} }
   // The account's data goes before the session does: other tabs, told of the sign-out, then
-  // find nothing to put away (space.js park).
-  await leave();
+  // find nothing to put away (space.js park). (Another account found active is parked.)
+  await withSyncLock(() => leave(uid));
   // This device only — other devices stay signed in. (Offline, or when the server fails, the
   // library keeps the session; signing out here only ever concerns this device.)
   const { error } = await sb.auth.signOut({ scope: "local" });
   if (error) localStorage.removeItem(STORAGE_KEY);
   session = null; say(); render();
 }));
+
+// What Sign out would remove that isn't in the cloud — null: nothing.
+function signOutWarning(u) {
+  const parts = [];
+  if (u.songs) parts.push([`${u.songs} song${u.songs > 1 ? "s" : ""}`, u.songs > 1]);
+  if (u.changes) parts.push(["some changes", true]);
+  if (u.recordings) parts.push([`the recording${u.recordings > 1 ? "s" : ""} of your last take${u.recordings > 1 ? "s" : ""}`, u.recordings > 1]);
+  if (u.calibration) parts.push(["your mic calibration", false]);
+  if (!parts.length) return null;
+  const list = parts.length === 1 ? parts[0][0] : `${parts.slice(0, -1).map((p) => p[0]).join(", ")} and ${parts[parts.length - 1][0]}`;
+  const plural = parts.length > 1 || parts[0][1];
+  return `${list[0].toUpperCase()}${list.slice(1)} ${plural ? "aren't" : "isn't"} in the cloud and will be removed from this device. Sign out?`;
+}
 
 $("sync-on").addEventListener("change", () => {
   if ($("sync-on").checked) { localStorage.removeItem(SYNC_OFF); startSync().then((m) => m?.syncNow()); }
@@ -257,7 +286,7 @@ sb.auth.onAuthStateChange((event, s) => {
   if (event === "USER_UPDATED") recovering = false;
   if (event === "SIGNED_OUT") {
     recovering = changing = false;
-    park(); // (signed out in another tab, or the session ended: the account's data is put away)
+    withSyncLock(() => park()); // (signed out in another tab, or the session ended: the account's data is put away)
   }
   setTimeout(async () => {
     if (event === "SIGNED_IN" && s) await settle(s);
@@ -268,7 +297,7 @@ sb.auth.onAuthStateChange((event, s) => {
 const { data, error: initError } = await sb.auth.getSession();
 if (data.session || !(initError && offline(initError) && saved)) {
   if (data.session) await settle(data.session);
-  else park(); // (the saved session couldn't be refreshed: it has ended)
+  else await withSyncLock(() => park()); // (the saved session couldn't be refreshed: it has ended)
   session = data.session;
   render();
 } else say("No connection.", "error"); // (keeps the saved account shown; the library retries)

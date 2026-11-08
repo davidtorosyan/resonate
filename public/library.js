@@ -28,6 +28,12 @@ const INDEX_KEY = "resonate.songs.index"; // [{ id, title, added }]
 const FILES = ["takes", "voices", "pdfs"];
 const memory = { songs: new Map(), takes: new Map(), voices: new Map(), pdfs: new Map() };
 const conns = new Map(); // database name → Promise<IDBDatabase | null>
+// Whether this page keeps songs in IndexedDB ("idb") or only in memory ("memory": IndexedDB
+// never worked here — some private modes). Decided once: after a database has opened, a lost
+// connection (iOS: "Connection to Indexed Database server lost" after the app was in the
+// background) is an error, never an empty in-memory library — the sync would take that for
+// "every song deleted".
+let mode = null;
 
 const GEN = (name) => `resonate.dbgen.${name}`;
 function newGen(name) {
@@ -43,9 +49,14 @@ export function dbGen() {
 }
 
 function openDb(name, gen, upgrade) {
+  if (mode === "memory") return Promise.resolve(null);
   if (!conns.has(name)) {
-    const p = new Promise((resolve) => {
-      const fail = () => { if (conns.get(name) === p) conns.delete(name); resolve(null); }; // (not kept: tried again next time)
+    const p = new Promise((resolve, reject) => {
+      const fail = () => { // (not kept: tried again next time)
+        if (conns.get(name) === p) conns.delete(name);
+        if (mode === "idb") reject(new Error("storage unavailable — reload the page"));
+        else { mode = "memory"; resolve(null); }
+      };
       try {
         const req = indexedDB.open(name, 1);
         let created = false;
@@ -56,6 +67,7 @@ function openDb(name, gen, upgrade) {
           db.onversionchange = () => { db.close(); forget(); }; // (a space being deleted)
           db.onclose = forget;
           if (created) newGen(gen);
+          mode = "idb";
           resolve(db);
         };
         req.onerror = fail;
@@ -224,7 +236,16 @@ export async function listTakes() {
   });
 }
 
+// Which songs have their original PDF here (the keys only: no PDF is read).
+export async function listPdfIds() {
+  return (await run("readonly", (s, mem) => (s ? s.getAllKeys() : { result: [...mem.keys()] }), "pdfs")) || [];
+}
+// How many take recordings are kept here (they never leave this device).
+export async function countVoices() {
+  return (await run("readonly", (s, mem) => (s ? s.count() : { result: mem.size }), "voices")) || 0;
+}
+
 // Songs (and their files) are really kept — not just in memory.
 export async function persistent() {
-  return !!(await openSongs()) && !!(await openFiles());
+  try { return !!(await openSongs()) && !!(await openFiles()); } catch { return false; }
 }

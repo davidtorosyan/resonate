@@ -22,8 +22,13 @@ export async function supabase() {
         // Email links (confirm, reset password) land on the account page with the session in
         // the URL fragment. Implicit flow, not PKCE: a link opened in another browser than the
         // one that asked (Mail → Safari, while the Home Screen app has its own storage) still
-        // works — PKCE would need the code verifier from the asking browser.
-        detectSessionInUrl: true,
+        // works — PKCE would need the code verifier from the asking browser. Only ever on the
+        // account page and only from the fragment (which account.js checks first: a link for
+        // another account than the one signed in is refused) — never from a query string, and
+        // never on the other pages, where this client is the sync's.
+        detectSessionInUrl: (url) => /account\.html$/.test(url.pathname)
+          && /(^|&)access_token=/.test(url.hash.slice(1))
+          && !/(^|&)(access_token|refresh_token)=/.test(url.search.slice(1)),
         flowType: "implicit",
       },
     });
