@@ -17,7 +17,7 @@
 // ac.currentTime moves once per render wake-up, so its steps (in frames) show how the output
 // pulls audio — the speaker's are small and even; bursts or uneven steps are what WebKit turns
 // into holes. "speed" is the audio clock against the wall clock (1.00 = right).
-import { loadPiano, holdPiano } from "./piano.js?v=69";
+import { loadPiano, holdPiano } from "./piano.js?v=70";
 
 const NOTE = 57; // A3
 const SECS = 4;

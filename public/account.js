@@ -1,7 +1,7 @@
 // Account page: sign in / create an account with email + password, reset a forgotten
 // password, change it, sign out. Email links (confirm the address, reset the password) come
 // back here with the session in the URL fragment; supabase-js reads it (auth.js).
-import { supabase, accountUrl, savedUser, STORAGE_KEY } from "./auth.js?v=69";
+import { supabase, accountUrl, savedUser, STORAGE_KEY } from "./auth.js?v=70";
 
 const $ = (id) => document.getElementById(id);
 const msg = $("msg");
@@ -27,6 +27,7 @@ const offline = (e) => !!e && (e.status === 0 || e.name === "AuthRetryableFetchE
 const sayError = (e) => say(offline(e) ? "No connection." : e?.message || "Something went wrong — try again.", "error");
 
 let session = null;
+let sb = null;       // the client, once the library has loaded
 let recovering = linkType === "recovery"; // a reset link: set a new password before anything else
 let changing = false;                     // "Change password" while signed in
 function render() {
@@ -37,9 +38,23 @@ function render() {
   } else if (session) {
     show("in");
     $("who").textContent = session.user?.email || "";
+    showCloud();
   } else if (view !== "sent") {
     show("out");
   }
+}
+
+// Invite-only: an account's cloud features stay off until the owner approves it (public.accounts,
+// supabase/migrations). Shown under the email; nothing when it can't be read (offline).
+async function showCloud() {
+  const el = $("cloud"), id = session?.user?.id;
+  if (!id || !sb) return;
+  const { data, error } = await sb.from("accounts").select("approved").maybeSingle();
+  if (session?.user?.id !== id) return;
+  el.hidden = !!error || !data;
+  if (el.hidden) return;
+  el.dataset.on = String(data.approved);
+  el.textContent = data.approved ? "Cloud: on" : "Cloud: waiting for approval";
 }
 
 // Shown at once from the saved session (a page left for a while first refreshes its token,
@@ -50,7 +65,6 @@ render();
 if (linkError) say(LINK_ERRORS[linkError] || "That link didn't work — try again.", "error");
 
 const ready = supabase(); // (the buttons work while it loads: each request waits for it)
-let sb = null;
 
 // Each request disables the buttons until it answers.
 async function busy(fn) {
@@ -86,7 +100,7 @@ $("signup").addEventListener("click", () => {
   busy(async () => {
     say();
     const { data, error } = await sb.auth.signUp({ email: email(), password: $("password").value, options: { emailRedirectTo: accountUrl() } });
-    if (error) return sayError(error);
+    if (error) return error.code === "user_already_exists" ? say("That email has an account — sign in.", "error") : sayError(error);
     if (data.session) return; // no confirmation needed: signed in
     // An address that already has an account comes back with no identities (and no email is sent).
     if (data.user && data.user.identities?.length === 0) return say("That email has an account — sign in.", "error");
@@ -135,7 +149,7 @@ $("signout").addEventListener("click", () => busy(async () => {
   session = null; say(); render();
 }));
 
-window.resonateDebug = () => ({ view, email: session?.user?.email || null, recovering, changing, ready: !!sb });
+window.resonateDebug = () => ({ view, email: session?.user?.email || null, recovering, changing, ready: !!sb, cloud: $("cloud").hidden ? null : $("cloud").textContent });
 
 // Then the library: it reads an email link's fragment, refreshes a saved session, and tells
 // every tab about changes.

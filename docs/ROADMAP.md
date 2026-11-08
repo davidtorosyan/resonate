@@ -105,7 +105,7 @@ is off there".
 
 ## 7. Accounts / auth
 
-**Started 2026-11-08 (v68):** Supabase project `resonate` (Jimbo84 org, Free) and **email + password** sign-in (the owner's choice over email codes for now) on `account.html`; details in CLAUDE.md "Account". Email codes, Google/GitHub and Delete account can follow.
+**Started 2026-11-08 (v68):** Supabase project `resonate` (Jimbo84 org, Free) and **email + password** sign-in (the owner's choice over email codes for now) on `account.html`; details in CLAUDE.md "Account". Email codes, Google/GitHub and Delete account can follow. **Invite-only (v70):** no email confirmation; every account gets a `public.accounts` row with `approved = false`, and cloud tables will require `public.is_approved()` in their RLS — the owner approves accounts in the Table Editor. Later: a notification to the owner on a new sign-up, and an approval screen in the app for the owner.
 
 OAuth, offloaded as much as possible (Supabase or an equivalent provider), as hands-off as
 possible. Needed for sync and for the MCP server, whose agents act on the user's own data.

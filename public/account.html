@@ -34,6 +34,8 @@
       button:disabled { opacity: 0.5; }
       .link { border: 0; padding: 0; font-weight: 400; font-size: 0.85rem; color: rgba(255,255,255,0.65); text-decoration: underline; align-self: flex-start; }
       #who { font-size: 1rem; overflow-wrap: anywhere; }
+      #cloud { font-size: 0.85rem; opacity: 0.7; margin-top: -0.35rem; }
+      #cloud[data-on="true"] { color: #8ee6a8; opacity: 1; }
       #msg { min-height: 1.3em; font-size: 0.88rem; text-align: center; }
       #msg[data-kind="error"] { color: #ffb38a; }
       #msg[data-kind="ok"] { color: #8ee6a8; }
@@ -47,7 +49,7 @@
         <a class="nav-link" href="./">Tuner</a>
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
-      <span id="version" class="mono">v69</span>
+      <span id="version" class="mono">v70</span>
     </header>
     <main>
       <form id="v-out" class="card" hidden>
@@ -80,6 +82,7 @@
 
       <section id="v-in" class="card" hidden>
         <div id="who" class="mono"></div>
+        <div id="cloud" hidden></div>
         <div class="row">
           <button id="change" type="button">Change password</button>
           <button id="signout" type="button">Sign out</button>
@@ -89,6 +92,6 @@
       <div id="msg" role="status"></div>
       <p class="hint">Optional — everything works signed out.</p>
     </main>
-    <script type="module" src="account.js?v=69"></script>
+    <script type="module" src="account.js?v=70"></script>
   </body>
 </html>
