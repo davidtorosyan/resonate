@@ -2,19 +2,19 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=64";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=64";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=64";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=64";
-import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=64";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=64";
-import { startCapture, playVoice } from "./capture.js?v=64";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=64";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=64";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=64";
-import { fixOmrScore } from "./omr/fixscore.js?v=64";
-import { activeProfile } from "./profiles.js?v=64";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=64";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=65";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=65";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=65";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=65";
+import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=65";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=65";
+import { startCapture, playVoice } from "./capture.js?v=65";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=65";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=65";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=65";
+import { fixOmrScore } from "./omr/fixscore.js?v=65";
+import { activeProfile } from "./profiles.js?v=65";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=65";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -669,6 +669,7 @@ async function beginSing(part) {
   playGen++;
   take = null;
   showMsg("");
+  updateButtons(); // (the old take's Play bar goes: a Play tapped while the mic opens would run under the take)
   singBtn.disabled = listenBtn.disabled = true;
   statusEl.textContent = "requesting mic…";
   let mic;
@@ -701,6 +702,7 @@ async function beginSing(part) {
     return;
   }
 
+  if (session) stopSession(); // anything that started while the mic opened (its sounds would play on)
   const nodes = [];
   const startQ = part ? part.fromQ : score.measures[entryIdx] ?? 0;
   const lastQ = part ? notes[part.range[1] - 1].q + notes[part.range[1] - 1].dq : score.length;

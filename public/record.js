@@ -2,10 +2,10 @@
 // notes you sang, and play it back (your voice and/or the notes on piano).
 // Song-based scoring lives on the Sing page (sing.js).
 
-import { noteName as nameOf, BLACK, median, centsLabel } from "./music.js?v=64";
-import { openMic, ANALYSIS_LAG } from "./pitch.js?v=64";
-import { startCapture, playVoice } from "./capture.js?v=64";
-import { loadPiano, pianoReady, playPiano, scheduleAhead, keepAlive } from "./piano.js?v=64";
+import { noteName as nameOf, BLACK, median, centsLabel } from "./music.js?v=65";
+import { openMic, ANALYSIS_LAG } from "./pitch.js?v=65";
+import { startCapture, playVoice } from "./capture.js?v=65";
+import { loadPiano, pianoReady, playPiano, scheduleAhead, keepAlive } from "./piano.js?v=65";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("roll");
