@@ -123,6 +123,15 @@ account (phone ↔ computer), for people who won't sign up but want their phone 
   on what else is going on), and you load songs, upload things, etc. from there. No reason
   for multiple pages.
 
+## 10. Sound over CarPlay / Bluetooth (open, 2026-11-08)
+
+Web Audio crackles and drops out over CarPlay — even one held key — while the phone's speaker and other apps are fine. WebKit's iOS Web Audio output has no lookahead (each IO callback's frames are rendered after it asks; a burst or a bigger slice than the last is zero-filled), forces a 128-frame IO buffer while any AudioContext exists, ignores `latencyHint`, and shares one output path between all contexts of a rate (details in CLAUDE.md, Sing → "Over CarPlay"). Scheduling ahead (v64) and replacing the context (v66, reverted) didn't help.
+
+- **Now:** Tools → Audio test, run in the car: which of seven ways crackle, with the output's IO pattern. Copy results back.
+- **If the `<audio>` file is clean (expected):** a playback path without Web Audio for high-latency routes (detected by output latency / the test, or a setting): Listen / Play / line playback rendered with OfflineAudioContext (in chunks, notes added with `suspend()`), WAV → `<audio>`, every AudioContext closed meanwhile; the lane follows `audio.currentTime`; seeking = `currentTime`. Keys: a pre-rendered held note per pitch, paused on release (iOS ignores `volume`, so no fade — bake a short release in, or accept the cut). Costs: start latency (~0.1–0.3 s), no live mixing.
+- **If the streamed `<audio>` (test 6) is clean too:** keep Web Audio and route it through a `MediaStreamAudioDestinationNode` into one `<audio>` element on such routes — keys stay instant.
+- **Takes over CarPlay:** play-and-record moves CarPlay to its 24 kHz hands-free route; a take there is a phone-call-quality path by design. Headphones / the phone itself remain the recommendation.
+
 ## Plan for 4–8 (research, 2026-11-07)
 
 This is the plan for items 4–8, researched on 2026-11-07. Several of the pieces below are in beta and change quickly. Anything marked *(unverified)* needs re-checking before you build on it.

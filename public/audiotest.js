@@ -1,10 +1,23 @@
-// Audio test (Tools): the same held piano note played six ways, to find which way crackles on a
-// given output (CarPlay: even one held key on the Sing page dropped out every few seconds,
-// while the phone speaker was fine). Each row reports what the device said: the context's
-// sample rate, its output/base latency, the audio session, and — from a tiny AudioWorklet —
-// how the output pulls audio: frames per wake-up (≈ the real IO buffer; WebKit asks for 128),
-// the longest pause between wake-ups, and how far the audio clock wandered from the wall clock.
-import { loadPiano, holdPiano } from "./piano.js?v=66";
+// Audio test (Tools): the same held piano note played seven ways, to find which way crackles
+// on a given output (CarPlay: even one held key on the Sing page dropped out every few
+// seconds, while the phone's speaker was fine). Each row reports what the device said.
+//
+// What's known (WebKit source, Nov 2026): Web Audio's output on iOS renders each IO callback's
+// frames only after the callback asked for them, with no lookahead; when callbacks come in
+// bursts or uneven sizes the shortfall is filled with zeros (a hard cut, every time). Every
+// context of one sample rate and channel count shares one output path, and WebKit forces a
+// 128-frame IO buffer while any context exists. An <audio> element goes through AVFoundation's
+// deep buffers instead. So the tests compare: Web Audio made before / after "playback", at
+// 44.1 / 48 kHz (a rate no other context uses gets its own path), a plain oscillator, Web Audio
+// streamed into an <audio> element, and a pre-rendered WAV in an <audio> element with no
+// AudioContext open at all.
+//
+// The probe reads the audio clock from the page (no AudioWorklet: a worklet makes WebKit's
+// shared render thread wait on a slower thread every callback — itself a cause of crackles):
+// ac.currentTime moves once per render wake-up, so its steps (in frames) show how the output
+// pulls audio — the speaker's are small and even; bursts or uneven steps are what WebKit turns
+// into holes. "speed" is the audio clock against the wall clock (1.00 = right).
+import { loadPiano, holdPiano } from "./piano.js?v=67";
 
 const NOTE = 57; // A3
 const SECS = 4;
@@ -18,87 +31,74 @@ const sessionType = () => navigator.audioSession?.type ?? "–";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ms = (s) => (typeof s === "number" && isFinite(s) ? `${Math.round(s * 1000)} ms` : "–");
 
-// Close what the last test left (a test's context is closed by the next one).
-function release() {
-  if (ctx && ctx.state !== "closed") ctx.close().catch(() => {});
+// Everything a test opened is closed — and the close awaited — before the next one starts, so
+// each test gets its own output path (contexts alive together share one).
+async function closeAll() {
+  if (media) { media.pause(); media.srcObject = null; media.removeAttribute("src"); media = null; }
+  const ac = ctx;
   ctx = null;
-  if (media) { media.pause(); media = null; }
+  if (ac && ac.state !== "closed") { try { await ac.close(); } catch {} }
 }
-// Create and start a context — synchronously, inside the tap, so iOS lets it start.
+// Create and start a context. (Called right in the tap: iOS lets audio start only there.)
 function newCtx(opts) {
-  release();
   const ac = new (window.AudioContext || window.webkitAudioContext)(opts);
   ctx = ac;
   ac.resume().catch(() => {});
   return ac;
 }
-async function running_(ac) {
+async function started(ac) {
   for (let i = 0; i < 30 && ac.state !== "running"; i++) await sleep(50);
-  return ac.state === "running";
+  if (ac.state !== "running") throw new Error("didn't start");
 }
 
-const PROBE = `class Probe extends AudioWorkletProcessor {
-  constructor() {
-    super(); this.n = 0; this.last = 0; this.cur = 0; this.bursts = []; this.gaps = [];
-    this.dmin = Infinity; this.dmax = -Infinity;
-    this.port.onmessage = () => this.port.postMessage({ bursts: this.bursts, gaps: this.gaps, jitter: this.dmax - this.dmin });
-  }
-  process() {
-    const t = Date.now();
-    if (++this.n === 200) { this.t0 = t; this.f0 = currentFrame; }
-    if (this.n > 200) {
-      if (t - this.last >= 2) { if (this.cur) this.bursts.push(this.cur); this.gaps.push(t - this.last); this.cur = 0; }
-      const d = (t - this.t0) / 1000 - (currentFrame - this.f0) / sampleRate;
-      if (d < this.dmin) this.dmin = d; if (d > this.dmax) this.dmax = d;
-    }
-    this.cur += 128; this.last = t;
-    return true;
-  }
-}
-registerProcessor("probe", Probe);`;
-const probeUrl = URL.createObjectURL(new Blob([PROBE], { type: "text/javascript" }));
-const mods = new WeakSet();
-async function probe(ac) {
-  try {
-    if (!mods.has(ac)) { await ac.audioWorklet.addModule(probeUrl); mods.add(ac); }
-    const node = new AudioWorkletNode(ac, "probe", { numberOfOutputs: 1, outputChannelCount: [1] });
-    node.connect(ac.destination);
-    return async () => {
-      const r = await new Promise((res) => { node.port.onmessage = (e) => res(e.data); node.port.postMessage(0); setTimeout(() => res(null), 1000); });
-      node.disconnect();
-      if (!r || !r.bursts.length) return {};
-      const sorted = (a) => [...a].sort((x, y) => x - y);
-      const b = sorted(r.bursts), g = sorted(r.gaps);
-      return { wake: b[b.length >> 1], wakeMax: b[b.length - 1], gap: g[g.length >> 1], gapMax: g[g.length - 1], jitter: r.jitter };
-    };
-  } catch (err) { console.warn("probe", err); return async () => ({}); }
+// The audio clock's steps while the note plays.
+function clockProbe(ac) {
+  const steps = [];
+  let last = ac.currentTime;
+  const c0 = ac.currentTime, w0 = performance.now();
+  const t = setInterval(() => {
+    const c = ac.currentTime;
+    if (c !== last) { steps.push(Math.round((c - last) * ac.sampleRate)); last = c; }
+  }, 1);
+  return () => {
+    clearInterval(t);
+    const speed = (ac.currentTime - c0) / ((performance.now() - w0) / 1000);
+    const s = steps.slice(10);
+    if (!s.length) return { speed };
+    const sorted = [...s].sort((a, b) => a - b);
+    const med = sorted[sorted.length >> 1];
+    return { step: med, stepMax: sorted[sorted.length - 1], uneven: s.filter((x) => Math.abs(x - med) > 128).length / s.length, speed };
+  };
 }
 
 // One held piano note (and its steady tone underneath) — what a held chip plays on the Sing page.
-async function playNote(ac) {
+async function heldNote(ac) {
   const piano = await loadPiano(ac);
-  const done = await probe(ac);
+  const done = clockProbe(ac);
   const when = ac.currentTime + 0.1;
   holdPiano(ac, piano, when, NOTE, 1.4).release(when + SECS);
   await sleep((SECS + 0.9) * 1000);
   return done();
 }
-async function playTone(ac) {
-  const done = await probe(ac);
-  const o = ac.createOscillator(), g = ac.createGain();
-  o.frequency.value = 220;
-  const t = ac.currentTime + 0.1;
-  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.3, t + 0.05);
-  g.gain.setValueAtTime(0.3, t + SECS); g.gain.linearRampToValueAtTime(0, t + SECS + 0.05);
-  o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + SECS + 0.1);
-  await sleep((SECS + 0.6) * 1000);
-  return done();
+// The same piano sample into any node (for the stream test).
+function pianoInto(ac, piano, out, when) {
+  let key = piano.keys[0];
+  for (const k of piano.keys) if (Math.abs(k - NOTE) < Math.abs(key - NOTE)) key = k;
+  const src = ac.createBufferSource();
+  src.buffer = piano.buffers.get(key);
+  src.playbackRate.value = 2 ** ((NOTE - key) / 12);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(1.4, when); g.gain.setTargetAtTime(0, when + SECS, 0.12);
+  const o = ac.createOscillator(), og = ac.createGain();
+  o.frequency.value = 440 * 2 ** ((NOTE - 69) / 12); o.type = "sawtooth";
+  og.gain.setValueAtTime(0, when); og.gain.setTargetAtTime(0.05, when + 0.15, 0.3); og.gain.setTargetAtTime(0, when + SECS, 0.12);
+  src.connect(g); g.connect(out); o.connect(og); og.connect(out);
+  src.start(when, 0.012); src.stop(when + SECS + 1); o.start(when); o.stop(when + SECS + 1);
 }
-function facts(ac) {
-  return { rate: ac.sampleRate, out: ac.outputLatency, base: ac.baseLatency };
-}
+const facts = (ac) => ({ rate: ac.sampleRate, out: ac.outputLatency, base: ac.baseLatency });
 
-// The note rendered ahead of time as a WAV, for the media-element test (no Web Audio).
+// The note rendered ahead of time as a WAV, for the no-Web-Audio test (rendered offline, then
+// that context is gone: an OfflineAudioContext has no output).
 let wavUrl = null;
 (async () => {
   try {
@@ -118,52 +118,81 @@ function wav(x, sr) {
   for (let i = 0; i < x.length; i++) out.setInt16(44 + i * 2, Math.max(-1, Math.min(1, x[i])) * 32767, true);
   return new Blob([out], { type: "audio/wav" });
 }
+const within = (p, ms, what) => Promise.race([p, sleep(ms).then(() => { throw new Error(what); })]);
+function mediaStalls(a) {
+  const n = { stalls: 0 };
+  for (const ev of ["waiting", "stalled"]) a.addEventListener(ev, () => n.stalls++);
+  return n;
+}
 
 const TESTS = [
   { name: "As Sing does", how: "context made before “playback”", run: async () => {
     setSession("auto");
     const ac = newCtx();
-    if (!(await running_(ac))) throw new Error("didn't start");
+    await started(ac);
     await sleep(400);
     setSession("playback");
     await sleep(300);
-    return { ...facts(ac), ...(await playNote(ac)) };
+    return { ...facts(ac), ...(await heldNote(ac)) };
   } },
   { name: "Fresh", how: "context made after “playback”", run: async () => {
     setSession("playback");
     const ac = newCtx();
-    if (!(await running_(ac))) throw new Error("didn't start");
-    return { ...facts(ac), ...(await playNote(ac)) };
-  } },
-  { name: "Fresh · 48 kHz", how: "", run: async () => {
-    setSession("playback");
-    const ac = newCtx({ sampleRate: 48000 });
-    if (!(await running_(ac))) throw new Error("didn't start");
-    return { ...facts(ac), ...(await playNote(ac)) };
+    await started(ac);
+    return { ...facts(ac), ...(await heldNote(ac)) };
   } },
   { name: "Fresh · 44.1 kHz", how: "", run: async () => {
     setSession("playback");
     const ac = newCtx({ sampleRate: 44100 });
-    if (!(await running_(ac))) throw new Error("didn't start");
-    return { ...facts(ac), ...(await playNote(ac)) };
+    await started(ac);
+    return { ...facts(ac), ...(await heldNote(ac)) };
   } },
-  { name: "Plain tone", how: "no piano, fresh context", run: async () => {
+  { name: "Fresh · 48 kHz", how: "", run: async () => {
+    setSession("playback");
+    const ac = newCtx({ sampleRate: 48000 });
+    await started(ac);
+    return { ...facts(ac), ...(await heldNote(ac)) };
+  } },
+  { name: "Plain tone", how: "no piano", run: async () => {
     setSession("playback");
     const ac = newCtx();
-    if (!(await running_(ac))) throw new Error("didn't start");
-    return { ...facts(ac), ...(await playTone(ac)) };
+    await started(ac);
+    const done = clockProbe(ac);
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = 220;
+    const t = ac.currentTime + 0.1;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.3, t + 0.05);
+    g.gain.setValueAtTime(0.3, t + SECS); g.gain.linearRampToValueAtTime(0, t + SECS + 0.05);
+    o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + SECS + 0.1);
+    await sleep((SECS + 0.6) * 1000);
+    return { ...facts(ac), ...done() };
   } },
-  { name: "Audio file", how: "no Web Audio", run: async () => {
-    release();
+  { name: "Web Audio → audio element", how: "streamed", run: async () => {
+    setSession("playback");
+    const ac = newCtx();
+    const dest = ac.createMediaStreamDestination();
+    const a = new Audio();
+    media = a;
+    a.srcObject = dest.stream;
+    const n = mediaStalls(a);
+    const playing = a.play();
+    await started(ac);
+    await within(playing, 3000, "the audio element didn't start");
+    const piano = await loadPiano(ac);
+    const done = clockProbe(ac);
+    pianoInto(ac, piano, dest, ac.currentTime + 0.15);
+    await sleep((SECS + 1) * 1000);
+    return { ...facts(ac), ...done(), ...n };
+  } },
+  { name: "Audio file", how: "no Web Audio open", run: async () => {
     if (!wavUrl) throw new Error("not ready yet — tap again");
     setSession("playback");
     const a = new Audio(wavUrl);
     media = a;
-    let stalls = 0;
-    for (const ev of ["waiting", "stalled"]) a.addEventListener(ev, () => stalls++);
-    await a.play();
+    const n = mediaStalls(a);
+    await within(a.play(), 3000, "the audio element didn't start");
     await sleep((SECS + 1.2) * 1000);
-    return { stalls };
+    return { ...n };
   } },
 ];
 
@@ -173,9 +202,9 @@ function line(r) {
   if (r.rate) p.push(`${r.rate} Hz`);
   if (r.out !== undefined) p.push(`out ${ms(r.out)}`);
   if (r.base !== undefined) p.push(`base ${ms(r.base)}`);
-  if (r.wake) p.push(`wake ${r.wake}${r.wakeMax > r.wake ? `–${r.wakeMax}` : ""} fr`);
-  if (r.gapMax) p.push(`gap ${r.gap}–${r.gapMax} ms`);
-  if (typeof r.jitter === "number" && isFinite(r.jitter)) p.push(`drift ${ms(r.jitter)}`);
+  if (r.step) p.push(`steps ${r.step}${r.stepMax > r.step ? `–${r.stepMax}` : ""} fr`);
+  if (typeof r.uneven === "number") p.push(`${Math.round(r.uneven * 100)}% uneven`);
+  if (typeof r.speed === "number" && isFinite(r.speed)) p.push(`speed ${r.speed.toFixed(2)}`);
   if (r.stalls !== undefined) p.push(`stalls ${r.stalls}`);
   p.push(r.session);
   return p.join(" · ");
@@ -196,6 +225,7 @@ TESTS.forEach((t, i) => {
     let r;
     try { r = await t.run(); } catch (err) { r = { error: err.message || String(err) }; }
     r.session = sessionType();
+    await closeAll();
     results[i + 1] = { test: t.name, ...r };
     out.textContent = line(r);
     row.dataset.state = "";
@@ -212,5 +242,5 @@ $("copy").addEventListener("click", async () => {
   catch { window.prompt("Copy:", text); }
 });
 
-window.addEventListener("pagehide", () => { release(); setSession("auto"); });
+window.addEventListener("pagehide", () => { closeAll(); setSession("auto"); });
 window.resonateDebug = () => ({ results, running });
