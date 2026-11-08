@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f0f1e" />
+    <title>Resonate · Account</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; -webkit-tap-highlight-color: transparent; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: radial-gradient(ellipse at top, #1a1a3e, #0f0f1e 70%) fixed;
+        color: #e8e8f0;
+        padding-top: env(safe-area-inset-top);
+      }
+      .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace; }
+      header { padding: 0.9rem 1.25rem 0.5rem; display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; }
+      .header-left { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+      h1 { font-size: 1.25rem; margin: 0 0.25rem 0 0; font-weight: 600; letter-spacing: 0.02em; opacity: 0.95; }
+      .nav-link { font-size: 0.8rem; color: rgba(255,255,255,0.6); text-decoration: none; padding: 0.2rem 0.6rem; border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; }
+      #version { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; color: #a64fff; opacity: 0.9; }
+      main { max-width: 420px; margin: 0 auto; padding: 0.75rem 1rem calc(2rem + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 0.9rem; }
+      .card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 1rem; padding: 1.1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+      .card[hidden] { display: none; }
+      h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+      label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.8rem; opacity: 0.85; }
+      input { font: inherit; font-size: 1rem; color: #fff; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.18); border-radius: 0.6rem; padding: 0.65rem 0.75rem; }
+      input:focus { outline: none; border-color: #a64fff; }
+      .row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+      button { font: inherit; font-size: 0.95rem; font-weight: 600; border-radius: 0.7rem; padding: 0.65rem 1rem; border: 1px solid rgba(255,255,255,0.22); background: none; color: #e8e8f0; cursor: pointer; }
+      button.primary { background: #a64fff; border-color: #a64fff; color: #fff; }
+      button:disabled { opacity: 0.5; }
+      .link { border: 0; padding: 0; font-weight: 400; font-size: 0.85rem; color: rgba(255,255,255,0.65); text-decoration: underline; align-self: flex-start; }
+      #who { font-size: 1rem; overflow-wrap: anywhere; }
+      #msg { min-height: 1.3em; font-size: 0.88rem; text-align: center; }
+      #msg[data-kind="error"] { color: #ffb38a; }
+      #msg[data-kind="ok"] { color: #8ee6a8; }
+      .hint { margin: 0; font-size: 0.8rem; opacity: 0.55; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="header-left">
+        <h1>Account</h1>
+        <a class="nav-link" href="./">Tuner</a>
+        <a class="nav-link" href="tools.html">Tools</a>
+      </div>
+      <span id="version" class="mono">v68</span>
+    </header>
+    <main>
+      <form id="v-out" class="card" hidden>
+        <label>Email <input id="email" type="email" autocomplete="username" inputmode="email" required /></label>
+        <label>Password <input id="password" type="password" autocomplete="current-password" required /></label>
+        <div class="row">
+          <button id="signin" class="primary" type="submit">Sign in</button>
+          <button id="signup" type="button">Create account</button>
+        </div>
+        <button id="forgot" class="link" type="button">Forgot password?</button>
+      </form>
+
+      <section id="v-sent" class="card" hidden>
+        <h2>Check your email</h2>
+        <div><span id="sent-to" class="mono"></span> — open the link, then sign in here.</div>
+        <div class="row">
+          <button id="resend" type="button">Send again</button>
+          <button id="back" type="button">Back</button>
+        </div>
+      </section>
+
+      <form id="v-newpw" class="card" hidden>
+        <h2>New password</h2>
+        <label>Password <input id="newpw" type="password" autocomplete="new-password" minlength="8" required /></label>
+        <div class="row">
+          <button class="primary" type="submit">Save</button>
+          <button id="newpw-cancel" type="button">Cancel</button>
+        </div>
+      </form>
+
+      <section id="v-in" class="card" hidden>
+        <div id="who" class="mono"></div>
+        <div class="row">
+          <button id="change" type="button">Change password</button>
+          <button id="signout" type="button">Sign out</button>
+        </div>
+      </section>
+
+      <div id="msg" role="status"></div>
+      <p class="hint">Optional — everything works signed out.</p>
+    </main>
+    <script type="module" src="account.js?v=68"></script>
+  </body>
+</html>
