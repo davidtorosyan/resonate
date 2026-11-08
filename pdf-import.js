@@ -2,9 +2,10 @@
 // resulting MusicXML to My songs. No settings: pages without staves are skipped
 // automatically, English OCR for lyrics, the title is taken from the score.
 
-import { readScoreFile, parseMusicXml } from "./musicxml.js?v=70";
-import { addSong } from "./library.js?v=70";
-import { fixOmrScore, joinMovements } from "./omr/fixscore.js?v=70";
+import { readScoreFile, parseMusicXml } from "./musicxml.js?v=71";
+import { addSong } from "./library.js?v=71";
+import { fixOmrScore, joinMovements } from "./omr/fixscore.js?v=71";
+import { spaceChanged } from "./nav.js?v=71";
 
 const $ = (id) => document.getElementById(id);
 const chooseBtn = $("choose");
@@ -12,6 +13,8 @@ const fileInput = $("file");
 
 let wakeLock = null;
 let running = false;
+let unsaved = false; // a finished conversion not saved (another tab signed in or out meanwhile)
+window.resonateBusy = () => running || unsaved; // (nav.js: a reload for another tab's sign-in/out waits for it)
 let t0 = 0;
 let timer = null;
 let lastFraction = 0;
@@ -198,7 +201,7 @@ async function run(file) {
   appendLog(logHead.trimEnd());
 
   try {
-    const omr = await import("./omr/omr.js?v=70");
+    const omr = await import("./omr/omr.js?v=71");
     const res = await omr.convertPdf(file, { onProgress, onLog: appendLog });
 
     setStep("save");
@@ -220,8 +223,16 @@ async function run(file) {
       appendLog(`[fix] key mode from the file name: ${mode}`);
     }
     const score = parseMusicXml(finalXml, title);
-    const id = await addSong(score.title, finalXml);
-    try { localStorage.setItem("resonate.sing.song", id); localStorage.removeItem("resonate.sing.verse"); } catch {}
+    // The original PDF is kept with the song (and synced with it, up to 10 MB, when signed in).
+    let pdf = null;
+    try { pdf = await file.arrayBuffer(); } catch {}
+    // Signed in or out in another tab meanwhile: My songs is someone else's now — not saved
+    // there (Download MusicXML keeps it).
+    unsaved = spaceChanged();
+    if (!unsaved) {
+      const id = await addSong(score.title, finalXml, { source: "pdf", ...(pdf ? { pdf, pdfName: file.name } : {}) });
+      try { localStorage.setItem("resonate.sing.song", id); localStorage.removeItem("resonate.sing.verse"); } catch {}
+    }
     setBar(1);
 
     const lyrics = score.notes.filter((n) => Object.keys(n.verses).length).length;
@@ -231,7 +242,7 @@ async function run(file) {
     const read = res.pages.filter((p) => !res.failed.some((f) => f.page === p));
     $("result-detail").textContent =
       `${score.notes.length} notes · ${lyrics} with lyrics${score.verses.length > 1 ? ` · ${score.verses.length} verses` : ""} · ` +
-      `page${read.length === 1 ? "" : "s"} ${read.join(", ")} · saved to My songs`;
+      `page${read.length === 1 ? "" : "s"} ${read.join(", ")} · ${unsaved ? "not saved (signed in or out in another tab) — download it" : "saved to My songs"}`;
     if (res.failed.length) {
       const pages = res.failed.map((f) => f.page);
       $("result-missing").hidden = false;

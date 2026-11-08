@@ -2,19 +2,21 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=70";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=70";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=70";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=70";
-import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=70";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=70";
-import { startCapture, playVoice } from "./capture.js?v=70";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=70";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=70";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean } from "./library.js?v=70";
-import { fixOmrScore } from "./omr/fixscore.js?v=70";
-import { activeProfile } from "./profiles.js?v=70";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=70";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=71";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=71";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=71";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=71";
+import { analyzeLines, lineDelta, feedback, rhythmText } from "./coach.js?v=71";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=71";
+import { startCapture, playVoice } from "./capture.js?v=71";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=71";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn } from "./rhythm.js?v=71";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean, getTake, putTake } from "./library.js?v=71";
+import { fixOmrScore } from "./omr/fixscore.js?v=71";
+import { activeProfile } from "./profiles.js?v=71";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=71";
+import { DATA_KEYS } from "./space.js?v=71";
+import { spaceChanged } from "./nav.js?v=71";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -65,7 +67,8 @@ const K = {
   verse: "resonate.sing.verse",
   legacyTranspose: "resonate.sing.transpose", // pre-v31: one transposition for every song
   keys: "resonate.sing.keys",                  // { songId: semitones }
-  rate: "resonate.sing.rate",
+  rate: "resonate.sing.rate",                  // (pre-v71: one tempo % for every song — migrated to rates)
+  rates: "resonate.sing.rates",                // { songId: tempo × } — per song since v71 (1 isn't stored)
   guide: "resonate.sing.guide",
   playMode: "resonate.sing.playMode",
   history: "resonate.sing.history",            // { songId: [{ sig, at, pct, lines: [score | null] }] } — latest last
@@ -94,7 +97,17 @@ let entryIdx = 0;  // measure where the singing starts (skips instrumental intro
 let entryT = 0;    // its start time (s) — count-in, lane and Listen start here
 let range = { lo: 55, hi: 72 };
 
-const store = (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} };
+// Every setting is written here; the user's own data (per-song key, tempo, timing, history…)
+// announces itself so the cloud sync (sync.js), when it runs, can follow.
+// After another tab switched whose data the device shows, nothing of the user's is written
+// here (it would land in the other space) — nav.js reloads the page as soon as it's idle.
+const SYNCED = new Set([K.keys, K.rates, K.timing, K.history]);
+const USER_DATA = new Set(DATA_KEYS);
+const store = (k, v) => {
+  if (USER_DATA.has(k) && spaceChanged()) return;
+  try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {}
+  if (SYNCED.has(k)) { try { window.dispatchEvent(new CustomEvent("resonate:data", { detail: { what: "settings", key: k } })); } catch {} }
+};
 const recall = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 
 let transpose = 0;  // whole-song semitones; "fit:s" = key s split by phrase octaves for the voice
@@ -104,7 +117,7 @@ let profile = null; // the active voice profile (profiles.js)
 let fitOpts = [];   // fitOptions for it: what the transpose menu offers
 let shifts = [];    // semitones per score note (all the same unless fitting)
 let shiftSig = "";  // shifts as a string, to tell whether a take's grades still apply
-let rate = Number(recall(K.rate)) || 1;
+let rate = 1; // (loadTiming sets it per song)
 let guide = recall(K.guide) || "click";
 let view = recall(K.view) === "perform" ? "perform" : "practice";
 let playMode = recall(K.playMode) || "both";
@@ -167,12 +180,21 @@ function timingEntry() {
   return e && e.sig === timingKey() ? e : null;
 }
 // The song's timing, and its speed: a tempo tapped for this song (`bpm`), else the
-// percentage chosen (global, one of the menu's), else as written.
+// percentage chosen for it (one of the menu's), else as written.
+function readRates() {
+  try { return JSON.parse(recall(K.rates)) || {}; } catch { return {}; }
+}
+function saveRate(r) {
+  const all = readRates();
+  if (r === 1 || !songId) delete all[songId];
+  else all[songId] = r;
+  store(K.rates, JSON.stringify(all));
+}
 function loadTiming() {
   const e = timingEntry();
   tmap = e?.segs?.length ? makeTiming(e.segs) : null;
   useMap = !!(tmap && e.use);
-  const saved = Number(recall(K.rate)) || 1;
+  const saved = Number(readRates()[songId]) || 1;
   rate = !useMap && e?.bpm ? e.bpm / score.tempo : RATES.includes(saved) || MAP_RATES.includes(saved) ? saved : 1;
 }
 function saveTiming(fields) {
@@ -217,6 +239,7 @@ function applySong() {
   fillTempoOptions();
   fillKeyOptions();
   if (take && !takeFits(take)) take = null; // grades no longer apply
+  if (take?.restored && !take.derived) deriveTake(take);
   if (!take) { reviewRows = []; closeReview(); }
   // Start at the bar containing the first note, not at bar 1 — songs with a
   // long piano intro would otherwise mean a long wait before singing.
@@ -229,8 +252,11 @@ function applySong() {
   renderAll();
 }
 
-// A take's grades hold only for the notes, timing and verse it was sung to.
-const takeFits = (t) => !!t && t.shiftSig === shiftSig && t.timing === timingSig() && t.verse === (verseSelect.value || score.verses[0] || "1");
+// A take's grades hold only for the notes, timing and verse it was sung to (a stored take
+// also checks the notes themselves: a song's clean-ups can change between versions).
+const takeFits = (t) => !!t && t.shiftSig === shiftSig && t.timing === timingSig() && t.verse === (verseSelect.value || score.verses[0] || "1")
+  && (!t.notesSig || t.notesSig === notesSig());
+const notesSig = () => { let h = 0x811c9dc5; for (const n of notes) for (const x of [n.midi, Math.round(n.t * 1000), Math.round(n.d * 1000)]) { h ^= x & 0xffff; h = Math.imul(h, 0x01000193) >>> 0; } return `${notes.length}.${h.toString(36)}`; };
 
 // The song's (transposed) lowest and highest notes.
 const lowest = () => notes.reduce((a, n) => (n.midi < a.midi ? n : a));
@@ -396,8 +422,10 @@ function readKeys() {
   try { return JSON.parse(recall(K.keys)) || {}; } catch { return {}; }
 }
 
-function setScore(sc) {
+let scoreId = null; // the song the loaded score is (songId changes as soon as another is chosen)
+function setScore(sc, stored = null) {
   score = sc;
+  scoreId = songId;
   minor = guessMinor(sc);
   const savedKey = readKeys()[songId];
   transpose = typeof savedKey === "string" && savedKey.startsWith("fit") ? savedKey : Number(savedKey) || 0;
@@ -416,30 +444,43 @@ function setScore(sc) {
   const saved = recall(K.verse);
   if (saved && sc.verses.includes(saved)) verseSelect.value = saved;
   verseSelect.hidden = sc.verses.length < 2;
-  take = null;
+  take = reviveTake(stored); // the song's last take, if it still fits (applySong checks)
+  reviewRows = [];
+  closeReview();
   practiceJ = -1;
   applySong();
+  flushRemote(); // (cloud changes that came while it loaded)
 }
 
-// id: a sample key, or a saved song's id (from library.js).
+// id: a sample key, or a saved song's id (from library.js). Its last take comes back with it.
+let songGen = 0; // a newer selectSong wins over one still loading
 async function selectSong(id) {
   stopLoop();
   stopSession();
+  $("taptempo").hidden = true; // (their taps belong to the song they were opened on)
+  $("tapalong").hidden = true;
+  tapAlong = null;
+  const gen = ++songGen;
   songId = id;
   songSelect.value = id;
   store(K.song, id);
   removeBtn.hidden = !!SAMPLES[id];
+  const stored = getTake(id, { voice: true }).catch(() => null);
   try {
+    let sc;
     if (SAMPLES[id]) {
       const res = await fetch(SAMPLES[id].url);
       if (!res.ok) throw new Error(`couldn't load (${res.status})`);
-      const sc = parseMusicXml(await res.text(), SAMPLES[id].title);
+      sc = parseMusicXml(await res.text(), SAMPLES[id].title);
       sc.title = SAMPLES[id].title;
-      return setScore(sc);
+    } else {
+      const song = await getSong(id);
+      if (!song) throw new Error("that song is no longer saved");
+      sc = parseMusicXml(songXml(song), song.title);
     }
-    const song = await getSong(id);
-    if (!song) throw new Error("that song is no longer saved");
-    return setScore(parseMusicXml(songXml(song), song.title));
+    const rec = await stored;
+    if (gen !== songGen) return;
+    return setScore(sc, rec);
   } catch (err) {
     console.error(err);
     showMsg(`Couldn't load song: ${err.message}`, "error");
@@ -493,9 +534,9 @@ async function refreshLibrary() {
 }
 
 // Validate, save to My songs, and switch to it.
-async function importXml(xml, name) {
+async function importXml(xml, name, source = "file") {
   const sc = parseMusicXml(xml, name);
-  const id = await addSong(sc.title, xml);
+  const id = await addSong(sc.title, xml, { source });
   await refreshLibrary();
   store(K.verse, null);
   await selectSong(id);
@@ -575,7 +616,7 @@ async function importLink() {
     const blob = await res.blob();
     const xml = await readScoreFile(new File([blob], name));
     if (/^\s*<!doctype html|^\s*<html/i.test(xml)) throw new Error("that's a web page — use the direct download link.");
-    await importXml(xml, name);
+    await importXml(xml, name, "link");
   } catch (err) {
     console.error(err);
     showMsg(`Couldn't load the link: ${err.message}`, "error");
@@ -656,7 +697,7 @@ let starting = null;
 async function startSing(part = null) {
   starting = "sing";
   monitorSync();
-  try { await beginSing(part); } finally { starting = null; monitorSync(MON_RESUME); }
+  try { await beginSing(part); } finally { starting = null; monitorSync(MON_RESUME); flushRemote(); }
 }
 
 async function beginSing(part) {
@@ -794,14 +835,19 @@ function gradeFinal(endT) {
   const [j0, j1] = take.range;
   const part = gradeTake(notes.slice(j0, j1), take.frames, { endT, gate: MIN_RMS });
   take.grades = notes.map((_, j) => (j >= j0 && j < j1 ? part[j - j0] : null));
-  for (const f of take.frames) f.ok = null;
+  recolour(take);
+}
+// Each frame of the pitch line coloured against the note its grade matched it with (the
+// note's moved slot), and drawn next to it.
+function recolour(tk) {
+  for (const f of tk.frames) f.ok = null;
   let k = 0;
-  take.grades.forEach((g, j) => {
+  tk.grades.forEach((g, j) => {
     if (!g || g.from === undefined) return;
     const n = notes[j];
-    while (k < take.frames.length && take.frames[k].t < g.from) k++;
-    for (let i = k; i < take.frames.length && take.frames[i].t < g.to; i++) {
-      const f = take.frames[i];
+    while (k < tk.frames.length && tk.frames[k].t < g.from) k++;
+    for (let i = k; i < tk.frames.length && tk.frames[i].t < g.to; i++) {
+      const f = tk.frames[i];
       if (f.midi === null) continue;
       f.ok = Math.abs(fold(f.midi - n.midi)) * 100 <= OK_CENTS;
       f.disp = f.midi + 12 * Math.round((n.midi - f.midi) / 12);
@@ -809,11 +855,18 @@ function gradeFinal(endT) {
   });
 }
 
+// While a stopped take is still being finished (the recording flushing, the mic closing,
+// rhythm, grades), nothing from the cloud is applied: it could replace the take.
+let finishing = false;
 async function stopSing() {
   const s = session;
   if (!s || s.kind !== "sing") return;
   session = null;
-  const tk = take;
+  finishing = true;
+  try { await finishSing(s); } finally { finishing = false; flushRemote(); }
+}
+async function finishSing(s) {
+  const tk = take, sid = songId;
   let settings = null;
   try { settings = s.mic.stream.getAudioTracks()[0]?.getSettings() || null; } catch {}
   // The mic stops now (the recording still flushes what it has): iOS keeps playback on the
@@ -853,6 +906,7 @@ async function stopSing() {
   try { await s.wakeLock?.release(); } catch {}
   await s.mic.close();
   statusEl.textContent = "";
+  if (take !== tk) { s.endRes(null); return; } // a new take started while the mic closed
   if (s.part) {
     renderAll();
     s.endRes(take);
@@ -866,6 +920,8 @@ async function stopSing() {
   s.endRes(take);
   recordTake();
   openReview();
+  saveLastTake(tk, sid);
+  if (spaceChanged()) showMsg("Not kept: signed in or out in another tab.", "error");
 }
 
 // ---------------------------------------------------------------------------
@@ -976,7 +1032,7 @@ async function getPlayCtx(how = "tap") {
 async function startPlay(kind, from, opts = {}) {
   starting = "play";
   monitorSync();
-  try { await beginPlay(kind, from, opts); } finally { starting = null; monitorSync(MON_RESUME); }
+  try { await beginPlay(kind, from, opts); } finally { starting = null; monitorSync(MON_RESUME); flushRemote(); }
 }
 
 let playGen = 0; // bumped by every start and stop: a start still loading checks it's current
@@ -1054,6 +1110,7 @@ function stopSession() {
   renderAll();
   monitorSync(MON_RESUME);
   s.endRes?.(!!s.natural); // true: it played to its end (not stopped)
+  flushRemote();
 }
 
 // ---------------------------------------------------------------------------
@@ -1677,6 +1734,7 @@ function stopLoop(msg) {
   renderAll();
   monitorSync(MON_RESUME);
   if (msg) showMsg(msg, "error");
+  flushRemote();
 }
 
 function renderLoop() {
@@ -1730,6 +1788,7 @@ function readHistory() {
 // the "last take" the next one is compared with.
 function recordTake() {
   if (!take || take.endT === null || !songId) return;
+  take.at = take.at || Date.now();
   const all = readHistory();
   const full = all[songId] || [];
   const sig = historySig();
@@ -1742,10 +1801,81 @@ function recordTake() {
   reviewRows = analyzeTake();
   const whole = reviewRows.filter((r) => r.complete).length >= 0.8 * lines.length;
   take.whole = whole;
-  full.push({ sig, at: Date.now(), pct, whole, lines: lines.map((_, li) => reviewRows.find((r) => r.li === li)?.score ?? null), rhythm: rhythmSummary() });
+  full.push({ sig, at: take.at, pct, whole, lines: lines.map((_, li) => reviewRows.find((r) => r.li === li)?.score ?? null), rhythm: rhythmSummary() });
   const keep = new Set(full.filter((h) => h.sig === sig).slice(-10));
   all[songId] = full.filter((h) => h.sig !== sig || keep.has(h)).slice(-40);
   store(K.history, JSON.stringify(all));
+}
+
+// --- The last take of each song, kept (library.js "takes") ------------------------------------
+// Its data — compact frames [t, midi, rms], grades, rhythm, what it fits — is synced to the
+// cloud when signed in (sync.js); the recording stays on this device (16-bit, half rate).
+const rd = (x, k) => (typeof x === "number" ? Math.round(x * k) / k : x ?? null);
+function takeData(tk) {
+  const rhythm = tk.rhythm ? JSON.parse(JSON.stringify(tk.rhythm)) : null;
+  if (rhythm?.diag?.settings) { delete rhythm.diag.settings.deviceId; delete rhythm.diag.settings.groupId; }
+  return {
+    v: 1, at: tk.at, verse: tk.verse, rate: tk.rate, timing: tk.timing, guide: tk.guide, shiftSig: tk.shiftSig, notesSig: notesSig(),
+    endT: rd(tk.endT, 1e4), latency: rd(tk.latency, 1e4), whole: tk.whole ?? null, octave: tk.octave ?? 0, prev: tk.prev ?? null,
+    frames: tk.frames.map((f) => [rd(f.t, 1e4), f.midi === null ? null : rd(f.midi, 1e3), rd(f.rms, 1e5)]),
+    grades: tk.grades.map((g) => g && Object.fromEntries(Object.entries(g).map(([k, v]) => [k, rd(v, 1e4)]))),
+    rhythm,
+  };
+}
+function packVoice(v) {
+  if (!v?.data?.length) return null;
+  const step = v.sampleRate >= 44100 ? 2 : 1;
+  const n = Math.floor(v.data.length / step), pcm = new Int16Array(n);
+  for (let i = 0; i < n; i++) {
+    let x = 0;
+    for (let k = 0; k < step; k++) x += v.data[i * step + k];
+    pcm[i] = Math.max(-1, Math.min(1, x / step)) * 32767;
+  }
+  return { pcm, sampleRate: v.sampleRate / step, start: v.start, gain: v.gain };
+}
+function unpackVoice(p) {
+  if (!p?.pcm?.length) return null;
+  const data = new Float32Array(p.pcm.length);
+  for (let i = 0; i < data.length; i++) data[i] = p.pcm[i] / 32767;
+  return { data, sampleRate: p.sampleRate, start: p.start, gain: p.gain };
+}
+// A whole take that judged something becomes the song's last take (not a loop round, not a
+// stop in the count-in).
+function saveLastTake(tk, sid) {
+  if (!tk || tk.part || tk.endT === null || !sid || !tk.grades.some((g) => g && g.status !== "unsung") || spaceChanged()) return;
+  tk.at = tk.at || Date.now();
+  tk.takeId = `${tk.at.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  let rec;
+  try { rec = { songId: sid, takeId: tk.takeId, at: tk.at, data: takeData(tk), voice: packVoice(tk.voice) }; }
+  catch (err) { console.warn("take not saved", err); return; }
+  putTake(rec).catch((err) => console.warn("take not saved", err));
+}
+// A stored take (here or from the cloud) as the page's take; derived once the notes are known.
+function reviveTake(rec) {
+  const d = rec?.data;
+  if (!d || d.v !== 1 || !Array.isArray(d.frames)) return null;
+  return {
+    restored: true, derived: false, takeId: rec.takeId, at: d.at,
+    frames: d.frames.map(([t, midi, rms]) => ({ t, midi, rms, disp: null, ok: null })),
+    grades: d.grades, endT: d.endT, voice: unpackVoice(rec.voice), latency: d.latency,
+    shiftSig: d.shiftSig, notesSig: d.notesSig, timing: d.timing, rate: d.rate, verse: d.verse,
+    octave: d.octave ?? 0, part: false, guide: d.guide, rhythm: d.rhythm, whole: d.whole, prev: d.prev ?? null,
+  };
+}
+function deriveTake(tk) {
+  tk.range = [0, notes.length];
+  let last = (range.lo + range.hi) / 2;
+  for (const f of tk.frames) {
+    if (f.midi === null) continue;
+    const i = noteAt(f.t);
+    f.disp = f.midi + 12 * Math.round(((i >= 0 ? notes[i].midi : last) - f.midi) / 12);
+    last = f.disp;
+  }
+  recolour(tk);
+  // Each line's latest earlier score, from the history before this take.
+  const same = (readHistory()[songId] || []).filter((h) => h.sig === historySig() && h.at < tk.at);
+  tk.prevLines = lines.map((_, li) => [...same].reverse().map((h) => h.lines?.[li]).find((x) => x !== null && x !== undefined) ?? null);
+  tk.derived = true;
 }
 
 function openReview() {
@@ -2272,7 +2402,7 @@ tempoSelect.addEventListener("change", () => {
 // Choose a speed (× the score's tempo, or × the tapped timing) from the menu; a tempo
 // tapped for this song is kept as its own (bpm).
 function setTiming(r, map, bpm = null) {
-  if (!bpm && (RATES.includes(r) || MAP_RATES.includes(r))) store(K.rate, String(r));
+  if (!bpm && (RATES.includes(r) || MAP_RATES.includes(r))) saveRate(r);
   saveTiming({ use: map, bpm });
   stopSession();
   applySong();
@@ -2412,7 +2542,7 @@ $("ta-save").addEventListener("click", () => {
   const { runs, pauses } = splitPauses(knots);
   let segs = timingEntry()?.segs || [];
   for (const run of runs) segs = mergeKnots(segs, run);
-  store(K.rate, "1");
+  saveRate(1);
   saveTiming({ segs, use: true, bpm: null });
   $("tapalong").hidden = true;
   stopSession();
@@ -2437,6 +2567,10 @@ removeBtn.addEventListener("click", async () => {
   const title = songSelect.selectedOptions[0]?.textContent || "this song";
   if (!confirm(`Remove “${title}” from My songs?`)) return;
   await removeSong(id);
+  for (const k of [K.keys, K.rates, K.timing, K.history]) {
+    const all = (() => { try { return JSON.parse(recall(k)) || {}; } catch { return {}; } })();
+    if (id in all) { delete all[id]; store(k, JSON.stringify(all)); }
+  }
   await refreshLibrary();
   await selectSong("amazing-grace");
 });
@@ -2569,6 +2703,49 @@ window.addEventListener("pageshow", (e) => {
 // Init
 
 guideSelect.value = guide;
+// The cloud sync brought changes (sync.js): the song list, the open song's settings, its last
+// take. Nothing changes under a take, a loop or a playback: what arrives then waits for its end.
+let pendingRemote = null; // { songs, profiles, state: Set, takes: Set } — song ids
+function queueRemote({ songs = false, profiles = false, state = [], takes = [] }) {
+  const p = (pendingRemote ||= { songs: false, profiles: false, state: new Set(), takes: new Set() });
+  p.songs ||= !!songs;
+  p.profiles ||= !!profiles;
+  for (const id of state) p.state.add(id);
+  for (const id of takes) p.takes.add(id);
+}
+window.addEventListener("resonate:remote", (e) => { queueRemote(e.detail || {}); flushRemote(); });
+// (After another tab signed in or out, the reload also waits for an open review to close.)
+const busyNow = () => !!(session || drill || starting || finishing || (spaceChanged() && !reviewEl.hidden));
+window.resonateBusy = busyNow; // (nav.js: a reload for another tab's sign-in/out waits for it)
+function flushRemote() {
+  if (!pendingRemote) return;
+  setTimeout(async () => {
+    const p = pendingRemote;
+    if (!p || busyNow()) return; // (flushed again when that ends)
+    pendingRemote = null;
+    let gone = false;
+    if (p.songs) {
+      await refreshLibrary();
+      if (songId) songSelect.value = songId;
+      gone = !!songId && !SAMPLES[songId] && ![...mySongsEl.querySelectorAll("option")].some((o) => o.value === songId);
+      if (gone && !busyNow()) return selectSong("amazing-grace");
+    }
+    const sid = songId;
+    if (!score || scoreId !== sid || busyNow()) return queueRemote({ ...p, songs: gone }); // (setScore flushes; a song gone meanwhile is closed later)
+    if (p.takes.has(sid)) {
+      const t = reviveTake(await getTake(sid, { voice: true }).catch(() => null));
+      if (sid !== songId || scoreId !== sid || busyNow()) return queueRemote({ takes: [sid], state: p.state, profiles: p.profiles });
+      // (A take sung here that isn't recorded yet has no time: it's never replaced.)
+      if (t && (!take || (take.at && take.at < t.at))) { take = t; reviewRows = []; closeReview(); }
+    }
+    if (p.state.has(sid) || p.takes.has(sid) || p.profiles) {
+      const savedKey = readKeys()[sid];
+      transpose = typeof savedKey === "string" && savedKey.startsWith("fit") ? savedKey : Number(savedKey) || 0;
+      applySong();
+    }
+  }, 0);
+}
+
 if (!navigator.mediaDevices?.getUserMedia) {
   statusEl.textContent = "mic API unavailable — open over HTTPS";
 }
@@ -2591,6 +2768,14 @@ if (!navigator.mediaDevices?.getUserMedia) {
     store(K.keys, JSON.stringify(keys));
   }
   store(K.legacyTranspose, null);
+  // The tempo % was one for every song before v71: it becomes the song open last's.
+  const legacyRate = Number(recall(K.rate));
+  if (legacyRate && legacyRate !== 1 && savedSong) {
+    const rates = readRates();
+    if (!(savedSong in rates)) rates[savedSong] = legacyRate;
+    store(K.rates, JSON.stringify(rates));
+  }
+  store(K.rate, null);
   await refreshLibrary();
   const known = SAMPLES[savedSong] || (savedSong && [...mySongsEl.querySelectorAll("option")].some((o) => o.value === savedSong));
   await selectSong(known ? savedSong : "amazing-grace");

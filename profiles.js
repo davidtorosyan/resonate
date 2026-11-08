@@ -23,6 +23,8 @@ export function loadProfiles() {
 
 export function saveProfiles(p) {
   try { localStorage.setItem(KEY, JSON.stringify(p)); } catch {}
+  // (the cloud sync, when it runs, follows — sync.js)
+  try { window.dispatchEvent(new CustomEvent("resonate:data", { detail: { what: "profiles" } })); } catch {}
 }
 
 export function activeProfile() {
