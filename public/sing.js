@@ -1971,7 +1971,7 @@ remoteBtn.addEventListener("click", () => { remoteBtn.disabled = true; remote.se
 function remoteState() {
   return { page: "sing", song: songId && score ? { id: songId, title: score.title } : null, key: score ? optText(keySelect) : null, tempo: score ? optText(tempoSelect) : null,
     doing: getReady ? "get-ready" : drill ? "loop" : session?.kind || (starting ? "starting" : "idle"), line: shownLine >= 0 ? shownLine + 1 : null, lines: lines.length,
-    take: take && take.endT !== null ? "reviewable" : null, sound: playCtx ? playCtx.state : "none" };
+    has_take: !!(take && take.endT !== null), sound: playCtx ? playCtx.state : "none" };
 }
 // Takes an assistant starts: a "Get ready" countdown first (its own words land there, not over
 // the count-in), tap to cancel; then the take, maybe ending by itself after a line.
@@ -2069,7 +2069,13 @@ async function runRemote(action, a) {
       if (session?.kind === "sing" || drill) return { ok: false, error: "Not while singing — stop first." };
       const opts = [...keySelect.querySelectorAll("option")];
       const want = a.semitones !== undefined && a.semitones !== null ? String(Math.round(Number(a.semitones))) : null;
-      const o = opts.find((x) => x.value === want) || (a.fit ? opts.find((x) => x.value.startsWith("fit")) : null);
+      // fit: the menu's best fit for the voice profile (the first of "Fits …" / "Close(st) …").
+      let o = opts.find((x) => x.value === want);
+      if (!o && a.fit && want === null) {
+        if (opts.some((x) => x.value === "fit")) return { ok: false, error: "No voice range yet — the range test is on Resonate's Voice page." };
+        o = [...keySelect.querySelectorAll("optgroup")].find((g) => /^(Fits|Close)/.test(g.label))?.querySelector("option") || null;
+        if (!o) return { ok: false, error: "No key comes close to the voice range — pick one by semitones.", keys: opts.map((x) => x.textContent.trim()) };
+      }
       if (!o) return { ok: false, error: "That key isn't offered.", keys: opts.map((x) => x.textContent.trim()) };
       if (session) stopSession();
       keySelect.value = o.value;
@@ -2117,7 +2123,12 @@ async function runRemote(action, a) {
       const end = until === null ? {} : { to_line: until + 1 };
       if (delay > 0) {
         // Answered now (the assistant talks during the countdown); the take starts after it.
-        startGetReady(delay, remoteTake.by).then((go) => { if (go) startSing(); else remoteTake = null; });
+        // (a take that didn't start — the mic refused — mustn't leave its settings to the next one)
+        startGetReady(delay, remoteTake.by).then(async (go) => {
+          if (go) { try { await startSing(); } catch (err) { console.warn("remote sing", err); } }
+          remoteTake = null;
+          remote.changedSoon();
+        });
         return done({ starts_in_s: delay, ...end });
       }
       await startSing();

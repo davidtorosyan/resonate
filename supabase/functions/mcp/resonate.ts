@@ -119,17 +119,44 @@ async function resolveTake(sb: Sb, take: string | undefined, q: string | undefin
 export async function getTake(sb: Sb, take: string | undefined, q: string | undefined) {
   const t = await resolveTake(sb, take, q);
   if (!t) return fail("No take found.");
+  // (the take just asked for hasn't begun: this one is the take before it)
+  const before = (!take || take === "latest") && !q && await pendingSing(sb, t) ? { previous_take: true, note: "This is the take BEFORE the one you just started, which hasn't begun (or didn't start). Don't give feedback on it as if just sung." } : {};
   const { data: lines } = await sb.from("coach_lines").select("li,final,data").eq("take_id", t.id).order("li");
-  return ok({ ...takeHead(t), review: t.review ?? null, legend: LINE_LEGEND, lines: (lines || []).map((l) => lineOut(l as Json)) });
+  return ok({ ...takeHead(t), ...before, review: t.review ?? null, legend: LINE_LEGEND, lines: (lines || []).map((l) => lineOut(l as Json)) });
 }
 
+// A take an assistant started in the last two minutes that hasn't begun yet (countdown, the
+// microphone opening, or cancelled): the latest take is still the one from before the sing
+// command (its id is kept with the command), so "the latest take" isn't the one just asked for.
+// → "waiting" (the device is counting down / opening the mic), "didnt_start" (it's idle again:
+// cancelled, or the mic refused) or null (no such take: the latest take is the one to use).
+async function pendingSing(sb: Sb, latest: Json | null): Promise<"waiting" | "didnt_start" | null> {
+  const { data } = await sb.from("device_commands").select("args,device_id").eq("action", "sing").eq("status", "done").gte("created_at", new Date(Date.now() - 120000).toISOString()).order("created_at", { ascending: false }).limit(1);
+  const c = data?.[0], a = (c?.args as Json) || null;
+  if (!a || !("prev_take" in a) || (a.prev_take ?? null) !== ((latest?.id as string) ?? null)) return null;
+  const { data: dev } = await sb.from("devices").select("state").eq("id", String(c!.device_id)).maybeSingle();
+  const doing = String(((dev?.state as Json) || {}).doing ?? "");
+  return ["get-ready", "starting", "sing"].includes(doing) ? "waiting" : "didnt_start";
+}
+const NOT_STARTED = { status: "not_started", take: null, note: "The take you started hasn't begun yet (the countdown, or the microphone opening). Stay silent and call get_live_lines again." };
+const DIDNT_START = { status: "didnt_start", take: null, note: "The take you started didn't begin (cancelled on the page, or the microphone didn't open). Call get_status, then offer to start it again." };
+
 // Long-poll: the lines of the live (else latest) take after `after`, waiting up to `wait` s for one.
+// Without a take id, a take just asked for is waited for (not the previous one returned).
 export async function getLiveLines(sb: Sb, after: number, wait: number, take?: string) {
   const deadline = Date.now() + Math.min(Math.max(wait || 0, 0), 20) * 1000;
   let t: Json | null = null;
   for (;;) {
     if (!t || take) t = await resolveTake(sb, take, undefined);
     else { const id = String(t.id); const res: { data: unknown } = await sb.from("coach_takes").select("id,song_id,status,started_at,updated_at,meta,review").eq("id", id).maybeSingle(); t = (res.data as Json) || t; }
+    const pend = take ? null : await pendingSing(sb, t);
+    if (pend === "didnt_start") return ok(DIDNT_START);
+    if (pend === "waiting") {
+      if (Date.now() >= deadline) return ok(NOT_STARTED);
+      t = null;
+      await new Promise((r) => setTimeout(r, 1000));
+      continue;
+    }
     if (!t) return fail("No take yet.");
     const { data: lines } = await sb.from("coach_lines").select("li,final,data").eq("take_id", t.id).gte("li", Math.max(0, Math.floor(after || 0))).order("li");
     const status = takeStatus(t);
@@ -201,7 +228,14 @@ export async function startCoaching(sb: Sb) {
     profilesData(sb),
     sb.from("coach_takes").select("id,song_id,status,started_at,updated_at,meta,headline:review->>headline").order("started_at", { ascending: false }).limit(3),
   ]);
-  return ok({ playbook: PLAYBOOK, now: { ...st, voice_profiles: profiles, recent_takes: (takes.data || []).map((t) => ({ ...takeHead(t as Json), headline: (t as Json).headline ?? null })) } });
+  const sid = ((st.devices.find((d) => d.remote_on)?.showing as Json)?.song as Json)?.id;
+  let song: Json | null = null;
+  if (sid) {
+    const { data } = await sb.from("song_scores").select("data").eq("song_id", String(sid)).maybeSingle();
+    const d = (data?.data as Json) || null;
+    if (d) song = { song: sid, title: d.title, key: d.key, tempo: d.tempo, meter: d.meter, range: d.range, lines: ((d.lines as Json[]) || []).length };
+  }
+  return ok({ playbook: PLAYBOOK, now: { ...st, song, voice_profiles: profiles, recent_takes: (takes.data || []).map((t) => ({ ...takeHead(t as Json), headline: (t as Json).headline ?? null })) } });
 }
 
 export const ACTIONS = ["open_song", "set_key", "set_tempo", "listen", "play_take", "sing", "loop_line", "go_to_line", "review", "stop"] as const;
@@ -214,7 +248,12 @@ export async function control(sb: Sb, args: Json, by = "Assistant") {
   for (const [k, v] of Object.entries(rest)) if (v !== undefined && v !== null) clean[k] = v;
   clean.by = by;
   const st = await settings(sb);
-  if (action === "sing") clean.delay = st.start_delay_s;
+  if (action === "sing") {
+    clean.delay = st.start_delay_s;
+    // (which take was the latest when this was sent: get_live_lines waits for a newer one)
+    const { data: lt } = await sb.from("coach_takes").select("id").order("started_at", { ascending: false }).limit(1);
+    clean.prev_take = (lt?.[0]?.id as string) ?? null;
+  }
   // The song resolved here, so the page gets an exact id (not its own guess at the title).
   if (action === "open_song" && clean.song) {
     const s = await findSong(sb, String(clean.song));
@@ -229,7 +268,7 @@ export async function control(sb: Sb, args: Json, by = "Assistant") {
     const { data: row } = await sb.from("device_commands").select("status,result").eq("id", cmd.id).maybeSingle();
     if (row && row.status !== "sent") {
       const r = (row.result as Json) || {};
-      const say = action === "sing" ? { now: `Starts in ${st.start_delay_s} s (a "Get ready" countdown, then the count-in). Say a word at most — then stay quiet until the take ends.` } : {};
+      const say = action === "sing" ? { now: `${st.start_delay_s ? `Starts in ${st.start_delay_s} s (a "Get ready" countdown, then the count-in)` : "Starts now with the count-in"}. Say a word at most — then stay quiet until the take ends.` } : {};
       return row.status === "done" ? ok({ done: action, on: d.name, ...r, ...say }) : fail(String(r.error ?? row.status), { on: d.name, ...r });
     }
   }

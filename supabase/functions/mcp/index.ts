@@ -63,7 +63,7 @@ function build(sb: Parameters<typeof R.listSongs>[0]) {
 
   server.registerTool("get_live_lines", {
     title: "Follow the take being sung",
-    description: "Lines of the take being sung right now (else the latest) after after_line, as soon as each line is sung. Waits up to wait_seconds (≤ 20) for a new line. Call again with after_line = next_after_line to keep following; when status isn't 'live' the take has ended and its review is included.",
+    description: "Lines of the take being sung right now (else the latest) after after_line, as soon as each line is sung. Waits up to wait_seconds (≤ 20) for a new line. Call again with after_line = next_after_line to keep following; when status isn't 'live' the take has ended and its review is included. Without take, a take you just started is waited for: status not_started = still counting down / opening the mic, didnt_start = it didn't begin.",
     inputSchema: z.object({ after_line: z.number().int().min(0).optional(), wait_seconds: z.number().min(0).max(20).optional(), take: z.string().optional() }),
     annotations: READ,
   }, ({ after_line, wait_seconds, take }) => gate(() => R.getLiveLines(sb, after_line ?? 0, wait_seconds ?? 15, take), "get_live_lines"));
@@ -83,7 +83,7 @@ function build(sb: Parameters<typeof R.listSongs>[0]) {
 
   server.registerTool("control_resonate", {
     title: "Control Resonate",
-    description: "Act in Resonate's Sing page on the device whose 📡 Remote is on. action: sing = START A TAKE — the user sings while Resonate records and grades it; use it whenever the user asks to start, go, sing, perform, record or try (to_line N: a short performance that ends by itself after line N — use this, never stop it yourself; view: perform = lyrics only, practice = the lane). It starts after a 'Get ready' countdown, so say a word at most and then stay quiet until it ends. stop = end what's going on (take, loop, playback). listen {line?, only_line?} = play the melody. play_take {mode?: voice|melody|both, line?} = play the last take back. loop_line {line} = practise one line round after round. open_song {song}, set_key {semitones -24…24, or fit: true = the best fit for the voice profile}, set_tempo {percent: 50,60,70,80,90,100,110,125}, go_to_line {line}, review = open the take's review on screen. Returns what the page now shows, or why it couldn't.",
+    description: "Act in Resonate's Sing page on the device whose 📡 Remote is on. action: sing = START A TAKE — the user sings while Resonate records and grades it; use it whenever the user asks to start, go, sing, perform, record or try (to_line N: a short performance that ends by itself after line N — use this instead of stopping it yourself; view: perform = lyrics only, practice = the lane). It starts after a 'Get ready' countdown, so say a word at most and then stay quiet until it ends. stop = end what's going on (take, loop, playback). listen {line?, only_line?} = play the melody. play_take {mode?: voice|melody|both, line?, only_line?} = play the last take back. loop_line {line} = practise one line round after round. open_song {song}, set_key {semitones -24…24 from the written key, or fit: true = Resonate's best fit for the voice profile}, set_tempo {percent: 50,60,70,80,90,100,110,125}, go_to_line {line}, review = open the take's review on screen. Returns what the page now shows, or why it couldn't.",
     inputSchema: z.object({
       action: z.enum(R.ACTIONS),
       song: z.string().optional(),
