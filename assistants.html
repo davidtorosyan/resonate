@@ -40,8 +40,7 @@
       .on { color: #c48bff; font-weight: 600; }
       .none { font-size: 0.85rem; opacity: 0.55; }
       .note { font-size: 0.8rem; opacity: 0.6; margin: 0; }
-      textarea { font: inherit; font-size: 0.85rem; line-height: 1.45; color: #fff; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.18); border-radius: 0.6rem; padding: 0.55rem 0.6rem; resize: vertical; width: 100%; }
-      textarea:focus, select:focus { outline: none; border-color: #a64fff; }
+      select:focus { outline: none; border-color: #a64fff; }
       select { font: inherit; font-size: 0.85rem; color: #e8e8f0; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.18); border-radius: 0.5rem; padding: 0.3rem 0.4rem; }
       option { background: #1a1a30; color: #e8e8f0; }
       label.line { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; font-size: 0.86rem; }
@@ -60,7 +59,7 @@
         <a class="nav-link" href="account.html">Account</a>
         <a class="nav-link" href="sing.html">Sing</a>
       </div>
-      <span id="version" class="mono">v74</span>
+      <span id="version" class="mono">v75</span>
     </header>
     <main>
       <section id="v-off" class="card" hidden>
@@ -79,13 +78,12 @@
       </section>
 
       <section id="v-rules" class="card" hidden>
-        <h2>Standing instructions</h2>
-        <textarea id="standing" rows="6" maxlength="4000" aria-label="Standing instructions for assistants"></textarea>
+        <h2>Takes an assistant starts</h2>
         <label class="line">Get ready before a take <select id="delay" aria-label="Get ready">
-          <option value="0">none</option><option value="2">2 s</option><option value="4">4 s</option><option value="6">6 s</option><option value="8">8 s</option><option value="10">10 s</option>
+          <option value="0">none</option><option value="2">2 s</option><option value="4" selected>4 s</option><option value="6">6 s</option><option value="8">8 s</option><option value="10">10 s</option>
         </select></label>
         <label class="line check"><input id="review-after" type="checkbox" /> Resonate's review after an assistant's take</label>
-        <div class="row-end"><span id="rules-msg" class="note"></span><button id="save-rules" class="primary" type="button">Save</button></div>
+        <div class="row-end"><span id="rules-msg" class="note" role="status"></span></div>
       </section>
 
       <section id="v-grants" class="card" hidden>
@@ -101,7 +99,7 @@
 
       <div id="msg" role="status"></div>
     </main>
-    <script type="module" src="nav.js?v=74"></script>
-    <script type="module" src="assistants.js?v=74"></script>
+    <script type="module" src="nav.js?v=75"></script>
+    <script type="module" src="assistants.js?v=75"></script>
   </body>
 </html>
