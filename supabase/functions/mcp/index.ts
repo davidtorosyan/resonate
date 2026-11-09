@@ -1,4 +1,4 @@
-// Resonate's MCP server (v73): https://<project>.supabase.co/functions/v1/mcp
+// Resonate's MCP server (v73–75): https://<project>.supabase.co/functions/v1/mcp
 // Assistants (ChatGPT, Claude…) connect with OAuth through Supabase Auth's OAuth 2.1 server
 // (dynamic client registration; consent page public/oauth/consent.html). Stateless Streamable
 // HTTP (MCP SDK v2): a fresh server per request; tools in resonate.ts run as the user under RLS.
@@ -22,9 +22,15 @@ function build(sb: Parameters<typeof R.listSongs>[0]) {
   };
   const song = z.string().describe("Song id or (part of) its title");
 
+  server.registerTool("start_vocal_coaching", {
+    title: "Become the user's vocal coach",
+    description: "Call this FIRST whenever the user mentions Resonate, wants to practise singing, or asks you to be their vocal or singing coach (e.g. \"I'm using Resonate, be my vocal coach\"). Returns the coaching playbook you must follow for the rest of the conversation — how to run takes in Resonate with these tools and coach from Resonate's data (never from what you hear) — and what Resonate shows right now.",
+    annotations: READ,
+  }, () => gate(() => R.startCoaching(sb), "start_vocal_coaching"));
+
   server.registerTool("get_status", {
     title: "What Resonate is doing",
-    description: "Call this first: the user's standing instructions for you (follow them), the start delay, the user's devices (which one has 📡 Remote on, whether it's in front, what it shows: song, key, tempo, what's playing) and any take being sung right now.",
+    description: "What Resonate is doing right now: the user's devices (which one has 📡 Remote on, whether it's in front, what it shows: song, key, tempo, line, what's going on) and any take being sung, and the start delay.",
     annotations: READ,
   }, () => gate(() => R.getStatus(sb), "get_status"));
 

@@ -3,26 +3,19 @@
 // runs as the signed-in user, so RLS decides (supabase/migrations/…_assistants.sql): an
 // assistant reads only its own account's data and can't write anything but commands.
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { PLAYBOOK, REMINDER } from "./coaching.ts";
 
 type Sb = SupabaseClient;
 type Json = Record<string, unknown>;
 
-export const INSTRUCTIONS = `Resonate is the user's singing-practice app (karaoke against sheet music; it grades each note's pitch and timing and gives its own coaching).
-You are a singing coach working from Resonate's data:
-- Lead with what went well, then one or two concrete things to try, each with a way to hear or practise it (e.g. "listen to line 3", "loop line 3").
-- Never read scores, percentages or cents out as grades. The numbers are for your reasoning only; speak in musical terms (a touch flat, came in late, held it short).
-- Lines are numbered from 1, as the user sees them. Notes are written in the key the user sang (target) with the note actually sung.
-- During a take, call get_live_lines repeatedly (after_line = the last line you've seen) to follow along line by line.
-- control_resonate acts in the app on the device whose 📡 Remote switch is on (Sing page). If nothing has it on, ask the user to tap 📡 on the device they're using. Starting sound or the microphone may need one tap on that device first (browsers require it).
-- To start a take (the user says start, go, sing, perform, record, let me try…), call control_resonate with action "sing" straight away. Then say a word at most — a "Get ready" countdown and the count-in follow, and the user is singing. Stay quiet until the take ends; follow it with get_live_lines without speaking.
-- For a short performance, pass to_line (the take ends by itself after that line, and the page shows it) instead of stopping it yourself.
-- get_status carries the user's standing instructions for you: follow them.`;
+export const INSTRUCTIONS = `Resonate is the user's singing-practice app (karaoke against sheet music; it grades each note's pitch and timing from the microphone and writes its own coaching).
+When the user mentions Resonate, wants to practise singing, or asks for a vocal or singing coach, call start_vocal_coaching first: it gives you the coaching playbook to follow for the rest of the conversation, and what Resonate shows right now.
+The core rules, always: Resonate's data is the only judge of the singing — never judge it from what you hear; fetch it (get_take, get_live_lines) before saying anything about a take. Whenever the user wants to sing, call control_resonate with action "sing" — never just say "go ahead". Never read scores, percentages or cents out as grades.`;
 
-// The user's standing instructions (Assistants page), else these.
-export const DEFAULT_STANDING = "When you start a take, say only \"Go\" (or nothing) and stay quiet until it ends; follow along with get_live_lines without speaking. For a short performance, start it with to_line rather than stopping it yourself. After a take, give your feedback in two or three short sentences: what went well, then one thing to try.";
+// How takes an assistant starts go (Assistants page): the "Get ready" countdown before them.
 export async function settings(sb: Sb) {
-  const { data } = await sb.from("assistant_settings").select("instructions,start_delay_s,review_after_remote").maybeSingle();
-  return { standing_instructions: (data?.instructions || "").trim() || DEFAULT_STANDING, start_delay_s: data?.start_delay_s ?? 4 };
+  const { data } = await sb.from("assistant_settings").select("start_delay_s").maybeSingle();
+  return { start_delay_s: data?.start_delay_s ?? 4 };
 }
 // Records the call (the Sing page shows which assistant is active) → the assistant's name.
 export async function seen(sb: Sb, tool: string): Promise<string> {
@@ -33,8 +26,10 @@ const LIB_ID = /^s[0-9a-z]{6,}$/; // songs imported into My songs; anything else
 const ONLINE_MS = 75000;
 const LIVE_MS = 120000;
 
-export const ok = (obj: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(obj) }] });
-export const fail = (message: string, extra: Json = {}) => ({ content: [{ type: "text" as const, text: JSON.stringify({ error: message, ...extra }) }], isError: true });
+// Every answer ends with the coaching playbook's core rules (in a long voice chat the playbook
+// itself, read once at the start, fades).
+export const ok = (obj: Json) => ({ content: [{ type: "text" as const, text: JSON.stringify({ ...obj, reminder: REMINDER }) }] });
+export const fail = (message: string, extra: Json = {}) => ({ content: [{ type: "text" as const, text: JSON.stringify({ error: message, ...extra, reminder: REMINDER }) }], isError: true });
 
 function ago(ts: string | number | null | undefined): string | null {
   if (!ts) return null;
@@ -161,19 +156,22 @@ export async function getProgress(sb: Sb, q: string) {
     }) });
 }
 
-export async function getVoiceProfile(sb: Sb) {
+async function profilesData(sb: Sb) {
   const { data } = await sb.from("sync_items").select("kind,id,data").in("kind", ["profile", "prefs"]).eq("deleted", false);
   const prefs = (data || []).find((r) => r.kind === "prefs")?.data as Json | undefined;
   const midi = (m: unknown) => { if (typeof m !== "number") return null; const n = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"][((m % 12) + 12) % 12]; return `${n}${Math.floor(m / 12) - 1}`; };
-  return ok({ profiles: (data || []).filter((r) => r.kind === "profile").map((r) => {
+  return (data || []).filter((r) => r.kind === "profile").map((r) => {
     const d = (r.data as Json) || {}, rg = (d.range as Json) || null;
     return { id: r.id, name: d.name, active: prefs?.activeProfile === r.id,
       range: rg ? { lowest: midi(rg.low), highest: midi(rg.high), comfortable: `${midi(rg.comfortLow)}–${midi(rg.comfortHigh)}`, measured: rg.at ? ago(Number(rg.at)) : "preset" } : null };
-  }) });
+  });
+}
+export async function getVoiceProfile(sb: Sb) {
+  return ok({ profiles: await profilesData(sb) });
 }
 
 const online = (d: Json) => Date.now() - new Date(String(d.seen_at)).getTime() < ONLINE_MS && (d.state as Json)?.visible !== false && !(d.state as Json)?.left;
-export async function getStatus(sb: Sb) {
+async function statusData(sb: Sb) {
   const [dev, live, st] = await Promise.all([
     sb.from("devices").select("id,name,remote,seen_at,state").order("seen_at", { ascending: false }),
     sb.from("coach_takes").select("id,song_id,status,started_at,updated_at,meta").eq("status", "live").order("started_at", { ascending: false }).limit(1),
@@ -182,14 +180,28 @@ export async function getStatus(sb: Sb) {
   const devices = (dev.data || []).map((d) => ({ device: d.id, name: d.name, remote_on: d.remote, online: online(d as Json), seen: ago(d.seen_at), showing: d.state }));
   const remote = devices.find((d) => d.remote_on);
   const lt = live.data?.[0] as Json | undefined;
-  return ok({
+  return {
     devices,
     remote_device: remote ? remote.name : null,
     hint: remote ? (remote.online ? null : `${remote.name} has 📡 Remote on but isn't in front right now (closed, in the background or asleep) — commands wait until it is.`)
       : "No device has 📡 Remote on — ask the user to tap 📡 on the Sing page of the device they're using.",
     live_take: lt && takeStatus(lt) === "live" ? takeHead(lt) : null,
     ...st,
-  });
+  };
+}
+export async function getStatus(sb: Sb) {
+  return ok(await statusData(sb));
+}
+
+// The coach: the playbook and everything it starts from — what the page shows, the voice
+// profile, the last few takes.
+export async function startCoaching(sb: Sb) {
+  const [st, profiles, takes] = await Promise.all([
+    statusData(sb),
+    profilesData(sb),
+    sb.from("coach_takes").select("id,song_id,status,started_at,updated_at,meta,headline:review->>headline").order("started_at", { ascending: false }).limit(3),
+  ]);
+  return ok({ playbook: PLAYBOOK, now: { ...st, voice_profiles: profiles, recent_takes: (takes.data || []).map((t) => ({ ...takeHead(t as Json), headline: (t as Json).headline ?? null })) } });
 }
 
 export const ACTIONS = ["open_song", "set_key", "set_tempo", "listen", "play_take", "sing", "loop_line", "go_to_line", "review", "stop"] as const;
@@ -218,7 +230,7 @@ export async function control(sb: Sb, args: Json, by = "Assistant") {
     if (row && row.status !== "sent") {
       const r = (row.result as Json) || {};
       const say = action === "sing" ? { now: `Starts in ${st.start_delay_s} s (a "Get ready" countdown, then the count-in). Say a word at most — then stay quiet until the take ends.` } : {};
-      return row.status === "done" ? ok({ done: action, on: d.name, ...r, ...say, standing_instructions: st.standing_instructions }) : fail(String(r.error ?? row.status), { on: d.name, ...r });
+      return row.status === "done" ? ok({ done: action, on: d.name, ...r, ...say }) : fail(String(r.error ?? row.status), { on: d.name, ...r });
     }
   }
   const starts = ["listen", "play_take", "sing", "loop_line"].includes(String(action));

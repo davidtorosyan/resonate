@@ -1,8 +1,8 @@
 // Assistants (v73): connect ChatGPT / Claude to the account (the MCP server's URL), see and
 // remove connected assistants (Supabase Auth OAuth grants), and the account's devices — which
 // one has 📡 Remote on (switched on only from that device's Sing page; off from here too).
-import { SUPABASE_URL } from "./auth.js?v=74";
-import { ready, device, renameDevice } from "./assist.js?v=74";
+import { SUPABASE_URL } from "./auth.js?v=75";
+import { ready, device, renameDevice } from "./assist.js?v=75";
 
 const $ = (id) => document.getElementById(id);
 const msg = $("msg");
@@ -39,23 +39,23 @@ $("copy").addEventListener("click", async () => {
 
 let c = null;
 
-// Standing instructions: sent to the assistant with every status and command (MCP server).
-const DEFAULT_STANDING = "When you start a take, say only \"Go\" (or nothing) and stay quiet until it ends; follow along with get_live_lines without speaking. For a short performance, start it with to_line rather than stopping it yourself. After a take, give your feedback in two or three short sentences: what went well, then one thing to try.";
+// How a take an assistant starts goes (the assistant's coaching itself is the MCP server's
+// playbook, supabase/functions/mcp/coaching.ts): the "Get ready" countdown and whether
+// Resonate's own review opens after it. Saved as soon as they change.
 async function showRules() {
-  const { data } = await c.sb.from("assistant_settings").select("instructions,start_delay_s,review_after_remote").maybeSingle();
-  $("standing").value = data?.instructions || DEFAULT_STANDING;
+  const { data } = await c.sb.from("assistant_settings").select("start_delay_s,review_after_remote").maybeSingle();
   $("delay").value = String(data?.start_delay_s ?? 4);
   if (!$("delay").value) $("delay").value = "4";
   $("review-after").checked = !!data?.review_after_remote;
 }
-$("save-rules").addEventListener("click", async (e) => {
-  e.target.disabled = true;
-  const instructions = $("standing").value.trim();
-  const { error } = await c.sb.from("assistant_settings").upsert({ instructions: instructions === DEFAULT_STANDING ? "" : instructions, start_delay_s: Number($("delay").value) || 0, review_after_remote: $("review-after").checked, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
-  e.target.disabled = false;
+async function saveRules() {
+  const { error } = await c.sb.from("assistant_settings").upsert({ start_delay_s: Number($("delay").value) || 0, review_after_remote: $("review-after").checked, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
   $("rules-msg").textContent = error ? "Couldn't save." : "Saved.";
-  setTimeout(() => { $("rules-msg").textContent = ""; }, 2500);
-});
+  clearTimeout(saveRules.t);
+  saveRules.t = setTimeout(() => { $("rules-msg").textContent = ""; }, 2500);
+}
+$("delay").addEventListener("change", saveRules);
+$("review-after").addEventListener("change", saveRules);
 async function showGrants() {
   const { data, error } = await c.sb.auth.oauth.listGrants();
   const box = $("grants");
