@@ -227,7 +227,9 @@ function attacks(t, L, floor) {
 // Where the sung pitch moves to the next note, for joined notes of different pitch (legato,
 // melismas: the energy may not dip): the best split of the frames between the two notes' sung
 // levels (a two-level step fit — vibrato crossing the midpoint doesn't fool it).
-function glides(notes, frames, shiftT, lead, win) {
+// loose (In time rounds, where the timing is judged and not the notes): a step sung on the wrong
+// pitches counts too (looseStep) — legato on wrong notes still shows where each note began.
+function glides(notes, frames, shiftT, lead, win, loose = false) {
   const out = new Map();
   const ft = frames.map((f) => f.t + shiftT);
   for (let j = 1; j < notes.length; j++) {
@@ -239,26 +241,50 @@ function glides(notes, frames, shiftT, lead, win) {
     for (let i = i0; i < i1; i++) if (frames[i].midi !== null) seg.push(i);
     if (seg.length < 6) continue;
     const ps = seg.map((i) => frames[i].midi);
-    const oct = 12 * Math.round((median(ps) - (a.midi + b.midi) / 2) / 12);
-    const ya = a.midi + oct, yb = b.midi + oct;
-    let best = Infinity, at = -1, cost = 0;
-    for (const p of ps) cost += (p - yb) ** 2; // everything on note b
-    for (let k = 0; k < ps.length; k++) { // frames 0..k on note a
-      cost += (ps[k] - ya) ** 2 - (ps[k] - yb) ** 2;
-      if (k >= 1 && k < ps.length - 2 && cost < best) { best = cost; at = k; }
-    }
-    if (at < 0) continue;
-    // A real move: ≥ 3 frames either side, each side near its note, and the step fits much
-    // better than one level (else note b was never sung — no onset).
-    const before = ps.slice(0, at + 1), after = ps.slice(at + 1);
-    let one = 0;
-    const mAll = median(ps);
-    for (const p of ps) one += (p - mAll) ** 2;
-    if (before.length < 3 || after.length < 3 || Math.abs(median(before) - ya) > 0.7 || Math.abs(median(after) - yb) > 0.7 || best > 0.5 * one) continue;
+    const at = noteStep(ps, a.midi, b.midi) ?? (loose ? looseStep(ps, b.midi - a.midi) : null);
+    if (at === null) continue;
     const tm = (ft[seg[at]] + ft[seg[at + 1]]) / 2;
     out.set(j, { t: tm, s: Math.abs(b.midi - a.midi) >= 3 ? 9 : 6, kind: "glide" });
   }
   return out;
+}
+
+// The split (index of the last frame on note a) of pitches ps between written notes ma → mb, or
+// null. A real move: ≥ 3 frames either side, each side near its note, and the step fits much
+// better than one level (else note b was never sung — no onset).
+function noteStep(ps, ma, mb) {
+  const oct = 12 * Math.round((median(ps) - (ma + mb) / 2) / 12);
+  const ya = ma + oct, yb = mb + oct;
+  let best = Infinity, at = -1, cost = 0;
+  for (const p of ps) cost += (p - yb) ** 2; // everything on note b
+  for (let k = 0; k < ps.length; k++) { // frames 0..k on note a
+    cost += (ps[k] - ya) ** 2 - (ps[k] - yb) ** 2;
+    if (k >= 1 && k < ps.length - 2 && cost < best) { best = cost; at = k; }
+  }
+  if (at < 0) return null;
+  const before = ps.slice(0, at + 1), after = ps.slice(at + 1);
+  let one = 0;
+  const mAll = median(ps);
+  for (const p of ps) one += (p - mAll) ** 2;
+  if (before.length < 3 || after.length < 3 || Math.abs(median(before) - ya) > 0.7 || Math.abs(median(after) - yb) > 0.7 || best > 0.5 * one) return null;
+  return at;
+}
+
+// The loose rule: a two-level step on the singer's own levels (a free fit — the written ones
+// would put the split anywhere when a side is off its note), the way the melody goes (interval
+// w), at least half of it and ≥ 1 semitone; ≥ 3 frames a side and the same fit test. → split | null
+const LOOSE_FRAC = 0.5, LOOSE_MIN = 1;
+function looseStep(ps, w) {
+  const n = ps.length, S1 = [0], S2 = [0];
+  for (const p of ps) { S1.push(S1[S1.length - 1] + p); S2.push(S2[S2.length - 1] + p * p); }
+  const sse = (i, k) => { const s = S1[k] - S1[i]; return S2[k] - S2[i] - (s * s) / (k - i); };
+  const one = sse(0, n);
+  let best = Infinity, at = -1;
+  for (let k = 3; k <= n - 3; k++) { const c = sse(0, k) + sse(k, n); if (c < best) { best = c; at = k - 1; } }
+  if (at < 0) return null;
+  const step = median(ps.slice(at + 1)) - median(ps.slice(0, at + 1));
+  if (Math.sign(step) !== Math.sign(w) || Math.abs(step) < Math.max(LOOSE_MIN, LOOSE_FRAC * Math.abs(w)) || best > 0.5 * one) return null;
+  return at;
 }
 
 // Voicing starts (after ≥ 60 ms unvoiced): a weak cue for entries the energy missed.
@@ -315,12 +341,20 @@ export const tolFlag = (u) => Math.min(0.16, Math.max(0.08, 0.33 * u));
 // frames: [{ t, midi, rms }] (song s, placed with `latency`). metric[j]: { beat, u (s), off
 // (not on a felt beat), level ("beat" | "div" | "sub"), toBeat (s to the next beat), entry
 // (after a rest ≥ ½ beat, or the first note), rest (s of rest before), lineEnd }.
-// opts: songT0, rt (null: unknown), latency, endT.
-// → { notes: [{ dev (s, + = late) | null, conf, kind, rel? (release − written end, s) }], lead }
-export function findOnsets(notes, feat, start, frames, metric, { songT0, rt, latency, endT = Infinity, unsung = null }) {
+// opts: songT0, rt (null: unknown), latency, endT, unsung[j] (leave note j out: nothing to
+// time), and for guided spans (COACHING.md §3.3; the defaults are the whole take's):
+// loose (glides on wrong pitches, In time rounds), seedRange (s: where the first guess at the
+// lead may lie — −0.15…+0.25 in a calibrated round; a whole take allows an unmeasured
+// Bluetooth delay).
+// → { notes: [{ dev (s, + = late) | null, conf, kind, rel? (release − written end, s) }], lead,
+//     leadN (on-beat, non-entry attacks the lead is the median of; 0 when it came from other
+//     cues), leadBy ("on" | "any" | "glide" — which notes set it — | "seed" | null),
+//     seed (the grid search's best offset, s — the middle of its best run; null when no attack
+//     lined up: compare with lead to see the lead wasn't locked a division off) }
+export function findOnsets(notes, feat, start, frames, metric, { songT0, rt, latency, endT = Infinity, unsung = null, loose = false, seedRange = [-0.15, 0.45] }) {
   const trip = rt ?? latency;
   const hopS = feat.hop / feat.sr;
-  const t = Float64Array.from({ length: feat.mid.length }, (_, i) => start + (i + 1) * hopS - songT0 - trip);
+  const t = hopTimes(feat, start, songT0, trip);
   const { L, floor } = envelope(feat.mid);
   const shiftT = latency - trip; // frames were placed with the estimate
   const att = attacks(t, L, floor);
@@ -339,7 +373,7 @@ export function findOnsets(notes, feat, start, frames, metric, { songT0, rt, lat
     return { early, late };
   });
   const candsFor = (lead) => {
-    const gl = glides(notes, frames, shiftT, lead, win);
+    const gl = glides(notes, frames, shiftT, lead, win, loose);
     return notes.map((n, j) => {
       if (!live[j]) return [];
       const lo = n.t + lead - win[j].early, hi = n.t + lead + win[j].late;
@@ -351,17 +385,21 @@ export function findOnsets(notes, feat, start, frames, metric, { songT0, rt, lat
     });
   };
   // The steady lead comes from notes on the beat that aren't entries (mistakes cluster there).
+  // → { lead, n (cues behind it), by } or null
   const steadyLead = (pick) => {
     const on = pick.filter((x, j) => live[j] && !x.none && x.kind === "attack" && !metric[j]?.off && !metric[j]?.entry).map((x) => x.dev);
     const any = pick.filter((x, j) => live[j] && !x.none && x.kind === "attack").map((x) => x.dev);
     const glided = pick.filter((x, j) => live[j] && !x.none && x.kind !== "voicing").map((x) => x.dev); // legato singing
-    return on.length >= 3 ? median(on) : any.length >= 3 ? median(any) : glided.length >= 3 ? median(glided) : null;
+    return on.length >= 3 ? { lead: median(on), n: on.length, by: "on" } : any.length >= 3 ? { lead: median(any), n: any.length, by: "any" }
+      : glided.length >= 3 ? { lead: median(glided), n: glided.length, by: "glide" } : null;
   };
   // First guess at the lead (an unmeasured Bluetooth delay can be 0.2 s off the estimate): the
-  // offset that lines the most strong syllable onsets up with the notes.
-  let seed = 0, seedBest = -1;
+  // offset that lines the most strong syllable onsets up with the notes. (The search starts from
+  // the first offset of the best run; seedEnd is its last, so the returned seed is the run's
+  // middle — the first offset sits up to 40 ms early, too far to compare with the lead.)
+  let seed = 0, seedBest = -1, seedEnd = 0, inBest = false;
   const attT = att.map((a) => a.t);
-  for (let off = -0.15; off <= 0.45 + 1e-9; off += 0.005) {
+  for (let off = seedRange[0]; off <= seedRange[1] + 1e-9; off += 0.005) {
     let score = 0;
     notes.forEach((n, j) => {
       if (!live[j] || n.melisma) return;
@@ -369,14 +407,20 @@ export function findOnsets(notes, feat, start, frames, metric, { songT0, rt, lat
       for (let k = lowerBound(attT, n.t + off - 0.04); k < att.length && att[k].t <= n.t + off + 0.04; k++) s = Math.max(s, Math.min(att[k].s, 24));
       score += s;
     });
-    if (score > seedBest + 1e-9) { seedBest = score; seed = off; }
+    if (score > seedBest + 1e-9) { seedBest = score; seed = seedEnd = off; inBest = true; }
+    else if (inBest && score >= seedBest - 1e-9) seedEnd = off;
+    else inBest = false;
   }
   let lead = seedBest > 0 ? seed : 0, pick = align(notes, candsFor(lead), lead);
+  let by = seedBest > 0 ? "seed" : null, leadN = 0;
   const l1 = steadyLead(pick);
   if (l1 !== null) {
-    lead = l1;
+    lead = l1.lead;
     pick = align(notes, candsFor(lead), lead);
-    lead = steadyLead(pick) ?? lead;
+    const l2 = steadyLead(pick) ?? l1;
+    lead = l2.lead;
+    by = l2.by;
+    leadN = l2.by === "on" ? l2.n : 0;
   }
   const out = pick.map((x, j) => (!live[j] || x.none ? { dev: null, conf: 0, kind: null }
     : { dev: x.dev, conf: Math.min(1, Math.max(0, (x.s - 4) / 10)) * KIND_W[x.kind], kind: x.kind }));
@@ -402,7 +446,128 @@ export function findOnsets(notes, feat, start, frames, metric, { songT0, rt, lat
     }
     if (out[j].rel === undefined && t[Math.min(i1, t.length) - 1] >= end + 0.55) out[j].rel = 0.6; // still going into the rest
   });
-  return { notes: out, lead };
+  return { notes: out, lead, leadN, leadBy: by, seed: seedBest > 0 ? (seed + seedEnd) / 2 : null };
+}
+
+// ---------------------------------------------------------------------------
+// Guided spans (COACHING.md §3.3): the first sound, and whether anything was sung at all —
+// from the recording alone, never from the pitch grading (a note sung a beat late can be graded
+// "missed" or "off" in its slot, which only moves 0.24 s: a timing fault, not silence or pitch).
+
+// As-heard song time of each feature hop's end (recording time − songT0 − trip).
+function hopTimes(feat, start, songT0, trip) {
+  const hopS = feat.hop / feat.sr;
+  return Float64Array.from({ length: feat.mid.length }, (_, i) => start + (i + 1) * hopS - songT0 - trip);
+}
+
+// The vowel band and its floor (as findOnsets has them) — but, given a stretch nobody sang in
+// (`quiet`: [t0, t1] song s as heard, e.g. the count-in), never under that stretch's level: a
+// recording with no singing at all has no quiet *between* phrases, so envelope() puts its floor
+// 20 dB under the room's noise and the noise would read as singing.
+function vowelFloor(feat, t, quiet) {
+  const { L, floor } = envelope(feat.mid);
+  if (!quiet) return { L, floor };
+  const i0 = lowerBound(t, quiet[0]), i1 = lowerBound(t, quiet[1]);
+  if (i1 - i0 < 20) return { L, floor }; // (< 0.1 s: too little to tell)
+  return { L, floor: Math.max(floor, median(Array.from(L.subarray(i0, i1)))) };
+}
+
+const FIRST_RUN = 0.08;   // s of voiced frames that make the first sound
+const FIRST_GAP = 0.05;   // s of unvoiced frames a run may skip (a YIN dropout at a scoop)
+const FIRST_BACK = 0.12;  // s the sound may start before its voicing (YIN needs a few periods)
+const FIRST_DB = 12;      // with no voiced run: dB over the floor…
+const FIRST_HOLD = 0.15;  //   …held this long (a click is gone in ~30 ms)
+
+// The vowel onset near hop i: the vowel band's peak in i … i + win hops, then back through the
+// stretch that stays within VOWEL_DB of it (not past kMin), timed like an attack (where it
+// crosses, − ATTACK_OFFSET). A consonant before the vowel (a hum, a fricative: ≥ 10 dB under it
+// in this band) or a click before it with a dip between isn't part of that stretch. → s | null
+function vowelOnset(t, L, i, win, kMin, minLevel) {
+  let kp = i;
+  for (let k = i; k < Math.min(L.length, i + win); k++) if (L[k] > L[kp]) kp = k;
+  const thr = Math.max(L[kp] - VOWEL_DB, minLevel);
+  if (L[kp] < thr) return null;
+  let k = kp;
+  while (k > Math.max(1, kMin) && L[k - 1] >= thr) k--;
+  const a = L[k - 1], b = L[k];
+  return (a < thr && b > a ? t[k - 1] + ((thr - a) / (b - a)) * (t[k] - t[k - 1]) : t[k]) - ATTACK_OFFSET;
+}
+
+// When the singing in a span began (the counting slip at its entry: the singer is quiet through
+// the count-in, so the first sound is unambiguous). from/to: the window it may start in (song s,
+// as heard: the first note − 1 beat … + 4 beats). The first run of voiced frames ≥ 80 ms that
+// starts in it, timed at its vowel's onset (as findOnsets reads every note: where the beat is
+// felt) — moved back at most 120 ms (YIN needs a few periods; a soft start voices late), or
+// forward past a voiced consonant (an "m" voices before the vowel). No voiced run (unpitched,
+// or YIN never settled): the first vowel-band level ≥ floor + 12 dB held ≥ 150 ms, timed the
+// same way. A click passes neither test (unpitched, ~30 ms).
+// frames: [{ t, midi }] (song s; + shiftT = as heard, as in findOnsets). quiet: the room's
+// level comes from here (default: everything before `from` — the count-in).
+// → song time (as heard) | null
+export function firstSound(feat, start, frames, { songT0, trip, shiftT = 0, from, to, quiet = [-Infinity, from] }) {
+  const hopS = feat.hop / feat.sr, plat = Math.round(PLATEAU / hopS);
+  const t = hopTimes(feat, start, songT0, trip);
+  const { L, floor } = vowelFloor(feat, t, quiet);
+  // 1. the first voiced run
+  let dt = 1 / 60;
+  if (frames.length > 2) dt = median(frames.slice(1, 40).map((f, i) => f.t - frames[i].t)) || dt;
+  let run0 = null, last = null, vs = null;
+  for (const f of frames) {
+    const ft = f.t + shiftT;
+    if (ft < from) continue;
+    if (f.midi === null) {
+      if (run0 !== null && ft - last >= FIRST_GAP) run0 = null;
+      continue;
+    }
+    if (run0 === null) {
+      if (ft > to) break;
+      run0 = ft;
+    }
+    last = ft;
+    if (last + dt - run0 >= FIRST_RUN - 1e-9) { vs = run0; break; }
+  }
+  if (vs !== null) {
+    const iv = lowerBound(t, vs);
+    if (iv < 1 || iv >= L.length) return vs;
+    const w = vowelOnset(t, L, iv, plat, iv - Math.round(FIRST_BACK / hopS), floor + 6);
+    return w === null ? vs : Math.max(vs - FIRST_BACK, w); // (null: a hum with no vowel — the voicing it is)
+  }
+  // 2. no voiced run: sustained energy in the vowel band
+  const need = Math.round(FIRST_HOLD / hopS);
+  let runLen = 0;
+  for (let i = lowerBound(t, from); i < L.length; i++) {
+    if (L[i] < floor + FIRST_DB) { runLen = 0; continue; }
+    if (!runLen && t[i] > to) break;
+    if (++runLen >= need) {
+      const i0 = i - need + 1;
+      return Math.max(t[i0] - ATTACK_OFFSET, vowelOnset(t, L, i0, need, i0, floor + FIRST_DB) ?? t[i0]);
+    }
+  }
+  return null;
+}
+
+// Per span [t0, t1] (song s, as heard — move a note by the take's lead first): the share of it
+// with the vowel band ≥ floor + 10 dB, i.e. something was sung there (whatever its pitch).
+// Time the recording doesn't reach counts as not sung. opts.quiet: as for firstSound (pass the
+// count-in, or a silent take reads as sung).
+export function voiceCover(feat, start, { songT0, trip, quiet = null }, spans) {
+  const hopS = feat.hop / feat.sr;
+  const t = hopTimes(feat, start, songT0, trip);
+  const { L, floor } = vowelFloor(feat, t, quiet);
+  return spans.map(([t0, t1]) => {
+    if (!(t1 > t0)) return 0;
+    let on = 0;
+    for (let i = lowerBound(t, t0), i1 = lowerBound(t, t1); i < i1; i++) if (L[i] >= floor + 10) on++;
+    return Math.min(1, (on * hopS) / (t1 - t0));
+  });
+}
+
+// The onset gate in a guided span: per note, voiceCover over [t − 0.1, t + d + 1 beat] (as
+// written: before the lead is known, so a note sung up to a beat late is still covered). A note
+// is left out of the onset search only if unsung, or "missed" with cover < 20%.
+// beat: s per beat — one number, or one per note (metric[j].beat).
+export function noteCover(feat, start, opts, notes, beat) {
+  return voiceCover(feat, start, opts, notes.map((n, j) => [n.t - 0.1, n.t + n.d + (typeof beat === "number" ? beat : beat[j])]));
 }
 
 // ---------------------------------------------------------------------------

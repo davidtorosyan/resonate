@@ -149,3 +149,161 @@ export function feedback(rows, { rhythm = null, prev = null, pct = null, whole =
     : wins.length ? "Nice — a few things to polish." : "Here's what to try next.";
   return { headline, wins: wins.slice(0, 3), tries: tries.slice(0, WORK_ON), tip };
 }
+
+// ---------------------------------------------------------------------------
+// Guided practice (docs/COACHING.md §5): after a round, one win and at most one cue —
+// `✓ <win> · <cue>`. The verdicts come from practice.js (timeVerdict / tuneVerdict); these are
+// only their words. A cue names a word, a beat or a note, never the body or the person; no
+// numbers but note names. A pass shows only a win; an unsure round never a fault.
+
+// The word note j belongs to (its syllable, or the one it's held from), syllables joined; ""
+// when it has none (no lyrics there).
+function wordAt(notes, j) {
+  let i = j;
+  while (i > 0 && notes[i].melisma) i--;
+  if (!notes[i] || !notes[i].text) return "";
+  const sylIdx = (from, dir) => { for (let k = from + dir; k >= 0 && k < notes.length; k += dir) if (!notes[k].melisma && notes[k].text) return k; return -1; };
+  const joins = (k) => { // (as sing.js joinsNext: both ends must agree, OCR tags whole words "begin")
+    if (notes[k].syllabic !== "begin" && notes[k].syllabic !== "middle") return false;
+    const n = sylIdx(k, 1);
+    return n >= 0 && (notes[n].syllabic === "middle" || notes[n].syllabic === "end");
+  };
+  let a = i;
+  for (let p = sylIdx(a, -1); p >= 0 && joins(p); p = sylIdx(a, -1)) a = p;
+  let s = notes[a].text, k = a;
+  while (joins(k)) { k = sylIdx(k, 1); s += notes[k].text; }
+  return s.replace(/^[“”"'‘’(\[¿¡]+|[“”"’)\].,;:!?…]+$/g, "");
+}
+
+const TIME_CUES = {
+  slip: (o, w) => (o.dir === "early" ? `${w(o.j)} waits a beat` : `Count in — ${w(o.j)} a beat sooner`),
+  unheard: (o, w) => `Sing out on ${w(o.j)}`,
+  "late-in": (o, w) => `Come in on the beat at ${w(o.j)}`, // (an instruction: "“Its” on the beat" read like praise)
+  "early-in": (o, w) => `Let the beat go first, then ${w(o.j)}`,
+  rushing: () => "Let the beat lead",
+  dragging: () => "Lean toward the next beat",
+  "offbeat-late": () => "Off-beat notes a touch sooner",
+  "offbeat-early": () => "Off-beat notes a touch later",
+  short: (o, w) => `Hold ${w(o.j)} full length`,
+  held: (o, w) => `Let go of ${w(o.j)} sooner`,
+  behind: () => "A touch behind the beat",
+  ahead: () => "A touch ahead — let the beat lead",
+};
+const TUNE_CUES = {
+  slip: TIME_CUES.slip,
+  note: (o, w, notes) => (w.word(o.j) ? `${w(o.j)} — ${o.dir === "down" ? "down" : "up"} to ` : o.dir === "down" ? "Down to " : "Up to ") + (notes[o.j]?.name || o.note || ""),
+  missed: (o, w) => `Sing out on ${w(o.j)}`,
+  flat: () => "A touch flat — lift it",
+  sharp: () => "A touch sharp — ease it",
+  mic: () => "Closer to the mic",
+  unclear: () => "Closer to the mic",
+};
+// Cues whose ▶ plays something: the note (In tune), the phrase from a beat before it (timing).
+const PLAYS = new Set(["note", "slip", "late-in", "early-in", "short", "held"]);
+
+// A previous cue that this round shows fixed → the progress win's words (or null).
+function progress(prev, v, f, w, notes) {
+  if (!prev || !(v === "pass" || v === "try" || v === "slip")) return null;
+  switch (prev.kind) {
+    case "slip": return v !== "slip" && (f.entryOk || (f.entryOk === undefined && f.timed)) ? `${w(prev.j)} on the beat now` : null;
+    case "late-in": case "early-in": return f.entryOk ? `${w(prev.j)} on the beat now` : null;
+    case "short": return f.released?.[prev.j] === "ok" ? `${w(prev.j)} full length now` : null;
+    case "held": return f.released?.[prev.j] === "ok" ? `${w(prev.j)} let go in time now` : null;
+    case "rushing": case "dragging": case "behind": case "ahead": return v === "pass" && f.kinds && !f.kinds.includes(prev.kind) ? "With the beat now" : null;
+    case "offbeat-late": case "offbeat-early": return v === "pass" && f.kinds && !f.kinds.includes(prev.kind) ? "Off-beats in place now" : null;
+    case "unheard": return f.cover !== undefined && f.cover !== null ? `${w(prev.j)} rings out now` : null;
+    case "note": return f.goodJ?.includes(prev.j) ? (w.word(prev.j) ? `${w(prev.j)} on ${notes[prev.j]?.name || prev.note} now` : `On ${notes[prev.j]?.name || prev.note} now`) : null;
+    case "missed": return f.missedJ && !f.missedJ.length ? `${w(prev.j)} rings out now` : null;
+    case "flat": case "sharp": return f.goodJ && f.goodJ.length >= 2 && Math.abs(f.lean || 0) < 0.2 ? "Right on pitch now" : null;
+    case "mic": case "unclear": return f.score !== null && f.score !== undefined ? "Heard clearly now" : null;
+    default: return null;
+  }
+}
+
+// stage: "time" | "tune"; verdict: practice.js timeVerdict/tuneVerdict (fullSpeed: applyRound's
+// flag for the first pass at the song's tempo after slower; shown (optional): the win texts the
+// card showed in the last few rounds, newest last — the win then rotates among the true ones);
+// prevCue: the previous round's verdict.cue; notes: the page's notes (name = the note as sung,
+// text = the syllable); ph: the phrase.
+// → { verdict, win: { kind, text } | null, cue: { kind, text, play: { j } | null } | null }
+// Which win: a progress win unless the last round showed that very one; else the first true
+// win (§5 order) not among `shown`; else the one shown longest ago. A pass always has one
+// ("With the beat" / "In tune" is true of every pass, so it takes its turn too). A true win is
+// never dropped for having been shown: a try whose only win is last round's shows it again.
+export function roundResult(stage, verdict, prevCue = null, notes = [], ph = null) {
+  const v = verdict?.v ?? "unknown", f = verdict?.facts || {};
+  // A word in quotes; a note without lyrics by its name (“That”, G4).
+  const word = (j) => wordAt(notes, j ?? ph?.j0 ?? 0);
+  const w = (j) => { const t = word(j); return t ? `“${t}”` : notes[j ?? ph?.j0 ?? 0]?.name || ""; };
+  w.word = word;
+  const wins = []; // { kind, text, j? (the note it's about) }
+  // (a pitch verdict never stands on top of a counting slip: no pitch words then)
+  const pitchOk = stage !== "tune" || v !== "slip";
+  const p = pitchOk || ["slip", "late-in", "early-in"].includes(prevCue?.kind) ? progress(prevCue, v, f, w, notes) : null;
+  if (p) wins.push({ kind: "progress", text: p, j: prevCue.j });
+  const judged = v === "pass" || v === "try" || v === "slip" || v === "unsure";
+  if (judged && stage === "time") {
+    if (f.entryOk && f.entryJ !== undefined) wins.push({ kind: "timing", text: `In on ${w(f.entryJ)}`, j: f.entryJ });
+    if (f.heldOkJ !== null && f.heldOkJ !== undefined) wins.push({ kind: "timing", text: `Held ${w(f.heldOkJ)} full length`, j: f.heldOkJ });
+    if (f.steady) wins.push({ kind: "timing", text: "Steady" });
+  }
+  if ((v === "pass" || v === "try") && stage === "tune") {
+    if (f.goodLongJ !== null && f.goodLongJ !== undefined) {
+      const n = notes[f.goodLongJ]?.name || "";
+      wins.push({ kind: "tune", text: word(f.goodLongJ) ? `${w(f.goodLongJ)} right on ${n}` : `Right on ${n}`, j: f.goodLongJ });
+    }
+    if (f.allFound) wins.push({ kind: "tune", text: "Every note found", all: true });
+  }
+  if ((verdict?.fullSpeed || f.fullSpeed) && v === "pass") wins.push({ kind: "tempo", text: "Full speed" });
+  if (v === "pass") wins.push({ kind: stage === "time" ? "timing" : "tune", text: stage === "time" ? "With the beat" : "In tune", plain: true });
+  const shown = Array.isArray(verdict?.shown) ? verdict.shown.filter((t) => typeof t === "string") : [];
+  const first = (ws) => {
+    // (without a history: the first true win, the plain one only when there's no other)
+    const real = shown.length ? ws : ws.filter((x, k) => !x.plain || k === 0);
+    if (!real.length) return null;
+    let x = real[0];
+    if (shown.length) {
+      const lastShown = (t) => shown.lastIndexOf(t);
+      const prog = real.find((y) => y.kind === "progress");
+      x = prog && shown[shown.length - 1] !== prog.text ? prog
+        : real.find((y) => lastShown(y.text) < 0) || real.reduce((a, b) => (lastShown(b.text) < lastShown(a.text) ? b : a));
+    }
+    return { kind: x.kind, text: x.text };
+  };
+  const win = first(wins);
+  if (v === "pass") return { verdict: v, win, cue: null };
+  // Unsure (and timing unknown): the win, or "Again" — never a fault.
+  if (v === "unsure" || (v === "unknown" && stage === "time")) return { verdict: v, win, cue: win ? null : { kind: "again", text: "Again", play: null } };
+  const c = verdict?.cue;
+  if (!c) return { verdict: v, win, cue: win ? null : { kind: "again", text: "Again", play: null } };
+  const table = stage === "time" ? TIME_CUES : TUNE_CUES;
+  const say = table[c.kind] || TIME_CUES[c.kind];
+  const text = say ? say(c, w, notes) : "Again";
+  const cue = { kind: c.kind, text, play: PLAYS.has(c.kind) && c.j !== undefined ? { j: c.j } : null };
+  // (no win when the round was barely heard or couldn't be pitched; none that says the
+  // opposite of the cue — "“song” on B3 now · “song” — down to B3", where a held word has two
+  // notes, or "Every note found" beside a note to aim for)
+  const about = (j) => (j === undefined || j === null ? null : word(j) || notes[j]?.name || null);
+  const subj = about(c.j);
+  const fit = wins.filter((x) => !(subj && about(x.j) === subj) && !(x.all && c.kind === "note"));
+  return { verdict: v, win: v === "unheard" || v === "unknown" ? null : first(fit), cue };
+}
+
+// After a run (§5): a headline only when a fact backs it ("In the song ✓ …"), then the first
+// true win ("Better than your first try: …" — ▶ Then → Now goes with it). Nothing otherwise:
+// the map animates the new marks. moved/improved: practice.js applyRun; song: { phrases }.
+export function runResult(moved = [], improved = [], song = { phrases: [] }) {
+  const name = (i) => { const ph = song.phrases[i] || {}, t = ph.label || ph.name || ""; return ph.words === "" ? t : `“${t}”`; };
+  // (a phrase that only rides along — a lone note, "Bar 185" — isn't news on its own)
+  const inSong = [...new Set(moved.filter(([i, mark]) => mark === "song" && !song.phrases[i]?.ride).map(([i]) => i))];
+  const headline = inSong.length ? `In the song ✓ ${inSong.slice(0, 3).map(name).join(", ")}${inSong.length > 3 ? " …" : ""}` : null;
+  const win = improved.length ? `Better than your first try: ${name(improved[0])}` : null;
+  return { headline, win };
+}
+
+// The secured glow's line: "✓ “Was blind…” in time · in tune".
+export function securedText(ph, stages) {
+  const say = { time: "in time", tune: "in tune", song: "in the song" };
+  const name = ph?.words === "" ? ph.name : `“${ph?.name || ""}”`;
+  return `✓ ${name} ${stages.map((s) => say[s] || s).join(" · ")}`;
+}

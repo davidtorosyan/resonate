@@ -19,9 +19,9 @@
 // pages' "resonate:data" events (debounced), when the page becomes visible, and every 2 minutes
 // while it's open — one at a time across tabs (Web Locks).
 
-import { supabase, savedUser } from "./auth.js?v=75";
-import { activeSpace, SYNC_META } from "./space.js?v=75";
-import { listSongs, getSong, putSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, listTakes, getTake, putTake, removeTake, persistent, dbGen } from "./library.js?v=75";
+import { supabase, savedUser } from "./auth.js?v=76";
+import { activeSpace, SYNC_META } from "./space.js?v=76";
+import { listSongs, getSong, putSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, countClips, listTakes, getTake, putTake, removeTake, persistent, dbGen } from "./library.js?v=76";
 
 export const SONG_LIMIT = 10;
 const FILE_LIMIT = 10 * 1024 * 1024;
@@ -647,9 +647,10 @@ export async function unsynced() {
   changes += [...local.pdfs].filter((id) => inCloud(id) && !meta.info[id]?.pdf).length;
   // What only ever lives on this device: the recordings of the last takes, the mic calibration.
   const recordings = await countVoices().catch(() => 0);
+  const clips = await countClips().catch(() => 0);
   const prof = readJson(L.profiles, null);
   const calibration = !!(prof?.list?.some?.((p) => p?.vol) || localStorage.getItem("resonate.volCal"));
-  return { songs, changes, recordings, calibration };
+  return { songs, changes, recordings, clips, calibration };
 }
 
 // Signing out: no more passes; wait for one under way (it stops at its next step).

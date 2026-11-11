@@ -33,6 +33,8 @@ export const DATA_KEYS = [
   "resonate.sing.rate",       // (the old global tempo %)
   "resonate.sing.timing",     // per song: tapped timing / own tempo
   "resonate.sing.history",    // per song: takes' summaries
+  "resonate.sing.practice",   // per song: guided practice marks (practice.js; device only until v1.1)
+  "resonate.sing.session",    // guided practice: the session under way
   "resonate.profiles",        // voice profiles
   "resonate.volCal",          // the Tuner's calibration before profiles
   "resonate.sing.customXml", "resonate.sing.customName", "resonate.sing.transpose", // (legacy)

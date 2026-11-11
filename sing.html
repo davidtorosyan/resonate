@@ -134,6 +134,64 @@
       #loopbar[hidden] { display: none; }
       #lp-text { font-weight: 700; font-size: 0.98rem; }
       #lp-text[data-tune="good"] { color: #4ade80; }
+      /* Guided practice: one card (the next step, a win, at most one cue), the song map, More. */
+      #coach { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.6rem 0.8rem; margin: 0.1rem 0 0.3rem; border-radius: 0.9rem; border: 1px solid rgba(166,79,255,0.45); background: rgba(166,79,255,0.08); transition: box-shadow 0.4s, border-color 0.4s; }
+      #coach[hidden] { display: none; }
+      #coach[data-glow="true"] { border-color: #4ade80; box-shadow: 0 0 0 0.25rem rgba(74,222,128,0.22); }
+      .co-top { display: flex; align-items: baseline; gap: 0.6rem; }
+      #co-title { flex: 1; min-width: 0; font-weight: 700; font-size: 0.98rem; line-height: 1.3; overflow-wrap: anywhere; }
+      #co-title .co-sub { font-weight: 500; color: rgba(255,255,255,0.6); }
+      .co-link { font: inherit; font-size: 0.8rem; color: rgba(255,255,255,0.65); background: none; border: 0; padding: 0.1rem 0; cursor: pointer; white-space: nowrap; }
+      #co-res { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.55rem; font-size: 0.92rem; line-height: 1.35; }
+      #co-res[hidden], #co-btns[hidden] { display: none; }
+      #co-win { color: #4ade80; font-weight: 600; }
+      #co-win:empty, #co-cue:empty { display: none; }
+      #co-cue { color: #ffe6a0; }
+      .co-chip, #co-btns button { font: inherit; font-size: 0.8rem; color: #e8e8f0; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; padding: 0.25rem 0.65rem; cursor: pointer; }
+      .co-chip[hidden] { display: none; }
+      #co-btns { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+      #co-btns button.go { background: #a64fff; border-color: #a64fff; color: #fff; font-weight: 600; }
+      #map { display: block; width: 100%; height: 24px; padding: 8px 0; margin: 0.15rem 0 0; background: none; border: 0; cursor: pointer; }
+      #map[hidden] { display: none; }
+      .map-strip { display: flex; gap: 2px; height: 8px; width: 100%; }
+      @media (min-width: 700px) { .map-strip { height: 12px; } #map { height: 28px; } }
+      .map-strip i { display: block; height: 100%; border-radius: 3px; border: 1px solid rgba(255,255,255,0.28); background: transparent; box-sizing: border-box; transition: background 0.5s, border-color 0.5s; }
+      .map-strip i[data-m="time"] { background: rgba(166,79,255,0.55); border-color: rgba(166,79,255,0.8); }
+      .map-strip i[data-m="tune"] { background: rgba(74,222,128,0.55); border-color: rgba(74,222,128,0.8); }
+      .map-strip i[data-m="song"] { background: rgba(74,222,128,0.85); border-color: #b7f5c8; box-shadow: inset 0 2px 0 rgba(255,255,255,0.7); }
+      .map-strip i[data-cur="true"] { outline: 2px solid #fff; outline-offset: 1px; }
+      .map-strip i[data-new="true"] { animation: map-new 1.2s ease-out 2; }
+      @keyframes map-new { 50% { filter: brightness(1.8); } }
+      @media (prefers-reduced-motion: reduce) { .map-strip i[data-new="true"] { animation: none; } #coach { transition: none; } }
+      /* Guided: the step's card replaces the results row, the play bar and the chips (More → Tools has them). */
+      body[data-guided="true"] .results-head, body[data-guided="true"] #playbar, body[data-guided="true"] #chips, body[data-guided="true"] #loopbar { display: none; }
+      /* (from More → Tools: a loop shows its bar instead of the card; 🎤 Pitch its readout) */
+      body[data-guided="true"][data-drill="true"] #loopbar { display: flex; }
+      body[data-guided="true"][data-drill="true"] #coach { display: none; }
+      body[data-guided="true"][data-mon="true"] .results-head { display: flex; }
+      #coach { max-height: 34vh; overflow-y: auto; }
+      @media (max-height: 760px) { body[data-guided="true"] #lane { min-height: 110px; } }
+      .mo-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.1rem; border-bottom: 1px solid rgba(255,255,255,0.07); }
+      .mo-marks { font-family: ui-monospace, "SF Mono", monospace; font-size: 0.85rem; letter-spacing: 0.12em; white-space: nowrap; }
+      .mo-marks b { font-weight: 600; color: rgba(255,255,255,0.45); }
+      .mo-legend { text-transform: none; letter-spacing: 0; font-weight: 500; color: rgba(255,255,255,0.45); margin-left: 0.4rem; }
+      .mo-note { font-size: 0.75rem; color: rgba(255,255,255,0.45); margin: 0.6rem 0 0; }
+      /* (touch targets: at least ~40 px tall on a phone) */
+      .co-link { min-height: 2.5rem; padding: 0 0.2rem; }
+      .co-chip, #co-btns button, .mo-row button.mo-from, .mo-tools button { min-height: 2.5rem; }
+      .mo-text { min-height: 2.5rem; }
+      #map { height: 32px; padding: 12px 0; }
+      #coach { min-height: 4.4rem; }
+      .mo-marks b[data-on="true"] { color: #4ade80; }
+      .mo-marks b.t[data-on="true"] { color: #c48bff; }
+      .mo-text { flex: 1; min-width: 0; font-size: 0.9rem; background: none; border: 0; color: inherit; font: inherit; text-align: left; padding: 0; cursor: pointer; }
+      .mo-sub { font-size: 0.72rem; color: rgba(255,255,255,0.5); }
+      .mo-row button.mo-from { font: inherit; font-size: 0.74rem; color: #e8e8f0; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; padding: 0.22rem 0.55rem; cursor: pointer; white-space: nowrap; }
+      .mo-row[data-cur="true"] .mo-text { color: #ffe6a0; }
+      #mo-tools.mo-tools { margin: 0.6rem 0 0; }
+      #mo-today:empty { display: none; }
+      #mo-today { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.3rem; }
+      #mo-today .co-chip { align-self: flex-start; }
       #lyric-now { font-size: 1.35rem; font-weight: 700; line-height: 1.35; min-height: 1.35em; }
       #lyric-next { font-size: 0.9rem; opacity: 0.45; min-height: 1.35em; margin-top: 0.15rem; }
       .syl { transition: color 0.1s ease; color: rgba(255,255,255,0.75); }
@@ -358,7 +416,7 @@
       <div class="header-right mono">
         <span id="assistant-chip" class="assistant-chip" hidden></span>
         <button id="remote-btn" class="remote-btn" type="button" hidden aria-pressed="false">📡</button>
-        <span id="version">v75</span>
+        <span id="version">v76</span>
         <span id="status"></span>
       </div>
     </header>
@@ -384,6 +442,7 @@
         <button id="options-btn" class="tool-btn" type="button" title="Singing options" aria-label="Singing options">⚙</button>
       </section>
       <div id="song-msg" hidden></div>
+      <button id="map" type="button" hidden aria-label="Your progress on this song"><span class="map-strip"></span></button>
       <section id="lyrics">
         <div id="countin" class="mono" hidden></div>
         <span id="take-end" class="take-end mono" hidden></span>
@@ -392,6 +451,11 @@
         <div id="lyric-next"></div>
       </section>
       <canvas id="lane"></canvas>
+      <section id="coach" hidden aria-live="polite">
+        <div class="co-top"><span id="co-title"></span><button id="co-more" class="co-link" type="button">More ›</button></div>
+        <div id="co-res" hidden><span id="co-win"></span><span id="co-cue"></span><button id="co-play" class="co-chip" type="button" hidden>▶</button></div>
+        <div id="co-btns" hidden></div>
+      </section>
       <section id="results">
         <div id="loopbar" hidden>
           <span id="lp-text"></span>
@@ -435,6 +499,8 @@
         <h3>While you sing</h3>
         <label class="op-choice"><input type="radio" name="view" value="practice" /><span><b>Practice</b> — notes + your pitch</span></label>
         <label class="op-choice"><input type="radio" name="view" value="perform" /><span><b>Perform</b> — lyrics only, review after</span></label>
+        <h3>Coach</h3>
+        <label class="op-choice"><input type="checkbox" id="guided-on" /><span><b>Guide me</b> — one step at a time</span></label>
         <h3>Guide</h3>
         <select id="guide-select" aria-label="Guide while singing">
           <option value="click">Click</option>
@@ -484,6 +550,19 @@
         </div>
       </div>
     </div>
+    <div id="more" class="overlay" hidden>
+      <div class="sheet" role="dialog" aria-labelledby="mo-title">
+        <div class="rv-head">
+          <span id="mo-title" class="op-title">This song</span>
+          <button id="mo-close" class="tool-btn" type="button" aria-label="Close">✕</button>
+        </div>
+        <div id="mo-today"></div>
+        <div id="mo-tools" class="rv-btns mo-tools"></div>
+        <h3>Lines <span class="mo-legend">♩ in time · ♪ in tune · ✓ in the song</span></h3>
+        <div id="mo-lines"></div>
+        <p class="mo-note">Your progress stays on this device.</p>
+      </div>
+    </div>
     <div id="review" class="overlay" hidden>
       <div class="sheet" role="dialog" aria-labelledby="rv-title">
         <div class="rv-head">
@@ -499,7 +578,7 @@
         <div id="rv-lines"></div>
       </div>
     </div>
-    <script type="module" src="nav.js?v=75"></script>
-    <script type="module" src="sing.js?v=75"></script>
+    <script type="module" src="nav.js?v=76"></script>
+    <script type="module" src="sing.js?v=76"></script>
   </body>
 </html>
