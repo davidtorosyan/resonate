@@ -219,6 +219,7 @@ function applySong() {
   shiftSig = shifts.join(",");
   flats = transposeKey(score.fifths, fit ? fit.key : shifts[0] ?? 0).fifths < 0;
   notes = notesForVerse(score, verse).map((n, i) => ({
+    wmidi: n.midi, // as written (before transpose / fit shifts)
     midi: n.midi + shifts[i],
     name: spellTransposed(n, shifts[i], transposeKey(score.fifths, shifts[i]).steps, flats).name,
     q: n.onset,
@@ -229,6 +230,9 @@ function applySong() {
     syllabic: n.syllabic,
     melisma: n.melisma,
     restBefore: n.restBefore,
+    pass: n.pass ?? 1, // the verse pass of the repeat it's sung in (musicxml.js unfold)
+    measure: n.measure, // written measure
+    mi: measureAt(n.onset), // played measure index (score.measureOf[mi] = its written one)
   }));
   lines = lyricLines(notesForVerse(score, verse));
   lineOf = [];

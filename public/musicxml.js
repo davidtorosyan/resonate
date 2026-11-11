@@ -501,7 +501,7 @@ export function notesForVerse(score, verse) {
   let lastSyl = null;
   return score.notes.map((n) => {
     const v = n.verses[verse];
-    const base = { midi: n.midi, letter: n.letter, alter: n.alter, onset: n.onset, dur: n.dur, measure: n.measure, restBefore: n.restBefore };
+    const base = { midi: n.midi, letter: n.letter, alter: n.alter, onset: n.onset, dur: n.dur, measure: n.measure, restBefore: n.restBefore, pass: n.pass ?? 1 };
     if (v) {
       lastSyl = v;
       return { ...base, text: v.text, syllabic: v.syllabic, melisma: false };
