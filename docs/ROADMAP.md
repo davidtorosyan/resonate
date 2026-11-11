@@ -70,6 +70,20 @@ See principle 1. Keep collecting the numbers, but change what the singer sees:
   something to try, with a ▶ to hear it.
 - No grade-like percentages anywhere in the singing flow. Avoid red "fail" colouring.
 
+## 2b. Guided practice — v1 built (v76); v1.1 next
+
+The site guides practice (docs/COACHING.md; CLAUDE.md "Guided practice"): phrase by phrase,
+in time → in tune → in the song, one step on one card, wins first, the song map, ▶ Then → Now.
+v1.1, in order:
+- Tune `PRACTICE` from the owner's real rounds (More → Tools → ⤓ Last round).
+- Sync the practice state (`<song>|practice` rows; docs/COACHING.md §8.3), so the map is the
+  same on the phone and the PC.
+- Kept checks: the next session starts with a short run over yesterday's ✓ phrases (gold dots).
+- Hear the note (in tune, after two misses), a smaller chunk before rotating, the key offer.
+- Entry lag inside runs where there's no rest (today: a phrase a whole beat late mid-run reads
+  as on time).
+- The MCP coach reads `practice` to add to the site's steps (never to replace them).
+
 ## 3. Fewer words (standing; fix the worst now)
 
 - Key/transpose: replace the explanation under the song bar with the original range and
