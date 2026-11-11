@@ -165,16 +165,30 @@
       @media (prefers-reduced-motion: reduce) { .map-strip i[data-new="true"] { animation: none; } #coach { transition: none; } }
       /* Guided: the step's card replaces the results row, the play bar and the chips (More → Tools has them). */
       body[data-guided="true"] .results-head, body[data-guided="true"] #playbar, body[data-guided="true"] #chips, body[data-guided="true"] #loopbar { display: none; }
+      /* (from More → Tools: a loop shows its bar instead of the card; 🎤 Pitch its readout) */
+      body[data-guided="true"][data-drill="true"] #loopbar { display: flex; }
+      body[data-guided="true"][data-drill="true"] #coach { display: none; }
+      body[data-guided="true"][data-mon="true"] .results-head { display: flex; }
+      #coach { max-height: 34vh; overflow-y: auto; }
+      @media (max-height: 760px) { body[data-guided="true"] #lane { min-height: 110px; } }
       .mo-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.1rem; border-bottom: 1px solid rgba(255,255,255,0.07); }
       .mo-marks { font-family: ui-monospace, "SF Mono", monospace; font-size: 0.85rem; letter-spacing: 0.12em; white-space: nowrap; }
-      .mo-marks b { font-weight: 600; color: rgba(255,255,255,0.22); }
+      .mo-marks b { font-weight: 600; color: rgba(255,255,255,0.45); }
+      .mo-legend { text-transform: none; letter-spacing: 0; font-weight: 500; color: rgba(255,255,255,0.45); margin-left: 0.4rem; }
+      .mo-note { font-size: 0.75rem; color: rgba(255,255,255,0.45); margin: 0.6rem 0 0; }
+      /* (touch targets: at least ~40 px tall on a phone) */
+      .co-link { min-height: 2.5rem; padding: 0 0.2rem; }
+      .co-chip, #co-btns button, .mo-row button.mo-from, .mo-tools button { min-height: 2.5rem; }
+      .mo-text { min-height: 2.5rem; }
+      #map { height: 32px; padding: 12px 0; }
+      #coach { min-height: 4.4rem; }
       .mo-marks b[data-on="true"] { color: #4ade80; }
       .mo-marks b.t[data-on="true"] { color: #c48bff; }
       .mo-text { flex: 1; min-width: 0; font-size: 0.9rem; background: none; border: 0; color: inherit; font: inherit; text-align: left; padding: 0; cursor: pointer; }
       .mo-sub { font-size: 0.72rem; color: rgba(255,255,255,0.5); }
       .mo-row button.mo-from { font: inherit; font-size: 0.74rem; color: #e8e8f0; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; padding: 0.22rem 0.55rem; cursor: pointer; white-space: nowrap; }
       .mo-row[data-cur="true"] .mo-text { color: #ffe6a0; }
-      .mo-tools { margin-left: 0; }
+      #mo-tools.mo-tools { margin: 0.6rem 0 0; }
       #mo-today:empty { display: none; }
       #mo-today { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.3rem; }
       #mo-today .co-chip { align-self: flex-start; }
@@ -402,7 +416,7 @@
       <div class="header-right mono">
         <span id="assistant-chip" class="assistant-chip" hidden></span>
         <button id="remote-btn" class="remote-btn" type="button" hidden aria-pressed="false">📡</button>
-        <span id="version">v75</span>
+        <span id="version">v76</span>
         <span id="status"></span>
       </div>
     </header>
@@ -485,7 +499,7 @@
         <h3>While you sing</h3>
         <label class="op-choice"><input type="radio" name="view" value="practice" /><span><b>Practice</b> — notes + your pitch</span></label>
         <label class="op-choice"><input type="radio" name="view" value="perform" /><span><b>Perform</b> — lyrics only, review after</span></label>
-        <h3>Practice</h3>
+        <h3>Coach</h3>
         <label class="op-choice"><input type="checkbox" id="guided-on" /><span><b>Guide me</b> — one step at a time</span></label>
         <h3>Guide</h3>
         <select id="guide-select" aria-label="Guide while singing">
@@ -543,10 +557,10 @@
           <button id="mo-close" class="tool-btn" type="button" aria-label="Close">✕</button>
         </div>
         <div id="mo-today"></div>
-        <h3>Lines</h3>
-        <div id="mo-lines"></div>
-        <h3>Tools</h3>
         <div id="mo-tools" class="rv-btns mo-tools"></div>
+        <h3>Lines <span class="mo-legend">♩ in time · ♪ in tune · ✓ in the song</span></h3>
+        <div id="mo-lines"></div>
+        <p class="mo-note">Your progress stays on this device.</p>
       </div>
     </div>
     <div id="review" class="overlay" hidden>
@@ -564,7 +578,7 @@
         <div id="rv-lines"></div>
       </div>
     </div>
-    <script type="module" src="nav.js?v=75"></script>
-    <script type="module" src="sing.js?v=75"></script>
+    <script type="module" src="nav.js?v=76"></script>
+    <script type="module" src="sing.js?v=76"></script>
   </body>
 </html>

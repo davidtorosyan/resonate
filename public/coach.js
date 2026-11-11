@@ -178,7 +178,7 @@ function wordAt(notes, j) {
 const TIME_CUES = {
   slip: (o, w) => (o.dir === "early" ? `${w(o.j)} waits a beat` : `Count in — ${w(o.j)} a beat sooner`),
   unheard: (o, w) => `Sing out on ${w(o.j)}`,
-  "late-in": (o, w) => `${w(o.j)} on the beat`,
+  "late-in": (o, w) => `Come in on the beat at ${w(o.j)}`, // (an instruction: "“Its” on the beat" read like praise)
   "early-in": (o, w) => `Let the beat go first, then ${w(o.j)}`,
   rushing: () => "Let the beat lead",
   dragging: () => "Lean toward the next beat",

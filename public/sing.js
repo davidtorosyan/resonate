@@ -2,23 +2,23 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=75";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=75";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=75";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=75";
-import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=75";
-import * as P from "./practice.js?v=75";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=75";
-import { startCapture, playVoice } from "./capture.js?v=75";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=75";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=75";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=75";
-import { fixOmrScore } from "./omr/fixscore.js?v=75";
-import { activeProfile } from "./profiles.js?v=75";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=75";
-import { DATA_KEYS } from "./space.js?v=75";
-import { spaceChanged } from "./nav.js?v=75";
-import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=75";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=76";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=76";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=76";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=76";
+import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=76";
+import * as P from "./practice.js?v=76";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=76";
+import { startCapture, playVoice } from "./capture.js?v=76";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=76";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=76";
+import { listSongs, getSong, addSong, removeSong, persistent, saveClean, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=76";
+import { fixOmrScore } from "./omr/fixscore.js?v=76";
+import { activeProfile } from "./profiles.js?v=76";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=76";
+import { DATA_KEYS } from "./space.js?v=76";
+import { spaceChanged } from "./nav.js?v=76";
+import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=76";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -156,6 +156,8 @@ function retime(r) {
   for (const n of notes) { n.t = qToT(n.q); n.d = qToT(n.q + n.dq) - n.t; }
   songEnd = notes.length ? Math.max(...notes.map((n) => n.t + n.d)) : 0;
   entryT = qToT(score.measures[entryIdx] ?? 0);
+  // (guided practice's phrases too: a slower round's listen, ▶ You and the cue's ▶ use them)
+  if (psong) for (const p of psong.phrases) { p.t0 = notes[p.j0].t; p.t1 = Math.max(...p.js.map((j) => notes[j].t + notes[j].d)); }
   renderAll();
 }
 
@@ -483,6 +485,7 @@ function setScore(sc, stored = null) {
 let songGen = 0; // a newer selectSong wins over one still loading
 async function selectSong(id) {
   stopLoop();
+  stopGuided();
   stopSession();
   $("taptempo").hidden = true; // (their taps belong to the song they were opened on)
   $("tapalong").hidden = true;
@@ -822,7 +825,7 @@ async function beginSing(part) {
     // (only notes up to that line are graded: the next line may start inside the margin)
     if (remoteTake.until !== null && lines[remoteTake.until]) { const idx = lines[remoteTake.until], jl = idx[idx.length - 1], last = notes[jl]; take.untilLine = remoteTake.until; take.untilT = last.t + last.d + 0.8; take.range = [take.range[0], Math.min(take.range[1], jl + 1)]; }
   }
-  remoteTake = null;
+  if (!part) remoteTake = null; // (a guided round mustn't eat an assistant's pending take)
   let endRes;
   const ended = new Promise((r) => { endRes = r; });
   session = { kind: "sing", ac, nodes, songT0, latency, mic, capture, features, countClicks, wakeLock, raf: null, part, start, beatSec, count, ended, endRes };
@@ -1046,7 +1049,7 @@ function rhythmOf(s, v, cal, stopAt, settings) {
     unsung = ns.map((_, k) => { const st = take.grades[j0 + k]?.status; return st === "unsung" || (st === "missed" && !(cov[k] >= P.PRACTICE.time.noteHeard)); });
   }
   const on = findOnsets(ns, feat, v.start, take.frames, met, { songT0: s.songT0, rt: cal ? cal.rt : null, latency: take.latency, endT: stopAt - s.songT0 - trip, unsung,
-    ...(guided ? { loose: s.part.stage === "time", ...(cal ? { seedRange: PRACTICE.time.seedRound } : {}) } : {}) });
+    ...(guided ? { loose: s.part.stage === "time", ...(cal ? { seedRange: P.PRACTICE.time.seedRound } : {}) } : {}) });
   // Saying the whole take was behind/ahead needs a measured round trip that's short (with a
   // long one — Bluetooth — the singer may be following the screen, which runs ahead of the
   // sound), the click guide, and no tapped timing map (the taps carry their own error).
@@ -1103,7 +1106,7 @@ function phraseRhythm(s, v, cal, ns, met, on, j0, feat, trip, phr, per) {
     }
     return {
       trust: "ok", calibrated: !!cal, guide: take.guide, tapped: !!(useMap && tmap), measuredRt: measured,
-      lag, beat, u, cover, classified, syllables: syl.length, notes: per,
+      lag, beat, u, cover, classified, syllables: syl.length, // (+ notes: take.rhythm.notes where judged — prOf)
       obs: pobs.filter((o) => o.scope !== "take" && o.li === pi).map((o) => (o.j !== undefined ? { ...o, j: o.j + j0 } : o)),
       takeObs, leadN: on.leadN ?? 0, seedAgrees: on.seed !== null && on.seed !== undefined && on.lead !== null && Math.abs(on.seed - on.lead) <= tolOn(u),
     };
@@ -1300,7 +1303,9 @@ let shownPrev = null; // [line, perform] of the previous-line display
 function renderLyrics(t) {
   if (!notes.length) return;
   const perform = performing();
-  const fi = !session && preview ? preview.j : focusNote(t);
+  // (a guided round's count-in: its own line, not the held word of the line before)
+  const sp = session?.kind === "sing" && session.part?.guided ? session.part.range[0] : -1;
+  const fi = !session && preview ? preview.j : sp >= 0 && notes[sp] && t < notes[sp].t ? sp : focusNote(t);
   const li = lineOf[fi] ?? 0;
   if (li !== shownLine) {
     sylEls = new Map();
@@ -1914,6 +1919,8 @@ let cardGlow = 0;     // until when the card glows (a stage secured)
 let mapNew = new Set(); // phrases whose marks just moved (the map pulses them)
 let lastRound = null;   // the last round or run: { tk, extra } — More → Tools → ⤓ (real takes, to tune PRACTICE)
 let winsShown = [];     // the win texts shown lately (newest last), so they rotate
+let guideQuiet = 0;     // footer taps are ignored until then (just after a step stopped)
+let cursorFor = null;   // the step the lane and lyrics were last moved to
 const coachEl = $("coach"), coTitle = $("co-title"), coRes = $("co-res"), coWin = $("co-win"), coCue = $("co-cue"), coPlay = $("co-play"), coBtns = $("co-btns");
 const mapEl = $("map"), moreEl = $("more");
 
@@ -1931,8 +1938,10 @@ function songSpq() {
 const barQAt = (q) => { const [b, t] = meterAt(measureAt(q)); return (b * 4) / t; };
 
 // After applySong: this verse's phrases, and the song's practice state.
+let pdocId = null; // the song pdoc belongs to
 function loadPractice() {
   stopGuided();
+  if (pdocId !== songId) { thenNow = null; thenNowFresh = false; lastRound = null; mapNew.clear(); cardGlow = 0; winsShown = []; }
   psong = null;
   pstep = null;
   cardRes = null;
@@ -1941,19 +1950,23 @@ function loadPractice() {
     psong = P.groupPhrases(notes, lines, { spq: songSpq(), barQAt, measureOf: score.measureOf || null });
   } catch (err) { console.warn("practice: grouping", err); psong = null; }
   pdoc = readAll(PK.doc)[songId] || P.newDoc();
+  pdocId = songId;
   const s = readAll(PK.session);
   psess = P.sessionFor(s && s.songId ? s : null, songId, Date.now());
   // A song sung here before (history, a saved take) has been heard: no "Hear it first".
   if (!pdoc.heard && (readHistory()[songId]?.length || take)) pdoc = P.markHeard(pdoc, Date.now());
   renderGuided();
+  // ▶ Then → Now stays available (More) for as long as its recordings are here.
+  const sid = songId;
+  storedThenNow().then((x) => { if (songId === sid) { thenNow = x; renderGuided(); } }, () => {});
 }
 function savePractice() {
-  if (!songId || !pdoc || spaceChanged()) return;
+  if (!pdocId || !pdoc || pdocId !== songId || spaceChanged()) return;
   pdoc.lastAt = Date.now();
   const all = readAll(PK.doc);
-  all[songId] = pdoc;
+  all[pdocId] = pdoc;
   store(PK.doc, JSON.stringify(all));
-  store(PK.session, JSON.stringify({ ...psess, songId, lastAt: Date.now() }));
+  store(PK.session, JSON.stringify({ ...psess, songId: pdocId, lastAt: Date.now() }));
 }
 // The plan's next step (a session that went quiet for 3 h starts a new one).
 function planNext() {
@@ -1975,23 +1988,34 @@ function renderGuided() {
   const label = P.stepLabel(step, psong);
   // Title: the step (or, mid-step, what's happening).
   const ph = gblock?.phase;
+  const checking = gblock?.phase === "wait" || (!gblock && step?.kind === "selfcheck");
+  const name = (i) => { const p = psong.phrases[i]; return p ? (p.words ? `“${P.phraseName(p, 3)}”` : P.phraseName(p, 3)) : ""; };
   coTitle.textContent = "";
-  coTitle.append(label.title);
+  coTitle.append(checking ? `Sounded right? ${name(step.p)}` : label.title);
   if (ph === "listen") coTitle.append(Object.assign(document.createElement("span"), { className: "co-sub", textContent: " · listen" }));
   if (!gblock && label.note) coTitle.append(Object.assign(document.createElement("span"), { className: "co-sub", textContent: ` · ${label.note}` }));
-  else if (ph === "sing" && gblock.setup?.confirm) coTitle.append(Object.assign(document.createElement("span"), { className: "co-sub", textContent: gblock.step.stage === "time" ? " · once more, lane off" : " · once more" }));
-  // The result line: a win and/or one cue (kept on through the next listen).
+  // The lane and lyrics show the step's line when it changes (not while the singer pans).
+  if (!gblock && !session && step && step !== cursorFor && psong.phrases[step.p ?? step.from]) {
+    cursorFor = step;
+    cursorToLine(lineOf[psong.phrases[step.p ?? step.from].j0]);
+    nowT = scrollT;
+    renderLyrics(nowT);
+    renderLane();
+  }
+  // The result line: a win and/or one cue (kept on through the next listen; the self-check
+  // asks instead of repeating the fault).
   const res = cardRes;
-  coRes.hidden = !res || (!res.win && !res.cue);
-  coWin.textContent = res?.win ? (res.win.text.startsWith("✓") ? res.win.text : `✓ ${res.win.text}`) : "";
-  coCue.textContent = res?.cue ? res.cue.text : "";
+  const cue = checking ? null : res?.cue;
+  coRes.hidden = !res || (!res.win && !cue);
+  coWin.textContent = res?.win ? (res.win.text.includes("✓") ? res.win.text : `✓ ${res.win.text}`) : "";
+  coCue.textContent = cue ? cue.text : "";
   coPlay.hidden = !res?.cue?.play || (!!gblock && gblock.phase !== "wait");
   // Buttons on the card: only for questions (the self-check) and Then → Now.
   coBtns.textContent = "";
   if (gblock?.phase === "wait" || (!gblock && pstep?.kind === "selfcheck")) {
     coBtns.append(cardBtn("✓ Yes", "yes", true), cardBtn("Again", "again"));
     if (gblock?.voice) coBtns.append(cardBtn("▶ You", "you"));
-  } else if (!gblock && thenNow) coBtns.append(cardBtn(session?.kind === "thennow" ? "■ Stop" : "▶ Then → Now", "thennow"));
+  } else if (!gblock && thenNow && (thenNowFresh || session?.kind === "thennow")) coBtns.append(cardBtn(session?.kind === "thennow" ? "■ Stop" : "▶ Then → Now", "thennow"));
   coBtns.hidden = !coBtns.childElementCount;
   coachEl.dataset.glow = Date.now() < cardGlow ? "true" : "false";
   renderMap();
@@ -2031,6 +2055,8 @@ function renderMap() {
 
 // --- Running a step ------------------------------------------------------------------
 
+// A phrase's PhraseRhythm from a take, with the take's per-note rhythm the verdicts read.
+const prOf = (tk, k) => { const r = tk?.rhythm?.phrases?.[k]; return r ? { ...r, notes: tk.rhythm.notes } : null; };
 const sleepG = (ms, b) => new Promise((r) => { const t = setTimeout(r, ms); b && (b.cancel = () => { clearTimeout(t); r(); }); });
 const spanOf = (p0, p1) => {
   const a = psong.phrases[p0], b = psong.phrases[p1];
@@ -2046,10 +2072,11 @@ function runPlan() {
   if (gblock) return stopGuided();
   const step = pstep;
   if (!step) return;
-  thenNow = null;
+  if (Date.now() < guideQuiet) return;
+  thenNowFresh = false;
   cardRes = null;
   if (step.kind === "hear") return runHear(step);
-  if (step.kind === "selfcheck") return answerCheck(step, true);
+  if (step.kind === "selfcheck") { answerCheck(step, false); return runPlan(); } // (the footer is "Again"; Yes is on the card)
   if (step.kind === "stage") return runBlock(step);
   return runSpan(step); // first, run, singon, through, finish
 }
@@ -2065,6 +2092,8 @@ function tapContext() {
 function stopGuided() {
   const b = gblock;
   if (!b) return;
+  // Hear it stopped once a phrase has played still counts (decided now: the lane moves on below).
+  if (b.step.kind === "hear" && nowT >= psong.phrases[b.step.from].t1) { pdoc = P.markHeard(pdoc, Date.now()); savePractice(); }
   gblock = null;
   b.cancel?.();
   b.waitRes?.(null);
@@ -2073,7 +2102,8 @@ function stopGuided() {
   retime(b.baseRate);
   laneMode = "on";
   b.ac?.close?.().catch(() => {});
-  take = takeFits(b.savedTake) ? b.savedTake : take?.part ? null : take;
+  take = b.sid === songId && takeFits(b.savedTake) ? b.savedTake : take?.part ? null : take;
+  guideQuiet = Date.now() + 400; // (a double tap on ■ Stop doesn't start the step again)
   pstep = planNext();
   monitorSync(MON_RESUME);
   renderAll();
@@ -2082,7 +2112,7 @@ function stopGuided() {
 }
 
 async function runHear(step) {
-  const b = gblock = { step, token: {}, phase: "listen", baseRate: rate };
+  const b = gblock = { step, token: {}, phase: "listen", baseRate: rate, sid: songId };
   const ps = psong.phrases;
   const t0 = ps[step.from].t0, t1 = ps[step.to].t1;
   renderGuided();
@@ -2093,6 +2123,7 @@ async function runHear(step) {
   if (gblock !== b) { if (!gblock) { pstep = planNext(); renderAll(); } return; }
   gblock = null;
   pstep = planNext();
+  monitorSync(MON_RESUME);
   renderAll();
   renderGuided();
 }
@@ -2101,7 +2132,7 @@ async function runHear(step) {
 // phrase `from` to `to` in Perform view with the lane off, clicks, the song's tempo; recorded.
 async function runSpan(step) {
   const ac = tapContext();
-  const b = gblock = { step, token: {}, phase: "sing", baseRate: rate, ac, savedTake: take?.part ? null : take, setup: step.setup };
+  const b = gblock = { step, token: {}, phase: "sing", baseRate: rate, ac, savedTake: take?.part ? null : take, setup: step.setup, sid: songId };
   closeReview();
   stopKeys();
   const sp = spanOf(step.from, step.to);
@@ -2119,16 +2150,18 @@ async function runSpan(step) {
   gblock = null;
   laneMode = "on";
   b.ac.close().catch(() => {});
+  monitorSync(MON_RESUME);
   if (!t) { pstep = planNext(); renderAll(); return renderGuided(); }
-  // The phrases this run reached (a run stopped early covers what was sung).
-  const reached = covered.filter((i) => { const ph = psong.phrases[i]; return ph.js.some((j) => t.grades[j] && t.grades[j].status !== "unsung"); });
+  // The phrases this run sang to their end (a run stopped early covers only those: a phrase cut
+  // a note in mustn't be judged — or credited — on that note).
+  const reached = covered.filter((i) => wholly(psong.phrases[i], t));
   const results = reached.map((i) => {
-    const ph = psong.phrases[i], k = covered.indexOf(i), r = t.rhythm?.phrases?.[k] || null;
+    const ph = psong.phrases[i], r = prOf(t, covered.indexOf(i));
     return { time: P.timeVerdict({ ph, r, grades: t.grades, notes, tapped: useMap && !!tmap }), tune: P.tuneVerdict({ ph, r, grades: t.grades, notes }) };
   });
   lastRound = { tk: t, extra: { run: step.kind, phrases: reached.map((i) => psong.phrases[i].name), results } };
   applyRunResult(t, reached, results, { rate: 1, guide: "click", first: step.kind === "first", at: Date.now(), kind: step.kind });
-  take = takeFits(b.savedTake) ? b.savedTake : null; // the run isn't the song's take
+  take = b.sid === songId && takeFits(b.savedTake) ? b.savedTake : null; // the run isn't the song's take
   pstep = planNext();
   renderAll();
   renderGuided();
@@ -2143,30 +2176,34 @@ async function applyRunResult(t, reached, results, run) {
   setTimeout(() => { mapNew.clear(); renderGuided(); }, 3000);
   savePractice();
   const rr = runResult(out.moved || [], out.improved || [], psong);
-  cardRes = rr.headline || rr.win ? { win: rr.headline ? { text: rr.headline } : null, cue: rr.win ? { text: rr.win, good: true } : null } : null;
+  const wins = [rr.headline, rr.win].filter(Boolean);
+  cardRes = wins.length ? { win: { text: wins.join(" · ") }, cue: null } : null;
+  if ((out.moved || []).length) { cardGlow = Date.now() + 1500; setTimeout(renderGuided, 1600); }
   renderGuided();
-  await keepRunAudio(t, reached, { ...out, firstReached: firstReach });
+  const passed = reached.filter((i, k) => !/^(try|slip)$/.test(results[k]?.time?.v) && !/^(try|slip)$/.test(results[k]?.tune?.v));
+  await keepRunAudio(t, reached, { ...out, firstReached: firstReach, passed });
   renderGuided();
 }
 
+const wholly = (ph, tk) => ph.js.every((j) => tk.grades[j] && tk.grades[j].status !== "unsung");
 // A free take (More → Sing it through, an assistant's take…) while guiding: credit for what
 // was sung (its own guide: the melody guide gives no ♩).
 function guidedAfterTake(tk) {
   if (!guiding() || !tk || tk.part || spaceChanged()) return;
   const rs = tk.rhythm?.phrases || [];
-  const reached = psong.phrases.map((p, i) => i).filter((i) => psong.phrases[i].js.some((j) => tk.grades[j] && tk.grades[j].status !== "unsung"));
+  const reached = psong.phrases.map((p, i) => i).filter((i) => wholly(psong.phrases[i], tk));
   if (!reached.length) return;
   const results = reached.map((i) => {
-    const ph = psong.phrases[i], r = rs[i] ? { ...rs[i], takeObs: [] } : null;
+    const ph = psong.phrases[i], r = rs[i] ? { ...prOf(tk, i), takeObs: [] } : null;
     return { time: P.timeVerdict({ ph, r, grades: tk.grades, notes, tapped: useMap && !!tmap }), tune: P.tuneVerdict({ ph, r, grades: tk.grades, notes }) };
   });
-  applyRunResult(tk, reached, results, { rate: 1, guide: tk.guide, first: !pdoc.firstRun, at: Date.now(), kind: "through" }).then(() => { pstep = planNext(); renderGuided(); });
+  applyRunResult(tk, reached, results, { rate: tk.rate / rate, guide: tk.guide, first: !pdoc.firstRun, at: Date.now(), kind: "through" }).then(() => { pstep = planNext(); renderGuided(); });
 }
 
 // A phrase's block: rounds until practice.js secures the stage, moves on or asks.
 async function runBlock(step) {
   const ac = tapContext();
-  const b = gblock = { step, token: {}, phase: "", baseRate: rate, ac, savedTake: take?.part ? null : take, setup: step.setup, round: 0 };
+  const b = gblock = { step, token: {}, phase: "", baseRate: rate, ac, savedTake: take?.part ? null : take, setup: step.setup, round: 0, sid: songId };
   closeReview();
   stopKeys();
   const ph = psong.phrases[step.p];
@@ -2204,7 +2241,7 @@ async function runBlock(step) {
     if (!alive() || !t) return;
     b.voice = t.voice;
     // The verdict, the words, the plan.
-    const r = t.rhythm?.phrases?.[0] || null;
+    const r = prOf(t, 0);
     const tv = P.timeVerdict({ ph, r, grades: t.grades, notes, tapped: useMap && !!tmap });
     const uv = P.tuneVerdict({ ph, r, grades: t.grades, notes });
     const v = step.stage === "time" ? tv : uv;
@@ -2217,6 +2254,8 @@ async function runBlock(step) {
     if (cardRes?.win?.text) winsShown.push(cardRes.win.text);
     if (v.cue) b.lastCue = v.cue;
     b.phase = "result";
+    cursorToLine(lineOf[ph.j0]); // (the lane and lyrics back on the round's line, where the card is)
+    renderAll();
     savePractice();
     if (out.event === "secured") {
       const stages = step.stage === "time" && out.alsoTune ? ["time", "tune"] : [step.stage];
@@ -2277,7 +2316,7 @@ function endBlock(b, nxt = null) {
   retime(b.baseRate);
   laneMode = "on";
   b.ac?.close?.().catch(() => {});
-  take = takeFits(b.savedTake) ? b.savedTake : null;
+  take = b.sid === songId && takeFits(b.savedTake) ? b.savedTake : null;
   pstep = nxt || planNext();
   monitorSync(MON_RESUME);
   renderAll();
@@ -2290,7 +2329,8 @@ function endBlock(b, nxt = null) {
 // (kept for good) — and "now" — the latest run at the song's tempo. ▶ Then → Now plays one
 // excerpt of phrases that went better now, then 0.6 s, then the same phrases now.
 
-let thenNow = null; // { then: clip, now: clip, t: [t0, t1] in each clip's own song seconds } — offered on the card
+let thenNow = null; // { then, now (clips), a, b: [t0, t1] in each clip's own song seconds } — in More (Today)
+let thenNowFresh = false; // …and on the card, right after the run that improved
 
 // Cut a take's recording (song seconds) down to [t0, t1] and pack it (16-bit, half rate).
 function clipOf(v, t0, t1) {
@@ -2300,9 +2340,10 @@ function clipOf(v, t0, t1) {
   return packVoice({ data: v.data.subarray(a, z), sampleRate: sr, start: v.start + a / sr, gain: v.gain });
 }
 async function keepRunAudio(t, reached, out) {
-  if (!t.voice || spaceChanged() || !songId) return;
-  const span = (is) => [Math.min(...is.map((i) => psong.phrases[i].t0)) - 0.5, Math.max(...is.map((i) => psong.phrases[i].t1)) + 0.5];
-  const spans = (is) => Object.fromEntries(is.map((i) => [psong.phrases[i].wk, [psong.phrases[i].t0, psong.phrases[i].t1]]));
+  if (!t.voice || spaceChanged() || !songId || !reached.length) return;
+  const sid = songId, ps = psong.phrases; // (the song may change while this awaits)
+  const span = (is) => [Math.min(...is.map((i) => ps[i].t0)) - 0.5, Math.max(...is.map((i) => ps[i].t1)) + 0.5];
+  const spans = (is) => Object.fromEntries(is.map((i) => [ps[i].wk, [ps[i].t0, ps[i].t1]]));
   const at = Date.now();
   try {
     // "then": the phrases this run reached for the first time.
@@ -2310,32 +2351,37 @@ async function keepRunAudio(t, reached, out) {
     if (first.length) {
       const [a, z] = span(first);
       const c = clipOf(t.voice, a, z);
-      if (c) await putClip(`${songId}#then#${at.toString(36)}`, { ...c, at, rate, spans: spans(first) });
+      if (c) await putClip(`${sid}#then#${at.toString(36)}`, { ...c, at, rate, spans: spans(first) });
     }
     // "now": this run (the song's tempo — a run always is).
     const [a, z] = span(reached);
     const c = clipOf(t.voice, a, z);
-    if (c) await putClip(`${songId}#now`, { ...c, at, rate, spans: spans(reached), ok: (out.improved || []).map((i) => psong.phrases[i].wk) });
-    // Offer it when some phrase went better now than in its "then".
-    thenNow = await findThenNow(out.improved || []);
+    if (c) await putClip(`${sid}#now`, { ...c, at, rate, spans: spans(reached), ok: (out.passed || []).map((i) => ps[i].wk) });
+    // Offer it when some phrase went better now than in its first try.
+    const x = await storedThenNow(sid, ps);
+    if (songId === sid) { thenNow = x; thenNowFresh = !!x && (out.improved || []).length > 0; }
   } catch (err) { console.warn("practice: recording", err); }
 }
-// The excerpt to play: the improved phrases covered by one "then" clip and the "now" clip.
-async function findThenNow(improved) {
-  if (!improved.length) return null;
-  const now = await getClip(`${songId}#now`);
-  if (!now) return null;
-  const thens = (await listClips(songId)).filter((c) => c.songId.includes("#then#"));
+// The excerpt to play: phrases that went better than their first try (practice.js marks them,
+// w.then.told), sung well in the latest run ("now".ok) and kept in one "then" clip — the first
+// such phrase and the ones after it that fit in 30 s.
+async function storedThenNow(sid = songId, ps = psong?.phrases || []) {
+  const now = await getClip(`${sid}#now`);
+  if (!now?.ok?.length) return null;
+  const better = new Set(ps.filter((p) => pdoc?.w?.[p.wk]?.then?.told && now.ok.includes(p.wk)).map((p) => p.wk));
+  if (!better.size) return null;
+  const thens = (await listClips(sid)).filter((c) => c.songId.includes("#then#"));
   let best = null;
   for (const th of thens) {
-    const wks = improved.map((i) => psong.phrases[i].wk).filter((wk) => th.spans?.[wk] && now.spans?.[wk]);
+    const wks = [...better].filter((wk) => th.spans?.[wk] && now.spans?.[wk]);
     if (wks.length && (!best || wks.length > best.wks.length)) best = { then: th, now, wks };
   }
   if (!best) return null;
-  // One stretch of at most 30 s: the first improved phrase and those after it that fit.
-  const rng = (c) => { const s = best.wks.map((wk) => c.spans[wk]); return [Math.min(...s.map((x) => x[0])) - 0.3, Math.max(...s.map((x) => x[1])) + 0.3]; };
-  const a = rng(best.then), b = rng(best.now);
-  return { then: best.then, now: best.now, a: [a[0], Math.min(a[1], a[0] + 30)], b: [b[0], Math.min(b[1], b[0] + 30)] };
+  const pick = best.wks.map((wk) => [wk, ...best.now.spans[wk]]).sort((x, y) => x[1] - y[1]), run = [pick[0]];
+  for (const x of pick.slice(1)) { if (x[2] - run[0][1] > 30) break; run.push(x); }
+  const keep = run.map((x) => x[0]);
+  const rng = (c) => { const s = keep.map((wk) => c.spans[wk]); return [Math.min(...s.map((x) => x[0])) - 0.3, Math.max(...s.map((x) => x[1])) + 0.3]; };
+  return { then: best.then, now: best.now, a: rng(best.then), b: rng(best.now), wks: keep };
 }
 function playClip(ac, c, when, t0, t1, nodes) {
   const v = unpackVoice(c);
@@ -2368,7 +2414,8 @@ async function playThenNow(x) {
   session = { kind: "thennow", ac, nodes, songT0: 0, raf: null, end: Infinity, ended, endRes };
   updateButtons();
   renderGuided();
-  setTimeout(() => { if (session?.kind === "thennow" && session.ac === ac) { session.natural = true; stopSession(); renderGuided(); } }, (d1 + 0.6 + d2 + 0.3) * 1000);
+  const me = session;
+  setTimeout(() => { if (session === me) { session.natural = true; stopSession(); renderGuided(); } }, (d1 + 0.6 + d2 + 0.3) * 1000);
 }
 function playRoundVoice(b) {
   if (!b.voice) return;
@@ -2378,8 +2425,8 @@ function playRoundVoice(b) {
     stopSession();
     const nodes = [];
     playVoice(ac, b.voice, ac.currentTime + 0.05, Math.max(b.voice.start, ph.t0 - 0.5), nodes);
-    session = { kind: "playback", ac, nodes, songT0: 0, raf: null, end: Infinity, ended: Promise.resolve(true), endRes() {} };
-    setTimeout(() => { if (session?.ac === ac && session.kind === "playback") { session.natural = true; stopSession(); } }, (ph.t1 - ph.t0 + 1) * 1000);
+    const me = session = { kind: "playback", ac, nodes, songT0: 0, raf: null, end: Infinity, ended: Promise.resolve(true), endRes() {} };
+    setTimeout(() => { if (session === me) { session.natural = true; stopSession(); } }, (ph.t1 - ph.t0 + 1) * 1000);
   });
 }
 
@@ -2414,6 +2461,7 @@ function renderMore() {
       pstep = P.singFromHere(pdoc, psong, i) || pstep;
       cardRes = null;
       renderGuided();
+      runPlan();
     });
     row.append(marks, text, sub, from);
     rows.append(row);
@@ -2630,7 +2678,7 @@ function showRemote(on) {
 remoteBtn.addEventListener("click", () => { remoteBtn.disabled = true; remote.set(!remote.on).finally(() => { remoteBtn.disabled = false; }); });
 function remoteState() {
   return { page: "sing", song: songId && score ? { id: songId, title: score.title } : null, key: score ? optText(keySelect) : null, tempo: score ? optText(tempoSelect) : null,
-    doing: getReady ? "get-ready" : drill ? "loop" : session?.kind || (starting ? "starting" : "idle"), line: shownLine >= 0 ? shownLine + 1 : null, lines: lines.length,
+    doing: getReady ? "get-ready" : drill ? "loop" : gblock ? "practice" : session?.kind || (starting ? "starting" : "idle"), line: shownLine >= 0 ? shownLine + 1 : null, lines: lines.length,
     has_take: !!(take && take.endT !== null), sound: playCtx ? playCtx.state : "none" };
 }
 // Takes an assistant starts: a "Get ready" countdown first (its own words land there, not over
@@ -2708,9 +2756,12 @@ async function runRemote(action, a) {
   // (a take still being finished — recording, rhythm, review — is let finish first)
   for (let i = 0; i < 100 && finishing; i++) await new Promise((r) => setTimeout(r, 100));
   if (spaceChanged()) return { ok: false, error: "This page is out of date (signed in or out elsewhere) and is reloading." };
+  // Guided practice running: the assistant's command comes first (it ends the step).
+  const wasGuided = !!gblock;
+  if (gblock && action !== "review") stopGuided();
   switch (action) {
     case "stop": {
-      const was = cancelGetReady() || drill || session;
+      const was = cancelGetReady() || drill || session || wasGuided;
       if (drill) stopLoop(); else if (session?.kind === "sing") await stopSing(); else if (session) stopSession();
       if (was && a.by) showMsg(`Stopped by ${a.by}`);
       return done();
@@ -2984,6 +3035,7 @@ $("co-more").addEventListener("click", openMore);
 mapEl.addEventListener("click", openMore);
 $("mo-close").addEventListener("click", closeMore);
 moreEl.addEventListener("click", (e) => { if (e.target === moreEl) closeMore(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !moreEl.hidden) closeMore(); });
 coBtns.addEventListener("click", (e) => {
   const act = e.target.closest("button")?.dataset.act;
   if (!act) return;
@@ -3039,11 +3091,13 @@ function updateButtons() {
   singBtn.textContent = drill ? "■ Stop loop" : kind === "sing" ? "■ Stop" : take?.endT != null ? `● ${verb} again` : `● ${verb}`;
   const perform = performing() ? "true" : "false";
   if (document.body.dataset.perform !== perform) document.body.dataset.perform = perform;
+  document.body.dataset.drill = drill ? "true" : "false"; // (guided: a loop from More shows its bar)
+  document.body.dataset.mon = mon ? "true" : "false";      // (…and 🎤 Pitch its readout)
   singBtn.dataset.active = kind === "sing" ? "true" : "false";
   // Guided: the footer's right button runs the plan's step (■ Stop while it runs).
   if (guiding() && !drill) {
     if (gblock) singBtn.textContent = "■ Stop";
-    else if (kind !== "sing" && pstep) singBtn.textContent = pstep.kind === "selfcheck" ? "✓ Yes" : P.stepLabel(pstep, psong).button;
+    else if (kind !== "sing" && pstep) singBtn.textContent = pstep.kind === "selfcheck" ? "● Again" : P.stepLabel(pstep, psong).button;
     singBtn.dataset.active = gblock || kind === "sing" ? "true" : "false";
   }
   listenBtn.textContent = kind === "listen" && !gblock ? "■ Stop" : "▶ Listen";

@@ -1,8 +1,8 @@
 // Assistants (v73): connect ChatGPT / Claude to the account (the MCP server's URL), see and
 // remove connected assistants (Supabase Auth OAuth grants), and the account's devices — which
 // one has 📡 Remote on (switched on only from that device's Sing page; off from here too).
-import { SUPABASE_URL } from "./auth.js?v=75";
-import { ready, device, renameDevice } from "./assist.js?v=75";
+import { SUPABASE_URL } from "./auth.js?v=76";
+import { ready, device, renameDevice } from "./assist.js?v=76";
 
 const $ = (id) => document.getElementById(id);
 const msg = $("msg");

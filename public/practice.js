@@ -428,6 +428,9 @@ export function tuneVerdict({ ph, r, grades = [], notes }) {
   const slip = slipOf(ph, r, notes);
   const sung = ph.js.filter((j) => grades[j] && grades[j].status !== "unsung");
   if (!sung.length) return { v: "unknown", cue: null, facts, ev: null };
+  // Too little voice to judge the notes (a whisper, far from the mic): uncounted, "Sing out" —
+  // not the same fault round after round, slower and slower.
+  if (!slip && r && r.trust === "ok" && r.guide !== "melody" && typeof r.cover === "number" && r.cover < P.time.heard) return { v: "unheard", cue: { kind: "unheard", j: entryOf(notes, ph) }, facts, ev: null };
   const dur = (js) => js.reduce((a, j) => a + notes[j].d, 0);
   const all = dur(sung);
   const st = (j) => grades[j].status;
@@ -1140,7 +1143,8 @@ export function stepLabel(step, song) {
     case "through": return out("Sing it through", "● Sing");
     case "selfcheck": return out("Sounded right?", "✓ Yes · Again · ▶ You");
     case "stage": {
-      if (step.cont && step.setup?.confirm) return out(step.stage === "time" ? "Once more, lane off" : "Once more", "■ Stop");
+      // (the confirm round: a block shows its own Stop while it runs — at rest, the step to go on with)
+      if (step.cont && step.setup?.confirm) return out(`${q(step.p, 2)} · once more`, "● Go");
       const what = step.stage === "time" ? "in time" : "in tune";
       if (step.extra === "full speed") return out(`${q(step.p, 2)} · full speed`, "● Go");
       if (step.extra === "again") return out(`${q(step.p, 2)} · ${what} again`, "● Go");
