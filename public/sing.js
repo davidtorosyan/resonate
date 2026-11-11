@@ -1913,6 +1913,7 @@ let cardRes = null;   // the last result: { win, cue, play } (coach.js), shown u
 let cardGlow = 0;     // until when the card glows (a stage secured)
 let mapNew = new Set(); // phrases whose marks just moved (the map pulses them)
 let lastRound = null;   // the last round or run: { tk, extra } — More → Tools → ⤓ (real takes, to tune PRACTICE)
+let winsShown = [];     // the win texts shown lately (newest last), so they rotate
 const coachEl = $("coach"), coTitle = $("co-title"), coRes = $("co-res"), coWin = $("co-win"), coCue = $("co-cue"), coPlay = $("co-play"), coBtns = $("co-btns");
 const mapEl = $("map"), moreEl = $("more");
 
@@ -2211,7 +2212,9 @@ async function runBlock(step) {
     lastRound = { tk: t, extra: { phrase: ph.name, stage: step.stage, setup, r: r && { ...r, notes: undefined }, time: tv, tune: uv } };
     const out = P.applyRound(pdoc, psess, ph, step.stage, step.stage === "time" ? { ...tv, tune: uv } : v, setup, Date.now());
     pdoc = out.doc; psess = out.session;
-    cardRes = roundResult(step.stage, { ...v, fullSpeed: out.fullSpeed }, b.lastCue, notes, ph);
+    // (the wins shown lately: roundResult rotates between the true ones instead of repeating one)
+    cardRes = roundResult(step.stage, { ...v, fullSpeed: out.fullSpeed, shown: winsShown.slice(-6) }, b.lastCue, notes, ph);
+    if (cardRes?.win?.text) winsShown.push(cardRes.win.text);
     if (v.cue) b.lastCue = v.cue;
     b.phase = "result";
     savePractice();

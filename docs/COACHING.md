@@ -68,6 +68,18 @@ export function runResult(moved, improved, song)                  // → { headl
 ```
 Words per §5 tables. No digits except in note names, no "%", "fail", "wrong", "score". A pass shows only a win; unsure/unknown never a fault.
 
+`verdict.shown` (optional): the win texts the card showed in the last few rounds, newest last (sing.js keeps ~6). With it the win rotates among the true ones: a progress win unless it was the last one shown, else the first true win not shown, else the one shown longest ago. "With the beat" / "In tune" (true of every pass) takes its turn on passes. A true win is never dropped. Without `shown`: the first true win, as before.
+
+### Rules settled after the integration check (D1–D7)
+
+- **Phrases that ride along** (`ph.ride`: fewer than 2 syllables with words, or notes in a song without lyrics). A word-less piece cut off by a jump or a new pass joins the phrase before it in performance order (not across a rest of a bar or more), so Killing Me Softly's "Bar 40" and Wichita's "Bars 32–33" are gone. What's left (Piano Man's lone note "Bar 185", "lone.") is never a phrase step, focus-window member, run target or Then → Now: runs that end just before one take it along (no rest between), it gets ♩♪ from a run where it had no try and a pass in time or tune (never the melody guide), then ✓ as usual, and never "· again". Sing on and Sing it through don't wait for it. `pickPhrase` on one returns a run from the phrase before it. `phraseMarks` adds `ride`.
+- **"· again" / "· full speed" from runs** need 2 run slips (`m.rs`, the stage in `m.rsk`; a run that holds at the song's tempo starts over). With nothing else left to do, a single slip's "· again" comes at once (rather than the same run straight back). A redo back again in the same session (`session.redos`) counts as a rotation: left out for 2 steps, the second time parked (quietly).
+- **"· full speed"** confirms at the song's tempo, whatever tempo the pass was at, and clears only with a pass there.
+- **"Good place to stop"**: never before 10 minutes (`stopNotBeforeMin`); again only after 6 more milestones (`stopAgainMarks`). Milestones are §6's: a stage secured (♩♪ at once is one), a section in the song. A run's credit and each phrase's ✓ don't count.
+- **No repeats**: a phrase rotated or left out isn't the next step: a run over it in its section comes first (from the section before when its section is one phrase). A run to the same phrase as the last run (whatever its start), a run to a phrase the last run just sang, or any run right after one that moved nothing waits while other work is left; the same run again for the ✓ that new ♪ allows comes only when nothing else is left. "Finish with" shows only after a park from a block.
+- **Then → Now / "Better than your first try"**: a phrase only the first time it improves (`w.then.told`).
+- **Names** come from the phrase's first lyric line only ("“to quell…”", not "“to quell And they're…”"; `ph.head`, `ph.headCut`) and never start inside a word: a phrase that does (the syllable before left open; or OCR's "begin" on both sides of a jump) is named from its next word ("“but it don’t look…”", not "“cation…”"; joining the syllables back on isn't safe with OCR'd lyrics — Piano Man's "car|and").
+
 ### public/rhythm.js (extend; whole-take defaults unchanged)
 
 ```js

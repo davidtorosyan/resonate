@@ -1036,11 +1036,9 @@ function baseStep(doc, song, session, now) {
   if (choice) return withAlt(doc, song, session, c, stageStep(doc, choice.ph, choice.stage, choice.extra), ranked.filter((x) => x !== choice));
   // 8. Sing it through, once every phrase has ✓ (those that ride along get theirs on the way).
   if (ps.every((ph) => ph.ride || doc.w[ph.wk]?.song)) return { kind: "through", from: 0, to: ps.length - 1, setup: RUN_SETUP(), extra: null, alt: [] };
-  // What's left: a run that isn't the last one again (any section), Sing on, a phrase that's
-  // left out for now, the same phrase again (the only one), and when all that's left is
-  // parked — finish, or work on a parked one anyway.
-  // (another section's run, Sing on, or a slipped phrase's "· again" before the same run again
-  // for the ✓ its ♪ now allows)
+  // What's left, in order: a run that isn't a repeat (any section), Sing on, a slipped phrase's
+  // "· again", the same run again for the ✓ its new ♪ allows, a phrase that's left out for now
+  // (after a run over it), the same phrase again (the only one), a parked one anyway.
   const secs = [c.cur, ...song.sections.map((x) => x.i).filter((s) => s !== c.cur)];
   for (const s of secs) {
     const r = runFor(doc, song, c, s);
@@ -1060,8 +1058,9 @@ function baseStep(doc, song, session, now) {
     const r = runFor(doc, song, c, s);
     if (r && !sameRun(r)) return withAlt(doc, song, session, c, r);
   }
-  // A phrase that's left out (just rotated away) or parked doesn't come straight back: first a
-  // run over it in its section — it may well hold there — unless the last step was that run.
+  // A phrase that's left out (just rotated away) doesn't come straight back when it's all
+  // that's left: first a run over it in its section — it may well hold there — unless the last
+  // step was that run.
   const ranLast = (ph) => !!session.last && session.last.kind !== "stage" && session.last.from <= ph.i && ph.i <= session.last.to;
   const around = (ph) => {
     if (ranLast(ph)) return null;
