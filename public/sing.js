@@ -132,6 +132,10 @@ let shownLine = -1; // lyric line currently rendered
 let lastChip = -1;  // chip marked as current
 let preview = null; // the latest note chip held down (piano keys): { j }
 let practiceJ = -1; // the note chip pressed last: what the pitch readout compares you with
+// The lane's display (guided practice sets it per step): "on" — notes and your pitch in
+// colour; "neutral" — no pitch colours (working on timing); "bars" — the notes without your
+// pitch line (confirming the tune); "off" — neither (confirming the timing, runs).
+let laneMode = "on";
 
 const noteName = (m) => nameOf(m, flats);
 
@@ -140,6 +144,18 @@ const noteName = (m) => nameOf(m, flats);
 
 function secPerQuarter() {
   return 60 / (score.tempo * rate);
+}
+
+// A slower round in guided practice: the song's times at rate r, for now only — nothing is
+// stored, synced or announced (the tempo menu still says the song's tempo); the plan puts
+// the song's own rate back (retime(base)) when the round's block ends or stops.
+function retime(r) {
+  if (!score || r === rate) return;
+  rate = r;
+  for (const n of notes) { n.t = qToT(n.q); n.d = qToT(n.q + n.dq) - n.t; }
+  songEnd = notes.length ? Math.max(...notes.map((n) => n.t + n.d)) : 0;
+  entryT = qToT(score.measures[entryIdx] ?? 0);
+  renderAll();
 }
 
 // Song time (s) of a position in quarter notes (performance order): the score's tempo ×
@@ -698,9 +714,13 @@ function beatGrid() {
 
 // While Sing / Listen / Play is starting ("sing" / "play"), the pitch monitor keeps its mic closed.
 let starting = null;
-// part (a phrase-loop round): { from (s, a bar start: the count-in is the bar before),
-// until (s), range: [first note, end), ac (the loop's mic context) } — no recording,
-// review or history; stopSing resolves session.ended with the round's grades.
+// part (a phrase-loop round, or a guided-practice round or run): { from (s, a bar start: the
+// count-in is the bar before), until (s), range: [first note, end), ac (the loop's mic context),
+// token } — no review or history; stopSing resolves session.ended with the take. Guided practice
+// adds: guided, guide ("click": its own guide, whatever the menu says), view ("practice" |
+// "perform"), lane ("on" | "neutral" | "off" | "bars"), stage ("time" | "tune" | "song"),
+// record (keep the recording: runs, and rounds for "▶ You"), phrases ([[note j…]], the phrases
+// judged — rhythm per phrase, PhraseRhythm in take.rhythm.phrases).
 async function startSing(part = null) {
   starting = "sing";
   monitorSync();
@@ -733,15 +753,16 @@ async function beginSing(part) {
   micWasOpen = true;
   if (part && drill?.token !== part.token) { await mic.close(); return; } // the loop stopped meanwhile
   const ac = mic.ac;
+  const g = part?.guide ?? guide;
   let piano = null;
-  if (guide === "melody") {
+  if (g === "melody") {
     statusEl.textContent = "loading piano…";
     try { piano = await loadPiano(ac); } catch (err) { console.warn(err); }
   }
   // The recording: a take's for playback; a loop round keeps just its count-in (to find the
   // clicks). Both stream into the rhythm features as they arrive.
   const features = makeFeatures(ac.sampleRate);
-  const capture = await startCapture(ac, mic.source, { keepSeconds: part ? 10 : Infinity, onChunk: (c) => features.push(c) });
+  const capture = await startCapture(ac, mic.source, { keepSeconds: part && !part.record ? 10 : Infinity, onChunk: (c) => features.push(c) });
   let wakeLock = null;
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
   if (part && drill?.token !== part.token) { // the loop stopped while the piano loaded
@@ -775,7 +796,7 @@ async function beginSing(part) {
   }
   // The guide, a few seconds ahead at a time (scheduleAhead: all at once choked WebKit).
   const guideItems = [];
-  if (guide === "click") for (const b of beatGrid()) if (b.t >= start - 1e-6 && b.t < end) guideItems.push({ when: songT0 + b.t, end: songT0 + b.t + 0.03, accent: b.accent });
+  if (g === "click") for (const b of beatGrid()) if (b.t >= start - 1e-6 && b.t < end) guideItems.push({ when: songT0 + b.t, end: songT0 + b.t + 0.03, accent: b.accent });
   if (piano) for (const n of notes.slice(j0, j1)) guideItems.push({ when: songT0 + n.t, end: songT0 + n.t + n.d, n });
   guideItems.sort((a, b) => a.when - b.when);
   keepAlive(ac, nodes);
@@ -784,7 +805,7 @@ async function beginSing(part) {
   // The singer follows what they hear (output latency); the mic hears them
   // late (input latency); a pitch frame lags its audio (analysis window).
   const latency = (ac.outputLatency || ac.baseLatency || 0) + INPUT_LATENCY;
-  take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, timing: timingSig(), rate, verse: verseSelect.value || score.verses[0] || "1", octave: 0, range: [j0, j1], part: !!part, guide };
+  take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, timing: timingSig(), rate, verse: verseSelect.value || score.verses[0] || "1", octave: 0, range: [j0, j1], part: !!part, guide: g, guided: !!part?.guided };
   // A whole take is shared with assistants line by line as it's sung (assist.js).
   if (!part && !spaceChanged()) { take.coachId = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`; take.coachSent = new Set(); takeStarted(take.coachId, songId, assistMeta()); }
   // A take an assistant started: who, and the line it ends after (a short performance).
@@ -932,7 +953,7 @@ async function finishSing(s) {
   const octs = take.grades.filter((g) => g && g.octave !== undefined).map((g) => g.octave);
   take.octave = octs.length ? Math.round(median(octs)) : 0;
   // Line the recording up with the score: shift by the round trip.
-  if (v && !s.part) take.voice = { ...v, start: v.start - s.songT0 - take.latency };
+  if (v && (!s.part || s.part.record)) take.voice = { ...v, start: v.start - s.songT0 - take.latency };
   try { take.rhythm = rhythmOf(s, v, cal, stopAt, settings); } catch (err) { console.warn("rhythm", err); take.rhythm = null; }
   try { await s.wakeLock?.release(); } catch {}
   await s.mic.close();
@@ -1222,7 +1243,7 @@ function renderLyrics(t) {
     lyricPrevEl.dataset.tune = "";
     shownPrev = prevKey;
   }
-  if (prevKey >= 0) {
+  if (prevKey >= 0 && !session?.part) { // (not in guided runs: it's pitch-only and mid-take)
     const js = lines[prevKey];
     const sc = js.every((j) => take.grades[j]) ? takeScore(js.map((j) => notes[j]), js.map((j) => take.grades[j])) : null;
     const tune = sc !== null && sc >= 0.85 ? "good" : "";
@@ -1245,12 +1266,12 @@ function renderLyrics(t) {
   for (const [i, span] of sylEls) {
     const g = take?.grades[i];
     // (Perform: no note-by-note colours while singing.)
-    span.dataset.state = i === curSyl && cur >= 0 ? "current" : g && g.status !== "unsung" && !perform ? g.status : "";
+    span.dataset.state = i === curSyl && cur >= 0 ? "current" : g && g.status !== "unsung" && !perform && laneMode === "on" ? g.status : "";
   }
 }
 
 // A take in Perform view: just the lyrics.
-const performing = () => session?.kind === "sing" && !session.part && view === "perform";
+const performing = () => session?.kind === "sing" && (session.part ? session.part.view === "perform" : view === "perform");
 
 function renderChips() {
   chipsEl.textContent = "";
@@ -2454,9 +2475,9 @@ function renderLane() {
   const practised = mon && !take?.grades[youTarget()] ? youTarget() : -1; // (a graded note keeps its grade's outline)
   const cur = session ? noteAt(nowT) : preview ? preview.j : practised; // lit: playing now / tapped / practised
   notes.forEach((n, j) => {
-    if (n.t + n.d < tMin || n.t > tMax) return;
+    if (n.t + n.d < tMin || n.t > tMax || laneMode === "off") return;
     const g = take?.grades[j];
-    const key = g && g.status !== "unsung" ? g.status : "todo";
+    const key = g && g.status !== "unsung" && laneMode !== "neutral" ? g.status : "todo";
     const [fill, stroke] = TUNE[key];
     const x0 = xOf(n.t) + 1, x1 = xOf(n.t + n.d) - 1;
     const y = yOf(n.midi);
@@ -2494,7 +2515,7 @@ function renderLane() {
 
   // Your pitch (a take; dimmed under the pitch monitor's live trail).
   const monitoring = mon && !session;
-  if (take) {
+  if (take && laneMode !== "off" && laneMode !== "bars") {
     ctx.globalAlpha = monitoring ? 0.4 : 1;
     ctx.lineWidth = 2.5;
     ctx.lineJoin = ctx.lineCap = "round";
@@ -2504,7 +2525,7 @@ function renderLane() {
     for (const f of take.frames) {
       if (f.t < tMin - 0.1 || f.t > upTo + 0.05 || f.disp === null) { prev = null; continue; }
       if (prev && Math.abs(prev.disp - f.disp) < 1.5 && f.t - prev.t < 0.1) {
-        ctx.strokeStyle = f.ok === true ? "rgba(74,222,128,0.95)" : f.ok === false ? "rgba(245,170,90,0.95)" : "rgba(255,255,255,0.8)";
+        ctx.strokeStyle = laneMode === "neutral" ? "rgba(255,255,255,0.8)" : f.ok === true ? "rgba(74,222,128,0.95)" : f.ok === false ? "rgba(245,170,90,0.95)" : "rgba(255,255,255,0.8)";
         ctx.beginPath();
         ctx.moveTo(xOf(prev.t), yOf(prev.disp));
         ctx.lineTo(xOf(f.t), yOf(f.disp));

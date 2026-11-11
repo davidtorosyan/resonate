@@ -14,7 +14,8 @@
 //   pdfs   { id, pdf: ArrayBuffer, name, bytes }   a song's original PDF (PDF → Song)
 //   takes  { songId, takeId, at, data }             each song's last take (sing.js), indexed
 //                                                   by [takeId, at] so listing reads no data
-//   voices { songId, takeId, pcm, sampleRate, start, gain }  its recording — this device only
+//   voices { songId, takeId, pcm, sampleRate, start, gain }  its recording — this device only;
+//          also guided practice's recordings under "<songId>#then#…" / "<songId>#now" (clips)
 // Whose songs: the databases belong to the active space (space.js). Each database pair has a
 // generation (localStorage resonate.dbgen.<name>), renewed whenever one is created: the sync
 // (sync.js) starts over when it changes — a database that came back empty (evicted, cleared)
@@ -183,6 +184,7 @@ export async function saveClean(id, xml, ver) {
 export async function removeSong(id, { quiet = false } = {}) {
   await run("readwrite", (s, mem) => (s ? s.delete(id) : (mem.delete(id), {})));
   for (const st of FILES) await run("readwrite", (s, mem) => (s ? s.delete(id) : (mem.delete(id), {})), st);
+  await removeClips(id);
   const list = readIndex();
   if (list) writeIndex(list.filter((x) => x.id !== id));
   if (!quiet) changed("song", id);
@@ -241,9 +243,36 @@ export async function listTakes() {
 export async function listPdfIds() {
   return (await run("readonly", (s, mem) => (s ? s.getAllKeys() : { result: [...mem.keys()] }), "pdfs")) || [];
 }
-// How many take recordings are kept here (they never leave this device).
+// How many take recordings are kept here (they never leave this device; practice clips aside).
 export async function countVoices() {
-  return (await run("readonly", (s, mem) => (s ? s.count() : { result: mem.size }), "voices")) || 0;
+  const keys = (await run("readonly", (s, mem) => (s ? s.getAllKeys() : { result: [...mem.keys()] }), "voices")) || [];
+  return keys.filter((k) => !String(k).includes("#")).length;
+}
+
+// Guided practice's recordings (sing.js): "<songId>#then#<at>" — the part of a run that first
+// reached some phrases — and "<songId>#now" — the latest run. Same shape as a take's voice plus
+// what it covers; in the voices store under their own keys (no schema change), this device only.
+const clipRange = (id) => (typeof IDBKeyRange !== "undefined" ? IDBKeyRange.bound(`${id}#`, `${id}#\uffff`) : null);
+export async function putClip(key, rec) {
+  const v = { ...rec, songId: key };
+  await run("readwrite", (s, mem) => (s ? s.put(v) : (mem.set(key, v), {})), "voices");
+}
+export async function getClip(key) {
+  return run("readonly", (s, mem) => (s ? s.get(key) : { result: mem.get(key) }), "voices");
+}
+// Every clip of a song (newest "then" last), or just their keys.
+export async function listClips(id, { keysOnly = false } = {}) {
+  const r = clipRange(id);
+  const out = await run("readonly", (s, mem) => (s ? (keysOnly ? s.getAllKeys(r) : s.getAll(r)) : { result: [...mem.entries()].filter(([k]) => String(k).startsWith(`${id}#`)).map(([k, v]) => (keysOnly ? k : v)) }), "voices");
+  return out || [];
+}
+export async function removeClips(id, { except = null } = {}) {
+  const keys = await listClips(id, { keysOnly: true });
+  for (const k of keys) if (k !== except) await run("readwrite", (s, mem) => (s ? s.delete(k) : (mem.delete(k), {})), "voices");
+}
+export async function countClips() {
+  const keys = (await run("readonly", (s, mem) => (s ? s.getAllKeys() : { result: [...mem.keys()] }), "voices")) || [];
+  return keys.filter((k) => String(k).includes("#")).length;
 }
 
 // Songs (and their files) are really kept — not just in memory.

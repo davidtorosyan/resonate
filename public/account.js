@@ -259,6 +259,7 @@ function signOutWarning(u) {
   if (u.songs) parts.push([`${u.songs} song${u.songs > 1 ? "s" : ""}`, u.songs > 1]);
   if (u.changes) parts.push(["some changes", true]);
   if (u.recordings) parts.push([`the recording${u.recordings > 1 ? "s" : ""} of your last take${u.recordings > 1 ? "s" : ""}`, u.recordings > 1]);
+  if (u.clips) parts.push(["your practice recordings", true]);
   if (u.calibration) parts.push(["your mic calibration", false]);
   if (!parts.length) return null;
   const list = parts.length === 1 ? parts[0][0] : `${parts.slice(0, -1).map((p) => p[0]).join(", ")} and ${parts[parts.length - 1][0]}`;
