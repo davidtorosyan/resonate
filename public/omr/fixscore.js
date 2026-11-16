@@ -653,7 +653,7 @@ function markUnmarkedTuplets(doc, changes) {
 // those markUnmarkedTuplets made, and Audiveris's own when its "3" was read but not its bracket.
 // Notation software draws nothing for them: four plain quarters in a 3/4 bar ("I'm a bu-sy"),
 // "give me a" with no 3. Each run of them, per voice, is split into groups of actual-notes
-// (by duration: k × the run's shortest element, unscaled) whose first and last elements get
+// (by duration: k × the group's shortest element, unscaled) whose first and last elements get
 // <tuplet type="start"/"stop">. Runs on every load (idempotent: a marked group is inside a
 // tuplet), so songs saved before it get the marks too.
 function markTupletGroups(doc, changes) {
@@ -698,16 +698,18 @@ function markTupletGroups(doc, changes) {
         }
         for (const r of runs) {
           const nominal = (n) => (val(n, "duration") || 0) * r.actual / r.normal;
-          const unit = Math.min(...r.els.map(nominal));
-          if (!(unit > 0)) continue;
-          const want = r.actual * unit;
-          let grp = [], sum = 0;
+          if (!(Math.min(...r.els.map(nominal)) > 0)) continue;
+          // a group closes at `actual` of its own smallest value (3 eighths, or 3 quarters: quarter
+          // triplets next to eighth triplets are two groups, not [q q] [q e])
+          let grp = [], sum = 0, unit = Infinity;
           for (const n of r.els) {
+            const v = nominal(n);
             grp.push(n);
-            sum += nominal(n);
-            if (sum >= want - 1e-6) {
+            sum += v;
+            unit = Math.min(unit, v);
+            if (sum >= r.actual * unit - 1e-6) {
               if (grp.length > 1) { mark(grp[0], "start"); mark(grp[grp.length - 1], "stop"); groups++; }
-              grp = []; sum = 0;
+              grp = []; sum = 0; unit = Infinity;
             }
           }
         }

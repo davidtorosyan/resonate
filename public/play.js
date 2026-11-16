@@ -30,6 +30,8 @@ const K = {
 // Staff space (CSS px) steps for − / +. Defaults: ~3 mm on a tablet on the music desk, smaller
 // on a desktop screen, a phone shows what fits.
 const SIZES = [7, 8, 9.5, 11, 12.5, 14, 16, 18, 20, 23];
+// The largest size step ≤ x (the smallest step when none is).
+const stepDown = (x) => [...SIZES].reverse().find((s) => s <= x + 0.01) ?? SIZES[0];
 const LEVELS = ["all", "some", "off"];
 const FIRST = Object.keys(SAMPLES)[0];
 // (header "none": "auto" prints every OCR'd credit, "Authorized for use by: …" included.
@@ -45,7 +47,6 @@ const VRV = {
   svgAdditionalAttribute: ["note@pname", "note@oct", "note@oct.ges", "accid@accid", "accid@accid.ges", "note@staff", "chord@staff", "staff@n"],
   pageMarginLeft: 60, pageMarginRight: 60, pageMarginTop: 40, pageMarginBottom: 20,
   spacingStaff: 8, spacingBraceGroup: 8,
-  transposeToSoundingPitch: true, // (a B♭ clarinet's or a horn's part at the pitch a pianist plays: no change without <transpose>)
   justifyVertically: true, justificationStaff: 0.2, justificationBraceGroup: 0.2,
   lyricWordSpace: 3,
 };
@@ -145,18 +146,20 @@ async function prune() {
 // ---------------------------------------------------------------------------
 // The engine: Verovio, imported in parallel with the song list and the song.
 
-let engineP = null;
+let engineP = null, engineFails = 0;
 function engine() {
   return (engineP ||= (async () => {
     const t0 = performance.now();
+    // (a browser keeps a failed module import for the page's life: a retry asks for a new address)
+    const q = engineFails ? `?r=${engineFails}` : "";
     const [{ default: createVerovioModule }, { VerovioToolkit }] = await Promise.all([
-      import("./vendor/verovio-6.4.0/verovio-module.mjs"), import("./vendor/verovio-6.4.0/verovio.mjs")]);
+      import(`./vendor/verovio-6.4.0/verovio-module.mjs${q}`), import(`./vendor/verovio-6.4.0/verovio.mjs${q}`)]);
     const t = new VerovioToolkit(await createVerovioModule());
     t.setOptions(VRV);
     S.t.engine = ms(t0);
     tk = t;
     return t;
-  })().catch((err) => { engineP = null; throw err; }));
+  })().catch((err) => { engineP = null; engineFails++; throw err; }));
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +286,9 @@ async function loadView(gen) {
   setPageSize(L);
   const t = performance.now();
   let ok = false;
+  // (a B♭ clarinet's or a horn's part at the pitch a pianist plays — only where a part transposes:
+  // the option moves positioned rests in any score, Songbird's bass rests into the gap above)
+  tk.setOptions({ transposeToSoundingPitch: /<transpose\b/.test(v.xml) });
   try { ok = tk.loadData(v.xml); } catch (err) { console.warn("loadData", err); }
   S.t.data = ms(t);
   S.loaded = ok ? v : null;
@@ -292,8 +298,10 @@ async function loadView(gen) {
 
 // The page size for the stage, from the staff size wanted: two pages side by side when each still
 // holds ≥ 48 staff spaces; ≥ 40 staff spaces across a system; ≥ one system a page. Until a size
-// is chosen on this device, a grand staff in landscape gets two systems a page (not under 11):
-// at 16 an 11" iPad's or a mini's landscape stage held one system and a third of blank paper.
+// is chosen on this device, a grand staff in landscape gets a size step that leaves room for two
+// systems a page (a grand-staff system with its margins takes ~27 staff spaces; not under 11):
+// at 16 an 11" iPad's or a mini's landscape stage held one system and a third of blank paper —
+// 14 on an 11" iPad Air, 12.5 on a mini; + from there is the next step.
 // single: no spread (a view that fits on one page is laid out at the stage's full width).
 function measure(single = false) {
   const cs = getComputedStyle(stage);
@@ -305,7 +313,7 @@ function measure(single = false) {
   const spread = !single && W > H && W / 2 / want >= 48;
   const pw = spread ? Math.floor(W / 2) : W;
   const hard = Math.min(want, pw / 40, H / (12 * staves));
-  const two = S.sizeAuto && staves > 1 && W > H ? Math.max(11, H / (24 * staves)) : Infinity;
+  const two = S.sizeAuto && staves > 1 && W > H ? stepDown(Math.max(11, H / (27 * staves))) : Infinity;
   const sp = Math.min(hard, two);
   const scale = Math.max(5, Math.round(sp / 0.18));
   return { W, H, spread, pw, sp, hard, scale };

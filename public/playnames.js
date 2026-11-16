@@ -67,6 +67,20 @@ export function factFromSvg(g) {
   };
 }
 
+// A transposing part's note as Verovio drew it: Verovio respells a remote sounding key (G♭ major
+// → F♯, C♭ → B, an A clarinet's 6♯ → 6♭), so the name follows the drawing. The pitch (MIDI) is
+// the fact's; a drawing that disagrees on it isn't used.
+export function drawnFact(f, g) {
+  const s = factFromSvg(g);
+  if (s.midi !== f.midi || (s.step === f.step && s.alter === f.alter && s.oct === f.oct)) return f;
+  const code = g.querySelector(":scope > g.accid")?.getAttribute("data-accid") || null;
+  return {
+    ...f, step: s.step, alter: s.alter, oct: s.oct,
+    acc: code ? "printed" : f.acc === "printed" || f.acc === "carried" ? "carried" : s.alter ? "key" : null,
+    nat: code ? code === "n" : f.nat && s.step === f.step && s.alter === 0,
+  };
+}
+
 const el = (name, attrs) => {
   const e = document.createElementNS(NS, name);
   for (const k in attrs) e.setAttribute(k, attrs[k]);
@@ -93,7 +107,8 @@ export function decorate(pageEl, facts = new Map()) {
     if (lines === undefined) staffs.set(staff, (lines = staffLines(staff)));
     const use = head.querySelector("use");
     const href = use ? use.getAttribute("xlink:href") || use.getAttribute("href") || "" : "";
-    items.push({ id: g.id, g, head, staff, lines, fact: facts.get(g.id) || factFromSvg(g), hollow: /#E0A[0-3]/i.test(href) });
+    const f = facts.get(g.id);
+    items.push({ id: g.id, g, head, staff, lines, fact: f ? (f.tr ? drawnFact(f, g) : f) : factFromSvg(g), hollow: /#E0A[0-3]/i.test(href) });
   }
   // Reads.
   for (const it of items) {
@@ -111,44 +126,26 @@ export function decorate(pageEl, facts = new Map()) {
   for (const it of live) (byStaff.get(it.staff) || byStaff.set(it.staff, []).get(it.staff)).push(it);
   // Some on a page the rule leaves nearly bare (a hymn in a flat key: no ledger notes, no
   // accidentals): one name a bar per staff — the first chord's top note on a bar's first staff,
-  // its bass note on the others — so fewer names is still some names.
+  // its bass note on the others — so fewer names is still some names. The first chord: the notes
+  // at the bar-staff's earliest moment (grace notes aside; a second's head on the far side of the
+  // stem and another voice's offset head included), by x only for notes the facts don't know.
   if (live.length && live.filter((it) => it.some === "name").length < 0.15 * live.length) {
     for (const [staff, list] of byStaff) {
       if (!staff) continue;
-      const x0 = Math.min(...list.map((it) => it.cx - it.w / 2));
-      const first = list.filter((it) => it.cx - it.w / 2 <= x0 + 0.5 * it.w);
+      const timed = list.filter((it) => Number.isFinite(it.fact.onset) && !it.fact.grace);
+      let first;
+      if (timed.length) {
+        const t0 = Math.min(...timed.map((it) => it.fact.onset));
+        first = timed.filter((it) => it.fact.onset < t0 + 1e-6);
+      } else {
+        const x0 = Math.min(...list.map((it) => it.cx - it.w / 2));
+        first = list.filter((it) => it.cx - it.w / 2 <= x0 + 0.5 * it.w);
+      }
       const top = staff === staff.parentNode?.querySelector(":scope > g.staff");
       const pick = first.reduce((a, b) => ((top ? b.cy < a.cy : b.cy > a.cy) ? b : a));
-      pick.some = "name";
+      // (a head two voices share: each named — otherwise the later voice's head covers the pill)
+      for (const o of list) if (o === pick || (Math.abs(o.cx - pick.cx) < 0.3 * Math.max(o.w, pick.w) && Math.abs(o.cy - pick.cy) < 0.15 * Math.max(o.h, pick.h))) o.some = "name";
     }
-  }
-  // The key's ♭/♯ mark (Some): at its own head's height just right of the head (past its dots and
-  // a ledger dash) — or left of it when another head sits there. Above the head it read as the
-  // accidental of the note a third up (an E♭–G–B♭ chord's ♭ by the G).
-  const ledgerBoxes = new Map();
-  const dashes = (staff) => {
-    let l = ledgerBoxes.get(staff);
-    if (!l) ledgerBoxes.set(staff, (l = staff ? [...staff.querySelectorAll("g.ledgerLines path")].map((p) => p.getBBox()) : []));
-    return l;
-  };
-  for (const it of live) {
-    if (it.some !== "mark") continue;
-    const ms = it.h, through = dashes(it.staff).filter((b) => b.x < it.cx && b.x + b.width > it.cx && Math.abs(b.y + b.height / 2 - it.cy) < 0.6 * it.h);
-    let x = it.cx + it.w / 2 + 0.12 * it.h;
-    const chord = it.g.closest("g.chord");
-    for (const dd of [it.g.querySelector(":scope > g.dots"), chord?.querySelector(":scope > g.dots")]) {
-      if (dd) for (const e of dd.children) {
-        const b = e.getBBox();
-        if (b.x > it.cx && Math.abs(b.y + b.height / 2 - it.cy) < 0.75 * it.h) x = Math.max(x, b.x + b.width + 0.12 * it.h);
-      }
-    }
-    for (const b of through) x = Math.max(x, b.x + b.width + 0.08 * it.h);
-    const left = (byStaff.get(it.staff) || []).some((o) => o !== it && o.cx > it.cx + 0.3 * it.w && o.cx - o.w / 2 < x + 0.6 * ms && Math.abs(o.cy - it.cy) < 0.7 * it.h);
-    if (left) {
-      x = it.cx - it.w / 2 - 0.12 * it.h;
-      for (const b of through) x = Math.min(x, b.x - 0.08 * it.h);
-    }
-    it.km = { x, y: it.cy + (it.fact.alter < 0 ? 0.18 : 0.33) * ms, size: ms, left };
   }
   // Dense chords: heads a second or a third apart (on one staff, overlapping in x) get smaller pills.
   for (const list of byStaff.values()) {
@@ -178,6 +175,7 @@ export function decorate(pageEl, facts = new Map()) {
       }
     }
   }
+  placeMarks(live);
   // Writes.
   let heads = 0;
   for (const it of live) {
@@ -204,6 +202,7 @@ export function decorate(pageEl, facts = new Map()) {
       t.appendChild(s);
     }
     g.appendChild(t);
+    if (it.some === "mark" && !it.km) g.setAttribute("data-km", "blocked");
     it.g.appendChild(g);
     it.badge = g;
     if (it.some === "mark" && it.km) {
@@ -218,4 +217,149 @@ export function decorate(pageEl, facts = new Map()) {
     heads++;
   }
   return { heads, ms: Math.round(performance.now() - t0), items };
+}
+
+// The key's ♭/♯ mark (Some): at its own head's height, just right of the head (past its dots and a
+// ledger dash), else just left of it — on the side where nothing else is drawn: another head (or
+// its name at Some), a printed accidental, a stem or flag, a dot, a rest, a clef, a barline, a
+// ledger dash, a tie or a slur, another mark. Neither side clear: no mark (the name is a tap
+// away). Above the head it read as the accidental of the note a third up (an E♭–G–B♭ chord's ♭
+// by the G), and sat on the note's own stem. → it.km = { x, y, size, left } | null.
+const OBSTACLES = "g.accid, g.stem > path, g.flag, g.rest, g.mRest, g.artic, g.clef, g.keySig, g.meterSig, g.dots > *, g.barLine > path, g.ledgerLines > path";
+function placeMarks(live) {
+  const marked = live.filter((it) => it.some === "mark");
+  if (!marked.length) return;
+  const areas = new Map(); // g.measure → { boxes, curves }
+  const areaOf = (m) => {
+    let a = areas.get(m);
+    if (a) return a;
+    a = { boxes: [], curves: [] };
+    if (m) {
+      for (const e of m.querySelectorAll(OBSTACLES)) {
+        // (a line's box has no width for its stroke: a barline, a stem, a ledger dash; a barline
+        // or a stem is kept clear of, not just not crossed)
+        const b = e.getBBox(), pad = (Number(e.getAttribute("stroke-width")) || 0) / 2;
+        if (b.width > 0 || b.height > 0) a.boxes.push({ x0: b.x - pad, y0: b.y - pad, x1: b.x + b.width + pad, y1: b.y + b.height + pad, e, gap: e.parentNode.matches("g.barLine, g.stem") });
+      }
+      for (const p of m.querySelectorAll("g.tie > path, g.slur > path")) {
+        const b = p.getBBox();
+        a.curves.push({ x0: b.x, y0: b.y, x1: b.x + b.width, y1: b.y + b.height, p });
+      }
+    }
+    areas.set(m, a);
+    return a;
+  };
+  // other heads (an oval in its box: the box's corners are paper), and the name drawn over a head
+  // at Some (a pill: rounded ends)
+  const heads = live.map((o) => {
+    const ph = o.h * o.scale, pw = labelOf(o.fact).acc ? ph * 1.45 : ph;
+    return { o, cx: o.cx, cy: o.cy, rx: 0.55 * o.w, ry: 0.55 * o.h, pill: o.some === "name" ? { L: o.cx - pw / 2, R: o.cx + pw / 2, cy: o.cy + (o.dy || 0), r: ph / 2 } : null };
+  });
+  const placed = [];
+  const bars = new Map(); // svg → its g.measure in drawing order
+  const measuresOf = (g) => {
+    const svg = g.closest("svg");
+    let l = bars.get(svg);
+    if (!l) bars.set(svg, (l = svg ? [...svg.querySelectorAll("g.measure")] : []));
+    return l;
+  };
+  const ledgerBoxes = new Map();
+  const dashes = (staff) => {
+    let l = ledgerBoxes.get(staff);
+    if (!l) ledgerBoxes.set(staff, (l = staff ? [...staff.querySelectorAll("g.ledgerLines path")].map((p) => p.getBBox()) : []));
+    return l;
+  };
+  for (const it of marked) {
+    const ms = it.h, tol = 0.04 * ms;
+    const through = dashes(it.staff).filter((b) => b.x < it.cx && b.x + b.width > it.cx && Math.abs(b.y + b.height / 2 - it.cy) < 0.6 * it.h);
+    // right: past the head, its dots, a ledger dash through it
+    let xr = it.cx + it.w / 2 + 0.12 * it.h;
+    const chord = it.g.closest("g.chord");
+    for (const dd of [it.g.querySelector(":scope > g.dots"), chord?.querySelector(":scope > g.dots")]) {
+      if (dd) for (const e of dd.children) {
+        const b = e.getBBox();
+        if (b.x > it.cx && Math.abs(b.y + b.height / 2 - it.cy) < 0.75 * it.h) xr = Math.max(xr, b.x + b.width + 0.12 * it.h);
+      }
+    }
+    // (a dash running on past a head of its chord on that side: the mark past it would sit by that
+    // head — that side is out)
+    const over = (side) => Math.max(0, ...through.map((b) => (side > 0 ? b.x + b.width - (it.cx + it.w / 2) : it.cx - it.w / 2 - b.x)));
+    for (const b of through) xr = Math.max(xr, b.x + b.width + 0.08 * it.h);
+    let xl = it.cx - it.w / 2 - 0.12 * it.h;
+    for (const b of through) xl = Math.min(xl, b.x - 0.08 * it.h);
+    const rightOk = over(1) < 0.6 * it.h, leftOk = over(-1) < 0.6 * it.h;
+    // the glyph's ink (measured in the page's font), its baseline below the head's centre
+    const flat = it.fact.alter < 0, gb = glyphBox(ACC[String(it.fact.alter)]), base = it.cy + (flat ? 0.18 : 0.33) * ms;
+    const y0 = base - gb.a * ms, y1 = base + gb.d * ms;
+    // (its bar and the bars before and after it in the drawing — a page break's placeholder or a
+    // new <g class="system"> can sit between two bars on one line)
+    const m = it.g.closest("g.measure"), list = measuresOf(it.g), k = list.indexOf(m);
+    const near = [areaOf(m), areaOf(list[k - 1] || null), areaOf(k >= 0 ? list[k + 1] || null : null)];
+    // (its own stem and flag: the mark sits clear of them, right of a stem-up head's stem)
+    const stem = it.g.querySelector(":scope > g.stem") || chord?.querySelector(":scope > g.stem") || null;
+    const clear = (x0, x1) => {
+      const hit = (b) => Math.min(x1, b.x1) - Math.max(x0, b.x0) > (b.gap ? -tol : tol) && Math.min(y1, b.y1) - Math.max(y0, b.y0) > tol;
+      for (const h of heads) if (h.o !== it && (ovalHit(h, x0 + tol, x1 - tol, y0 + tol, y1 - tol) || (h.pill && pillHit(h.pill, x0 + tol, x1 - tol, y0 + tol, y1 - tol)))) return false;
+      for (const b of placed) if (hit(b)) return false;
+      for (const a of near) {
+        for (const b of a.boxes) if (!(stem && stem.contains(b.e)) && hit(b)) return false; // (its own ledger dash is passed already)
+        for (const c of a.curves) if (hit(c) && inkIn(c.p, x0, x1, y0, y1)) return false;
+      }
+      return true;
+    };
+    // (right: the text starts at xr; left: it ends at xl — text-anchor end)
+    const R = [xr - gb.l * ms, xr + gb.r * ms], L = [xl - (gb.w + gb.l) * ms, xl - (gb.w - gb.r) * ms];
+    let km = null;
+    if (rightOk && clear(...R)) km = { x: xr, left: false, box: R };
+    else if (leftOk && clear(...L)) km = { x: xl, left: true, box: L };
+    if (km) {
+      placed.push({ x0: km.box[0], y0, x1: km.box[1], y1 });
+      it.km = { x: km.x, y: base, size: ms, left: km.left };
+    } else it.km = null;
+  }
+}
+// A box against an axis-aligned oval { cx, cy, rx, ry } (the box's point nearest the centre inside it).
+function ovalHit(o, x0, x1, y0, y1) {
+  if (x0 >= x1 || y0 >= y1) return false;
+  const dx = (Math.min(Math.max(o.cx, x0), x1) - o.cx) / o.rx, dy = (Math.min(Math.max(o.cy, y0), y1) - o.cy) / o.ry;
+  return dx * dx + dy * dy < 1;
+}
+// A box against a pill (from L to R, its ends half circles of radius r round the line at cy): the
+// box's distance to the pill's spine (L + r … R − r at cy) under r.
+function pillHit(p, x0, x1, y0, y1) {
+  if (x0 >= x1 || y0 >= y1) return false;
+  const a = p.L + p.r, b = Math.max(a, p.R - p.r);
+  const gx = Math.max(0, a - x1, x0 - b), gy = Math.max(0, y0 - p.cy, p.cy - y1);
+  return Math.hypot(gx, gy) < p.r;
+}
+// Does a tie's / slur's ink (a filled curve) cross the box? (sampled on a 10 × 10 grid, edges in)
+function inkIn(path, x0, x1, y0, y1) {
+  const svg = path.ownerSVGElement;
+  if (!svg || !path.isPointInFill) return false;
+  const pt = svg.createSVGPoint();
+  try {
+    for (let i = 0; i < 10; i++) for (let j = 0; j < 10; j++) {
+      pt.x = x0 + (i / 9) * (x1 - x0);
+      pt.y = y0 + (j / 9) * (y1 - y0);
+      if (path.isPointInFill(pt) || path.isPointInStroke(pt)) return true;
+    }
+  } catch { return false; }
+  return false;
+}
+// A mark glyph's ink in ems of its font size, from the baseline and the text's start: { l (left of
+// the start), r, a (above the baseline), d (below), w (advance) } — measured once in the page's
+// font (canvas), else typical values.
+const glyphs = new Map();
+function glyphBox(ch) {
+  let g = glyphs.get(ch);
+  if (g) return g;
+  g = ch === "♭" ? { l: 0, r: 0.45, a: 0.78, d: 0.1, w: 0.5 } : { l: 0, r: 0.55, a: 0.78, d: 0.15, w: 0.6 };
+  try {
+    const cx = document.createElement("canvas").getContext("2d");
+    cx.font = `700 100px ${FONT}`;
+    const m = cx.measureText(ch);
+    if (Number.isFinite(m.actualBoundingBoxAscent) && m.width > 0) g = { l: m.actualBoundingBoxLeft / 100, r: m.actualBoundingBoxRight / 100, a: m.actualBoundingBoxAscent / 100, d: m.actualBoundingBoxDescent / 100, w: m.width / 100 };
+  } catch {}
+  glyphs.set(ch, g);
+  return g;
 }

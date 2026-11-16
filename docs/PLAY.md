@@ -415,15 +415,14 @@ Where this differs from the sections above, this wins.
   - `spacingStaff: 8`, `spacingBraceGroup: 8`;
   - `justifyVertically: true`, `justificationStaff: 0.2`, `justificationBraceGroup: 0.2`;
   - `lyricWordSpace: 3` (eight stacked verses ran words together: "taughtmy");
-  - `transposeToSoundingPitch: true`;
   - `svgAdditionalAttribute` also has `note@staff`, `chord@staff` and `staff@n`.
-- `transposeToSoundingPitch` puts a transposing part (B♭ clarinet, horn, guitar 8vb) at the pitch a pianist plays. It changes nothing in a score without `<transpose>`. `noteFacts` shifts each note's step/alter/octave and the key by the same interval before classifying accidentals, so badges, the peek and the strip all name what is drawn.
+- `transposeToSoundingPitch` puts a transposing part (B♭ clarinet, horn, guitar 8vb) at the pitch a pianist plays. It is set per view (`loadView`), only when the view's XML has a `<transpose>`: on for every score it moved positioned rests too, so Songbird's and Killing Me Softly's bass-staff rests were drawn far above their staff and Songbird's systems stretched to one a page (second check). `noteFacts` shifts each note's step/alter/octave and the key by the same interval before classifying accidentals. Verovio respells a remote sounding key (G♭ → F♯, C♭ → B): such facts carry `tr`, and `drawnFact` (playnames.js) takes the spelling Verovio drew when its MIDI agrees, so badges, the peek and the strip name what is drawn.
 
 **Layout** (`measure()`):
 - **Spread:** two pages when `W > H` and each half holds ≥ 48 staff spaces.
 - **Staff space:**
   - `sp = min(size, pageWidth / 40, H / (12 · staves))`.
-  - **Until a size is chosen on this device** (`sizeAuto`), a grand staff in landscape gets `max(11, H / (24 · staves))`, which is two systems a page. At 16, an 11" iPad or iPad mini in landscape held one system and about a third of blank paper.
+  - **Until a size is chosen on this device** (`sizeAuto`), a grand staff in landscape gets the size step at or below `max(11, H / (27 · staves))` (a grand-staff system with its margins takes ~27 staff spaces): 14 on an 11" iPad Air, 12.5 on a mini, two systems a page. At 16, they held one system and about a third of blank paper. (The first fix, `H / 24` unrounded, gave 15.9 on the Air: nearly no change, and + from it was a 1% step that re-paginated.)
   - + from there goes to the next size and saves it.
 - **Short songs:** a view that fits on one page is laid out at the stage's full width, not as half of a spread. A lone last page of a spread stays in its half.
 
@@ -435,16 +434,16 @@ Where this differs from the sections above, this wins.
 - `isMark` keeps tempo, navigation and section marks from a hidden staff, once.
 - **Prep repairs** for what Verovio draws wrong or not at all:
   - ties written stop-after-start are put in order (`tiesInOrder`);
-  - a one-hand view pairs its slurs and rebuilds beams cut by the hidden staff (`slurPairs`, `rebeam`);
+  - a one-hand view pairs its slurs and re-ends the beam groups the hidden staff cut (`slurPairs`; `beamGroups` read before the filter as Verovio reads them — a grace note doesn't break a group, a "begin" inside an open group continues it — then `rebeam` touches only the cut groups: rewriting every group split Wichita's Melody bar 9 and runs with grace notes);
   - a multi-measure rest over bars that have notes is dropped (`dropCoveringRests`);
   - a part missing from the part-list is added;
-  - `dropRestatedKeys` uses the first key of each bar only, as Verovio draws it;
+  - `dropRestatedKeys` uses the first key of each bar only, as Verovio draws it (a dropped restatement isn't the bar's first: the next key in the bar is);
   - `placed()` reports "couldn't draw" when no staff comes out, not blank paper.
-- **Tuplets:** OMR tuplets without a tuplet mark (four quarters in a 3/4 bar, from fixscore's unmarked-tuplet fix or a "3" Audiveris read without its bracket) get `<tuplet>` start/stop. This is `markTupletGroups` in omr/fixscore.js. It runs on every load of an Audiveris song and is idempotent. Sing's parse is unchanged; it only adds marks.
+- **Tuplets:** OMR tuplets without a tuplet mark (four quarters in a 3/4 bar, from fixscore's unmarked-tuplet fix or a "3" Audiveris read without its bracket) get `<tuplet>` start/stop. This is `markTupletGroups` in omr/fixscore.js. A group closes at `actual` × its own smallest value, so quarter triplets next to eighth triplets are separate groups. It runs on every load of an Audiveris song and is idempotent. Sing's parse is unchanged; it only adds marks (fixOmrScore's output on the owner's six scores is byte-identical before and after the second check's fix).
 
 **Names**
-- **Key-signature mark:** the ♭/♯ `.km` mark of a key-only note sits at its own head's height, after the note's dots and any ledger dash. When another head on the staff is in the way, it moves to the left of the head. Its size is 1.0 × the head height. At first it sat at the upper right, beside the note a third above, which then read as F♭.
-- **Some floor:** on a page where the rules name fewer than 15% of heads, each bar's first chord gets one name per staff: the top note on staff 1, the bass note on the others. Amazing Grace's first page had 0 of 56 names at Some, so the first fade would have taken away nearly all of them.
+- **Key-signature mark** (`placeMarks`): the ♭/♯ `.km` mark of a key-only note sits at its own head's height, right of the head after its dots and any ledger dash, else left of it — on the side where its ink (measured on a canvas in the page font) touches nothing: another head (an oval) or a name pill, a printed accidental, a stem or flag, a dot, a rest, a clef, a key or time signature, a barline or stem (kept clear of), a ledger dash, a tie or slur (its ink, sampled), another mark; its bar and the bars either side in drawing order are checked. Neither side clear: no mark (`data-km="blocked"`; 14 of 581 in the tests) — the name is a tap away. Its size is 1.0 × the head height. At first it sat at the upper right, beside the note a third above, which then read as F♭; the first placement fix still hit the next note's accidental, barlines and ties (pixel check on the owner's songs: 11–33 collisions, now 0). Cost: ~1 ms a page.
+- **Some floor:** on a page where the rules name fewer than 15% of heads, each bar's first chord gets one name per staff: the top note on staff 1, the bass note on the others. The first chord is the notes at the bar-staff's earliest onset (facts carry `onset` in quarters and `grace`; by x only for notes the facts don't know — a second's head on the far side of the stem had won by x), and every head sharing the picked one (another voice's unison) is named too, so no pill is covered. Amazing Grace's first page had 0 of 56 names at Some, so the first fade would have taken away nearly all of them.
 - **Placement fixes:**
   - Cross-staff notes are measured against the staff they're drawn on.
   - Pills stacked by a unison plus a second are pushed apart vertically.
@@ -479,6 +478,7 @@ Where this differs from the sections above, this wins.
 **Review (v77, adversarial, five lenses):** names, iPad/Safari, state, real scores, UX.
 - 27 findings were confirmed. 25 are fixed, plus the −/+ labels in part.
 - **Not fixed:** a later key change written for one staff only (`<key number>`) is drawn on both staves. It needs an MEI round trip, rewriting each staff's keySig and reloading, about 70 ms. None of the owner's scores, and no Audiveris export, has one.
+- **Second check** of the fix commit (four lenses — prep, state, names, cross-page — each finding re-proved from scratch by a skeptic): 10 confirmed, all fixed. One was serious: `transposeToSoundingPitch` on for every score moved Songbird's and Killing Me Softly's bass rests out of their staff. The rest: `rebeam` rewriting uncut groups, remote transposed keys respelled, a restated key's removal hiding the bar's next key, a failed engine download never retried (the browser keeps a failed module import: the retry asks for `?r=N`), the landscape soft size, key marks on accidentals/barlines/ties, the Some floor's unison and second-across-the-stem picks, mixed-value tuplet groups.
 
 **Tests** (in tools/, outside the repo):
 - `playunit.cjs`: prep and facts on every fixture, with sidecar checks.

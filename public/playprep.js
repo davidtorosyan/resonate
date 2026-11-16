@@ -168,7 +168,9 @@ export function keyAlters(keyEl) {
 const NOKEY = keyAlters({ children: [] });
 
 // A transposing part (<transpose>: a B♭ clarinet, an F horn, a guitar's octave): the page shows
-// and names the sounding pitch (Verovio's transposeToSoundingPitch), the key a pianist plays.
+// and names the sounding pitch (Verovio's transposeToSoundingPitch, set only for a view that has
+// a <transpose>), the key a pianist plays. Verovio respells a remote sounding key (G♭ → F♯,
+// C♭ → B): the badges of such a part take the spelling it drew (playnames.js decorate, fact.tr).
 const LETTERS = "CDEFGAB";
 // <transpose> → { d (letters), c (semitones) } or null
 function transOf(t) {
@@ -190,7 +192,8 @@ function shiftKey(a, tr) {
 }
 
 // Pitch facts from the whole score, as written — at sounding pitch in a transposing part:
-// Map(noteId → { step, alter, oct, midi, part, staff, voice, mi, acc, nat }). Per part and staff:
+// Map(noteId → { step, alter, oct, midi, part, staff, voice, mi, acc, nat, onset (quarters from
+// the bar's start), grace, tr (in a transposing part) }). Per part and staff:
 // the key in force (<key number> aware) and the accidentals printed in the bar (by step + octave,
 // reset at each barline).
 //   acc "printed": it has an <accidental>; "carried": an earlier one in the bar applies, or its
@@ -206,6 +209,7 @@ export function noteFacts(doc) {
     const pid = part.getAttribute("id");
     let keys = { all: NOKEY }; // "all" | staff number → alters
     let trans = { all: null }; // "all" | staff number → { d, c } (a transposing part) | null
+    let div = 1; // (divisions: a note's onset in quarters from the bar's start)
     const sounding = new Map(); // written alters → { "d|c" → sounding alters }
     const keyOf = (wk, tr) => {
       if (!tr) return wk;
@@ -223,16 +227,19 @@ export function noteFacts(doc) {
         const name = el.nodeName;
         if (name === "backup") pos -= num(kid(el, "duration"), 0);
         else if (name === "forward") pos += num(kid(el, "duration"), 0);
-        else if (name === "attributes") { if (kid(el, "key") || kid(el, "transpose")) events.push([pos, 0, i++, el]); }
-        else if (name === "note") {
+        else if (name === "attributes") {
+          const dv = num(kid(el, "divisions"), 0);
+          if (dv > 0) div = dv;
+          if (kid(el, "key") || kid(el, "transpose")) events.push([pos, 0, i++, el]);
+        } else if (name === "note") {
           const chord = !!kid(el, "chord");
           const onset = chord ? last : pos;
           if (!chord) { last = pos; if (!kid(el, "grace")) pos += num(kid(el, "duration"), 0); }
-          if (kid(el, "pitch")) events.push([onset, 1, i++, el]);
+          if (kid(el, "pitch")) events.push([onset, 1, i++, el, onset / div]);
         }
       }
       events.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
-      for (const [, kind, , el] of events) {
+      for (const [, kind, , el, q] of events) {
         if (kind === 0) {
           for (const k of kids(el, "key")) {
             const n = k.getAttribute("number");
@@ -274,7 +281,7 @@ export function noteFacts(doc) {
         }
         facts.set(el.getAttribute("id"), {
           step, alter, oct, midi: (oct + 1) * 12 + STEP_PC[step] + Math.round(alter),
-          part: pid, staff, voice, mi, acc, nat,
+          part: pid, staff, voice, mi, acc, nat, onset: q, grace: !!kid(el, "grace"), ...(tr ? { tr: true } : {}),
         });
       }
     });
@@ -358,12 +365,12 @@ export function buildView(doc, plan) {
   }
   if (plan.staff != null || plan.voice != null) for (const part of parts) {
     // (one staff / voice of music written across both: slurs and beams whose other end goes)
-    const pairs = slurPairs(part);
+    const pairs = slurPairs(part), beams = beamGroups(part);
     filterPart(d, part, plan.staff, plan.voice, plan.lyrics);
     const drop = (sl) => { const no = sl.parentElement; sl.remove(); if (no && !no.children.length) no.remove(); };
     for (const [sl, partner] of pairs) if (sl.isConnected && !partner.isConnected) drop(sl);
     for (const sl of [...part.querySelectorAll("notations > slur")]) if (!pairs.has(sl)) drop(sl);
-    rebeam(part);
+    rebeam(beams);
   }
   for (const part of parts) {
     // A note tied both ways with <tied type="start"/> before <tied type="stop"/> (Audiveris):
@@ -565,7 +572,8 @@ const keySig = (k) => [...k.children].filter((c) => c.nodeName !== "cancel" && c
 // draws a courtesy key signature at the end of the previous system (fixOmrScore restates the
 // key at every page start). Verovio draws only the first key of a bar (per staff number), at the
 // bar's start, so only that one counts as in force: a second, mid-bar change isn't drawn, and the
-// next barline's key restating it must stay.
+// next barline's key restating it must stay. A restatement dropped here isn't the bar's first
+// key: the next one in the bar is (Verovio draws that one at the bar's start).
 function dropRestatedKeys(part) {
   let cur = { all: null };
   for (const m of kids(part, "measure")) {
@@ -575,12 +583,11 @@ function dropRestatedKeys(part) {
     for (const a of attrs) {
       for (const k of kids(a, "key")) {
         const sig = keySig(k), n = k.getAttribute("number");
-        const first = !seen.has(n || "all") && !seen.has("all");
-        seen.add(n || "all");
-        if (!first) continue;
+        if (seen.has(n || "all") || seen.has("all")) continue;
         const same = n ? (cur[n] ?? cur.all) === sig : cur.all === sig && Object.keys(cur).every((s) => cur[s] === sig);
-        if (same && !change) k.remove();
-        else if (n) cur[n] = sig;
+        if (same && !change) { k.remove(); continue; }
+        seen.add(n || "all");
+        if (n) cur[n] = sig;
         else cur = { all: sig };
       }
       if (!a.children.length) a.remove();
@@ -737,36 +744,34 @@ function slurPairs(part) {
   return out;
 }
 
-// Beam groups cut by a staff / voice filter: re-terminated on each voice's kept notes; a note left
-// alone loses its beams (a flag).
-function rebeam(part) {
-  const b1 = (n) => kids(n, "beam").find((b) => (b.getAttribute("number") || "1") === "1");
+// Each voice's beam-1 groups of main notes, as Verovio reads them: a grace note doesn't break a
+// group, and a "begin" inside an open group continues it (Audiveris: Wichita bar 9's eighth and
+// two 16ths). Taken before a staff / voice filter, so rebeam knows which groups it cut.
+const beam1 = (n) => kids(n, "beam").find((b) => (b.getAttribute("number") || "1") === "1");
+function beamGroups(part) {
+  const groups = [];
   for (const m of kids(part, "measure")) {
-    const byVoice = new Map();
+    const open = new Map(); // voice → its open group
     for (const n of kids(m, "note")) {
-      if (kid(n, "chord")) continue;
-      const v = txt(kid(n, "voice")) || "1";
-      if (!byVoice.has(v)) byVoice.set(v, []);
-      byVoice.get(v).push(n);
+      if (kid(n, "chord") || kid(n, "grace")) continue;
+      const v = txt(kid(n, "voice")) || "1", b = beam1(n);
+      if (!b) { open.delete(v); continue; }
+      let g = open.get(v);
+      if (!g) { g = []; groups.push(g); open.set(v, g); }
+      g.push(n);
+      if (txt(b) === "end") open.delete(v);
     }
-    for (const notes of byVoice.values()) {
-      const groups = [];
-      let g = null;
-      for (const n of notes) {
-        const b = b1(n);
-        if (!b) { g = null; continue; }
-        const t = txt(b);
-        if (t === "begin" || !g) { g = []; groups.push(g); }
-        g.push(n);
-        if (t === "end") g = null;
-      }
-      for (const grp of groups) {
-        if (grp.length === 1) { for (const b of kids(grp[0], "beam")) b.remove(); continue; }
-        b1(grp[0]).textContent = "begin";
-        b1(grp[grp.length - 1]).textContent = "end";
-        for (const n of grp.slice(1, -1)) b1(n).textContent = "continue";
-      }
-    }
+  }
+  return groups;
+}
+// Groups the filter cut: re-terminated on their kept notes; a note left alone loses its beams (a
+// flag). Groups kept whole are left as written.
+function rebeam(groups) {
+  for (const grp of groups) {
+    const left = grp.filter((n) => n.isConnected);
+    if (left.length === grp.length || !left.length) continue;
+    if (left.length === 1) { for (const b of kids(left[0], "beam")) b.remove(); continue; }
+    left.forEach((n, i) => { beam1(n).textContent = i === 0 ? "begin" : i === left.length - 1 ? "end" : "continue"; });
   }
 }
 
