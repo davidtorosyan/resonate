@@ -7,12 +7,12 @@
 //
 // The place is kept by written measure (S.at): rotation, −/+, a hands switch and reopening the
 // song all come back to the page holding that bar.
-import { spaceChanged } from "./nav.js?v=77";
-import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=77";
-import { prepare, buildView, VIEW_LABELS } from "./playprep.js?v=77";
-import { decorate, fullName, labelOf } from "./playnames.js?v=77";
-import { loadPiano, holdPiano } from "./piano.js?v=77";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=77";
+import { spaceChanged } from "./nav.js?v=78";
+import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=78";
+import { prepare, buildView, VIEW_LABELS } from "./playprep.js?v=78";
+import { decorate, fullName, labelOf } from "./playnames.js?v=78";
+import { loadPiano, holdPiano } from "./piano.js?v=78";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=78";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
@@ -22,7 +22,10 @@ const pdfBtn = $("pdf"), offerEl = $("offer"), stripEl = $("strip"), bubbleEl = 
 
 const K = {
   play: "resonate.play",        // { songId: { names, view, at, pdfPage, days } } — the account's (space.js DATA_KEYS)
-  size: "resonate.play.size",   // staff space in CSS px — this device's
+  size: "resonate.play.size",   // staff space in CSS px — this device's (the piano views)
+  scoreSize: "resonate.play.size.score", // the same for the full score: a size picked for the piano
+                                // doesn't make the score one system a page, nor the other way
+                                // round — this device's
   names: "resonate.play.names", // the level a song opened for the first time starts at — this device's
   gen: "resonate.play.gen",     // the songs' database generation seen at the last visit — this device's
   song: "resonate.sing.song",   // the song open, shared with Sing
@@ -50,6 +53,19 @@ const VRV = {
   justifyVertically: true, justificationStaff: 0.2, justificationBraceGroup: 0.2,
   lyricWordSpace: 3,
 };
+// The full score leaves a staff that rests through a whole system out of it, as printed (the voice
+// through a piano interlude, an accordion where it doesn't play): Verovio's "auto" condensing,
+// which runs only with more than one group symbol (playprep gives each single staff an unmarked
+// group; the piano's brace keeps its two staves together). The first system shows every staff
+// (condenseFirstPage off — and its marks: the tempo over a piano intro is the voice's), and
+// systems with a tempo or a fermata are condensed too (condenseTempoPages on would show every
+// staff there, despite its name). A staff keeps a system where it has a note, a clef or a mark
+// (playprep keepMarks). No system dividers (Verovio's "auto" draws a heavy "//" between systems
+// of more than one group; piano/vocal music has none). The other views: Verovio's defaults.
+const CONDENSE = {
+  score: { condense: "auto", condenseFirstPage: false, condenseTempoPages: false, systemDivider: "none" },
+  other: { condense: "auto", condenseFirstPage: false, condenseTempoPages: false, systemDivider: "auto" },
+};
 
 const recall = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const keep = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} };
@@ -69,9 +85,11 @@ function defaultSize() {
   if (!coarse) return 12.5;
   return Math.min(screen.width, screen.height) >= 700 ? 16 : 9.5;
 }
-function savedSize() {
-  const v = Number(recall(K.size));
-  return SIZES.includes(v) ? v : defaultSize();
+// The size pref of a view: the full score has its own. → { key, size, auto (none chosen yet) }
+const sizeKind = (view) => (view === "score" ? "score" : "piano");
+function savedSize(kind) {
+  const key = kind === "score" ? K.scoreSize : K.size, v = Number(recall(key));
+  return { key, size: SIZES.includes(v) ? v : defaultSize(), auto: !SIZES.includes(v) };
 }
 
 const S = {
@@ -87,8 +105,9 @@ const S = {
   loaded: null,     // the buildView() result Verovio holds
   st: {},           // the song's own record in resonate.play
   names: LEVELS.includes(recall(K.names)) ? recall(K.names) : "all",
-  size: savedSize(),
-  sizeAuto: !SIZES.includes(Number(recall(K.size))), // no size chosen on this device yet
+  sizes: { piano: savedSize("piano"), score: savedSize("score") }, // this device's size prefs
+  size: 0,          // the shown view's staff space wanted (its pref: useSize)
+  sizeAuto: true,   // no size chosen on this device yet for the shown view
   W: 0, H: 0, spread: false, sp: 0, scale: 0,
   hard: 0,          // the staff space the screen allows (sp may be under it: the landscape default)
   pages: 0, page: 1,
@@ -98,7 +117,9 @@ const S = {
   lgen: 0,          // layout generation: the page cache and prefetches belong to one
   mine: new Set(),  // library song ids
   t: {},            // timings (ms)
+  fitLog: [],       // the full score's two-system sizes tried: [{ sp, share }] (tests)
 };
+useSize();
 let tk = null;            // the Verovio toolkit (one per page load)
 const cache = new Map();  // page → SVG string, for the current layout only
 
@@ -278,6 +299,7 @@ async function loadView(gen) {
   }
   S.v = v;
   S.waiting = false;
+  useSize();
   setBusy(true);
   await paint();
   if (gen !== S.gen) return;
@@ -288,12 +310,37 @@ async function loadView(gen) {
   let ok = false;
   // (a B♭ clarinet's or a horn's part at the pitch a pianist plays — only where a part transposes:
   // the option moves positioned rests in any score, Songbird's bass rests into the gap above)
-  tk.setOptions({ transposeToSoundingPitch: /<transpose\b/.test(v.xml) });
-  try { ok = tk.loadData(v.xml); } catch (err) { console.warn("loadData", err); }
+  const score = S.P.views[S.view]?.kind === "score";
+  const tr = /<transpose\b/.test(v.xml);
+  // (the MEI below is already at sounding pitch: loaded without transposing again)
+  tk.setOptions({ transposeToSoundingPitch: tr && !v.mei, ...(score ? CONDENSE.score : CONDENSE.other) });
+  try {
+    ok = tk.loadData(v.mei || v.xml);
+    // The full score's endings once, over the top staff, as printed: Verovio draws an ending over
+    // the first staff of every staff group (the voice's, the piano's, an accordion's) unless the
+    // score definition says ending.rend="top", which MusicXML can't say — so a full score with
+    // endings goes through MEI once (~5–20 ms out, MEI loads faster than MusicXML; ids kept). With
+    // a transposing part the MEI is at sounding pitch (Verovio drops trans.* once it has
+    // transposed): it's loaded with transposing off.
+    if (ok && score && !v.mei && /<ending\b/.test(v.xml)) {
+      let mei = null;
+      try { mei = tk.getMEI().replace(/<scoreDef\b/, '<scoreDef ending.rend="top"'); } catch {}
+      if (mei) tk.setOptions({ transposeToSoundingPitch: false });
+      if (mei && tk.loadData(mei)) v.mei = mei;
+      else { tk.setOptions({ transposeToSoundingPitch: tr }); ok = tk.loadData(v.xml); }
+    }
+  } catch (err) { console.warn("loadData", err); }
   S.t.data = ms(t);
   S.loaded = ok ? v : null;
   if (!ok || !tk.getPageCount()) return fail("song");
-  placed(L);
+  placed(fitScore(L));
+}
+
+// The shown view's size pref: S.size (staff space wanted) and S.sizeAuto (none chosen yet).
+function useSize() {
+  const z = S.sizes[sizeKind(S.view)];
+  S.size = z.size;
+  S.sizeAuto = z.auto;
 }
 
 // The page size for the stage, from the staff size wanted: two pages side by side when each still
@@ -308,15 +355,89 @@ function measure(single = false) {
   const W = Math.floor(stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
   const H = Math.floor(stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom));
   if (W < 60 || H < 60 || !S.P) return null;
-  const staves = S.P.views[S.view]?.staves || 1;
+  const plan = S.P.views[S.view];
+  const staves = plan?.staves || 1;
   const want = S.size;
-  const spread = !single && W > H && W / 2 / want >= 48;
+  // (the full score's pages are ≥ SCORE_WIDE staff spaces across, as its own size keeps them: a
+  // chosen size in narrower halves held one bar a system — and less music than one page)
+  const spread = !single && W > H && W / 2 / want >= (plan?.kind === "score" ? SCORE_WIDE : 48);
   const pw = spread ? Math.floor(W / 2) : W;
+  if (plan?.kind === "score") {
+    // (a size this view was already fitted to at this page size: laid out once — fitScore)
+    const z = scoreSize(plan, pw, H, want), hit = z.mode === "two" && S.v?.fit?.get(fitKey(pw, H, want));
+    return { W, H, spread, pw, ...z, ...(hit || {}) };
+  }
   const hard = Math.min(want, pw / 40, H / (12 * staves));
   const two = S.sizeAuto && staves > 1 && W > H ? stepDown(Math.max(11, H / (27 * staves))) : Infinity;
   const sp = Math.min(hard, two);
   const scale = Math.max(5, Math.round(sp / 0.18));
   return { W, H, spread, pw, sp, hard, scale };
+}
+// The full score's staff space. Measured on the owner's songs (systems laid out unjustified, page
+// margins in): two voice + piano systems take 62–74 staff spaces a page (median 66, the 3rd
+// quartile 69, the most 81 — dynamics and hairpins make Songbird's the tallest), one 33–46; with
+// an accordion staff too, two take 79–94 (one 42–53); a grand staff with words in it, two 48–61.
+// So a system of 3 staves takes SCORE_OPT staff spaces for most songs, SCORE_SYS on the safe
+// side, SCORE_STAFF less for a staff less, and SCORE_EXTRA more for each staff beyond three — the
+// tallest one measured (the accordion's system, 53: budgeted at 45.5, Piano Man's ran off the foot
+// of the page at the largest size + allowed, and on a phone in landscape). And the words spread
+// the bars: at 14 px an iPad in portrait (58 staff spaces across) held 1–2 bars a system —
+// Wichita Lineman 13 pages, 2.6 bars a page; at 11 (74 across) 2–4 bars, at 9.5 2–5.
+// The size always leaves a whole system on a page. Until one is chosen (its own pref: a size
+// picked for Both doesn't make the score one system a page, nor the other way round): ≥ SCORE_WIDE
+// staff spaces across (not under SCORE_MIN), two systems a page when that leaves ≥ SCORE_MIN px
+// a staff space (print size on an iPad), checked on the layout (fitScore); else one, as large as
+// fits — unless one alone would leave a third of the page blank (a phone): then two, smaller
+// (checked too).
+const SCORE_SYS = 38, SCORE_OPT = 34, SCORE_STAFF = 7.5, SCORE_EXTRA = 15, SCORE_MIN = 9.5, SCORE_WIDE = 72;
+function scoreSize(plan, pw, H, want) {
+  // (a staff beyond the voice and the grand staff — an accordion's, a guitar's — is often left out
+  // of a system where it rests: the two-system size is tried as if it were, then checked)
+  // (sys: the tallest system, which must fit — the extra staves in; typ: one without them, for
+  // whether one system a page leaves a third of it blank)
+  const more = (plan.staves > 3 ? SCORE_EXTRA : SCORE_STAFF) * (plan.staves - 3), sys = SCORE_SYS + more, opt = SCORE_OPT + Math.min(0, more);
+  const typ = SCORE_SYS + Math.min(0, more);
+  const hard = Math.min(want, pw / 40, H / sys);
+  const cap = Math.min(hard, Math.max(SCORE_MIN, stepDown(pw / SCORE_WIDE)));
+  const one = Math.min(cap, stepDown(H / sys)), two = Math.min(cap, stepDown(H / (2 * opt)));
+  const at = (sp, mode) => ({ sp, hard, scale: Math.max(5, Math.round(sp / 0.18)), mode, one, typ });
+  if (!S.sizeAuto) return at(hard, "set");
+  if (two >= SCORE_MIN - 0.01) return at(two, "two"); // (checked on the layout: fitScore)
+  return one * typ < (2 / 3) * H ? at(two, "two") : at(one, "one");
+}
+const fitKey = (pw, H, want) => pw + "x" + H + "@" + want;
+// The two-system size measure() picked, checked on the layout just made: Verovio's page-based MEI
+// lists each page's systems (~15 ms). Stepped down while fewer than 3 pages in 4 (the last aside)
+// hold two systems, not under SCORE_MIN; then one system a page — or, where one would leave a
+// third of the page blank, two at the next size down. → the layout kept.
+function fitScore(L) {
+  S.fitLog = [];
+  if (L.mode !== "two") return L;
+  const t = performance.now();
+  for (;;) {
+    const share = twoShare();
+    S.fitLog.push({ sp: L.sp, share: Math.round(share * 100) / 100 });
+    if (share >= 0.75) break;
+    const next = [...SIZES].reverse().find((s) => s < L.sp - 0.01);
+    const sp = next >= SCORE_MIN - 0.01 ? next : L.one * L.typ < (2 / 3) * L.H && next ? next : L.one;
+    L = { ...L, sp, scale: Math.max(5, Math.round(sp / 0.18)), mode: next >= SCORE_MIN - 0.01 ? "two" : "one" };
+    setPageSize(L);
+    tk.redoLayout();
+    if (L.mode !== "two") break;
+  }
+  S.t.fit = ms(t);
+  // (remembered for this view and page size: a rotation back to it lays out once — Piano Man's
+  // landscape tried three sizes, ~0.4 s, on every rotation)
+  if (S.v) (S.v.fit ||= new Map()).set(fitKey(L.pw, L.H, S.size), { sp: L.sp, scale: L.scale, mode: L.mode });
+  return L;
+}
+// The share of pages (the last aside) holding two systems or more.
+function twoShare() {
+  let mei;
+  try { mei = tk.getMEI({ scoreBased: false }); } catch { return 1; }
+  const per = mei.split(/<page\b/).slice(1).map((p) => (p.match(/<system\b/g) || []).length);
+  const judged = per.length > 1 ? per.slice(0, -1) : per;
+  return judged.length ? judged.filter((n) => n >= 2).length / judged.length : 1;
 }
 function setPageSize(L) {
   // (floored: the drawing never comes out a pixel larger than the stage)
@@ -330,6 +451,7 @@ function placed(L) {
     L = measure(true) || { ...L, spread: false, pw: L.W };
     setPageSize(L);
     tk.redoLayout();
+    L = fitScore(L);
   }
   S.W = L.W; S.H = L.H; S.spread = L.spread; S.sp = L.sp; S.hard = L.hard; S.scale = L.scale;
   cache.clear();
@@ -361,7 +483,7 @@ function relayout() {
   const t = performance.now();
   tk.redoLayout();
   S.t.layout = ms(t);
-  placed(L);
+  placed(fitScore(L));
 }
 
 // ---------------------------------------------------------------------------
@@ -398,7 +520,7 @@ function show() {
   S.t.show = ms(t0);
   const t1 = performance.now();
   for (const d of els) {
-    const r = decorate(d, S.P.facts);
+    const r = decorate(d, S.P.facts, { low: S.P.views[S.view]?.low });
     for (const it of r.items) S.items.push(it);
     S.counted.set(Number(d.dataset.page), r.items.length);
   }
@@ -505,7 +627,9 @@ function resize(dir) {
     S.size = prev;
   }
   S.sizeAuto = false;
-  keep(K.size, String(S.size));
+  const z = S.sizes[sizeKind(S.view)];
+  Object.assign(z, { size: S.size, auto: false });
+  keep(z.key, String(S.size));
   relayout();
 }
 smallerBtn.addEventListener("click", () => resize(-1));
@@ -622,7 +746,9 @@ const LATE = 1500;       // ms
 const MAX_HOLD = 60000;  // ms: a release that never came lets go by itself
 const HIDE_AFTER = 2000; // ms after the lift: the names, the strip and the colour go
 const CUT = 0.01;        // s: time constant when a press becomes a swipe
-const HAND = { rh: "#a64fff", lh: "#4f7cff" };
+// (the voice: the full score's sung part — its own colour, clear of both hands and the orange of
+// the pressed note)
+const HAND = { rh: "#a64fff", lh: "#4f7cff", voice: "#0b8f78" };
 const WHITE = new Set([0, 2, 4, 5, 7, 9, 11]);
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
 
@@ -666,10 +792,15 @@ for (const t of UNLOCK) document.addEventListener(t, unlockPlay, true);
 let peek = null;
 const peekLog = []; // what sounded: { midis, how: "hold" | "lift" } (tests)
 
-// (Melody is the right hand; a hymn's treble part is, its bass part the left.)
+// (Melody is the right hand; a hymn's treble part is, its bass part the left. In the full score
+// the sung part is the voice, and another part's staff is a hand by where it's read from.)
 function handOf(f) {
   const plan = S.P?.views[S.view], both = S.P?.views.both;
   if (!plan || plan.kind === "melody" || !both) return "rh";
+  if (plan.kind === "score") {
+    if (plan.sung?.includes(f.part)) return "voice";
+    return plan.low.includes(f.part + "|" + f.staff) ? "lh" : "rh";
+  }
   if (both.kind === "hymn") return f.part === both.parts[1] ? "lh" : "rh";
   if (both.kind === "parts") return "rh";
   return Number(f.staff) >= 2 ? "lh" : "rh";
@@ -1251,7 +1382,7 @@ function countAll() {
     if (!S.counted.has(p)) {
       const had = cache.has(p);
       const doc = new DOMParser().parseFromString(svgOf(p), "image/svg+xml");
-      S.counted.set(p, [...doc.querySelectorAll("g.note")].filter((g) => g.querySelector(":scope > g.notehead")).length);
+      S.counted.set(p, [...doc.querySelectorAll("g.note")].filter((g) => g.querySelector(":scope > g.notehead") && g.getAttribute("visibility") !== "hidden").length);
       if (!had) cache.delete(p);
     }
     rendered += S.counted.get(p);
@@ -1269,6 +1400,7 @@ window.resonateDebug = () => {
       views: S.P ? Object.keys(S.P.views) : [], parts: S.P?.parts ?? [],
       keep: plan ? { ...plan, ids: S.v?.ids ?? [] } : null,
       pages: S.pages, page: S.page, shown: shownPages(), spread: S.spread, sp: S.sp, scale: S.scale, size: S.size,
+      sizeAuto: S.sizeAuto, sizes: JSON.parse(JSON.stringify(S.sizes)), hard: S.hard, fitLog: S.fitLog.map((x) => ({ ...x })),
       W: S.W, H: S.H, names: S.names, at: S.at,
       counts: { rendered, pitched: S.v?.pitched ?? 0, pages: S.counted.size }, countAll,
       get facts() { return S.P ? Object.fromEntries(S.P.facts) : {}; },
