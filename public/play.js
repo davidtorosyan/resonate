@@ -7,12 +7,12 @@
 //
 // The place is kept by written measure (S.at): rotation, −/+, a hands switch and reopening the
 // song all come back to the page holding that bar.
-import { spaceChanged } from "./nav.js?v=76";
-import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=76";
-import { prepare, buildView, VIEW_LABELS } from "./playprep.js?v=76";
-import { decorate, fullName, labelOf } from "./playnames.js?v=76";
-import { loadPiano, holdPiano } from "./piano.js?v=76";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=76";
+import { spaceChanged } from "./nav.js?v=77";
+import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=77";
+import { prepare, buildView, VIEW_LABELS } from "./playprep.js?v=77";
+import { decorate, fullName, labelOf } from "./playnames.js?v=77";
+import { loadPiano, holdPiano } from "./piano.js?v=77";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=77";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
