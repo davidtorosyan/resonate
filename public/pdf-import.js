@@ -2,10 +2,10 @@
 // resulting MusicXML to My songs. No settings: pages without staves are skipped
 // automatically, English OCR for lyrics, the title is taken from the score.
 
-import { readScoreFile, parseMusicXml } from "./musicxml.js?v=77";
-import { addSong } from "./library.js?v=77";
-import { fixOmrScore, joinMovements } from "./omr/fixscore.js?v=77";
-import { spaceChanged } from "./nav.js?v=77";
+import { readScoreFile, parseMusicXml } from "./musicxml.js?v=78";
+import { addSong } from "./library.js?v=78";
+import { fixOmrScore, joinMovements } from "./omr/fixscore.js?v=78";
+import { spaceChanged } from "./nav.js?v=78";
 
 const $ = (id) => document.getElementById(id);
 const chooseBtn = $("choose");
@@ -201,7 +201,7 @@ async function run(file) {
   appendLog(logHead.trimEnd());
 
   try {
-    const omr = await import("./omr/omr.js?v=77");
+    const omr = await import("./omr/omr.js?v=78");
     const res = await omr.convertPdf(file, { onProgress, onLog: appendLog });
 
     setStep("save");
