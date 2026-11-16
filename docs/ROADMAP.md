@@ -163,6 +163,7 @@ The owner got a piano: the Play tab shows a song's piano part as sheet music on 
 - Tap the keyboard strip to hear a key; "Simplify" (RH top note, LH bass note); half-page turns; a centre tap to hide the bar; a dark paper theme.
 - Sync `resonate.play` (a `song_state "<song>|play"` row) so the place and level follow to the phone/PC.
 - A Worker toolkit if the iPad stutters on open; OSMD as a fallback renderer if a real score draws fewer notes than it has.
+- A later key change written for one staff only (`<key number>`) is drawn on both staves (v77 review, not fixed: needs an MEI round trip rewriting each staff's keySig, ~70 ms; no Audiveris export has one).
 - Never: octave numbers on the page, a separate row of names, colours by pitch, generated fingering, falling-note views, grades or streaks.
 
 ## Plan for 4–8 (research, 2026-11-07)

@@ -208,7 +208,7 @@ The SVG's `data-pname`, `data-accid`/`data-accid.ges` and `data-oct` are only cr
 - `top` and `bottom` = the y of the first and fifth path of the note's `g.staff`; `space = (bottom - top) / 4`.
 - `cy` = the centre of the head's bbox.
 - `ledgers = cy < top ? floor((top - cy)/space + .05) : cy > bottom ? floor((cy - bottom)/space + .05) : 0`. This gives 2 for C6 and for A3 in treble, and for E4 in bass.
-- Known limit: cross-staff notes (none from Audiveris).
+- Cross-staff notes (Audiveris does write them: Killing Me Softly bar 31, Songbird bars 51, 90, 149) are measured against the staff they're drawn on (Verovio's `note@staff`/`chord@staff` → `data-staff`; see As built).
 
 ```css
 #stage .nn, #stage .km { display:none }
@@ -335,7 +335,7 @@ Melody is hidden when it would equal Both. The default per song is Both.
 
 - Every write to a DATA_KEYS entry is guarded with `if (spaceChanged()) return`, as sing.js `store()` does.
 - `days` is written at most every 30 s and on `pagehide`.
-- On load, prune `resonate.play` entries whose song no longer exists (not a sample and not in `listSongs()`).
+- On load, prune `resonate.play` entries whose song no longer exists (not a sample and not in `listSongs()`). (As built: a song's record goes with the song, and the load-time prune is guarded — see As built.)
 - **Not synced in v1:** no sync.js changes. Later: a `song_state` row `"<song>|play"`.
 - Fires no "resonate:data".
 - play.html loads `nav.js?v=N` as the **first** module, then `play.js?v=N`. nav.js handles space parking, account links and starting sync.
@@ -404,3 +404,88 @@ Melody is hidden when it would equal Both. The default per song is Both.
 
 Not planned:
 - **Never:** octave numbers on the page, a separate row of names, colours by pitch, generated fingering, scrolling or falling-note views, grades or streaks.
+
+
+## As built (v77)
+
+Where this differs from the sections above, this wins.
+
+**Toolkit options** (`VRV` in play.js):
+- The §2 set, plus:
+  - `spacingStaff: 8`, `spacingBraceGroup: 8`;
+  - `justifyVertically: true`, `justificationStaff: 0.2`, `justificationBraceGroup: 0.2`;
+  - `lyricWordSpace: 3` (eight stacked verses ran words together: "taughtmy");
+  - `transposeToSoundingPitch: true`;
+  - `svgAdditionalAttribute` also has `note@staff`, `chord@staff` and `staff@n`.
+- `transposeToSoundingPitch` puts a transposing part (B♭ clarinet, horn, guitar 8vb) at the pitch a pianist plays. It changes nothing in a score without `<transpose>`. `noteFacts` shifts each note's step/alter/octave and the key by the same interval before classifying accidentals, so badges, the peek and the strip all name what is drawn.
+
+**Layout** (`measure()`):
+- **Spread:** two pages when `W > H` and each half holds ≥ 48 staff spaces.
+- **Staff space:**
+  - `sp = min(size, pageWidth / 40, H / (12 · staves))`.
+  - **Until a size is chosen on this device** (`sizeAuto`), a grand staff in landscape gets `max(11, H / (24 · staves))`, which is two systems a page. At 16, an 11" iPad or iPad mini in landscape held one system and about a third of blank paper.
+  - + from there goes to the next size and saves it.
+- **Short songs:** a view that fits on one page is laid out at the stage's full width, not as half of a spread. A lone last page of a spread stays in its half.
+
+**Views**
+- Melody is offered only when the melody part has words. It is hidden when it is the same notes as Both (a voice-only song); Both then shows the words.
+- A hymn's two parts (treble over bass, no piano) are braced as a grand staff.
+- When three or more stanzas stack, Melody shows only the first (`firstStanzaOnly`). Amazing Grace's eight verses made the page 70% text.
+- **Piano views keep the song's road map.** Audiveris writes endings, D.S./To Coda, tempo and section marks on the top (vocal) part only, and reads a piano's 8va lines as endings. `copyMarks` copies the top part's endings and repeats into the kept part's barlines, and its words, tempo and navigation marks onto staff 1 at the same beat. The kept part's own endings are dropped when the score is from Audiveris or the top part has endings, as Sing's `readStructure` does.
+- `isMark` keeps tempo, navigation and section marks from a hidden staff, once.
+- **Prep repairs** for what Verovio draws wrong or not at all:
+  - ties written stop-after-start are put in order (`tiesInOrder`);
+  - a one-hand view pairs its slurs and rebuilds beams cut by the hidden staff (`slurPairs`, `rebeam`);
+  - a multi-measure rest over bars that have notes is dropped (`dropCoveringRests`);
+  - a part missing from the part-list is added;
+  - `dropRestatedKeys` uses the first key of each bar only, as Verovio draws it;
+  - `placed()` reports "couldn't draw" when no staff comes out, not blank paper.
+- **Tuplets:** OMR tuplets without a tuplet mark (four quarters in a 3/4 bar, from fixscore's unmarked-tuplet fix or a "3" Audiveris read without its bracket) get `<tuplet>` start/stop. This is `markTupletGroups` in omr/fixscore.js. It runs on every load of an Audiveris song and is idempotent. Sing's parse is unchanged; it only adds marks.
+
+**Names**
+- **Key-signature mark:** the ♭/♯ `.km` mark of a key-only note sits at its own head's height, after the note's dots and any ledger dash. When another head on the staff is in the way, it moves to the left of the head. Its size is 1.0 × the head height. At first it sat at the upper right, beside the note a third above, which then read as F♭.
+- **Some floor:** on a page where the rules name fewer than 15% of heads, each bar's first chord gets one name per staff: the top note on staff 1, the bass note on the others. Amazing Grace's first page had 0 of 56 names at Some, so the first fade would have taken away nearly all of them.
+- **Placement fixes:**
+  - Cross-staff notes are measured against the staff they're drawn on.
+  - Pills stacked by a unison plus a second are pushed apart vertically.
+  - A pill's left end is trimmed past a printed accidental.
+  - Verovio's own `<style>` draws a `currentColor` stroke on every rect; play.html removes it.
+- **Per-song level:** a song's level is pinned when it is first opened, so changing the level on one song never changes another's.
+
+**Input**
+- **Pedals and menus:** a `<select>` focused by a tap gives the page-turn keys back (blur, then turn), including Space and Enter. A tap on the music also blurs a menu that still has focus. A select reached with Tab keeps its keys.
+  - Known limit: on an iPad, UIKit catches Space on a focused menu and reopens it before the page sees the key.
+- **Wake lock:** Safari grants the wake lock only from a user gesture. Every trusted pointerup, click or keydown asks for it until it is held.
+
+**PDF view (📄)**
+- The hidden sheet's descendants are hidden too: Verovio writes `visibility="visible"` on some staves.
+- In landscape it shows two pages when each is ≥ 75% of print size, or ≥ 97% of the size a single page would get.
+- Each open has its own token. A page that can't be read shows a message, and documents are freed with `loadingTask.destroy()`.
+
+**Builder fixes:** found while building, before the review:
+- the PDF render race;
+- the Split View pager row;
+- the offer chip wrapping the bar (at 1100–1140 px too, after the review);
+- the pager width on phones;
+- −/+ became one segmented control with magnifier icons. A bare − / + next to ABC read as fewer / more names.
+
+**State**
+- **Records go with their songs:** a song's `resonate.play` record is removed with the song, both by Sing's ✕ and by a sync tombstone.
+- **The load-time prune is guarded.** It runs only when storage is persistent and the songs' database generation equals the one seen last visit. That is the device key `resonate.play.gen`, deliberately not in DATA_KEYS. A library that failed to open lists no songs, which once wiped every record.
+- After a view fails, the next view that draws clears the failure. The hands menu retries the engine, and saves the view only once it has drawn.
+
+**Fonts:** the Verovio module also embeds Liberation Serif 1.04 (GPL-2.0 with the font exception). It is used only under the option `fontTextLiberation`, which Play never sets; its license ships in `vendor/verovio-6.4.0/` anyway.
+
+**Review (v77, adversarial, five lenses):** names, iPad/Safari, state, real scores, UX.
+- 27 findings were confirmed. 25 are fixed, plus the −/+ labels in part.
+- **Not fixed:** a later key change written for one staff only (`<key number>`) is drawn on both staves. It needs an MEI round trip, rewriting each staff's keySig and reloading, about 70 ms. None of the owner's scores, and no Audiveris export, has one.
+
+**Tests** (in tools/, outside the repo):
+- `playunit.cjs`: prep and facts on every fixture, with sidecar checks.
+- `play.cjs`: spec §8 at 8 sizes, plus the owner's scores from `PLAY_SCORES`.
+- `playcore.cjs` and `playextras.cjs`: peek, sound, strip, fading, PDF, spaces.
+- `playheaders.cjs`: every page's header.
+- `playfixes.cjs`: a check per review fix, each failing on the pre-fix code.
+- `playwebkit.mjs` and `playextraswk.mjs`: WebKitGTK, including the wake lock after a pedal key.
+- `catalog.cjs`: Sing and Play share the song list and the clean-ups.
+- `regress.sh` runs the Sing suites, then play, playheaders, playfixes and playwebkit.
