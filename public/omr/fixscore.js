@@ -18,6 +18,7 @@ export function fixOmrScore(xml, log = [], { tempo = null } = {}) {
   unifyKeySignatures(doc, changes);
   unifyOctaveClefs(doc, changes);
   markUnmarkedTuplets(doc, changes);
+  markTupletGroups(doc, changes);
   return { xml: changes.length ? new XMLSerializer().serializeToString(doc) : xml, changes };
 }
 
@@ -645,6 +646,75 @@ function markUnmarkedTuplets(doc, changes) {
         break; // one per measure (divisions now changed)
       }
     });
+  }
+}
+
+// Tuplets with no tuplet mark: notes with <time-modification> outside any <tuplet> start/stop —
+// those markUnmarkedTuplets made, and Audiveris's own when its "3" was read but not its bracket.
+// Notation software draws nothing for them: four plain quarters in a 3/4 bar ("I'm a bu-sy"),
+// "give me a" with no 3. Each run of them, per voice, is split into groups of actual-notes
+// (by duration: k × the run's shortest element, unscaled) whose first and last elements get
+// <tuplet type="start"/"stop">. Runs on every load (idempotent: a marked group is inside a
+// tuplet), so songs saved before it get the marks too.
+function markTupletGroups(doc, changes) {
+  const kids = (el, name) => [...el.children].filter((c) => c.nodeName === name);
+  const val = (el, name) => { const c = el && kids(el, name)[0]; return c ? Number(c.textContent) : null; };
+  const voiceOf = (n) => kids(n, "voice")[0]?.textContent || "1";
+  const tupletOf = (n, type) => n.querySelector(`:scope > notations > tuplet[type="${type}"]`);
+  const mark = (n, type) => {
+    let no = kids(n, "notations")[0];
+    if (!no) {
+      no = doc.createElement("notations");
+      n.insertBefore(no, kids(n, "lyric")[0] || kids(n, "play")[0] || kids(n, "listen")[0] || null);
+    }
+    const t = doc.createElement("tuplet");
+    t.setAttribute("type", type);
+    no.appendChild(t);
+  };
+  for (const part of doc.querySelectorAll("score-partwise > part")) {
+    const where = [];
+    for (const measure of kids(part, "measure")) {
+      const notes = kids(measure, "note").filter((n) => !kids(n, "grace").length);
+      let groups = 0;
+      for (const v of new Set(notes.map(voiceOf))) {
+        // lead elements of the voice, each with its chord notes (Audiveris marks every chord note)
+        const leads = [];
+        for (const n of notes) {
+          if (voiceOf(n) !== v) continue;
+          if (!kids(n, "chord").length || !leads.length) leads.push([n]);
+          else leads[leads.length - 1].push(n);
+        }
+        const runs = [];
+        let inside = false, run = null;
+        for (const g of leads) {
+          if (g.some((n) => tupletOf(n, "start"))) inside = true;
+          const tm = kids(g[0], "time-modification")[0];
+          const ratio = tm ? `${val(tm, "actual-notes")}:${val(tm, "normal-notes")}` : null;
+          if (!inside && tm && val(tm, "actual-notes") >= 2 && val(tm, "normal-notes") >= 1) {
+            if (run && run.ratio === ratio) run.els.push(g[0]);
+            else runs.push((run = { ratio, actual: val(tm, "actual-notes"), normal: val(tm, "normal-notes"), els: [g[0]] }));
+          } else run = null;
+          if (g.some((n) => tupletOf(n, "stop"))) inside = false;
+        }
+        for (const r of runs) {
+          const nominal = (n) => (val(n, "duration") || 0) * r.actual / r.normal;
+          const unit = Math.min(...r.els.map(nominal));
+          if (!(unit > 0)) continue;
+          const want = r.actual * unit;
+          let grp = [], sum = 0;
+          for (const n of r.els) {
+            grp.push(n);
+            sum += nominal(n);
+            if (sum >= want - 1e-6) {
+              if (grp.length > 1) { mark(grp[0], "start"); mark(grp[grp.length - 1], "stop"); groups++; }
+              grp = []; sum = 0;
+            }
+          }
+        }
+      }
+      if (groups) where.push(`m${measure.getAttribute("number")}`);
+    }
+    if (where.length) changes.push(`part ${part.getAttribute("id")}: tuplet marks added (${where.join(", ")})`);
   }
 }
 

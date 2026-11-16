@@ -3561,7 +3561,7 @@ removeBtn.addEventListener("click", async () => {
   const title = songSelect.selectedOptions[0]?.textContent || "this song";
   if (!confirm(`Remove “${title}” from My songs?`)) return;
   await removeSong(id);
-  for (const k of [K.keys, K.rates, K.timing, K.history]) {
+  for (const k of [K.keys, K.rates, K.timing, K.history, "resonate.play"]) { // (resonate.play: the Play page's record)
     const all = (() => { try { return JSON.parse(recall(k)) || {}; } catch { return {}; } })();
     if (id in all) { delete all[id]; store(k, JSON.stringify(all)); }
   }

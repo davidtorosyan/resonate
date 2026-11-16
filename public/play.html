@@ -70,8 +70,12 @@
       #names[data-level="all"] { background: #a64fff; border-color: #a64fff; color: #fff; }
       #names[data-level="some"] { background: transparent; border-color: #c48bff; color: #e0c8ff; }
       #names[data-level="off"] { background: transparent; color: rgba(255,255,255,0.45); text-decoration: line-through; }
-      .size { display: inline-flex; gap: 0.25rem; }
-      #smaller, #bigger { font-size: 1.15rem; line-height: 1; padding: 0; }
+      /* Size: one segmented control with magnifiers (a bare − / + by ABC read as fewer / more names). */
+      .size { display: inline-flex; gap: 0; }
+      #bar #smaller { border-radius: 0.5rem 0 0 0.5rem; }
+      #bar #bigger { border-radius: 0 0.5rem 0.5rem 0; border-left-width: 0; }
+      #smaller, #bigger { line-height: 1; padding: 0; }
+      #smaller svg, #bigger svg { width: 22px; height: 22px; display: block; margin: auto; }
       #pdf { padding: 0 0.5rem; }
       #offer { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; color: rgba(255,255,255,0.75); white-space: nowrap; }
       #bar #offer-yes { border-radius: 999px; border-color: #c48bff; color: #e0c8ff; background: transparent; font-weight: 600; }
@@ -106,6 +110,11 @@
          pages, so the bar keeps its rows (one on iPad mini landscape, two in portrait). */
       @media (min-width: 421px) {
         .ctl:has(#offer:not([hidden])) #song { flex-basis: 7.5rem; }
+      }
+      /* (one row from 1100 px: the song menu takes only what's left while the chip shows — a line
+         breaks on its base size, so 7.5rem wrapped the chip to a second row at 1100–1140) */
+      @media (min-width: 1100px) {
+        .ctl:has(#offer:not([hidden])) #song { flex-basis: 0; min-width: 4.5rem; }
       }
       @media (max-width: 1099px) {
         #bar:has(#offer:not([hidden])) .pager { order: 1; }
@@ -157,6 +166,10 @@
       #stage[data-names="all"] .nn, #stage[data-names="some"] .nn.lv, #stage[data-names="some"] .km, #stage .nn.peek { display: inline; }
       #stage g.note.peek .notehead use { fill: #d86b00; }
       /* (the peeked chord's own badges turn orange too: at All they cover its heads) */
+      /* (Verovio's own <style> gives every rect a currentColor stroke — a black ring that ate into
+         the printed accidental beside a pill; the attributes lose to it) */
+      #stage .nn rect { stroke: none; }
+      #stage .nn.nb-h rect { stroke: #5e2fb8; }
       #stage .nn.nb-f.peek rect { fill: #c45f00; }
       #stage .nn.nb-h.peek rect { stroke: #c45f00; }
       #stage .nn.nb-h.peek text { fill: #c45f00; }
@@ -179,8 +192,9 @@
       #strip.on { transform: none; }
       #strip svg { display: block; width: 100%; height: 100%; }
       @media (prefers-reduced-motion: reduce) { #strip { transition: none; } }
-      /* The original PDF over the (hidden, still laid out) sheet. */
-      #stage[data-pdf] .page { visibility: hidden; }
+      /* The original PDF over the (hidden, still laid out) sheet. (Its descendants too: Verovio
+         writes visibility="visible" on some staves, which beats an inherited hidden.) */
+      #stage[data-pdf] .page, #stage[data-pdf] .page * { visibility: hidden; }
       #pdfview { position: absolute; top: 0; left: 50%; transform: translateX(-50%); z-index: 1; display: block; background: #fff; }
     </style>
   </head>
@@ -200,8 +214,8 @@
         <select id="hands" aria-label="Hands" hidden></select>
         <button id="names" type="button" data-level="all" aria-label="Note names: all" title="Note names: all">ABC</button>
         <span class="size">
-          <button id="smaller" type="button" aria-label="Smaller" title="Smaller">−</button>
-          <button id="bigger" type="button" aria-label="Larger" title="Larger">+</button>
+          <button id="smaller" type="button" aria-label="Smaller" title="Smaller"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg></button>
+          <button id="bigger" type="button" aria-label="Larger" title="Larger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg></button>
         </span>
         <button id="pdf" type="button" aria-label="Original PDF" title="Original PDF" aria-pressed="false" hidden>📄</button>
         <span id="offer" hidden></span>

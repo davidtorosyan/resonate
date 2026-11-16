@@ -167,9 +167,32 @@ export function keyAlters(keyEl) {
 }
 const NOKEY = keyAlters({ children: [] });
 
-// Pitch facts from the whole score, as written: Map(noteId → { step, alter, oct, midi, part,
-// staff, voice, mi, acc, nat }). Per part and staff: the key in force (<key number> aware) and
-// the accidentals printed in the bar (by step + octave, reset at each barline).
+// A transposing part (<transpose>: a B♭ clarinet, an F horn, a guitar's octave): the page shows
+// and names the sounding pitch (Verovio's transposeToSoundingPitch), the key a pianist plays.
+const LETTERS = "CDEFGAB";
+// <transpose> → { d (letters), c (semitones) } or null
+function transOf(t) {
+  const oc = num(kid(t, "octave-change"), 0), c = num(kid(t, "chromatic"), 0) + 12 * oc;
+  const d = (kid(t, "diatonic") ? num(kid(t, "diatonic"), 0) : Math.round((num(kid(t, "chromatic"), 0) * 7) / 12)) + 7 * oc;
+  return d || c ? { d, c } : null;
+}
+// A written pitch moved by d letters and c semitones (spelled by the interval).
+function shiftPitch(step, alter, oct, d, c) {
+  const i = LETTERS.indexOf(step) + d;
+  const o = oct + Math.floor(i / 7), s = LETTERS[((i % 7) + 7) % 7];
+  return { step: s, oct: o, alter: (oct + 1) * 12 + STEP_PC[step] + alter + c - ((o + 1) * 12 + STEP_PC[s]) };
+}
+// The written key's alterations, transposed: { C: …, …, B: … } of the sounding key.
+function shiftKey(a, tr) {
+  const out = {};
+  for (const s of LETTERS) { const p = shiftPitch(s, a[s] || 0, 4, tr.d, tr.c); out[p.step] = p.alter; }
+  return out;
+}
+
+// Pitch facts from the whole score, as written — at sounding pitch in a transposing part:
+// Map(noteId → { step, alter, oct, midi, part, staff, voice, mi, acc, nat }). Per part and staff:
+// the key in force (<key number> aware) and the accidentals printed in the bar (by step + octave,
+// reset at each barline).
 //   acc "printed": it has an <accidental>; "carried": an earlier one in the bar applies, or its
 //   alter differs from the key with nothing printed (a tie from the previous bar, an OMR alter);
 //   "key": altered by the key signature only; null: plain.
@@ -182,6 +205,16 @@ export function noteFacts(doc) {
   for (const part of partsIn(doc.documentElement)) {
     const pid = part.getAttribute("id");
     let keys = { all: NOKEY }; // "all" | staff number → alters
+    let trans = { all: null }; // "all" | staff number → { d, c } (a transposing part) | null
+    const sounding = new Map(); // written alters → { "d|c" → sounding alters }
+    const keyOf = (wk, tr) => {
+      if (!tr) return wk;
+      let m = sounding.get(wk);
+      if (!m) sounding.set(wk, (m = new Map()));
+      const k = tr.d + "|" + tr.c;
+      if (!m.has(k)) m.set(k, shiftKey(wk, tr));
+      return m.get(k);
+    };
     kids(part, "measure").forEach((m, mi) => {
       const state = {}; // staff → Map(step+oct → alter of the accidental printed there)
       const events = [];
@@ -190,7 +223,7 @@ export function noteFacts(doc) {
         const name = el.nodeName;
         if (name === "backup") pos -= num(kid(el, "duration"), 0);
         else if (name === "forward") pos += num(kid(el, "duration"), 0);
-        else if (name === "attributes") { if (kid(el, "key")) events.push([pos, 0, i++, el]); }
+        else if (name === "attributes") { if (kid(el, "key") || kid(el, "transpose")) events.push([pos, 0, i++, el]); }
         else if (name === "note") {
           const chord = !!kid(el, "chord");
           const onset = chord ? last : pos;
@@ -205,15 +238,21 @@ export function noteFacts(doc) {
             const n = k.getAttribute("number");
             if (n) keys[n] = keyAlters(k); else keys = { all: keyAlters(k) };
           }
+          for (const t of kids(el, "transpose")) {
+            const n = t.getAttribute("number");
+            if (n) trans[n] = transOf(t); else trans = { all: transOf(t) };
+          }
           continue;
         }
         const p = kid(el, "pitch");
         if (!p) continue;
-        const step = txt(kid(p, "step")).toUpperCase();
-        if (!(step in STEP_PC)) continue;
-        const alter = num(kid(p, "alter"), 0), oct = num(kid(p, "octave"), 4);
+        const wstep = txt(kid(p, "step")).toUpperCase();
+        if (!(wstep in STEP_PC)) continue;
         const staff = num(kid(el, "staff"), 1), voice = txt(kid(el, "voice")) || "1";
-        const ka = (keys[staff] || keys.all)[step] || 0;
+        const tr = staff in trans ? trans[staff] : trans.all;
+        let step = wstep, alter = num(kid(p, "alter"), 0), oct = num(kid(p, "octave"), 4);
+        if (tr) ({ step, alter, oct } = shiftPitch(step, alter, oct, tr.d, tr.c));
+        const ka = keyOf(keys[staff] || keys.all, tr)[step] || 0;
         const st = (state[staff] ||= new Map());
         const sk = step + oct, prev = st.get(sk);
         const accEl = kid(el, "accidental");
@@ -221,7 +260,7 @@ export function noteFacts(doc) {
         let acc, nat;
         if (printed) {
           acc = "printed";
-          nat = alter === 0 && (ka !== 0 || (prev ?? 0) !== 0 || txt(accEl) === "natural");
+          nat = alter === 0 && (ka !== 0 || (prev ?? 0) !== 0 || (!tr && txt(accEl) === "natural"));
           st.set(sk, alter);
         } else if (prev !== undefined) {
           acc = "carried";
@@ -251,11 +290,27 @@ export function buildView(doc, plan) {
   const d = doc.cloneNode(true);
   const root = d.documentElement;
   const keep = new Set(plan.parts);
-  const list = kid(root, "part-list");
   const all = partsIn(root);
+  // Audiveris writes endings, D.S. / To Coda, tempo and section marks on the top (vocal) part
+  // only, and reads a piano's 8va lines as endings (Sing's readStructure reads endings from the
+  // top part for the same reason): a view without the top part gets its marks.
+  const host = all.find((p) => keep.has(p.getAttribute("id")));
+  if (all[0] && host && host !== all[0]) copyMarks(d, all[0], host);
   const dropped = all.some((p) => !keep.has(p.getAttribute("id")));
   for (const p of all) if (!keep.has(p.getAttribute("id"))) p.remove();
-  if (list) {
+  // A part the part-list doesn't name (or no part-list): Verovio loads it and draws nothing.
+  let list = kid(root, "part-list");
+  if (!list) { list = d.createElement("part-list"); root.insertBefore(list, partsIn(root)[0] || null); }
+  const listed = new Set(kids(list, "score-part").map((sp) => sp.getAttribute("id")));
+  for (const p of partsIn(root)) {
+    const id = p.getAttribute("id");
+    if (listed.has(id)) continue;
+    const sp = d.createElement("score-part");
+    sp.setAttribute("id", id);
+    sp.appendChild(d.createElement("part-name"));
+    list.appendChild(sp);
+  }
+  { // the part-list: only the kept parts, a hymn's two braced, no names
     for (const sp of kids(list, "score-part")) if (!keep.has(sp.getAttribute("id"))) sp.remove();
     if (dropped || keep.size === 1 || plan.brace) for (const g of kids(list, "part-group")) g.remove();
     const sps = kids(list, "score-part");
@@ -299,9 +354,25 @@ export function buildView(doc, plan) {
       if (!sd.children.length && !sd.attributes.length) sd.remove();
     }
     if (!plan.lyrics) for (const l of [...part.getElementsByTagName("lyric")]) l.remove();
+    else firstStanzaOnly(part);
   }
-  if (plan.staff != null || plan.voice != null) for (const part of parts) filterPart(d, part, plan.staff, plan.voice, plan.lyrics);
+  if (plan.staff != null || plan.voice != null) for (const part of parts) {
+    // (one staff / voice of music written across both: slurs and beams whose other end goes)
+    const pairs = slurPairs(part);
+    filterPart(d, part, plan.staff, plan.voice, plan.lyrics);
+    const drop = (sl) => { const no = sl.parentElement; sl.remove(); if (no && !no.children.length) no.remove(); };
+    for (const [sl, partner] of pairs) if (sl.isConnected && !partner.isConnected) drop(sl);
+    for (const sl of [...part.querySelectorAll("notations > slur")]) if (!pairs.has(sl)) drop(sl);
+    rebeam(part);
+  }
   for (const part of parts) {
+    // A note tied both ways with <tied type="start"/> before <tied type="stop"/> (Audiveris):
+    // Verovio pairs the stop with the note's own start (not drawn) and the incoming tie skips to
+    // the next note — one long arc over a chord that looks re-struck (Killing Me Softly bar 11).
+    for (const n of part.getElementsByTagName("note")) {
+      tiesInOrder(n, "tie");
+      for (const no of kids(n, "notations")) tiesInOrder(no, "tied");
+    }
     for (const n of part.getElementsByTagName("note")) {
       // Audiveris writes <beam> and <tuplet> on every note of a chord; Verovio expects them on
       // the chord's first note only and drops the rest of the group (Wichita: 496 of 820 notes).
@@ -314,6 +385,7 @@ export function buildView(doc, plan) {
     for (const mn of part.querySelectorAll("print > measure-numbering")) mn.textContent = "system";
     dropRestatedKeys(part);
     dropUnclosedSpanners(part);
+    dropCoveringRests(part);
   }
   // Measure ids for the page anchor (Verovio keeps them: <measure id="m3"> → g#m3).
   const present = [];
@@ -353,9 +425,14 @@ function filterPart(d, part, staff, voice, lyrics) {
     return el;
   };
   const setStaff = (el) => { const s = kid(el, "staff"); if (s) s.textContent = "1"; };
+  const otherDir = (el) => {
+    const ds = txt(kid(el, "staff")) || "1", dvc = txt(kid(el, "voice"));
+    return (S != null && ds !== S) || (V != null && dvc && dvc !== V);
+  };
   for (const m of kids(part, "measure")) {
     let pos = 0, cur = 0, last = 0, chordKept = false;
     const out = [], pending = [];
+    const own = new Set(kids(m, "direction").filter((el) => !otherDir(el)).map(dirSig)); // (a mark both staves carry: once)
     const kept = new Map(); // onset → note (main notes kept), for syllables left on dropped voices
     const orphan = [];      // [onset, lyric] from dropped notes on the kept staff
     const move = (to, v) => {
@@ -396,8 +473,14 @@ function filterPart(d, part, staff, voice, lyrics) {
           break;
         }
         case "direction": {
-          const ds = txt(kid(el, "staff")) || "1", dvc = txt(kid(el, "voice"));
-          if ((S != null && ds !== S) || (V != null && dvc && dvc !== V)) break;
+          // (the other staff's / voice's directions go — but a tempo, a D.S., a section name is
+          // for both hands: kept, once)
+          if (otherDir(el)) {
+            const sig = dirSig(el);
+            if (!isMark(el, true) || own.has(sig)) break;
+            own.add(sig);
+            for (const v of kids(el, "voice")) v.remove();
+          }
           setStaff(el);
           place(el, pos);
           break;
@@ -480,15 +563,21 @@ const keySig = (k) => [...k.children].filter((c) => c.nodeName !== "cancel" && c
 
 // A <key> that restates the key in force, in a measure with no clef or time change: Verovio
 // draws a courtesy key signature at the end of the previous system (fixOmrScore restates the
-// key at every page start).
+// key at every page start). Verovio draws only the first key of a bar (per staff number), at the
+// bar's start, so only that one counts as in force: a second, mid-bar change isn't drawn, and the
+// next barline's key restating it must stay.
 function dropRestatedKeys(part) {
   let cur = { all: null };
   for (const m of kids(part, "measure")) {
     const attrs = kids(m, "attributes");
     const change = attrs.some((a) => kid(a, "clef") || kid(a, "time"));
+    const seen = new Set();
     for (const a of attrs) {
       for (const k of kids(a, "key")) {
         const sig = keySig(k), n = k.getAttribute("number");
+        const first = !seen.has(n || "all") && !seen.has("all");
+        seen.add(n || "all");
+        if (!first) continue;
         const same = n ? (cur[n] ?? cur.all) === sig : cur.all === sig && Object.keys(cur).every((s) => cur[s] === sig);
         if (same && !change) k.remove();
         else if (n) cur[n] = sig;
@@ -525,4 +614,180 @@ function dropUnclosedSpanners(part) {
     }
   }
   for (const el of open.values()) drop(el);
+}
+
+// --- Marks of the top part (copyMarks), kept across staves (filterPart) ------------------------
+
+// Section and navigation words: "D.S. 55 al Coda I", "To Coda", "Fine", "Verse:", "Chorus".
+const NAV_WORDS = /(^|[^a-z])(d\.\s?s\.|d\.\s?c\.|dal segno|da capo|to coda|coda|fine|segno|verse|chorus|bridge|interlude|intro|outro|refrain|pre-?chorus|vamp|repeat|fade)(?![a-z])/i;
+// Tempo words: "Moderately", "Freely", "Fast three, in one", "rit.", "a tempo", "= about 76".
+const TEMPO_WORDS = /(^|[^a-z])(a tempo|tempo|rit|ritard|ritardando|rall|rallentando|accel|accelerando|rubato|freely|slowly|moderately|fast|bright|brightly|slow|lento|largo|adagio|andante|andantino|moderato|allegro|allegretto|presto|vivace|langsam|ruhig|schnell|lebhaft|zart|in (one|1|2|two|3|three|4|four))(?![a-z])|=\s*(about|ca\.?|c\.)?\s*\d/i;
+const SOUND_MARK = ["tempo", "dalsegno", "dacapo", "tocoda", "coda", "fine", "segno"];
+
+// A direction that is for the whole score, not one staff: a segno / coda / rehearsal mark, a
+// metronome, a navigation or section word, a <sound> tempo or jump — and tempo words when
+// `tempo` (the piano's own, or the score's first bar).
+function isMark(dir, tempo) {
+  for (const dt of kids(dir, "direction-type")) {
+    for (const c of dt.children) {
+      const n = c.nodeName;
+      if (n === "segno" || n === "coda" || n === "metronome" || n === "rehearsal") return true;
+      if (n === "words") {
+        const w = c.textContent;
+        if (NAV_WORDS.test(w) || (tempo && TEMPO_WORDS.test(w))) return true;
+      }
+    }
+  }
+  const snd = kid(dir, "sound");
+  return !!snd && SOUND_MARK.some((a) => snd.hasAttribute(a));
+}
+// What a direction shows (two copies of one mark compare equal).
+const dirSig = (dir) => kids(dir, "direction-type").map((dt) => [...dt.children].map((c) => c.nodeName + ":" + c.textContent.replace(/\s+/g, " ").trim().toLowerCase()).join(",")).join("|");
+
+// The top part's endings, repeats and marks into the kept part `host` (same measure index):
+// endings and repeats merged into its barlines (its own endings go: from Audiveris they're 8va
+// lines misread), directions copied onto staff 1 at the same moment (an <offset> in the host's
+// divisions).
+function copyMarks(d, top, host) {
+  const tms = kids(top, "measure"), hms = kids(host, "measure");
+  const omr = /audiveris/i.test(d.querySelector("identification > encoding > software")?.textContent || "");
+  if (omr || top.querySelector("barline > ending")) for (const e of [...host.querySelectorAll("barline > ending")]) e.remove();
+  // (where a measure's music starts: after its print, attributes and left barline)
+  const startOf = (m) => { for (const c of m.children) if (!(c.nodeName === "print" || c.nodeName === "attributes" || (c.nodeName === "barline" && c.getAttribute("location") === "left"))) return c; return null; };
+  let tDiv = 1, hDiv = 1;
+  for (let i = 0; i < Math.min(tms.length, hms.length); i++) {
+    const tm = tms[i], hm = hms[i];
+    for (const a of kids(hm, "attributes")) { const dv = num(kid(a, "divisions"), 0); if (dv > 0) hDiv = dv; }
+    for (const tb of kids(tm, "barline")) {
+      const end = kid(tb, "ending"), rep = kid(tb, "repeat");
+      if (!end && !rep) continue;
+      const loc = tb.getAttribute("location") || "right";
+      let hb = kids(hm, "barline").find((b) => (b.getAttribute("location") || "right") === loc);
+      if (!hb) {
+        hb = d.createElement("barline");
+        hb.setAttribute("location", loc);
+        const bs = kid(tb, "bar-style");
+        if (bs) hb.appendChild(bs.cloneNode(true));
+        if (loc === "left") hm.insertBefore(hb, startOf(hm)); else hm.appendChild(hb);
+      }
+      if (end) hb.insertBefore(end.cloneNode(true), kid(hb, "repeat"));
+      if (rep && !kid(hb, "repeat")) hb.appendChild(rep.cloneNode(true));
+    }
+    const have = new Set(kids(hm, "direction").map(dirSig));
+    let pos = 0;
+    for (const el of tm.children) {
+      const name = el.nodeName;
+      if (name === "attributes") { const dv = num(kid(el, "divisions"), 0); if (dv > 0) tDiv = dv; }
+      else if (name === "backup") pos -= num(kid(el, "duration"), 0);
+      else if (name === "forward") pos += num(kid(el, "duration"), 0);
+      else if (name === "note") { if (!kid(el, "chord") && !kid(el, "grace")) pos += num(kid(el, "duration"), 0); }
+      else if (name === "direction") {
+        // (tempo words only in the first bar, or with a metronome: a voice's own "rit." stays its own)
+        if (!isMark(el, i === 0)) continue;
+        const sig = dirSig(el);
+        if (have.has(sig)) continue;
+        have.add(sig);
+        const c = el.cloneNode(true);
+        for (const v of kids(c, "voice")) v.remove();
+        const st = kid(c, "staff");
+        if (st) st.textContent = "1";
+        const at = Math.round(((pos + num(kid(el, "offset"), 0)) / tDiv) * hDiv * 1000) / 1000;
+        let off = kid(c, "offset");
+        if (at > 0) {
+          if (!off) { off = d.createElement("offset"); c.insertBefore(off, kid(c, "staff") || kid(c, "sound") || kid(c, "listening") || null); }
+          off.textContent = String(at);
+        } else if (off) off.remove();
+        hm.insertBefore(c, startOf(hm));
+      }
+    }
+  }
+  for (const b of [...host.getElementsByTagName("barline")]) if (!b.children.length) b.remove();
+}
+
+// --- Lyrics, slurs, beams, ties, rests ------------------------------------------------------------
+
+// A hymn's stacked stanzas (≥ 3 verses each with ≥ half the syllables of the longest): verse 1
+// only — eight lines of words under every system left 6 bars a page. A song's second verse under a
+// repeat (two at most stacked) is what the second pass reads: kept.
+function firstStanzaOnly(part) {
+  const count = new Map();
+  for (const l of part.getElementsByTagName("lyric")) {
+    const n = l.getAttribute("number") || "1";
+    count.set(n, (count.get(n) || 0) + 1);
+  }
+  const main = Math.max(0, ...count.values());
+  const stanzas = [...count].filter(([, c]) => c >= 0.5 * main).map(([n]) => n);
+  if (stanzas.length < 3) return;
+  const first = stanzas.sort((a, b) => (Number(a) || 0) - (Number(b) || 0) || a.localeCompare(b))[0];
+  for (const l of [...part.getElementsByTagName("lyric")]) if ((l.getAttribute("number") || "1") !== first) l.remove();
+}
+
+// Every slur element → its partner's note (MusicXML pairs by number in document order; a stop
+// before its start pairs with the next start).
+function slurPairs(part) {
+  const out = new Map(), open = new Map(), early = new Map();
+  for (const n of part.getElementsByTagName("note")) for (const sl of n.querySelectorAll(":scope > notations > slur")) {
+    const k = sl.getAttribute("number") || "1", t = sl.getAttribute("type");
+    if (t === "start") {
+      if (early.has(k)) { const [e, en] = early.get(k); early.delete(k); out.set(sl, en); out.set(e, n); } else open.set(k, [sl, n]);
+    } else if (t === "stop") {
+      if (open.has(k)) { const [e, en] = open.get(k); open.delete(k); out.set(sl, en); out.set(e, n); } else early.set(k, [sl, n]);
+    } else out.set(sl, n); // (continue)
+  }
+  return out;
+}
+
+// Beam groups cut by a staff / voice filter: re-terminated on each voice's kept notes; a note left
+// alone loses its beams (a flag).
+function rebeam(part) {
+  const b1 = (n) => kids(n, "beam").find((b) => (b.getAttribute("number") || "1") === "1");
+  for (const m of kids(part, "measure")) {
+    const byVoice = new Map();
+    for (const n of kids(m, "note")) {
+      if (kid(n, "chord")) continue;
+      const v = txt(kid(n, "voice")) || "1";
+      if (!byVoice.has(v)) byVoice.set(v, []);
+      byVoice.get(v).push(n);
+    }
+    for (const notes of byVoice.values()) {
+      const groups = [];
+      let g = null;
+      for (const n of notes) {
+        const b = b1(n);
+        if (!b) { g = null; continue; }
+        const t = txt(b);
+        if (t === "begin" || !g) { g = []; groups.push(g); }
+        g.push(n);
+        if (t === "end") g = null;
+      }
+      for (const grp of groups) {
+        if (grp.length === 1) { for (const b of kids(grp[0], "beam")) b.remove(); continue; }
+        b1(grp[0]).textContent = "begin";
+        b1(grp[grp.length - 1]).textContent = "end";
+        for (const n of grp.slice(1, -1)) b1(n).textContent = "continue";
+      }
+    }
+  }
+}
+
+// <tie>/<tied> stop before start on a note tied both ways.
+function tiesInOrder(p, tag) {
+  const els = kids(p, tag);
+  const st = els.find((e) => e.getAttribute("type") === "start"), sp = els.find((e) => e.getAttribute("type") === "stop");
+  if (st && sp && els.indexOf(st) < els.indexOf(sp)) p.insertBefore(sp, st);
+}
+
+// A multi-measure rest over bars that have notes (a hand-made or generated file): Verovio draws
+// the rest and drops the notes. The mark goes; a real one (bars of rests only) stays.
+function dropCoveringRests(part) {
+  const ms = kids(part, "measure");
+  ms.forEach((m, mi) => {
+    for (const mr of [...m.querySelectorAll(":scope > attributes > measure-style > multiple-rest")]) {
+      const n = Math.max(1, num(mr, 1));
+      if (!ms.slice(mi, mi + n).some((x) => [...x.getElementsByTagName("note")].some((nt) => kid(nt, "pitch")))) continue;
+      const st = mr.parentElement;
+      mr.remove();
+      if (!st.children.length) st.remove();
+    }
+  });
 }

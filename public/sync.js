@@ -27,7 +27,7 @@ export const SONG_LIMIT = 10;
 const FILE_LIMIT = 10 * 1024 * 1024;
 const TEXT_LIMIT = 64 * 1024 * 1024; // a downloaded file never unpacks to more than this
 export const OFF_KEY = "resonate.sync.off"; // this device doesn't sync (a device setting)
-const L = { keys: "resonate.sing.keys", rates: "resonate.sing.rates", timing: "resonate.sing.timing", history: "resonate.sing.history", profiles: "resonate.profiles" };
+const L = { keys: "resonate.sing.keys", rates: "resonate.sing.rates", timing: "resonate.sing.timing", history: "resonate.sing.history", profiles: "resonate.profiles", play: "resonate.play" };
 const FIELDS = { key: L.keys, rate: L.rates, timing: L.timing }; // a song's settings: song_state "<song>|<field>", data { v }
 const HISTORY = "history"; // its take history: song_state "<song>|history", data { list }
 const BUCKET = "songs";
@@ -246,7 +246,7 @@ async function apply(sb, row, meta, changed, uid) {
     if (deleted) {
       guard();
       await removeSong(id, { quiet: true });
-      for (const k of [L.keys, L.rates, L.timing, L.history]) setIn(k, id, null); // (removeSong took its take and PDF)
+      for (const k of [L.keys, L.rates, L.timing, L.history, L.play]) setIn(k, id, null); // (removeSong took its take and PDF)
       delete meta.info[id];
       delete meta.held[id];
     } else {

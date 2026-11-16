@@ -12,7 +12,7 @@ import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=76";
 import { prepare, buildView, VIEW_LABELS } from "./playprep.js?v=76";
 import { decorate, fullName, labelOf } from "./playnames.js?v=76";
 import { loadPiano, holdPiano } from "./piano.js?v=76";
-import { listPdfIds, getPdf } from "./library.js?v=76";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=76";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
@@ -24,6 +24,7 @@ const K = {
   play: "resonate.play",        // { songId: { names, view, at, pdfPage, days } } — the account's (space.js DATA_KEYS)
   size: "resonate.play.size",   // staff space in CSS px — this device's
   names: "resonate.play.names", // the level a song opened for the first time starts at — this device's
+  gen: "resonate.play.gen",     // the songs' database generation seen at the last visit — this device's
   song: "resonate.sing.song",   // the song open, shared with Sing
 };
 // Staff space (CSS px) steps for − / +. Defaults: ~3 mm on a tablet on the music desk, smaller
@@ -40,9 +41,11 @@ const FIRST = Object.keys(SAMPLES)[0];
 // 0 crowded pairs, Amazing Grace 18 → 4 touching, at most one more page.)
 const VRV = {
   header: "none", footer: "none", breaks: "auto", mnumInterval: 0, adjustPageHeight: false,
-  svgAdditionalAttribute: ["note@pname", "note@oct", "note@oct.ges", "accid@accid", "accid@accid.ges"],
+  // (note@staff / chord@staff: a cross-staff note's staff; staff@n: each staff's number)
+  svgAdditionalAttribute: ["note@pname", "note@oct", "note@oct.ges", "accid@accid", "accid@accid.ges", "note@staff", "chord@staff", "staff@n"],
   pageMarginLeft: 60, pageMarginRight: 60, pageMarginTop: 40, pageMarginBottom: 20,
   spacingStaff: 8, spacingBraceGroup: 8,
+  transposeToSoundingPitch: true, // (a B♭ clarinet's or a horn's part at the pitch a pianist plays: no change without <transpose>)
   justifyVertically: true, justificationStaff: 0.2, justificationBraceGroup: 0.2,
   lyricWordSpace: 3,
 };
@@ -84,7 +87,9 @@ const S = {
   st: {},           // the song's own record in resonate.play
   names: LEVELS.includes(recall(K.names)) ? recall(K.names) : "all",
   size: savedSize(),
+  sizeAuto: !SIZES.includes(Number(recall(K.size))), // no size chosen on this device yet
   W: 0, H: 0, spread: false, sp: 0, scale: 0,
+  hard: 0,          // the staff space the screen allows (sp may be under it: the landscape default)
   pages: 0, page: 1,
   at: 0,            // written measure index the shown place is anchored to
   items: [],        // decorate() items of the shown pages (heads with their facts and boxes)
@@ -120,12 +125,20 @@ function saveState() {
 let saveTimer = 0;
 const saveSoon = () => { clearTimeout(saveTimer); saveTimer = setTimeout(saveState, 1000); };
 
-// Entries of songs that are gone (not a sample, not in My songs).
-function prune() {
+// A song's record goes with the song (Sing's ✕ and the sync's deletion remove it). What's left —
+// a song deleted in another tab while this one still wrote its record — goes here, only when the
+// list can be trusted: the songs are really kept (a library that failed to open lists none) and
+// their database is the one seen on the last visit (one the browser cleared starts empty; the
+// sync brings its songs back under the same ids).
+async function prune() {
+  if (spaceChanged() || !(await persistent())) return;
+  const gen = dbGen(), seen = recall(K.gen);
   if (spaceChanged()) return;
+  keep(K.gen, gen);
+  if (!gen || seen !== gen) return;
   const all = readPlay();
   let n = 0;
-  for (const id of Object.keys(all)) if (!(id in SAMPLES) && !S.mine.has(id)) { delete all[id]; n++; }
+  for (const id of Object.keys(all)) if (!(id in SAMPLES) && !S.mine.has(id) && id !== S.song) { delete all[id]; n++; }
   if (n) writePlay(all);
 }
 
@@ -206,9 +219,11 @@ async function open(id) {
   S.st = readPlay()[id] || {};
   if (!S.st || typeof S.st !== "object") S.st = {};
   S.at = Number.isInteger(S.st.at) && S.st.at >= 0 ? S.st.at : 0;
-  // (a song opened for the first time starts at the level chosen last)
+  // (a song opened for the first time starts at the level chosen last, and keeps it: a level
+  // chosen later on another song leaves this one alone)
   const last = recall(K.names);
   setNames(LEVELS.includes(S.st.names) ? S.st.names : LEVELS.includes(last) ? last : "all");
+  if (!LEVELS.includes(S.st.names)) S.st.names = S.names;
   songSel.value = id;
   handsSel.hidden = true;
   showMsg("");
@@ -276,19 +291,24 @@ async function loadView(gen) {
 }
 
 // The page size for the stage, from the staff size wanted: two pages side by side when each still
-// holds ≥ 48 staff spaces; ≥ 40 staff spaces across a system; ≥ one system a page.
-function measure() {
+// holds ≥ 48 staff spaces; ≥ 40 staff spaces across a system; ≥ one system a page. Until a size
+// is chosen on this device, a grand staff in landscape gets two systems a page (not under 11):
+// at 16 an 11" iPad's or a mini's landscape stage held one system and a third of blank paper.
+// single: no spread (a view that fits on one page is laid out at the stage's full width).
+function measure(single = false) {
   const cs = getComputedStyle(stage);
   const W = Math.floor(stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
   const H = Math.floor(stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom));
   if (W < 60 || H < 60 || !S.P) return null;
   const staves = S.P.views[S.view]?.staves || 1;
   const want = S.size;
-  const spread = W > H && W / 2 / want >= 48;
+  const spread = !single && W > H && W / 2 / want >= 48;
   const pw = spread ? Math.floor(W / 2) : W;
-  const sp = Math.min(want, pw / 40, H / (12 * staves));
+  const hard = Math.min(want, pw / 40, H / (12 * staves));
+  const two = S.sizeAuto && staves > 1 && W > H ? Math.max(11, H / (24 * staves)) : Infinity;
+  const sp = Math.min(hard, two);
   const scale = Math.max(5, Math.round(sp / 0.18));
-  return { W, H, spread, pw, sp, scale };
+  return { W, H, spread, pw, sp, hard, scale };
 }
 function setPageSize(L) {
   // (floored: the drawing never comes out a pixel larger than the stage)
@@ -297,7 +317,13 @@ function setPageSize(L) {
 
 // After a layout: pages, the anchor's page (odd in a spread), show.
 function placed(L) {
-  S.W = L.W; S.H = L.H; S.spread = L.spread; S.sp = L.sp; S.scale = L.scale;
+  if (L.spread && tk.getPageCount() === 1) {
+    // (one page: no spread — the stage's full width, not a narrow column in its middle)
+    L = measure(true) || { ...L, spread: false, pw: L.W };
+    setPageSize(L);
+    tk.redoLayout();
+  }
+  S.W = L.W; S.H = L.H; S.spread = L.spread; S.sp = L.sp; S.hard = L.hard; S.scale = L.scale;
   cache.clear();
   S.counted = new Map();
   S.lgen++;
@@ -306,8 +332,12 @@ function placed(L) {
   let p = tk.getPageWithElement("m" + S.v.firstMeasureAtOrAfter(S.at)) || 1;
   if (S.spread && p % 2 === 0) p--;
   S.page = Math.max(1, Math.min(S.pages, p));
+  // (a score Verovio loads but draws nothing of — notes kept, no staff on the page: say so, not
+  // blank paper with "1 / 1")
+  if (S.v?.pitched && !/<g [^>]*class="staff[" ]/.test(svgOf(S.page))) return fail("song");
   showMsg("");
   S.ready = true;
+  S.failed = null;
   handsSel.disabled = pdf.on;
   show();
   holdWake();
@@ -445,8 +475,9 @@ function setNames(level, byHand = false) {
 }
 namesBtn.addEventListener("click", () => !pdf.on && setNames(LEVELS[(LEVELS.indexOf(S.names) + 1) % LEVELS.length], true));
 
-// − / +: the staff size, as far as the screen allows (+ stops where the width caps it).
-const clamped = () => S.sp < S.size - 0.01;
+// − / +: the staff size, as far as the screen allows (+ stops where the width caps it — not
+// where the landscape default does: + from there is the size shown next).
+const clamped = () => (S.hard || S.sp) < S.size - 0.01;
 function sizeButtons() {
   const shown = Math.min(S.size, S.sp || S.size);
   smallerBtn.disabled = !S.ready || pdf.on || shown <= SIZES[0] + 0.01;
@@ -456,7 +487,7 @@ function sizeButtons() {
 function resize(dir) {
   if (!S.ready || pdf.on) return;
   if (dir > 0) {
-    const next = SIZES.find((s) => s > S.size + 0.01);
+    const next = SIZES.find((s) => s > Math.min(S.size, S.sp || S.size) + 0.01);
     if (!next || clamped()) return;
     S.size = next;
   } else {
@@ -465,6 +496,7 @@ function resize(dir) {
     if (!prev) return;
     S.size = prev;
   }
+  S.sizeAuto = false;
   keep(K.size, String(S.size));
   relayout();
 }
@@ -480,18 +512,31 @@ songSel.addEventListener("change", () => {
 });
 handsSel.addEventListener("change", async () => {
   if (!S.P || !(handsSel.value in S.P.views)) return;
-  S.view = handsSel.value;
-  S.st.view = S.view;
-  saveState();
   const gen = ++S.gen;
+  S.view = handsSel.value;
   clearPeek();
   S.ready = false;
+  S.failed = null; // (an earlier view's failure: this one may draw)
+  showMsg("");
+  setBusy(true);
+  try { await engine(); } catch (err) { if (gen === S.gen) fail("engine", err); return; } // (tried again after a failed load)
+  if (gen !== S.gen) return;
   await loadView(gen);
+  // (kept once drawn: a view that fails isn't the one the song reopens at)
+  if (gen === S.gen && (S.ready || S.waiting)) { S.st.view = S.view; saveState(); }
 });
 // A focused control keeps the pedal's keys (a select's arrows, a button's Space/Enter): let go.
 const bar = $("bar");
 bar.addEventListener("change", (e) => { if (e.target.matches?.("select")) e.target.blur(); });
 bar.addEventListener("click", (e) => e.target.closest?.("button")?.blur());
+// A menu closed with no new pick (a tap outside, the same song, Escape) fires no change and keeps
+// focus — an iPad never blurs it — so the pedal's next arrow / Page key would pick the next song
+// or hands view. A select focused by a tap lets go of the page-turn keys; one reached with Tab
+// keeps them.
+let tappedSel = null;
+bar.addEventListener("pointerdown", (e) => { tappedSel = e.target.closest?.("select") || null; });
+bar.addEventListener("focusin", (e) => { if (e.target !== tappedSel) tappedSel = null; });
+bar.addEventListener("focusout", (e) => { if (e.target === tappedSel) tappedSel = null; });
 
 // ---------------------------------------------------------------------------
 // Turning pages: keys (Bluetooth page turners send these), a tap on the outer quarters, a swipe.
@@ -501,18 +546,21 @@ const BACK = new Set(["ArrowLeft", "ArrowUp", "PageUp", "Backspace"]);
 window.addEventListener("keydown", (e) => {
   if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target instanceof Element ? e.target : null;
-  if (t && (t.closest("select, input, textarea") || t.isContentEditable)) return;
   let d = FWD.has(e.key) ? 1 : BACK.has(e.key) ? -1 : 0;
-  if (!d) return;
   const own = e.key === " " || e.key === "Spacebar" || e.key === "Enter";
-  if (own && t?.closest("button, a")) return; // (a control reached with Tab keeps its keys)
   if (d > 0 && e.key !== "Enter" && own && e.shiftKey) d = -1;
+  const sel = t?.closest("select");
+  if (sel && d && sel === tappedSel) { e.preventDefault(); sel.blur(); tappedSel = null; turn(d); return; }
+  if (t && (t.closest("select, input, textarea") || t.isContentEditable)) return;
+  if (!d) return;
+  if (own && t?.closest("button, a")) return; // (a control reached with Tab keeps its keys)
   e.preventDefault();
   turn(d);
 });
 
 let gest = null; // { id, x, y, t, hit, peek }
 stage.addEventListener("pointerdown", (e) => {
+  document.activeElement?.closest?.("#bar select")?.blur(); // (a tap on the music lets go of a menu)
   if (!e.isPrimary || (e.pointerType === "mouse" && e.button !== 0)) return;
   const hit = S.ready && !pdf.on ? nearHead(e.clientX, e.clientY) : null;
   gest = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, hit, peek: null };
@@ -910,7 +958,8 @@ function hideOffer() {
 
 const PDFJS = new URL("./omr/pdfjs/", import.meta.url).href;
 const PRINT = 96 / 72; // CSS px per pt at print size
-const pdf = { has: false, on: false, gen: 0, doc: null, pages: 0, page: 1, spread: false, canvas: null, sizes: [], busy: false };
+// (open: the opening under way — a newer one or pdfOff wins; gen: the drawing under way)
+const pdf = { has: false, on: false, open: 0, gen: 0, task: null, doc: null, pages: 0, page: 1, spread: false, canvas: null, sizes: [], busy: false };
 let pdfLib = null;
 let pdfTask = null; // the page drawing under way (pdf.js RenderTask)
 async function pdfjs() {
@@ -948,38 +997,49 @@ function pdfControls() {
   }
 }
 
+// (pdf.js 6: the document is freed — its worker ended — through its loading task)
+const pdfFree = (task) => { try { task?.destroy()?.catch?.(() => {}); } catch {} };
+function pdfFailed() {
+  pdfOff();
+  showMsg("Couldn't open the PDF.");
+  setTimeout(() => { if (msgEl.textContent === "Couldn't open the PDF.") showMsg(""); }, 3000);
+}
+
 async function pdfOn() {
   if (!pdf.has || pdf.on || !S.song) return;
-  const id = S.song, g = ++pdf.gen;
+  const id = S.song, g = ++pdf.open;
   clearPeek();
   pdf.on = true;
   pdf.busy = true;
   pdfControls();
   try {
     const [lib, rec] = await Promise.all([pdfjs(), getPdf(id)]);
+    if (g !== pdf.open) return;
     if (!rec?.pdf) throw new Error("no PDF stored");
     const src = rec.pdf;
     const data = src instanceof Blob ? new Uint8Array(await src.arrayBuffer())
       : ArrayBuffer.isView(src) ? new Uint8Array(src.buffer.slice(src.byteOffset, src.byteOffset + src.byteLength))
       : new Uint8Array(src.slice(0)); // (a copy: pdf.js hands the data to its worker)
-    const doc = await lib.getDocument({ data, wasmUrl: PDFJS + "wasm/", standardFontDataUrl: PDFJS + "standard_fonts/", iccUrl: PDFJS + "iccs/" }).promise;
-    if (g !== pdf.gen) { doc.destroy().catch?.(() => {}); return; }
+    if (g !== pdf.open) return;
+    const task = lib.getDocument({ data, wasmUrl: PDFJS + "wasm/", standardFontDataUrl: PDFJS + "standard_fonts/", iccUrl: PDFJS + "iccs/" });
+    pdf.task = task;
+    const doc = await task.promise;
+    if (g !== pdf.open) { if (pdf.task === task) pdf.task = null; pdfFree(task); return; }
     pdf.doc = doc;
     pdf.pages = doc.numPages;
     const p0 = Number(S.st.pdfPage);
     pdf.page = Number.isInteger(p0) && p0 >= 1 && p0 <= pdf.pages ? p0 : 1;
     pdf.busy = false;
-    await pdfRender();
+    if ((await pdfRender()) === "error") throw new Error("PDF page");
   } catch (err) {
-    if (g !== pdf.gen) return;
+    if (g !== pdf.open) return;
     console.warn("pdf", err);
-    pdfOff();
-    showMsg("Couldn't open the PDF.");
-    setTimeout(() => { if (msgEl.textContent === "Couldn't open the PDF.") showMsg(""); }, 3000);
+    pdfFailed();
   }
 }
 
 function pdfOff() {
+  pdf.open++;
   pdf.gen++;
   pdf.on = false;
   pdf.busy = false;
@@ -988,9 +1048,10 @@ function pdfOff() {
     pdf.canvas.width = pdf.canvas.height = 0; // (iOS caps the canvas memory of a page)
     pdf.canvas.remove();
   }
-  const doc = pdf.doc;
+  const task = pdf.task;
+  pdf.task = null;
   pdf.doc = null;
-  try { doc?.destroy()?.catch?.(() => {}); } catch {}
+  pdfFree(task); // (also ends an opening still under way)
   pdfControls();
 }
 
@@ -1014,38 +1075,51 @@ function pdfTurn(d) {
   S.st.pdfPage = p;
   saveSoon();
   pdfPager();
-  pdfRender();
+  pdfRender().then((r) => { if (r === "error") pdfFailed(); });
   return true;
 }
 
 // Draw the shown page(s) fitted to the stage. A newer call wins: it cancels a drawing still under
 // way first (pdf.js refuses a second render on a canvas in use — two quick pedal presses left the
-// newer page undrawn and the older one finishing on the canvas).
+// newer page undrawn and the older one finishing on the canvas). Never rejects: → true (drawn),
+// false (overtaken, nothing to draw) or "error" (a page that can't be read, no canvas memory).
 async function pdfRender() {
   const doc = pdf.doc;
-  if (!doc || !pdf.on) return;
+  if (!doc || !pdf.on) return false;
   const g = ++pdf.gen;
+  try {
+    return await pdfDraw(doc, g);
+  } catch (err) {
+    if (g !== pdf.gen || err?.name === "RenderingCancelledException") return false;
+    console.warn("pdf page", err);
+    return "error";
+  }
+}
+async function pdfDraw(doc, g) {
   const cs = getComputedStyle(stage);
   const W = Math.floor(stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
   const H = Math.floor(stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom));
-  if (W < 60 || H < 60) return;
+  if (W < 60 || H < 60) return false;
   const t0 = performance.now();
   const first = await doc.getPage(1);
-  if (g !== pdf.gen) return;
+  if (g !== pdf.gen) return false;
   const v1 = first.getViewport({ scale: 1 });
   const fit = (w, vp) => Math.min(w / vp.width, H / vp.height);
-  pdf.spread = W > H && pdf.pages > 1 && fit(Math.floor(W / 2), v1) >= 0.75 * PRINT;
+  // (two side by side when each is still ≥ 75% of print size — or as big as one alone: a page
+  // limited by the height, an 11" iPad or a mini in landscape)
+  const one = fit(W, v1), two = fit(Math.floor(W / 2), v1);
+  pdf.spread = W > H && pdf.pages > 1 && (two >= 0.75 * PRINT || two >= 0.97 * one);
   if (pdf.spread && pdf.page % 2 === 0) pdf.page--;
   const list = pdf.spread ? [pdf.page, pdf.page + 1].filter((p) => p <= pdf.pages) : [pdf.page];
   const each = pdf.spread ? Math.floor(W / 2) : W;
   const pages = await Promise.all(list.map((p) => (p === 1 ? first : doc.getPage(p))));
-  if (g !== pdf.gen) return;
+  if (g !== pdf.gen) return false;
   if (pdfTask) {
     const t = pdfTask;
     pdfTask = null;
     t.cancel();
     await t.promise.catch(() => {});
-    if (g !== pdf.gen) return;
+    if (g !== pdf.gen) return false;
   }
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   const boxes = pages.map((pg) => {
@@ -1061,6 +1135,7 @@ async function pdfRender() {
   canvas.style.height = ch + "px";
   canvas.style.left = pdf.spread && list.length === 1 ? "25%" : ""; // (the last odd page in its half)
   const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("no canvas context"); // (iOS: the page's canvas memory is used up)
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   pdfPager();
@@ -1068,16 +1143,14 @@ async function pdfRender() {
   // background before drawing, so it gets a transparent one and the canvas was made white)
   let x = 0;
   for (const b of boxes) {
-    if (g !== pdf.gen) return;
+    if (g !== pdf.gen) return false;
     const vp = b.pg.getViewport({ scale: b.s * dpr });
     const task = (pdfTask = b.pg.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, Math.round(x * dpr), 0], background: "rgba(0,0,0,0)" }));
-    try {
-      await task.promise;
-    } catch (err) { if (g === pdf.gen && err?.name !== "RenderingCancelledException") console.warn("pdf page", err); return; }
-    finally { if (pdfTask === task) pdfTask = null; }
+    try { await task.promise; } finally { if (pdfTask === task) pdfTask = null; }
     x += b.w;
   }
   S.t.pdf = ms(t0);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1087,7 +1160,7 @@ let resizeTimer = 0;
 new ResizeObserver(() => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
-    if (pdf.on) pdfRender();
+    if (pdf.on) pdfRender().then((r) => { if (r === "error") pdfFailed(); });
     if (!S.P || !tk || S.failed) return;
     const L = measure();
     if (!L) return;
@@ -1101,17 +1174,22 @@ new ResizeObserver(() => {
 // ---------------------------------------------------------------------------
 // The screen stays on while a song is shown.
 
-let wake = null, wakeRequests = 0;
+let wake = null, wakeRequests = 0, wakeAsking = false;
 async function holdWake() {
   if (!S.ready || document.visibilityState !== "visible" || !navigator.wakeLock) return;
-  if (wake && !wake.released) return;
+  if (wakeAsking || (wake && !wake.released)) return;
+  wakeAsking = true;
   try {
     wakeRequests++;
-    const w = await navigator.wakeLock.request("screen");
+    const w = await navigator.wakeLock.request("screen"); // (asked before the first await: a gesture's activation counts)
     wake = w;
     w?.addEventListener?.("release", () => { if (wake === w) wake = null; });
-  } catch { wake = null; }
+  } catch { wake = null; } finally { wakeAsking = false; }
 }
+// WebKit (Safari) grants the lock only in a user gesture, or after one grant in this document:
+// opening the page, a reload and the re-request when the page shows again have none, and page
+// turns don't ask — so every trusted tap or key asks until it's held.
+for (const t of ["pointerup", "click", "keydown"]) document.addEventListener(t, (e) => { if (e.isTrusted) holdWake(); }, true);
 function dropWake() {
   const w = wake;
   wake = null;
@@ -1154,7 +1232,7 @@ setNames(S.names);
 (async () => {
   const listed = await fillSongs();
   const saved = recall(K.song);
-  if (listed) prune();
+  if (listed) prune().catch(() => {});
   await open(known(saved) ? saved : FIRST);
 })();
 
