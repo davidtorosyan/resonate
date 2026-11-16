@@ -153,6 +153,18 @@ Web Audio crackles and drops out over CarPlay — even one held key — while th
 - **If the streamed `<audio>` (test 6) is clean too:** keep Web Audio and route it through a `MediaStreamAudioDestinationNode` into one `<audio>` element on such routes — keys stay instant.
 - **Takes over CarPlay:** play-and-record moves CarPlay to its 24 kHz hands-free route; a take there is a phone-call-quality path by design. Headphones / the phone itself remain the recommendation.
 
+## 11. Play — sheet music for the piano (v1 built, v77)
+
+The owner got a piano: the Play tab shows a song's piano part as sheet music on the iPad, with note names on the noteheads (All → Some → Off, offered after 3 practice days, never automatic), press a note to see, hear and light its chord. Design: docs/PLAY.md; CLAUDE.md "Play (sheet music)". Later, roughly in order:
+- Check the default staff size and badge size at the piano (iPad on the music desk, ~70 cm).
+- **Listen** to the piano part (or one hand, slower) with a moving highlight and automatic page turns (Verovio `renderToTimemap` / `getElementsAtTime`, piano.js `scheduleAhead`).
+- Play along: a single-note check with the mic ("✓ that's it", YIN), or Web MIDI from a digital piano (desktop Chrome; not iOS Safari).
+- Follow Sing's key (Verovio `transpose`); toggles for chord symbols and lyrics.
+- Tap the keyboard strip to hear a key; "Simplify" (RH top note, LH bass note); half-page turns; a centre tap to hide the bar; a dark paper theme.
+- Sync `resonate.play` (a `song_state "<song>|play"` row) so the place and level follow to the phone/PC.
+- A Worker toolkit if the iPad stutters on open; OSMD as a fallback renderer if a real score draws fewer notes than it has.
+- Never: octave numbers on the page, a separate row of names, colours by pitch, generated fingering, falling-note views, grades or streaks.
+
 ## Plan for 4–8 (research, 2026-11-07)
 
 This is the plan for items 4–8, researched on 2026-11-07. Several of the pieces below are in beta and change quickly. Anything marked *(unverified)* needs re-checking before you build on it.

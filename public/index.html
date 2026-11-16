@@ -454,6 +454,10 @@
         text-underline-offset: 2px;
       }
       .cal-link[hidden] { display: none; }
+      /* Headers wrap rather than overflow (a phone, with the Play pill and Sing's 📡). */
+      header { flex-wrap: wrap; row-gap: 0.4rem; }
+      .header-left, .header-right { flex-wrap: wrap; row-gap: 0.3rem; }
+      @media (max-width: 420px) { header { column-gap: 0.5rem; } .nav-link, .page-link { padding: 0.2rem 0.42rem; } .header-left { gap: 0.3rem; } .header-right { gap: 0.4rem; } }
     </style>
   </head>
   <body>
@@ -462,6 +466,7 @@
       <div class="header-right">
         <a class="page-link" href="record.html">Record</a>
         <a class="page-link" href="sing.html">Sing</a>
+        <a class="page-link" href="play.html">Play</a>
         <a class="page-link" href="tools.html">Tools</a>
         <span id="version">v76</span>
         <span id="status">idle</span>

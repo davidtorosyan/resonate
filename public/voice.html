@@ -114,6 +114,10 @@
       #t-ladder span[data-ok="true"] { border-color: rgba(74,222,128,0.6); color: #4ade80; }
       #t-ladder span[data-ok="false"] { border-color: rgba(255,111,111,0.5); color: #ff8a9a; text-decoration: line-through; }
       #t-buttons { display: flex; gap: 0.45rem; flex-wrap: wrap; justify-content: flex-end; }
+      /* Headers wrap rather than overflow (a phone, with the Play pill and Sing's 📡). */
+      header { flex-wrap: wrap; row-gap: 0.4rem; }
+      .header-left, .header-right { flex-wrap: wrap; row-gap: 0.3rem; }
+      @media (max-width: 420px) { header { column-gap: 0.5rem; } .nav-link, .page-link { padding: 0.2rem 0.42rem; } .header-left { gap: 0.3rem; } .header-right { gap: 0.4rem; } }
     </style>
   </head>
   <body>
@@ -122,6 +126,7 @@
         <h1>Voice</h1>
         <a class="nav-link" href="./">Tuner</a>
         <a class="nav-link" href="sing.html">Sing</a>
+        <a class="nav-link" href="play.html">Play</a>
         <a class="nav-link" href="tools.html">Tools</a>
       </div>
       <div class="header-right mono">

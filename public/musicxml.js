@@ -43,29 +43,8 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
   const parts = [...root.querySelectorAll(":scope > part")];
   if (!parts.length) throw new Error("Score has no parts");
 
-  // Pick the part + voice that carries the most lyric syllables (the sung
-  // melody). Fall back to the first part's voice 1 for lyric-less scores.
-  // Within a part, a voice with nearly as many syllables (≥ 70%) but a higher pitch is the tune:
-  // recognition hands some syllables to the accompaniment under it (a piano right hand), and a
-  // hymn's alto carries the same words as its soprano.
-  let best = null;
-  for (const part of parts) {
-    const counts = {}, pitch = {};
-    for (const n of part.querySelectorAll("note")) {
-      const v = text(n.querySelector("voice")) || "1";
-      const st = n.querySelector("pitch");
-      if (st) {
-        const midi = (Number(text(st.querySelector("octave"))) + 1) * 12 + (STEP_PC[text(st.querySelector("step"))] ?? 0);
-        (pitch[v] ||= []).push(midi);
-      }
-      if (n.querySelector("lyric")) counts[v] = (counts[v] || 0) + 1;
-    }
-    const med = (v) => { const a = (pitch[v] || []).slice().sort((x, y) => x - y); return a.length ? a[a.length >> 1] : -Infinity; };
-    const top = Math.max(0, ...Object.values(counts));
-    const near = Object.entries(counts).filter(([, c]) => c >= 0.7 * top).sort((a, b) => med(b[0]) - med(a[0]) || b[1] - a[1]);
-    if (near.length && (!best || top > best.count)) best = { part, voice: near[0][0], count: top };
-  }
-  if (!best) best = { part: parts[0], voice: text(parts[0].querySelector("note > voice")) || "1", count: 0 };
+  const best = pickMelody(root);
+  const melodyStaff = best.staff;
 
   const partId = best.part.getAttribute("id");
   const partName = text(root.querySelector(`score-part[id="${partId}"] > part-name`)) || partId;
@@ -91,14 +70,6 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
   }
 
   const melodyMeasures = [...best.part.querySelectorAll(":scope > measure")];
-  // The melody's staff (a piano part's right hand, when the tune is in the piano).
-  const staffCount = {};
-  for (const n of best.part.querySelectorAll("note")) {
-    if ((text(n.querySelector("voice")) || "1") !== best.voice) continue;
-    const st = text(n.querySelector("staff")) || "1";
-    staffCount[st] = (staffCount[st] || 0) + 1;
-  }
-  const melodyStaff = Object.entries(staffCount).sort((a, b) => b[1] - a[1])[0]?.[0] || "1";
   melodyMeasures.forEach((measure, mi) => {
     // Syllables printed under the melody's staff but attached to another voice there: sheet-
     // music recognition hands a syllable to the chord nearest the words, which in a piano part
@@ -249,6 +220,45 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
   };
   const played = performanceOrder(readStructure(parts, melodyMeasures.length), notes);
   return played ? unfold(score, played) : score;
+}
+
+// The sung melody of a score (root = <score-partwise>): the part + voice that carries the most
+// lyric syllables, and the staff that voice is mostly on. Falls back to the first part's voice
+// for lyric-less scores. Within a part, a voice with nearly as many syllables (≥ 70%) but a
+// higher pitch is the tune: recognition hands some syllables to the accompaniment under it (a
+// piano right hand), and a hymn's alto carries the same words as its soprano.
+// → { partId, voice, staff, part (the <part> element) }, or null when the score has no parts.
+export function pickMelody(root) {
+  const parts = [...root.querySelectorAll(":scope > part")];
+  if (!parts.length) return null;
+  let best = null;
+  for (const part of parts) {
+    const counts = {}, pitch = {};
+    for (const n of part.querySelectorAll("note")) {
+      const v = text(n.querySelector("voice")) || "1";
+      const st = n.querySelector("pitch");
+      if (st) {
+        const midi = (Number(text(st.querySelector("octave"))) + 1) * 12 + (STEP_PC[text(st.querySelector("step"))] ?? 0);
+        (pitch[v] ||= []).push(midi);
+      }
+      if (n.querySelector("lyric")) counts[v] = (counts[v] || 0) + 1;
+    }
+    const med = (v) => { const a = (pitch[v] || []).slice().sort((x, y) => x - y); return a.length ? a[a.length >> 1] : -Infinity; };
+    const top = Math.max(0, ...Object.values(counts));
+    const near = Object.entries(counts).filter(([, c]) => c >= 0.7 * top).sort((a, b) => med(b[0]) - med(a[0]) || b[1] - a[1]);
+    if (near.length && (!best || top > best.count)) best = { part, voice: near[0][0], count: top };
+  }
+  if (!best) best = { part: parts[0], voice: text(parts[0].querySelector("note > voice")) || "1", count: 0 };
+
+  // The melody's staff (a piano part's right hand, when the tune is in the piano).
+  const staffCount = {};
+  for (const n of best.part.querySelectorAll("note")) {
+    if ((text(n.querySelector("voice")) || "1") !== best.voice) continue;
+    const st = text(n.querySelector("staff")) || "1";
+    staffCount[st] = (staffCount[st] || 0) + 1;
+  }
+  const staff = Object.entries(staffCount).sort((a, b) => b[1] - a[1])[0]?.[0] || "1";
+  return { partId: best.part.getAttribute("id"), voice: best.voice, staff, part: best.part };
 }
 
 // The lowest note of the last measure that has any (all parts): the final chord's bass,
