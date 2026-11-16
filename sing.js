@@ -2,23 +2,23 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=76";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=76";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=76";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=76";
-import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=76";
-import * as P from "./practice.js?v=76";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=76";
-import { startCapture, playVoice } from "./capture.js?v=76";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=76";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=76";
-import { listSongs, getSong, addSong, removeSong, persistent, saveClean, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=76";
-import { fixOmrScore } from "./omr/fixscore.js?v=76";
-import { activeProfile } from "./profiles.js?v=76";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=76";
-import { DATA_KEYS } from "./space.js?v=76";
-import { spaceChanged } from "./nav.js?v=76";
-import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=76";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=77";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=77";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=77";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=77";
+import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=77";
+import * as P from "./practice.js?v=77";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=77";
+import { startCapture, playVoice } from "./capture.js?v=77";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=77";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=77";
+import { listSongs, getSong, addSong, removeSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=77";
+import { SAMPLES, songXml } from "./catalog.js?v=77";
+import { activeProfile } from "./profiles.js?v=77";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=77";
+import { DATA_KEYS } from "./space.js?v=77";
+import { spaceChanged } from "./nav.js?v=77";
+import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=77";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -61,7 +61,6 @@ const loopBtn = $("loop-btn");
 const loopbarEl = $("loopbar");
 const reviewBtn = $("review-btn");
 
-const SAMPLES = { "amazing-grace": { title: "Amazing Grace", url: "songs/amazing-grace.musicxml" } };
 const K = {
   song: "resonate.sing.song",
   legacyXml: "resonate.sing.customXml",   // pre-library single custom song (migrated)
@@ -517,32 +516,7 @@ async function selectSong(id) {
   }
 }
 
-// Songs converted from PDF (Audiveris) get the OMR clean-ups again on load, so songs saved by an
-// older version benefit from newer fixes without converting again (the clean-ups leave an
-// already-clean score unchanged).
-function cleanXml(xml) {
-  if (!/<software>\s*Audiveris/.test(xml.slice(0, 4000))) return xml;
-  try {
-    const { xml: fixed, changes } = fixOmrScore(xml);
-    if (changes.length) console.info("OMR clean-ups on load:", changes);
-    return fixed;
-  } catch (err) {
-    console.warn("OMR clean-ups failed", err);
-    return xml;
-  }
-}
-
-// A saved song's MusicXML, cleaned up: the cleaned copy saved with it when this version of
-// the app made it (the clean-ups take a while on a big score on a phone), else cleaned now
-// and saved for next time. The original stays as it was imported.
-const APP_VERSION = document.getElementById("version")?.textContent.trim() || "";
-function songXml(song) {
-  if (!/<software>\s*Audiveris/.test(song.xml.slice(0, 4000))) return song.xml;
-  if (APP_VERSION && song.clean?.ver === APP_VERSION) return song.clean.xml ?? song.xml;
-  const xml = cleanXml(song.xml);
-  if (APP_VERSION) saveClean(song.id, xml === song.xml ? null : xml, APP_VERSION).catch(() => {});
-  return xml;
-}
+// (SAMPLES, the OMR clean-ups on load — cleanXml — and songXml are in catalog.js, shared with Play.)
 
 function showMsg(text, kind = "info", link = null) {
   songMsgEl.textContent = text;
@@ -3587,7 +3561,7 @@ removeBtn.addEventListener("click", async () => {
   const title = songSelect.selectedOptions[0]?.textContent || "this song";
   if (!confirm(`Remove “${title}” from My songs?`)) return;
   await removeSong(id);
-  for (const k of [K.keys, K.rates, K.timing, K.history]) {
+  for (const k of [K.keys, K.rates, K.timing, K.history, "resonate.play"]) { // (resonate.play: the Play page's record)
     const all = (() => { try { return JSON.parse(recall(k)) || {}; } catch { return {}; } })();
     if (id in all) { delete all[id]; store(k, JSON.stringify(all)); }
   }

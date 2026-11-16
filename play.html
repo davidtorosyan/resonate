@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f0f1e" />
+    <title>Resonate · Play</title>
+    <style>
+      :root { color-scheme: dark; }
+      /* An open menu's list takes the option's own colours (Chrome on Windows drew the see-through
+         select background as white under the light text). */
+      option, optgroup { background: #1a1a30; color: #e8e8f0; }
+      option:disabled { color: #8a8aa0; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; -webkit-tap-highlight-color: transparent; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: radial-gradient(ellipse at top, #1a1a3e, #0f0f1e 70%);
+        color: #e8e8f0;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        height: 100dvh;
+        padding-top: env(safe-area-inset-top);
+      }
+      .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace; }
+
+      /* The bar: one row from ~1100 px, two on an iPad in portrait and in Split View (pages |
+         version, then the controls and the pager), three on a phone (the song gets a row). */
+      #bar {
+        flex: 0 0 auto;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem 0.75rem;
+        row-gap: 0.4rem;
+        padding: 0.45rem max(0.9rem, env(safe-area-inset-right)) 0.45rem max(0.9rem, env(safe-area-inset-left));
+      }
+      .nav { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; row-gap: 0.3rem; }
+      h1 { font-size: 1.25rem; margin: 0 0.25rem 0 0; font-weight: 600; letter-spacing: 0.02em; opacity: 0.95; }
+      .nav-link {
+        font-size: 0.8rem;
+        color: rgba(255,255,255,0.6);
+        text-decoration: none;
+        padding: 0.2rem 0.6rem;
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 999px;
+        touch-action: manipulation;
+      }
+      .ctl { display: flex; align-items: center; gap: 0.4rem; flex: 1 1 22rem; flex-wrap: wrap; row-gap: 0.4rem; min-width: 0; }
+      #bar select, #bar button {
+        font: inherit;
+        font-size: 0.85rem;
+        color: #e8e8f0;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 0.5rem;
+        min-height: 40px;
+        padding: 0 0.65rem;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+      #bar button { min-width: 40px; }
+      #bar select[hidden], #bar button[hidden], #offer[hidden] { display: none; }
+      #bar select:disabled, #bar button:disabled { opacity: 0.35; cursor: default; }
+      #song { flex: 1 1 11rem; min-width: 7.5rem; max-width: 19rem; text-overflow: ellipsis; }
+      #hands { flex: 0 1 auto; min-width: 0; }
+      /* Note names: All = a filled pill, Some = outlined "A·C", Off = grey, struck through. */
+      #names { font-weight: 700; letter-spacing: 0.04em; min-width: 3.4rem; border-radius: 999px; }
+      #names[data-level="all"] { background: #a64fff; border-color: #a64fff; color: #fff; }
+      #names[data-level="some"] { background: transparent; border-color: #c48bff; color: #e0c8ff; }
+      #names[data-level="off"] { background: transparent; color: rgba(255,255,255,0.45); text-decoration: line-through; }
+      /* Size: one segmented control with magnifiers (a bare − / + by ABC read as fewer / more names). */
+      .size { display: inline-flex; gap: 0; }
+      #bar #smaller { border-radius: 0.5rem 0 0 0.5rem; }
+      #bar #bigger { border-radius: 0 0.5rem 0.5rem 0; border-left-width: 0; }
+      #smaller, #bigger { line-height: 1; padding: 0; }
+      #smaller svg, #bigger svg { width: 22px; height: 22px; display: block; margin: auto; }
+      #pdf { padding: 0 0.5rem; }
+      #offer { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; color: rgba(255,255,255,0.75); white-space: nowrap; }
+      #bar #offer-yes { border-radius: 999px; border-color: #c48bff; color: #e0c8ff; background: transparent; font-weight: 600; }
+      #bar #offer-no { background: transparent; border-color: transparent; color: rgba(255,255,255,0.55); min-width: 36px; padding: 0 0.4rem; }
+      #pdf[aria-pressed="true"] { background: rgba(166,79,255,0.28); border-color: #a64fff; }
+      .pager { display: flex; align-items: center; gap: 0.25rem; margin-left: auto; }
+      #pg { min-width: 4.6rem; text-align: center; font-size: 0.85rem; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.75); white-space: nowrap; }
+      #prev, #next { font-size: 1.3rem; line-height: 1; padding: 0; }
+      #version { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; color: #a64fff; opacity: 0.9; }
+      .brk { display: none; }
+      @media (any-pointer: coarse) {
+        #bar select, #bar button { min-height: 44px; }
+        #bar button { min-width: 44px; }
+        .nav-link { padding: 0.35rem 0.7rem; }
+      }
+      /* Narrower than one row: the pages and the badge on top, the controls and the pager under
+         them — under 670 px (Split View, phones) the pager goes up by the pages: under the controls
+         it took a third row of its own at 507. */
+      @media (max-width: 1099px) {
+        .nav { order: 0; }
+        #version { order: 1; margin-left: auto; }
+        .brk { display: block; order: 2; flex-basis: 100%; height: 0; }
+        .ctl { order: 3; }
+        .pager { order: 4; }
+      }
+      @media (max-width: 669px) {
+        .pager { order: 1; }
+        #version { margin-left: 0; }
+        .ctl { flex-basis: 100%; }
+      }
+      /* The fewer-names chip: the song menu gives way, and under 1100 px the pager goes up by the
+         pages, so the bar keeps its rows (one on iPad mini landscape, two in portrait). */
+      @media (min-width: 421px) {
+        .ctl:has(#offer:not([hidden])) #song { flex-basis: 7.5rem; }
+      }
+      /* (one row from 1100 px: the song menu takes only what's left while the chip shows — a line
+         breaks on its base size, so 7.5rem wrapped the chip to a second row at 1100–1140) */
+      @media (min-width: 1100px) {
+        .ctl:has(#offer:not([hidden])) #song { flex-basis: 0; min-width: 4.5rem; }
+      }
+      @media (max-width: 1099px) {
+        #bar:has(#offer:not([hidden])) .pager { order: 1; }
+        #bar:has(#offer:not([hidden])) #version { margin-left: 0; }
+      }
+      @media (max-width: 479px) {
+        #prev, #next { display: none; }
+        /* (room for "12 / 31" while it says "…": the bar doesn't re-wrap — and the music re-lay —
+           when the song is in) */
+        #pg { min-width: 3.2rem; }
+      }
+      @media (max-width: 420px) {
+        #bar { column-gap: 0.5rem; padding-left: max(0.6rem, env(safe-area-inset-left)); padding-right: max(0.6rem, env(safe-area-inset-right)); }
+        .nav-link { padding: 0.2rem 0.42rem; }
+        .nav { gap: 0.3rem; }
+        .ctl { gap: 0.3rem; }
+        #song { flex-basis: 100%; max-width: none; }
+      }
+      @media (max-width: 420px) and (any-pointer: coarse) { .nav-link { padding: 0.3rem 0.5rem; } }
+
+      /* The paper: one page (or two side by side), drawn to the stage's exact size. */
+      #stage {
+        flex: 1 1 auto;
+        min-height: 0;
+        position: relative;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        overflow: hidden;
+        background: #fdfcf8;
+        color: #111;
+        padding-left: env(safe-area-inset-left);
+        padding-right: env(safe-area-inset-right);
+        padding-bottom: env(safe-area-inset-bottom);
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+      }
+      #stage .page { flex: 0 0 auto; position: relative; }
+      /* A spread keeps each page in its half: the last odd page alone stays on the left. */
+      #stage.spread { justify-content: flex-start; }
+      #stage .page + .page { box-shadow: inset 1px 0 0 #e4e0d6; }
+      #stage svg { display: block; }
+      #msg { position: absolute; left: 1rem; right: 1rem; top: 40%; margin: 0; text-align: center; font-size: 1rem; color: #6b6660; }
+      #msg[hidden] { display: none; }
+      /* Note names (playnames.js): badges on the heads, ♭/♯ marks at Some. */
+      #stage .nn, #stage .km { display: none; }
+      #stage[data-names="all"] .nn, #stage[data-names="some"] .nn.lv, #stage[data-names="some"] .km, #stage .nn.peek { display: inline; }
+      #stage g.note.peek .notehead use { fill: #d86b00; }
+      /* (the peeked chord's own badges turn orange too: at All they cover its heads) */
+      /* (Verovio's own <style> gives every rect a currentColor stroke — a black ring that ate into
+         the printed accidental beside a pill; the attributes lose to it) */
+      #stage .nn rect { stroke: none; }
+      #stage .nn.nb-h rect { stroke: #5e2fb8; }
+      #stage .nn.nb-f.peek rect { fill: #c45f00; }
+      #stage .nn.nb-h.peek rect { stroke: #c45f00; }
+      #stage .nn.nb-h.peek text { fill: #c45f00; }
+      /* Peek: the chord's names (with octaves) by it, its keys on a strip over the stage's foot
+         (its head when the chord sits low). Neither takes a touch. */
+      #bubble {
+        position: absolute; left: 0; top: 0; z-index: 3; display: none; pointer-events: none;
+        padding: 0.3rem 0.7rem; border-radius: 0.6rem; background: #14142c; color: #fff;
+        font: 600 clamp(1.05rem, 2.4vmin, 1.6rem)/1.25 system-ui, -apple-system, "Segoe UI", "Apple Symbols", sans-serif;
+        letter-spacing: 0.02em; white-space: nowrap; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+      }
+      #bubble.on { display: block; }
+      #strip {
+        position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; pointer-events: none;
+        box-sizing: content-box; height: clamp(56px, 9vh, 110px);
+        padding: 6px max(8px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+        background: #14142c; transform: translateY(calc(100% + 2px)); transition: transform 0.16s ease-out;
+      }
+      #strip[data-side="top"] { top: 0; bottom: auto; padding-bottom: 6px; transform: translateY(calc(-100% - 2px)); }
+      #strip.on { transform: none; }
+      #strip svg { display: block; width: 100%; height: 100%; }
+      @media (prefers-reduced-motion: reduce) { #strip { transition: none; } }
+      /* The original PDF over the (hidden, still laid out) sheet. (Its descendants too: Verovio
+         writes visibility="visible" on some staves, which beats an inherited hidden.) */
+      #stage[data-pdf] .page, #stage[data-pdf] .page * { visibility: hidden; }
+      #pdfview { position: absolute; top: 0; left: 50%; transform: translateX(-50%); z-index: 1; display: block; background: #fff; }
+    </style>
+  </head>
+  <body>
+    <header id="bar">
+      <nav class="nav">
+        <h1>Play</h1>
+        <a class="nav-link" href="./">Tuner</a>
+        <a class="nav-link" href="sing.html">Sing</a>
+        <a class="nav-link" href="tools.html">Tools</a>
+      </nav>
+      <div class="ctl">
+        <select id="song" aria-label="Song">
+          <optgroup id="samples" label="Samples"></optgroup>
+          <optgroup id="mine" label="My songs" hidden></optgroup>
+        </select>
+        <select id="hands" aria-label="Hands" hidden></select>
+        <button id="names" type="button" data-level="all" aria-label="Note names: all" title="Note names: all">ABC</button>
+        <span class="size">
+          <button id="smaller" type="button" aria-label="Smaller" title="Smaller"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg></button>
+          <button id="bigger" type="button" aria-label="Larger" title="Larger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg></button>
+        </span>
+        <button id="pdf" type="button" aria-label="Original PDF" title="Original PDF" aria-pressed="false" hidden>📄</button>
+        <span id="offer" hidden></span>
+      </div>
+      <span class="pager">
+        <button id="prev" type="button" aria-label="Previous page" title="Previous page">‹</button>
+        <span id="pg" aria-live="polite">…</span>
+        <button id="next" type="button" aria-label="Next page" title="Next page">›</button>
+      </span>
+      <span class="brk"></span>
+      <span id="version" class="mono">v77</span>
+    </header>
+    <main id="stage" data-names="all">
+      <p id="msg" hidden></p>
+      <div id="bubble"></div>
+      <div id="strip" aria-hidden="true"></div>
+    </main>
+    <script type="module" src="nav.js?v=77"></script>
+    <script type="module" src="play.js?v=77"></script>
+  </body>
+</html>
