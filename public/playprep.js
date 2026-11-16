@@ -1,6 +1,6 @@
 // Play page: the score as a piano player reads it. Pure DOM-on-XML (no rendering): the parts,
-// the views (both hands / one hand / the tune), each note's pitch facts as written, and the
-// MusicXML each view hands to Verovio.
+// the views (the full score / both hands / one hand / the tune), each note's pitch facts as
+// written, and the MusicXML each view hands to Verovio.
 //
 //   const P = prepare(xml);              // { doc, parts, views, facts }
 //   const v = buildView(P.doc, P.views.rh);  // { xml, pitched, firstMeasureAtOrAfter }
@@ -11,7 +11,7 @@ import { pickMelody } from "./musicxml.js?v=77";
 
 const STEP_PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 const PIANO = /piano|pno|keyboard|klavier|clavier|organ/i;
-export const VIEW_LABELS = { both: "Both hands", rh: "Right hand", lh: "Left hand", melody: "Melody" };
+export const VIEW_LABELS = { score: "Full score", both: "Both hands", rh: "Right hand", lh: "Left hand", melody: "Melody" };
 
 const kids = (el, name) => { const out = []; for (const c of el.children) if (c.nodeName === name) out.push(c); return out; };
 const kid = (el, name) => { for (const c of el.children) if (c.nodeName === name) return c; return null; };
@@ -87,15 +87,23 @@ export function partsOf(doc) {
   return out;
 }
 
-// The views a pianist gets (§5): { both, rh?, lh?, melody? }, in that order. Each:
-// { key, label, kind, parts: [ids], staff (number | null), voice (string | null), brace,
-//   lyrics, staves (per system) }.
+// The views a pianist gets (§5): { score?, both, rh?, lh?, melody? }, in that order (fullest
+// first). Each: { key, label, kind, parts: [ids], staff (number | null), voice (string | null),
+// brace, lyrics, staves (per system), low: ["part|staff" read from the bottom: a bar's floor name
+// at Some is its bass note] }. The full score also has words { part (the tune's), staff (null, or
+// the one staff of it that keeps its words: the tune inside the keyboard part), also (other sung
+// parts that keep theirs), tune { staff, voice } (where its syllables gather) }, sung (the parts
+// that sing, not the keyboard's: the voice's strip colour), braced (the hymn pair braced as Both)
+// and condense (≥ 3 staves: a staff resting a whole system is left out of it, as printed).
 export function planViews(doc, parts = partsOf(doc)) {
   const view = (key, o) => ({ key, label: VIEW_LABELS[key], kind: "piano", staff: null, voice: null, brace: false, lyrics: false, staves: 1, ...o });
   const views = {};
+  // (parts that really play: pitched notes in ≥ 10% of measures — not a few stray OCR notes)
+  const live = (p) => p.notes > 0 && p.live >= 0.1;
+  let piano = null;
   const pianos = parts.filter((p) => p.notes > 0 && (p.staves >= 2 || PIANO.test(p.name) || PIANO.test(p.instrument) || (p.program >= 1 && p.program <= 8)));
   if (pianos.length) {
-    const piano = pianos.reduce((a, b) => (b.notes > a.notes ? b : a));
+    piano = pianos.reduce((a, b) => (b.notes > a.notes ? b : a));
     views.both = view("both", { parts: [piano.id], staves: piano.staves });
     if (piano.staves === 2) {
       views.rh = view("rh", { parts: [piano.id], staff: 1 });
@@ -116,15 +124,56 @@ export function planViews(doc, parts = partsOf(doc)) {
   }
   const mel = parts.length ? pickMelody(doc.documentElement) : null;
   const mp = mel && parts.find((p) => p.id === mel.partId);
+  // A part that sings: the tune's, or one (not the keyboard's) whose notes mostly carry words — a
+  // second singer; not a piano's or a cue staff's stray OCR syllables (Piano Man: 6 in 2019, 13
+  // in 401).
+  const singer = (p) => p.id !== piano?.id && ((mp && p.id === mp.id && mp.lyrics > 0) || (p.notes > 0 && p.lyrics >= 0.25 * p.notes));
   // (a score without words has no sung tune: pickMelody's fallback is just the first voice)
+  let score = null;
   if (mp && mp.lyrics > 0) {
+    const both = views.both;
     const melody = view("melody", { kind: "melody", parts: [mp.id], staff: mp.staves > 1 ? Number(mel.staff) || 1 : null, voice: String(mel.voice), lyrics: true });
     // Hidden when it shows exactly what Both shows (a voice-only song): Both then is the tune,
     // with its words.
-    if (sameNotes(doc, views.both, melody)) views.both.lyrics = true;
+    if (sameNotes(doc, both, melody)) both.lyrics = true;
     else views.melody = melody;
+    // The full score, as piano/vocal music is printed: the tune's staff with its words over the
+    // piano (and any other part that plays), in score order. Offered when it shows more than
+    // Both: more parts, or the words Both leaves out (the tune inside the piano, a hymn).
+    const keep = parts.filter((p) => p.id === mp.id || (piano ? p.id === piano.id || live(p) : both.parts.includes(p.id)));
+    if (keep.length > both.parts.length || !both.lyrics) {
+      const ids = keep.map((p) => p.id);
+      const braced = both.brace && both.parts.every((id) => ids.includes(id)) ? [...both.parts] : null;
+      // (the sung parts: the tune's and any other kept part that sings — a second singer's)
+      const sung = keep.filter((p) => singer(p) && !braced?.includes(p.id)).map((p) => p.id);
+      const staves = keep.reduce((s, p) => s + p.staves, 0);
+      score = view("score", {
+        kind: "score", parts: ids, brace: !!braced, braced, lyrics: true, staves, sung, condense: staves >= 3,
+        words: {
+          part: mp.id,
+          // (the tune inside the keyboard part: its staff's words only, not a stray syllable under
+          // the left hand; a singer's own part keeps every staff's — a duet on two staves)
+          staff: mp.id === piano?.id && mp.staves > 1 ? Number(mel.staff) || 1 : null,
+          also: sung.filter((id) => id !== mp.id),
+          tune: { staff: Number(mel.staff) || 1, voice: String(mel.voice) },
+        },
+      });
+    }
   }
-  return views;
+  const out = score ? { score, ...views } : views;
+  // Staves read from the bottom (the Some floor names a bar's bass note there): the piano's left
+  // hand, a hymn's bass part, any other bass-clef staff but a singer's (the tune, a baritone's
+  // line in a duet).
+  const low = new Set();
+  const hymnLow = views.both.kind === "hymn" ? views.both.parts[1] : null;
+  for (const p of parts) {
+    for (let s = 1; s <= p.staves; s++) {
+      const lo = piano && p.id === piano.id ? s >= 2 : p.id === hymnLow ? true : p.id !== mp?.id && !singer(p) && p.clefs[String(s)] === "F";
+      if (lo) low.add(p.id + "|" + s);
+    }
+  }
+  for (const v of Object.values(out)) v.low = [...low].filter((k) => v.parts.includes(k.slice(0, k.lastIndexOf("|"))));
+  return out;
 }
 
 // Does the plan keep this note (part id, staff number, voice string)?
@@ -305,23 +354,41 @@ export function buildView(doc, plan) {
   if (all[0] && host && host !== all[0]) copyMarks(d, all[0], host);
   const dropped = all.some((p) => !keep.has(p.getAttribute("id")));
   for (const p of all) if (!keep.has(p.getAttribute("id"))) p.remove();
-  // A part the part-list doesn't name (or no part-list): Verovio loads it and draws nothing.
+  const score = plan.kind === "score";
+  // The full score: the road map is the top part's (Verovio reads endings from the first part
+  // only; Audiveris writes them there, and reads a piano's 8va lines as endings below).
+  if (score) {
+    scoreEndings(d, partsIn(root));
+    scoreBarlines(d, partsIn(root));
+    scoreMarks(d, partsIn(root));
+  }
+  // A part the part-list doesn't name (or no part-list): Verovio loads it and draws nothing. Its
+  // entry goes where its <part> stands (Verovio orders the staves by the part-list: appended, a
+  // voice missing from it was drawn under the piano).
   let list = kid(root, "part-list");
   if (!list) { list = d.createElement("part-list"); root.insertBefore(list, partsIn(root)[0] || null); }
   const listed = new Set(kids(list, "score-part").map((sp) => sp.getAttribute("id")));
-  for (const p of partsIn(root)) {
-    const id = p.getAttribute("id");
-    if (listed.has(id)) continue;
+  const order = partsIn(root).map((p) => p.getAttribute("id"));
+  order.forEach((id, i) => {
+    if (listed.has(id)) return;
     const sp = d.createElement("score-part");
     sp.setAttribute("id", id);
     sp.appendChild(d.createElement("part-name"));
-    list.appendChild(sp);
-  }
+    let at = kids(list, "score-part").find((x) => order.indexOf(x.getAttribute("id")) > i) || null;
+    // (before the groups that open there, not inside them)
+    while (at?.previousElementSibling?.nodeName === "part-group" && at.previousElementSibling.getAttribute("type") === "start") at = at.previousElementSibling;
+    list.insertBefore(sp, at);
+    listed.add(id);
+  });
   { // the part-list: only the kept parts, a hymn's two braced, no names
+    // (the full score keeps a group of the source all of whose parts it shows — a choir's bracket,
+    // its barlines through the staves — as Both does)
+    const whole = score ? wholeGroups(list, keep, plan.braced) : new Set();
     for (const sp of kids(list, "score-part")) if (!keep.has(sp.getAttribute("id"))) sp.remove();
-    if (dropped || keep.size === 1 || plan.brace) for (const g of kids(list, "part-group")) g.remove();
+    if (dropped || keep.size === 1 || plan.brace || score) for (const g of kids(list, "part-group")) if (!whole.has(g)) g.remove();
     const sps = kids(list, "score-part");
-    if (plan.brace && sps.length === 2) {
+    if (score) scoreGroups(d, list, plan, whole);
+    else if (plan.brace && sps.length === 2) {
       const pg = (type) => {
         const g = d.createElement("part-group");
         g.setAttribute("type", type); g.setAttribute("number", "1");
@@ -361,7 +428,18 @@ export function buildView(doc, plan) {
       if (!sd.children.length && !sd.attributes.length) sd.remove();
     }
     if (!plan.lyrics) for (const l of [...part.getElementsByTagName("lyric")]) l.remove();
-    else firstStanzaOnly(part);
+    else if (plan.words) {
+      // (the full score: words only where they're sung — the tune's part (the tune's staff only
+      // when the tune is inside the keyboard part) and another singer's — not a piano's or another
+      // part's stray OCR syllables)
+      const w = plan.words, pid = part.getAttribute("id"), tune = pid === w.part, mine = tune || !!w.also?.includes(pid);
+      for (const l of [...part.getElementsByTagName("lyric")]) {
+        const n = l.parentElement;
+        if (!mine || (tune && w.staff != null && num(kid(n, "staff"), 1) !== w.staff)) l.remove();
+      }
+      if (tune && w.tune) gatherSyllables(part, w.tune.staff, w.tune.voice);
+      if (mine) firstStanzaOnly(part);
+    } else firstStanzaOnly(part);
   }
   if (plan.staff != null || plan.voice != null) for (const part of parts) {
     // (one staff / voice of music written across both: slurs and beams whose other end goes)
@@ -392,15 +470,19 @@ export function buildView(doc, plan) {
     for (const mn of part.querySelectorAll("print > measure-numbering")) mn.textContent = "system";
     dropRestatedKeys(part);
     dropUnclosedSpanners(part);
-    dropCoveringRests(part);
+    dropCoveringRests(part, score ? parts : [part]); // (the full score: a rest bar is every part's)
+    if (score && plan.condense && stavesOf(part) === 1) keepMarks(d, part);
   }
-  // Measure ids for the page anchor (Verovio keeps them: <measure id="m3"> → g#m3).
+  // Measure ids for the page anchor (Verovio keeps them: <measure id="m3"> → g#m3), on the part
+  // the part-list names first: Verovio takes a measure's id from that part.
   const present = [];
   const ids = [];
-  parts.forEach((part, k) => {
+  const first = kids(list, "score-part")[0]?.getAttribute("id");
+  const idPart = parts.find((p) => p.getAttribute("id") === first) || parts[0];
+  parts.forEach((part) => {
     let skip = 0;
     kids(part, "measure").forEach((m, mi) => {
-      if (k > 0) { m.removeAttribute("id"); return; }
+      if (part !== idPart) { m.removeAttribute("id"); return; }
       m.setAttribute("id", "m" + mi);
       if (skip > 0) skip--; else present.push(mi);
       const mr = m.querySelector("attributes > measure-style > multiple-rest");
@@ -537,6 +619,77 @@ function filterPart(d, part, staff, voice, lyrics) {
       if (kids(n, "lyric").some((x) => (x.getAttribute("number") || "1") === nb)) continue;
       n.insertBefore(l, kid(n, "play") || kid(n, "listen") || null);
     }
+  }
+}
+
+// The full score keeps every voice of the tune's staff, but syllables the recognition gave to
+// another voice of it (the chord under the tune, The Longest Time: "For the long-est" came out
+// "For" on the tune, "the" on the chord, "long" on the tune, "est" on the chord) move onto the
+// tune's note at the same moment, when it has none for that verse — as Melody does — so a word's
+// hyphens join within one voice (Verovio joins a syllable to the next one of its own voice: they
+// ran through the other voice's syllables). Only a verse the tune's voice sings and the other voices
+// don't carry a copy of (a duet's second singer on one staff with his own verse, a hymn's alto
+// with the same words: theirs). One with no tune note at its moment (sung on a beat the tune's
+// printed note holds through: "wo-man" over a half note) stays, and the hyphens either side of it
+// go (they'd join over it), its own included.
+function gatherSyllables(part, staff, voice) {
+  const S = String(staff ?? 1), V = String(voice ?? "1");
+  const dur = (el) => num(kid(el, "duration"), 0);
+  const onStaff = (n) => (txt(kid(n, "staff")) || "1") === S;
+  const verse = (l) => l.getAttribute("number") || "1";
+  const tuneVerses = new Set();
+  for (const n of part.getElementsByTagName("note")) if (onStaff(n) && (txt(kid(n, "voice")) || "1") === V) for (const l of kids(n, "lyric")) tuneVerses.add(verse(l));
+  if (!tuneVerses.size) return;
+  // Each measure's tune notes by onset, its other voices' syllables of those verses, the tune's own.
+  const bars = kids(part, "measure").map((m, mi) => {
+    let pos = 0, last = 0;
+    const tune = new Map(), orphan = [], own = [];
+    for (const el of m.children) {
+      if (el.nodeName === "backup") pos -= dur(el);
+      else if (el.nodeName === "forward") pos += dur(el);
+      else if (el.nodeName === "note") {
+        const chord = !!kid(el, "chord"), grace = !!kid(el, "grace");
+        const onset = chord ? last : pos;
+        if (!chord) { last = pos; pos += grace ? 0 : dur(el); }
+        if (!onStaff(el)) continue;
+        if ((txt(kid(el, "voice")) || "1") !== V) { for (const l of kids(el, "lyric")) if (tuneVerses.has(verse(l))) orphan.push([onset, l]); continue; }
+        for (const l of kids(el, "lyric")) own.push([onset, l]);
+        if (!chord && !grace && kid(el, "pitch") && !tune.has(onset)) tune.set(onset, el);
+      }
+    }
+    return { mi, tune, orphan, own };
+  });
+  // (a copy: most of a verse's syllables on other voices land on a tune note that has its own)
+  const has = (n, v) => kids(n, "lyric").some((x) => verse(x) === v);
+  const stat = new Map();
+  for (const b of bars) for (const [onset, l] of b.orphan) {
+    const n = b.tune.get(onset), st = stat.get(verse(l)) || stat.set(verse(l), { n: 0, copy: 0 }).get(verse(l));
+    st.n++;
+    if (n && has(n, verse(l))) st.copy++;
+  }
+  const split = (v) => { const st = stat.get(v); return !!st && st.copy <= st.n / 2; };
+  const sung = new Map(), left = []; // verse → the tune's syllables in time order [{ at, l }]; syllables left
+  for (const { mi, tune, orphan, own } of bars) {
+    for (const [onset, l] of orphan) {
+      if (!split(verse(l))) continue;
+      const n = tune.get(onset);
+      if (!n) { left.push({ at: [mi, onset], l }); continue; }
+      if (has(n, verse(l))) continue;
+      n.insertBefore(l, kid(n, "play") || kid(n, "listen") || null);
+      own.push([onset, l]);
+    }
+    for (const [onset, l] of own.sort((a, b) => a[0] - b[0])) (sung.get(verse(l)) || sung.set(verse(l), []).get(verse(l))).push({ at: [mi, onset], l });
+  }
+  const before = (a, b) => a[0] < b[0] || (a[0] === b[0] && a[1] < b[1]);
+  const close = (l) => {
+    const sy = kid(l, "syllabic");
+    if (sy && txt(sy) === "begin") sy.textContent = "single";
+    else if (sy && txt(sy) === "middle") sy.textContent = "end";
+  };
+  for (const { at, l } of left) {
+    close(l);
+    const prev = (sung.get(verse(l)) || []).filter((x) => before(x.at, at)).pop();
+    if (prev) close(prev.l);
   }
 }
 
@@ -711,6 +864,270 @@ function copyMarks(d, top, host) {
   for (const b of [...host.getElementsByTagName("barline")]) if (!b.children.length) b.remove();
 }
 
+// Verovio's MusicXML import takes a measure's barlines — style, repeats, endings — from the first
+// part only, and Audiveris writes a barline only on the staves printed in that system (a voice
+// resting through a system has none: Piano Man's double bars and final barline, Songbird's double
+// bar were drawn single). So the full score's top part gets them from the parts below it.
+const omrScore = (d) => /audiveris/i.test(d.querySelector("identification > encoding > software")?.textContent || "");
+// (where a measure's music starts: after its print, attributes and left barline)
+const musicStart = (m) => { for (const c of m.children) if (!(c.nodeName === "print" || c.nodeName === "attributes" || (c.nodeName === "barline" && c.getAttribute("location") === "left"))) return c; return null; };
+// The top part's barline at a location ("left" | "right"), made if missing.
+function barlineAt(d, m, loc) {
+  let b = kids(m, "barline").find((x) => (x.getAttribute("location") || "right") === loc);
+  if (!b) {
+    b = d.createElement("barline");
+    b.setAttribute("location", loc);
+    if (loc === "left") m.insertBefore(b, musicStart(m)); else m.appendChild(b);
+  }
+  return b;
+}
+
+// The full score's endings are its top part's: the lower parts' go when the score is from
+// Audiveris (a piano's 8va lines read as endings) or the top part has its own. A file from an
+// exporter with endings written only below the top part (Verovio would draw none) has the first
+// such part's moved to the top.
+function scoreEndings(d, parts) {
+  const [top, ...rest] = parts;
+  if (!top || !rest.length) return;
+  const omr = omrScore(d), own = !!top.querySelector("barline > ending");
+  const from = !omr && !own ? rest.find((p) => p.querySelector("barline > ending")) : null;
+  if (!omr && !own && !from) return;
+  if (from) {
+    const tms = kids(top, "measure");
+    kids(from, "measure").forEach((m, i) => {
+      if (!tms[i]) return;
+      for (const b of kids(m, "barline")) {
+        const e = kid(b, "ending");
+        if (!e) continue;
+        const tb = barlineAt(d, tms[i], b.getAttribute("location") || "right");
+        if (!kid(tb, "ending")) tb.insertBefore(e.cloneNode(true), kid(tb, "repeat"));
+      }
+    });
+  }
+  for (const p of rest) {
+    for (const e of [...p.querySelectorAll("barline > ending")]) {
+      const b = e.parentElement;
+      e.remove();
+      if (!b.children.length) b.remove();
+    }
+  }
+}
+
+// The heaviest bar style of the parts, and any repeat, into the top part (location by location).
+const BAR_WEIGHT = { "light-light": 1, "heavy-light": 2, "heavy-heavy": 2, "light-heavy": 3 };
+function scoreBarlines(d, parts) {
+  const [top, ...rest] = parts;
+  if (!top || !rest.length) return;
+  const tms = kids(top, "measure");
+  const weight = (b) => BAR_WEIGHT[txt(kid(b, "bar-style"))] || 0;
+  for (const p of rest) kids(p, "measure").forEach((m, i) => {
+    if (!tms[i]) return;
+    for (const b of kids(m, "barline")) {
+      const loc = b.getAttribute("location") || "right", rep = kid(b, "repeat"), w = weight(b);
+      if (loc === "middle" || (!w && !rep)) continue;
+      const tb = barlineAt(d, tms[i], loc);
+      if (w > weight(tb)) { kid(tb, "bar-style")?.remove(); tb.insertBefore(kid(b, "bar-style").cloneNode(true), tb.firstChild); }
+      if (rep && !kid(tb, "repeat")) tb.appendChild(rep.cloneNode(true));
+    }
+  });
+}
+
+// The full score's marks on the parts below the top one. A copy of one the top part has in that
+// bar goes (an exporter that writes system text into every part: drawn over every staff). From
+// Audiveris, a section heading placed below a lower part's staff was printed between two systems,
+// over the next one, and attached to the staff above it (Piano Man's "Chorus" under the accordion,
+// 7 bars early; Wichita's "Verse:" under the left hand, 3 bars early): it moves to the top part,
+// to the bar at the same place across the next system (Audiveris's measure widths) — onto the
+// section barline when one is a bar away from there, as headings are printed — and goes when
+// there's no next system. (Both keeps v77's.)
+const HEADING = /(^|[^a-z])(verse|chorus|bridge|interlude|intro|outro|refrain|pre-?chorus)(?![a-z])/i;
+function scoreMarks(d, parts) {
+  const [top, ...rest] = parts;
+  if (!top || !rest.length) return;
+  const omr = omrScore(d), tms = kids(top, "measure");
+  for (const p of rest) kids(p, "measure").forEach((m, i) => {
+    const have = new Set(tms[i] ? kids(tms[i], "direction").map(dirSig) : []);
+    for (const dir of kids(m, "direction")) {
+      if (!isMark(dir, i === 0)) continue;
+      const heading = omr && dir.getAttribute("placement") === "below" && kids(dir, "direction-type").some((dt) => kids(dt, "words").some((w) => HEADING.test(w.textContent)));
+      if (!heading && !have.has(dirSig(dir))) continue;
+      const to = heading && !have.has(dirSig(dir)) ? headingBar(parts, p, i, dir) : null;
+      dir.remove();
+      if (to == null || kids(tms[to], "direction").some((x) => dirSig(x) === dirSig(dir))) continue;
+      dir.setAttribute("placement", "above");
+      for (const c of [...dir.children]) if (c.nodeName === "offset" || c.nodeName === "voice" || c.nodeName === "staff") c.remove();
+      for (const w of dir.querySelectorAll("direction-type > words")) w.removeAttribute("default-y");
+      tms[to].insertBefore(dir, musicStart(tms[to]));
+    }
+  });
+}
+// The measure (index) a heading attached to measure i of part p was printed over: the same place
+// across the next system. → null when there's no next system.
+function headingBar(parts, p, i, dir) {
+  const n = Math.min(...parts.map((q) => kids(q, "measure").length));
+  const starts = [];
+  for (let k = 0; k < n; k++) if (k === 0 || parts.some((q) => kids(q, "measure")[k].querySelector(":scope > print[new-system=yes], :scope > print[new-page=yes]"))) starts.push(k);
+  const s0 = starts.filter((k) => k <= i).pop() ?? 0, s1 = starts.find((k) => k > i), s2 = starts.find((k) => k > s1) ?? n;
+  if (s1 == null) return null;
+  const ms = kids(p, "measure");
+  const width = (k) => { const v = Number(ms[k]?.getAttribute("width")); return Number.isFinite(v) && v > 0 ? v : 0; };
+  // (a section barline: a double / heavy bar or a repeat, in any part, where measure k starts)
+  const section = (k) => parts.some((q) => {
+    const qm = kids(q, "measure");
+    const end = qm[k - 1] && kids(qm[k - 1], "barline").find((b) => (b.getAttribute("location") || "right") === "right");
+    const beg = qm[k] && kids(qm[k], "barline").find((b) => b.getAttribute("location") === "left");
+    return [end, beg].some((b) => b && (BAR_WEIGHT[txt(kid(b, "bar-style"))] || kid(b, "repeat")));
+  });
+  // (no widths: the next system's first bar)
+  for (let k = s0; k < s2; k++) if (!width(k)) return s1;
+  let x = 0;
+  for (let k = s0; k < i; k++) x += width(k);
+  const len = extentOf(ms[i]), at = positionOf(ms[i], dir);
+  x += len > 0 ? (Math.min(at, len) / len) * width(i) : 0;
+  let left = 0, k = s1;
+  for (; k < s2 - 1 && left + width(k) <= x; k++) left += width(k);
+  // the nearest section barline within a bar's width of that place
+  let best = k, dist = Infinity, edge = 0;
+  for (let j = s1; j < s2; j++) {
+    if (section(j) && Math.abs(edge - x) <= width(k) && Math.abs(edge - x) < dist) { best = j; dist = Math.abs(edge - x); }
+    edge += width(j);
+  }
+  return best;
+}
+// A measure's length in divisions (the furthest any voice reaches), and where an element of it
+// stands (its <offset> included).
+function extentOf(m) {
+  let pos = 0, end = 0;
+  for (const el of m.children) {
+    if (el.nodeName === "backup") pos -= num(kid(el, "duration"), 0);
+    else if (el.nodeName === "forward") pos += num(kid(el, "duration"), 0);
+    else if (el.nodeName === "note" && !kid(el, "chord") && !kid(el, "grace")) pos += num(kid(el, "duration"), 0);
+    end = Math.max(end, pos);
+  }
+  return end;
+}
+function positionOf(m, target) {
+  let pos = 0;
+  for (const el of m.children) {
+    if (el === target) return pos + num(kid(el, "offset"), 0);
+    if (el.nodeName === "backup") pos -= num(kid(el, "duration"), 0);
+    else if (el.nodeName === "forward") pos += num(kid(el, "duration"), 0);
+    else if (el.nodeName === "note" && !kid(el, "chord") && !kid(el, "grace")) pos += num(kid(el, "duration"), 0);
+  }
+  return pos;
+}
+
+// The source's part-groups (start and stop elements) all of whose parts are kept (≥ 2), none of
+// them the hymn pair the full score braces itself.
+function wholeGroups(list, keep, braced) {
+  const out = new Set(), open = new Map();
+  for (const c of list.children) {
+    if (c.nodeName === "score-part") { for (const g of open.values()) g.ids.push(c.getAttribute("id")); continue; }
+    if (c.nodeName !== "part-group") continue;
+    const n = c.getAttribute("number") || "1";
+    if (c.getAttribute("type") === "start") { open.set(n, { start: c, ids: [] }); continue; }
+    const g = open.get(n);
+    if (c.getAttribute("type") !== "stop" || !g) continue;
+    open.delete(n);
+    if (g.ids.length >= 2 && g.ids.every((id) => keep.has(id) && !braced?.includes(id))) { out.add(g.start); out.add(c); }
+  }
+  return out;
+}
+
+// The full score's part-list groups (the source's go, but those kept whole — `whole`): a hymn's
+// pair braced, as Both; with ≥ 3 staves each single-staff part outside a kept group on its own in
+// an unmarked group (symbol none) — Verovio condenses (leaves a staff resting a whole system out
+// of it, as printed: the voice through a piano intro) only when the score has more than one group
+// symbol; a piano part's brace is one, and it keeps its two staves together.
+function scoreGroups(d, list, plan, whole = new Set()) {
+  const sps = kids(list, "score-part");
+  const at = (id) => sps.find((sp) => sp.getAttribute("id") === id) || null;
+  // (the parts inside a kept group, and the numbers it uses)
+  const inGroup = new Set(), open = new Set();
+  let nb = 0;
+  for (const c of list.children) {
+    if (c.nodeName === "part-group" && whole.has(c)) {
+      const n = c.getAttribute("number") || "1";
+      nb = Math.max(nb, Number(n) || 0);
+      if (c.getAttribute("type") === "start") open.add(n); else open.delete(n);
+    } else if (c.nodeName === "score-part" && open.size) inGroup.add(c);
+  }
+  const group = (first, last, symbol) => {
+    nb++;
+    const start = d.createElement("part-group");
+    start.setAttribute("type", "start"); start.setAttribute("number", String(nb));
+    const gs = d.createElement("group-symbol");
+    gs.textContent = symbol;
+    start.appendChild(gs);
+    if (symbol === "brace") { const gb = d.createElement("group-barline"); gb.textContent = "yes"; start.appendChild(gb); }
+    const stop = d.createElement("part-group");
+    stop.setAttribute("type", "stop"); stop.setAttribute("number", String(nb));
+    list.insertBefore(start, first);
+    last.after(stop);
+  };
+  const pair = plan.braced ? plan.braced.map(at) : null;
+  if (pair && pair[0] && pair[1] && sps.indexOf(pair[1]) === sps.indexOf(pair[0]) + 1) group(pair[0], pair[1], "brace");
+  if (!plan.condense) return;
+  const root = list.parentNode;
+  for (const sp of sps) {
+    if (pair?.includes(sp)) continue;
+    const part = partsIn(root).find((p) => p.getAttribute("id") === sp.getAttribute("id"));
+    if (part && stavesOf(part) > 1) wholeInstrument(d, sp);
+    else if (!inGroup.has(sp)) group(sp, sp, "none");
+  }
+}
+// A part of several staves (the piano) is kept whole when it rests through a system in one hand
+// only — Verovio shows all the staves of a group that holds an instrument definition (from the
+// part's <midi-instrument>; Audiveris always writes one) if one shows, else condenses them one by
+// one: the left hand resting through a system was left out, the right hand alone under a brace.
+function wholeInstrument(d, sp) {
+  if (kid(sp, "midi-instrument")) return;
+  let si = kid(sp, "score-instrument");
+  const id = si?.getAttribute("id") || sp.getAttribute("id") + "-I1";
+  if (!si) {
+    si = d.createElement("score-instrument");
+    si.setAttribute("id", id);
+    si.appendChild(d.createElement("instrument-name"));
+    sp.insertBefore(si, kids(sp, "player")[0] || kids(sp, "midi-device")[0] || null);
+  }
+  const mi = d.createElement("midi-instrument");
+  mi.setAttribute("id", id);
+  const pr = d.createElement("midi-program");
+  pr.textContent = "1";
+  mi.appendChild(pr);
+  sp.appendChild(mi);
+}
+const stavesOf = (part) => Math.max(1, ...[...part.querySelectorAll(":scope > measure > attributes > staves")].map((s) => num(s, 1)));
+
+// A staff left out of a system (condensed: it rests there) takes its marks with it — Verovio
+// draws a direction only on its own staff: a D.S., a section name, a tempo over a piano interlude
+// were lost. Verovio keeps a staff that has a note in the system, so a bar that carries a mark
+// and rests gets an invisible grace note (print-object="no", unpitched: no fact, no name, not
+// counted; ids "keep-…"), which costs the bar ~1.5 staff spaces at its start. (A hidden clef did
+// keep the staff, but Verovio then drew the staff's clef invisible at every later system start;
+// a visible one is drawn mid-line.)
+function keepMarks(d, part) {
+  let sign = "G";
+  kids(part, "measure").forEach((m, mi) => {
+    for (const a of kids(m, "attributes")) for (const c of kids(a, "clef")) if ((c.getAttribute("number") || "1") === "1") sign = txt(kid(c, "sign")) || sign;
+    if (!kids(m, "direction").some((dir) => isMark(dir, true))) return;
+    const notes = kids(m, "note");
+    if (notes.some((n) => kid(n, "pitch") || kid(n, "unpitched"))) return; // (its notes keep it)
+    const [step, oct] = sign === "F" ? ["D", "3"] : sign === "C" ? ["C", "4"] : ["B", "4"];
+    const n = d.createElement("note");
+    n.setAttribute("print-object", "no");
+    n.setAttribute("id", `keep-${part.getAttribute("id")}-${mi}`);
+    const el = (name, text, parent = n) => { const e = d.createElement(name); if (text != null) e.textContent = text; parent.appendChild(e); return e; };
+    el("grace");
+    const u = el("unpitched");
+    el("display-step", step, u);
+    el("display-octave", oct, u);
+    el("voice", notes[0] ? txt(kid(notes[0], "voice")) || "1" : "1");
+    el("type", "eighth");
+    m.insertBefore(n, notes[0] || kids(m, "barline").find((b) => b.getAttribute("location") !== "left") || null);
+  });
+}
+
 // --- Lyrics, slurs, beams, ties, rests ------------------------------------------------------------
 
 // A hymn's stacked stanzas (≥ 3 verses each with ≥ half the syllables of the longest): verse 1
@@ -783,13 +1200,14 @@ function tiesInOrder(p, tag) {
 }
 
 // A multi-measure rest over bars that have notes (a hand-made or generated file): Verovio draws
-// the rest and drops the notes. The mark goes; a real one (bars of rests only) stays.
-function dropCoveringRests(part) {
-  const ms = kids(part, "measure");
+// the rest and drops the notes. The mark goes; a real one (bars of rests only) stays. `all`: the
+// parts whose bars it covers (the full score: every part's — a voice's rest under a piano intro).
+function dropCoveringRests(part, all = [part]) {
+  const ms = kids(part, "measure"), others = all.map((p) => kids(p, "measure"));
   ms.forEach((m, mi) => {
     for (const mr of [...m.querySelectorAll(":scope > attributes > measure-style > multiple-rest")]) {
       const n = Math.max(1, num(mr, 1));
-      if (!ms.slice(mi, mi + n).some((x) => [...x.getElementsByTagName("note")].some((nt) => kid(nt, "pitch")))) continue;
+      if (!others.some((pm) => pm.slice(mi, mi + n).some((x) => [...x.getElementsByTagName("note")].some((nt) => kid(nt, "pitch"))))) continue;
       const st = mr.parentElement;
       mr.remove();
       if (!st.children.length) st.remove();

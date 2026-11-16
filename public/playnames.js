@@ -90,14 +90,19 @@ const f1 = (x) => (Math.round(x * 10) / 10).toString();
 
 // Badges for every notehead of a rendered page (an element holding Verovio's SVG). All boxes
 // are read first, then everything is written (one layout pass). Idempotent per page.
+// opts.low: the staves ("part|staff") read from the bottom — the Some floor names a bar's bass
+// note there (the piano's left hand, a hymn's bass part), its top note elsewhere (the tune, the
+// right hand); without it, the top note on a system's first staff and the bass note below.
 // → { heads (badges drawn), ms, items: [{ id, g, fact, cx, cy, h, w, ledgers, some, badge }] }
-export function decorate(pageEl, facts = new Map()) {
+export function decorate(pageEl, facts = new Map(), opts = {}) {
+  const low = opts.low ? new Set(opts.low) : null;
   const t0 = performance.now();
   const items = [];
   const staffs = new Map();
   for (const g of pageEl.querySelectorAll("g.note")) {
     const head = g.querySelector(":scope > g.notehead");
-    if (!head || g.querySelector(":scope > .nn")) continue;
+    // (a note Verovio draws invisible — the full score's place-keepers: no name)
+    if (!head || g.querySelector(":scope > .nn") || g.getAttribute("visibility") === "hidden") continue;
     // A cross-staff note (Verovio's note@staff / chord@staff → data-staff) is drawn on that staff,
     // though it sits in its own staff's group (Killing Me Softly bar 31, Songbird bar 149).
     const home = g.closest("g.staff");
@@ -108,7 +113,7 @@ export function decorate(pageEl, facts = new Map()) {
     const use = head.querySelector("use");
     const href = use ? use.getAttribute("xlink:href") || use.getAttribute("href") || "" : "";
     const f = facts.get(g.id);
-    items.push({ id: g.id, g, head, staff, lines, fact: f ? (f.tr ? drawnFact(f, g) : f) : factFromSvg(g), hollow: /#E0A[0-3]/i.test(href) });
+    items.push({ id: g.id, g, head, staff, home, lines, fact: f ? (f.tr ? drawnFact(f, g) : f) : factFromSvg(g), hollow: /#E0A[0-3]/i.test(href) });
   }
   // Reads.
   for (const it of items) {
@@ -125,10 +130,11 @@ export function decorate(pageEl, facts = new Map()) {
   const byStaff = new Map();
   for (const it of live) (byStaff.get(it.staff) || byStaff.set(it.staff, []).get(it.staff)).push(it);
   // Some on a page the rule leaves nearly bare (a hymn in a flat key: no ledger notes, no
-  // accidentals): one name a bar per staff — the first chord's top note on a bar's first staff,
-  // its bass note on the others — so fewer names is still some names. The first chord: the notes
-  // at the bar-staff's earliest moment (grace notes aside; a second's head on the far side of the
-  // stem and another voice's offset head included), by x only for notes the facts don't know.
+  // accidentals): one name a bar per staff — the first chord's top note on the tune's and the
+  // right hand's staff, its bass note on the left hand's (opts.low) — so fewer names is still some
+  // names. The first chord: the notes at the bar-staff's earliest moment (grace notes aside; a
+  // second's head on the far side of the stem and another voice's offset head included), by x
+  // only for notes the facts don't know.
   if (live.length && live.filter((it) => it.some === "name").length < 0.15 * live.length) {
     for (const [staff, list] of byStaff) {
       if (!staff) continue;
@@ -141,7 +147,10 @@ export function decorate(pageEl, facts = new Map()) {
         const x0 = Math.min(...list.map((it) => it.cx - it.w / 2));
         first = list.filter((it) => it.cx - it.w / 2 <= x0 + 0.5 * it.w);
       }
-      const top = staff === staff.parentNode?.querySelector(":scope > g.staff");
+      // (which staff of the score this is: a note drawn in its own staff tells — a cross-staff
+      // one sits in another's group)
+      const own = low && list.find((it) => it.home === staff && !it.fact.svg);
+      const top = own ? !low.has(own.fact.part + "|" + own.fact.staff) : staff === staff.parentNode?.querySelector(":scope > g.staff");
       const pick = first.reduce((a, b) => ((top ? b.cy < a.cy : b.cy > a.cy) ? b : a));
       // (a head two voices share: each named — otherwise the later voice's head covers the pill)
       for (const o of list) if (o === pick || (Math.abs(o.cx - pick.cx) < 0.3 * Math.max(o.w, pick.w) && Math.abs(o.cy - pick.cy) < 0.15 * Math.max(o.h, pick.h))) o.some = "name";
