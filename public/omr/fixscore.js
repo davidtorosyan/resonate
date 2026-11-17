@@ -19,6 +19,7 @@ export function fixOmrScore(xml, log = [], { tempo = null } = {}) {
   unifyOctaveClefs(doc, changes);
   markUnmarkedTuplets(doc, changes);
   markTupletGroups(doc, changes);
+  restoreTies(doc, changes);
   return { xml: changes.length ? new XMLSerializer().serializeToString(doc) : xml, changes };
 }
 
@@ -718,6 +719,235 @@ function markTupletGroups(doc, changes) {
     }
     if (where.length) changes.push(`part ${part.getAttribute("id")}: tuplet marks added (${where.join(", ")})`);
   }
+}
+
+// Ties the engine missed. Audiveris finds a tie as a short curve between two heads; beside a
+// chord's other heads, or cut by a line break, the curve is often lost, read as a slur, or
+// written half (a start with no stop) — Killing Me Softly bar 3: the piano's tied F♯/A chord
+// under "life" had no tie at all, and the B/G chord under "words", tied over the line break,
+// came out as one slur from the G to the next line's B. The voice usually keeps its tie (one
+// head, room around it). Ties are judged on a staff's *strike*: the notes of one part's staff
+// that start at the same moment (any voice — Audiveris numbers a chord's notes into voices
+// loosely), when they all last the same; the next strike is the one starting where they end, or
+// the next bar's first when nothing else on that staff starts later in the bar (at a barline, or
+// a bar the engine left short: Killing bar 6, a tied eighth chord read as 16ths). Three repairs,
+// in order, only where the next strike is the same notes again, carries no syllable (a new word is
+// sung, not tied), no articulation and no grace note before it (struck again), and the first isn't
+// marked short (staccato, a breath):
+//   1. a slur from a strike into the next one is a tie on every note (a slur between identical
+//      chords means nothing else; a tie over a line break comes out this way);
+//   2. a part that plays the sung line (most of its notes carry words), where it doubles it: where
+//      the voice ties a note over, another part's staff striking that note at the same moment, for
+//      the same length, and the same notes again where the voice's tie ends, ties it — when that
+//      part also plays the voice's note before the tie (or, after a rest, the one after it) at its
+//      time and length (Musicnotes P/V/G: the piano's right hand doubles the tune; repeated block
+//      chords holding the tied pitch are accompaniment, struck again; where the piano strikes a
+//      different chord — Killing bar 7, F♯ then F♯/A — it re-strikes, as printed);
+//   3. a strike tied on some notes is tied on all of them.
+// Known limit: a melody note held over while an inner voice strikes the same notes again on the
+// beat (printed with a tie on one note only) looks like a tie the engine lost on the others.
+// A tie is written both ways the readers take it: <tie> after <duration> (Sing's parser) and
+// <tied> in <notations> (Verovio), stop before start on a note tied both ways. Idempotent.
+function restoreTies(doc, changes, debug = null) {
+  const kid = (el, name) => { for (const c of el.children) if (c.nodeName === name) return c; return null; };
+  const kids = (el, name) => { const out = []; for (const c of el.children) if (c.nodeName === name) out.push(c); return out; };
+  const num = (el, name) => { const c = kid(el, name); return c ? Number(c.textContent) : null; };
+  const STEP = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  const EPS = 1e-6, Q = 960; // (onsets keyed in 1/960 quarters)
+  const key = (q) => Math.round(q * Q);
+  const tieTypes = (n) => {
+    const out = kids(n, "tie").map((t) => t.getAttribute("type"));
+    for (const no of kids(n, "notations")) for (const t of kids(no, "tied")) out.push(t.getAttribute("type"));
+    return out;
+  };
+  const tiedOn = (n) => tieTypes(n).some((t) => t === "start" || t === "continue");
+  // marks on a note: any articulation (struck again), and the ones that part it from what follows
+  const SHORT = new Set(["staccato", "staccatissimo", "spiccato", "breath-mark", "caesura"]);
+  const marksOf = (n) => {
+    const out = [];
+    for (const no of kids(n, "notations")) for (const ar of kids(no, "articulations")) for (const c of ar.children) out.push(c.nodeName);
+    return out;
+  };
+
+  const parts = [...doc.querySelectorAll("score-partwise > part")].map((part) => {
+    const strikes = new Map(); // "mi|staff|onset" → [{ el, midi, d, on, mi, staff, voice, lyric, bar }]
+    const graces = new Set();  // "mi|staff|onset": a grace note before the note starting there
+    const last = new Map();    // "mi|staff" → the latest onset anything (a note or a rest) starts at
+    const ends = [], notes = [], byBar = [];
+    let div = 1, beats = 4, unit = 4;
+    kids(part, "measure").forEach((m, mi) => {
+      let pos = 0, prev = 0, max = 0;
+      byBar[mi] = [];
+      for (const el of m.children) {
+        const name = el.nodeName;
+        if (name === "attributes") {
+          div = num(el, "divisions") || div;
+          const t = kid(el, "time");
+          if (t && num(t, "beats")) { beats = num(t, "beats"); unit = num(t, "beat-type") || 4; }
+        } else if (name === "backup") pos -= (num(el, "duration") || 0) / div;
+        else if (name === "forward") pos += (num(el, "duration") || 0) / div;
+        else if (name === "note") {
+          const staff = kid(el, "staff")?.textContent || "1";
+          if (kid(el, "grace")) { graces.add(`${mi}|${staff}|${key(pos)}`); continue; }
+          if (kid(el, "cue")) continue;
+          const d = (num(el, "duration") || 0) / div, chord = !!kid(el, "chord");
+          const on = chord ? prev : pos;
+          if (!chord) { prev = pos; pos += d; max = Math.max(max, pos); }
+          const sk = `${mi}|${staff}`;
+          if (!(last.get(sk) >= on)) last.set(sk, on);
+          const p = kid(el, "pitch");
+          if (!p) continue;
+          const midi = (num(p, "octave") + 1) * 12 + STEP[kid(p, "step")?.textContent] + Math.round(num(p, "alter") || 0);
+          const n = { el, midi, d, on, mi, staff, voice: kid(el, "voice")?.textContent || "1", lyric: !!kid(el, "lyric"), bar: m };
+          const k = `${sk}|${key(on)}`;
+          if (!strikes.has(k)) strikes.set(k, []);
+          strikes.get(k).push(n);
+          notes.push(n);
+          byBar[mi].push(n);
+        }
+      }
+      ends[mi] = Math.min(beats * 4 / unit, max || beats * 4 / unit);
+    });
+    // a note's strike when all its notes last the same, and the strike where they end
+    const strike = (n) => {
+      const s = strikes.get(`${n.mi}|${n.staff}|${key(n.on)}`);
+      return s && s.every((x) => Math.abs(x.d - n.d) < EPS) ? s : null;
+    };
+    const after = (n) => {
+      const t = n.on + n.d;
+      if (t < ends[n.mi] - EPS) {
+        const s = strikes.get(`${n.mi}|${n.staff}|${key(t)}`);
+        if (s || last.get(`${n.mi}|${n.staff}`) > n.on + EPS) return s || null;
+      }
+      return strikes.get(`${n.mi + 1}|${n.staff}|0`) || null;
+    };
+    // the note of the same staff and voice that ends where n starts (in the bar before, at its start)
+    const before = (n) => {
+      if (n.on > EPS) return byBar[n.mi].find((x) => x.staff === n.staff && x.voice === n.voice && Math.abs(x.on + x.d - n.on) < EPS) || null;
+      return n.mi > 0 ? byBar[n.mi - 1].find((x) => x.staff === n.staff && x.voice === n.voice && Math.abs(x.on + x.d - ends[n.mi - 1]) < EPS) || null : null;
+    };
+    const sung = notes.filter((n) => n.lyric).length >= 0.25 * notes.length;
+    return { part, id: part.getAttribute("id"), notes, byBar, graces, strike, after, before, lyric: notes.length > 0 && sung };
+  });
+
+  const sorted = (s) => s.map((n) => n.midi).sort((a, b) => a - b);
+  const same = (a, b) => { const x = sorted(a), y = sorted(b); return x.length === y.length && x.every((v, i) => v === y[i]); };
+  // a strike and the next, when that's the same notes again, sung on no new syllable, not struck
+  // again (an articulation, a grace note before it) and not parted from it: the pairs to tie
+  const pairsOf = (p, n) => {
+    const a = p.strike(n), b = a && p.after(n);
+    if (!a || !b || !same(a, b) || b.some((x) => x.lyric)) return null;
+    if (b.some((x) => marksOf(x.el).length) || a.some((x) => marksOf(x.el).some((m) => SHORT.has(m)))) return null;
+    if (p.graces.has(`${b[0].mi}|${b[0].staff}|${key(b[0].on)}`)) return null;
+    const left = [...b], pairs = [];
+    for (const x of a) {
+      const i = left.findIndex((y) => y.midi === x.midi && y.voice === x.voice), j = i >= 0 ? i : left.findIndex((y) => y.midi === x.midi);
+      pairs.push([x, left.splice(j, 1)[0]]);
+    }
+    return { a, b, pairs };
+  };
+  const add = (n, type) => {
+    let changed = false;
+    if (!kids(n, "tie").some((t) => t.getAttribute("type") === type)) {
+      const t = doc.createElement("tie");
+      t.setAttribute("type", type);
+      const ties = kids(n, "tie"), dur = kid(n, "duration");
+      // stop before start
+      const ref = type === "stop" ? (ties[0] || dur?.nextSibling || null) : ((ties.at(-1) || dur)?.nextSibling || null);
+      n.insertBefore(t, ref);
+      changed = true;
+    }
+    let no = kid(n, "notations");
+    const tied = no ? kids(no, "tied") : [];
+    if (!tied.some((t) => t.getAttribute("type") === type)) {
+      if (!no) {
+        no = doc.createElement("notations");
+        n.insertBefore(no, kid(n, "lyric") || kid(n, "play") || kid(n, "listen") || null);
+      }
+      const td = doc.createElement("tied");
+      td.setAttribute("type", type);
+      // (a stop first; a start after the last <tied> there — appended when that's the last child)
+      no.insertBefore(td, type === "stop" ? (tied[0] || no.firstChild) : (tied.length ? tied.at(-1).nextSibling : no.firstChild));
+      changed = true;
+    }
+    return changed;
+  };
+  const tieAll = (pairs) => {
+    let any = false;
+    for (const [x, y] of pairs) { any = add(x.el, "start") || any; any = add(y.el, "stop") || any; }
+    return any;
+  };
+  const NAMES = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
+  const where = new Map(); // part id → bar numbers
+  const mark = (rule, p, t) => {
+    const no = t.a[0].bar.getAttribute("number");
+    if (!where.has(p.id)) where.set(p.id, new Set());
+    where.get(p.id).add(no);
+    debug?.push(`${rule} ${p.id} m${no}@${t.a[0].on} st${t.a[0].staff} → m${t.b[0].bar.getAttribute("number")}@${t.b[0].on}: ${sorted(t.a).map((m) => NAMES[m % 12] + (Math.floor(m / 12) - 1)).join(" ")}`);
+  };
+
+  // 1. slurs between identical strikes (in time order: a slur may run from a voice written after
+  // <backup> to one written before it)
+  for (const p of parts) {
+    const open = new Map(); // slur number → { from (note), els }
+    const inTime = p.notes.map((n, i) => [n, i]).sort((x, y) => x[0].mi - y[0].mi || x[0].on - y[0].on || x[1] - y[1]).map(([n]) => n);
+    for (const n of inTime) {
+      for (const no of kids(n.el, "notations")) {
+        for (const sl of kids(no, "slur")) {
+          const k = sl.getAttribute("number") || "1", type = sl.getAttribute("type");
+          if (type === "start") { open.set(k, { from: n, els: [sl] }); continue; }
+          const o = open.get(k);
+          if (!o) continue;
+          o.els.push(sl);
+          if (type !== "stop") continue;
+          open.delete(k);
+          const t = pairsOf(p, o.from);
+          if (!t || !t.b.includes(n)) continue;
+          for (const s of o.els) { const par = s.parentElement; s.remove(); if (par && !par.children.length) par.remove(); }
+          tieAll(t.pairs);
+          mark("slur", p, t);
+        }
+      }
+    }
+  }
+
+  // 2. a part doubling the sung line takes its ties
+  for (const v of parts.filter((p) => p.lyric)) {
+    for (const n of v.notes) {
+      if (!tiedOn(n.el)) continue;
+      const to = v.after(n);
+      const m = to && to.find((x) => x.midi === n.midi);
+      if (!m) continue;
+      // the voice's note before the tie, else (a rest before it) the one after the tied-to note
+      const lead = v.before(n) || (v.after(m) || []).find((x) => x.voice === m.voice) || null;
+      if (!lead) continue;
+      for (const p of parts) {
+        if (p === v) continue;
+        const doubled = (x) => (p.byBar[x.mi] || []).some((y) => y.midi === x.midi && Math.abs(y.on - x.on) < EPS && Math.abs(y.d - x.d) < EPS);
+        if (!doubled(lead)) continue;
+        for (const c of p.byBar[n.mi] || []) {
+          if (c.midi !== n.midi || Math.abs(c.on - n.on) > EPS || Math.abs(c.d - n.d) > EPS || tiedOn(c.el)) continue;
+          const t = pairsOf(p, c);
+          if (!t || t.b[0].mi !== m.mi || Math.abs(t.b[0].on - m.on) > EPS) continue;
+          if (tieAll(t.pairs.filter(([x]) => x === c))) mark("dbl", p, t);
+        }
+      }
+    }
+  }
+
+  // 3. a strike tied in part is tied whole
+  for (const p of parts) {
+    const seen = new Set();
+    for (const n of p.notes) {
+      if (!tiedOn(n.el)) continue;
+      const t = pairsOf(p, n);
+      if (!t || seen.has(t.a)) continue;
+      seen.add(t.a);
+      if (t.a.length > 1 && tieAll(t.pairs)) mark("chord", p, t);
+    }
+  }
+
+  for (const [id, bars] of where) changes.push(`part ${id}: ties restored (m${[...bars].join(", m")})`);
 }
 
 function setDivisions(doc, measure, value) {

@@ -157,7 +157,7 @@ Web Audio crackles and drops out over CarPlay — even one held key — while th
 
 The owner got a piano: the Play tab shows a song's piano part as sheet music on the iPad, with note names on the noteheads (All → Some → Off, offered after 3 practice days, never automatic), press a note to see, hear and light its chord. Design: docs/PLAY.md; CLAUDE.md "Play (sheet music)". Later, roughly in order:
 - Check the default staff size and badge size at the piano (iPad on the music desk, ~70 cm).
-- **Listen** to the piano part (or one hand, slower) with a moving highlight and automatic page turns (Verovio `renderToTimemap` / `getElementsAtTime`, piano.js `scheduleAhead`).
+- ~~**Listen** to the piano part (or one hand, slower) with a moving highlight and automatic page turns~~ — v79 ▶: a stretch dragged on the page, once or looped, 50–100%, or from the page in Sing's order (docs/PLAY.md "As built (v79): ▶").
 - Play along: a single-note check with the mic ("✓ that's it", YIN), or Web MIDI from a digital piano (desktop Chrome; not iOS Safari).
 - Follow Sing's key (Verovio `transpose`); toggles for chord symbols and lyrics.
 - Tap the keyboard strip to hear a key; "Simplify" (RH top note, LH bass note); half-page turns; a centre tap to hide the bar; a dark paper theme.
