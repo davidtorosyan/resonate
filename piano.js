@@ -6,6 +6,9 @@ const ONSET = 0.012;   // samples start ~12 ms in (recording + encoder delay)
 const RELEASE = 0.12;  // damper time constant when a note ends
 
 const cache = new WeakMap(); // AudioContext -> Promise<{ keys, buffers }>
+const loaded = new WeakMap(); // AudioContext -> { keys, buffers } once decoded (pianoNow)
+const byRate = new Map(); // sample rate -> Promise<{ keys, buffers }>: decoded once per rate
+const rateLoaded = new Map(); // sample rate -> { keys, buffers } once decoded
 const files = new Map(); // sample name -> Promise<ArrayBuffer> (the mp3, fetched once per page)
 
 function sampleMidi(name) {
@@ -29,15 +32,35 @@ export function pianoReady(ac) {
   return cache.has(ac);
 }
 
-// Decoded per context (at its own sample rate); a new context — one made for a new output —
-// only decodes, the files are kept. (decodeAudioData takes its buffer over: give it a copy.)
+// The piano decoded for `ac`, or null while it isn't (yet): synchronous, so a key press can strike
+// in its own event instead of after a promise.
+export function pianoNow(ac) {
+  return loaded.get(ac) || rateLoaded.get(ac.sampleRate) || null;
+}
+
+// Decoded at the context's own sample rate, once per rate: a new context at a rate already decoded
+// (one that replaced a closed or "interrupted" context) plays the same buffers at once — an
+// AudioBuffer isn't tied to the context that decoded it (checked in WebKit: decoded on a context
+// since closed, it plays in another). The files are fetched once a page. (decodeAudioData takes its
+// buffer over: give it a copy.)
 export function loadPiano(ac) {
   if (!cache.has(ac)) {
-    const p = Promise.all(
-      SAMPLES.map(async (name) => [sampleMidi(name), await ac.decodeAudioData((await sampleFile(name)).slice(0))]),
-    ).then((entries) => ({ keys: entries.map((e) => e[0]).sort((a, b) => a - b), buffers: new Map(entries) }));
-    p.catch(() => cache.delete(ac));
-    cache.set(ac, p);
+    const rate = ac.sampleRate;
+    let p = byRate.get(rate);
+    if (!p) {
+      p = Promise.all(
+        SAMPLES.map(async (name) => [sampleMidi(name), await ac.decodeAudioData((await sampleFile(name)).slice(0))]),
+      ).then((entries) => {
+        const piano = { keys: entries.map((e) => e[0]).sort((a, b) => a - b), buffers: new Map(entries) };
+        rateLoaded.set(rate, piano);
+        return piano;
+      });
+      p.catch(() => { if (byRate.get(rate) === p) byRate.delete(rate); });
+      byRate.set(rate, p);
+    }
+    const mine = p.then((piano) => { loaded.set(ac, piano); return piano; });
+    mine.catch(() => cache.delete(ac));
+    cache.set(ac, mine);
   }
   return cache.get(ac);
 }
@@ -146,20 +169,31 @@ export function keepAlive(ac, nodes) {
 // boosted below middle C: a phone speaker barely plays below ~200 Hz, so a low note's
 // fundamental alone would be near silent. release() damps both like lifting the key; it
 // can be called again with an earlier time (stop now instead of at the end of the note).
+// `dest`: where both go (the context's output, or a bus — pianoBus).
 const SUSTAIN = 0.05;   // held tone's level, relative to the piano's
 const HARMONICS = [0, ...Array.from({ length: 12 }, (_, i) => 1 / (i + 1) ** 1.2)];
 const waves = new WeakMap(); // AudioContext -> PeriodicWave
 
-export function holdPiano(ac, piano, when, midi, level, { sustain = true } = {}) {
+// The held tone's wave for `ac`, made once per context (~3.6 ms in WebKitGTK: worth making before
+// the first key press — primeHold).
+function holdWave(ac) {
+  let wave = waves.get(ac);
+  if (!wave) {
+    wave = ac.createPeriodicWave(new Float32Array(HARMONICS.length), new Float32Array(HARMONICS));
+    waves.set(ac, wave);
+  }
+  return wave;
+}
+export function primeHold(ac) {
+  holdWave(ac);
+}
+
+export function holdPiano(ac, piano, when, midi, level, { sustain = true, dest = ac.destination } = {}) {
   const nodes = [];
-  const g = playPiano(ac, piano, when, 3600, midi, level, nodes); // until released
+  const g = playPiano(ac, piano, when, 3600, midi, level, nodes, dest); // until released
   const parts = [{ src: nodes[0], gain: g.gain }];
   if (sustain) {
-    let wave = waves.get(ac);
-    if (!wave) {
-      wave = ac.createPeriodicWave(new Float32Array(HARMONICS.length), new Float32Array(HARMONICS));
-      waves.set(ac, wave);
-    }
+    const wave = holdWave(ac);
     const osc = ac.createOscillator();
     osc.setPeriodicWave(wave);
     osc.frequency.value = 440 * 2 ** ((midi - 69) / 12);
@@ -168,7 +202,7 @@ export function holdPiano(ac, piano, when, midi, level, { sustain = true } = {})
     sg.gain.setValueAtTime(0, when);
     sg.gain.setTargetAtTime(SUSTAIN * level * low, when + 0.15, 0.3); // in as the piano fades
     osc.connect(sg);
-    sg.connect(ac.destination);
+    sg.connect(dest);
     osc.start(when);
     parts.push({ src: osc, gain: sg.gain });
   }

@@ -64,7 +64,10 @@
       #bar select[hidden], #bar button[hidden], #offer[hidden] { display: none; }
       #bar select:disabled, #bar button:disabled { opacity: 0.35; cursor: default; }
       #song { flex: 1 1 11rem; min-width: 7.5rem; max-width: 19rem; text-overflow: ellipsis; }
-      #hands { flex: 0 1 auto; min-width: 0; }
+      /* The view menu gives way first — its name clipped ("Both…") — before the song menu shrinks
+         or the controls take a new row: it has its whole width whenever the row has room (its grow
+         factor takes the room first, up to its content). */
+      #bar #hands { flex: 1000 1 0; min-width: 4.5rem; max-width: max-content; text-overflow: ellipsis; }
       /* Note names: All = a filled pill, Some = outlined "A·C", Off = grey, struck through. */
       #names { font-weight: 700; letter-spacing: 0.04em; min-width: 3.4rem; border-radius: 999px; }
       #names[data-level="all"] { background: #a64fff; border-color: #a64fff; color: #fff; }
@@ -77,7 +80,7 @@
       #smaller, #bigger { line-height: 1; padding: 0; }
       #smaller svg, #bigger svg { width: 22px; height: 22px; display: block; margin: auto; }
       #pdf { padding: 0 0.5rem; }
-      #play { padding: 0; }
+      #bar #play, #bar #keys { padding: 0; }
       #play svg { width: 22px; height: 22px; display: block; margin: auto; }
       #play[data-icon="stop"] { background: rgba(216,107,0,0.25); border-color: #d86b00; }
       #offer { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; color: rgba(255,255,255,0.75); white-space: nowrap; }
@@ -109,6 +112,7 @@
       }
       @media (max-width: 669px) {
         .pager { order: 1; }
+        .ctl { column-gap: 0.3rem; } /* (the controls' row with 🎹 at 480 px) */
         #version { margin-left: 0; }
         .ctl { flex-basis: 100%; }
       }
@@ -121,6 +125,12 @@
          breaks on its base size, so 7.5rem wrapped the chip to a second row at 1100–1140) */
       @media (min-width: 1100px) {
         .ctl:has(#offer:not([hidden])) #song { flex-basis: 0; min-width: 4.5rem; }
+      }
+      /* (with 📄 the iPad's controls row (670–1099 px) is full: the song menu — its long title cut
+         anyway — gives way before the view menu, which keeps its whole name (an iPad mini in
+         portrait showed "Full…" once 🎹 joined the row); it takes what the view menu leaves) */
+      @media (min-width: 670px) and (max-width: 1099px) {
+        .ctl:has(#pdf:not([hidden])) #song { flex-basis: 0; min-width: 5rem; }
       }
       @media (max-width: 1099px) {
         #bar:has(#offer:not([hidden])) .pager { order: 1; }
@@ -143,17 +153,20 @@
            — no empty break line, whose row gaps made the bar taller than v78's) */
         #bar #song { order: 3; flex: 1 1 calc(100% - 11rem); min-width: 0; max-width: none; }
         #bar .pager, #bar:has(#offer:not([hidden])) .pager { order: 4; margin-left: 0; }
-        #hands, #play, #names, .size, #pdf, #offer { order: 6; }
+        #hands, #play, #names, #keys, .size, #pdf, #offer { order: 6; }
+        /* (the controls' row holds the view menu, ▶, ABC, 🎹, − +, 📄 with v78's gaps a little
+           closer) */
+        #bar { column-gap: 0.5rem; }
       }
       @media (max-width: 420px) {
-        #bar { column-gap: 0.5rem; padding-left: max(0.6rem, env(safe-area-inset-left)); padding-right: max(0.6rem, env(safe-area-inset-right)); }
+        #bar { column-gap: 0.4rem; padding-left: max(0.6rem, env(safe-area-inset-left)); padding-right: max(0.6rem, env(safe-area-inset-right)); }
         .nav-link { padding: 0.2rem 0.42rem; }
         .nav { gap: 0.3rem; }
         .ctl { gap: 0.3rem; }
         #song { flex-basis: 100%; max-width: none; }
         /* (the controls' row sits .3rem under the song's, as when they shared .ctl's gap: the
            stage keeps v78's height) */
-        #hands, #play, #names, .size, #pdf, #offer { margin-top: -0.1rem; }
+        #hands, #play, #names, #keys, .size, #pdf, #offer { margin-top: -0.1rem; }
       }
       @media (max-width: 420px) and (any-pointer: coarse) { .nav-link { padding: 0.3rem 0.5rem; } }
       /* ▶ takes a place on the controls' row: with the fewer-names chip and 📄 the one-row bar is
@@ -165,9 +178,9 @@
         #bar:has(#offer:not([hidden])) #pg { min-width: 3.6rem; }
         #bar:has(#offer:not([hidden])) .ctl { column-gap: 0.3rem; }
       }
-      @media (max-width: 359px) {
-        #bar #hands { flex: 1 1 0; min-width: 5rem; text-overflow: ellipsis; }
-      }
+      /* (under 360 px — no iPhone since the first SE — the 🎹 has no room on the controls' row: the
+         keyboard is off on a phone unless turned on, so the button goes; the view menu narrower) */
+      @media (max-width: 359px) { #bar #keys { display: none; } }
       @media (max-width: 319px) { #bar #hands { min-width: 4rem; } }
       /* The fewer-names chip with ▶ in the row: on a big phone in portrait (421–479 px) it joins the
          song's row without its question (the pager took the place v78's chip row went under: a 4th
@@ -221,8 +234,7 @@
       #stage .nn.nb-f.peek rect { fill: #c45f00; }
       #stage .nn.nb-h.peek rect { stroke: #c45f00; }
       #stage .nn.nb-h.peek text { fill: #c45f00; }
-      /* Peek: the chord's names (with octaves) by it, its keys on a strip over the stage's foot
-         (its head when the chord sits low). Neither takes a touch. */
+      /* Peek: the chord's names (with octaves) by it — over the music, never taking a touch. */
       #bubble {
         position: absolute; left: 0; top: 0; z-index: 3; display: none; pointer-events: none;
         padding: 0.3rem 0.7rem; border-radius: 0.6rem; background: #14142c; color: #fff;
@@ -230,21 +242,35 @@
         letter-spacing: 0.02em; white-space: nowrap; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
       }
       #bubble.on { display: block; }
-      #strip {
-        position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; pointer-events: none;
-        box-sizing: content-box; height: clamp(56px, 9vh, 110px);
+      /* The keyboard (🎹): docked under the music, in its own space — the music is laid out above it
+         (the stage ends where it starts), and it stays: nothing slides, switches sides or goes with a
+         press or ▶. It takes the bottom safe area (the stage's own padding goes). A flex row: what
+         ▶ plays can go at its left end; the keys take the rest. It takes no touch. */
+      #dock {
+        flex: 0 0 auto; display: flex; align-items: stretch; gap: 8px; background: #14142c;
         padding: 6px max(8px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
-        background: #14142c; transform: translateY(calc(100% + 2px)); transition: transform 0.16s ease-out;
       }
-      #strip[data-side="top"] { top: 0; bottom: auto; padding-bottom: 6px; transform: translateY(calc(-100% - 2px)); }
-      #strip.on { transform: none; }
+      #dock[hidden] { display: none; }
+      body[data-keys="on"] #stage { padding-bottom: 0; }
+      #strip { flex: 1 1 auto; min-width: 0; height: clamp(56px, 9vh, 110px); pointer-events: none; }
       #strip svg { display: block; width: 100%; height: 100%; }
-      @media (prefers-reduced-motion: reduce) { #strip { transition: none; } }
+      #keys svg { width: 24px; height: 24px; display: block; margin: auto; }
+      #keys[aria-pressed="true"] { background: rgba(166,79,255,0.28); border-color: #a64fff; }
       /* ▶: what sounds now — heads and names in the peek's orange. */
       #stage g.note.play .notehead use { fill: #d86b00; }
       #stage g.note.play > .nn.nb-f rect { fill: #c45f00; }
       #stage g.note.play > .nn.nb-h rect { stroke: #c45f00; fill: #ffe3c7; }
       #stage g.note.play > .nn.nb-h text { fill: #c45f00; }
+      /* A muted part's notes as the music passes (what ▶ plays, below): lighter — the place, not a
+         sound — and the words under them, so the tune and the words can be followed. */
+      /* (a muted note pressed is sounding: the peek's orange wins) */
+      #stage g.note.hush:not(.peek) .notehead use { fill: #f0a560; }
+      #stage g.note.hush > .nn.nb-f:not(.peek) rect { fill: #ffd8b3; }
+      #stage g.note.hush > .nn.nb-f:not(.peek) text { fill: #a84f00; }
+      #stage g.note.hush > .nn.nb-h:not(.peek) rect { stroke: #f0a560; fill: #fff3e6; }
+      #stage g.note.hush > .nn.nb-h:not(.peek) text { fill: #c0661c; }
+      #stage g.note.play > g.verse text { fill: #c45f00; }
+      #stage g.note.hush > g.verse text { fill: #d27a2c; }
       /* A stretch picked by dragging: a band a system, like a text selection (multiplied: the ink
          stays black, the names readable). */
       #stage .sel { position: absolute; pointer-events: none; background: #d4e2ff; mix-blend-mode: multiply; border-radius: 3px; }
@@ -266,6 +292,31 @@
       #selbar #sel-play[data-icon="stop"] { background: rgba(216,107,0,0.4); }
       #selbar select { padding: 0 0.6rem; background: rgba(255,255,255,0.08); -webkit-appearance: none; appearance: none; text-align: center; font-variant-numeric: tabular-nums; }
       #selbar #sel-clear { font-size: 1rem; color: rgba(255,255,255,0.7); }
+      /* (a narrow screen: the controls take two rows rather than run off it — the chips for ▶ are
+         in them when the keyboard is off) */
+      #selbar { flex-wrap: wrap; justify-content: center; max-width: calc(100% - 20px); border-radius: 26px; }
+      /* What ▶ plays (v80): a chip a part, in its keys' colour (the piano both hands'); pressed =
+         heard, else outlined and struck through. At the keyboard's left end (rows of 44 px as its
+         height holds, then columns), or in the stretch's controls when the keyboard is off. */
+      #hear { display: grid; grid-auto-flow: column; grid-template-rows: repeat(var(--rows, 1), auto); grid-auto-columns: minmax(3.4rem, max-content); gap: 6px; align-content: center; flex: 0 0 auto; }
+      #hear[hidden] { display: none; }
+      #hear > button[data-hand] {
+        --c: #a64fff;
+        font: 600 0.85rem/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: 0.02em;
+        color: #fff; background: var(--c); border: 2px solid var(--c); border-radius: 999px;
+        min-width: 3.4rem; height: 44px; padding: 0 0.75rem; cursor: pointer; touch-action: manipulation;
+        white-space: nowrap; max-width: 8rem; overflow: hidden; text-overflow: ellipsis;
+      }
+      #hear > button[data-hand="voice"] { --c: #0b8f78; }
+      #hear > button[data-hand="lh"] { --c: #4f7cff; }
+      #hear > button[data-hand="part"] { --c: #d6336c; }
+      #hear > button[data-hand="piano"] { border-color: transparent; background: linear-gradient(90deg, #a64fff 50%, #4f7cff 50%) border-box; }
+      #hear > button[data-hand][aria-pressed="false"] { background: transparent; color: rgba(255,255,255,0.55); text-decoration: line-through; }
+      #hear > button[data-hand="piano"][aria-pressed="false"] { background: linear-gradient(#14142c, #14142c) padding-box, linear-gradient(90deg, #a64fff 50%, #4f7cff 50%) border-box; }
+      /* (the last one heard, tapped: it stays on — a shake) */
+      #hear > button.nope { animation: nope 0.28s ease-in-out; }
+      @keyframes nope { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+      @media (prefers-reduced-motion: reduce) { #hear > button.nope { animation: none; } }
       /* The original PDF over the (hidden, still laid out) sheet. (Its descendants too: Verovio
          writes visibility="visible" on some staves, which beats an inherited hidden.) */
       #stage[data-pdf] .page, #stage[data-pdf] .page * { visibility: hidden; }
@@ -288,6 +339,7 @@
         <select id="hands" aria-label="Hands" hidden></select>
         <button id="play" type="button" aria-label="Play" title="Play" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.2v13.6a.8.8 0 0 0 1.2.7l10.6-6.8a.8.8 0 0 0 0-1.4L9.2 4.5A.8.8 0 0 0 8 5.2z" fill="currentColor"/></svg></button>
         <button id="names" type="button" data-level="all" aria-label="Note names: all" title="Note names: all">ABC</button>
+        <button id="keys" type="button" aria-label="Keyboard" title="Keyboard" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.83 12.5V19M15.17 12.5V19" stroke="currentColor" stroke-width="1.4"/><rect x="7.2" y="5.6" width="3.3" height="7.4" rx="0.5" fill="currentColor"/><rect x="13.5" y="5.6" width="3.3" height="7.4" rx="0.5" fill="currentColor"/></svg></button>
         <span class="size">
           <button id="smaller" type="button" aria-label="Smaller" title="Smaller"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg></button>
           <button id="bigger" type="button" aria-label="Larger" title="Larger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg></button>
@@ -301,12 +353,11 @@
         <button id="next" type="button" aria-label="Next page" title="Next page">›</button>
       </span>
       <span class="brk"></span>
-      <span id="version" class="mono">v79</span>
+      <span id="version" class="mono">v80</span>
     </header>
     <main id="stage" data-names="all">
       <p id="msg" hidden></p>
       <div id="bubble"></div>
-      <div id="strip" aria-hidden="true"></div>
       <div id="selbar" hidden>
         <button id="sel-play" type="button" aria-label="Play" title="Play"></button>
         <button id="sel-loop" type="button" aria-label="Loop" title="Loop" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 0 1 13-5.1L19.5 9M19.5 4.5V9H15M19.5 12a7.5 7.5 0 0 1-13 5.1L4.5 15M4.5 19.5V15H9"/></svg></button>
@@ -316,7 +367,11 @@
         <button id="sel-clear" type="button" aria-label="Clear" title="Clear">✕</button>
       </div>
     </main>
-    <script type="module" src="nav.js?v=79"></script>
-    <script type="module" src="play.js?v=79"></script>
+    <div id="dock" hidden>
+      <div id="hear" class="hear" role="group" aria-label="Hear" hidden></div>
+      <div id="strip" aria-hidden="true"></div>
+    </div>
+    <script type="module" src="nav.js?v=80"></script>
+    <script type="module" src="play.js?v=80"></script>
   </body>
 </html>
