@@ -156,7 +156,11 @@ export function barAt(T, q) {
 //   bars: the written measures to play, in order (Sing's measureOf from a bar, or written order);
 //   span: { q0, q1 } — only what starts in [q0, q1), cut at q1 (a stretch picked on the page;
 //     bars then are the written ones it covers);
-//   keep(el): the view plays it; base: quarter notes a minute at 100%.
+//   keep(el): the view plays it; base: quarter notes a minute at 100%;
+//   hear(el): false for a part muted for ▶ (its notes are on the schedule — lit as they pass, so the
+//     words and the tune can be followed — but never struck, and they count neither in a unison nor
+//     in a chord's loudness: muting the voice leaves the piano's copy of the tune struck, at the
+//     level of the keys really struck).
 // Ties join (a tied note sounds once, for its tied length); a jump in the bars (a repeat, an
 // ending, D.S., To Coda) cuts what's held over it — the note after the jump is struck again. A
 // note an overfilled voice runs past its bar's end is cut at the barline. Grace notes come GRACE
@@ -164,10 +168,11 @@ export function barAt(T, q) {
 // before 0 — `pre` s of them, which a player starts that much earlier (a loop's next round: at the
 // end of the round before). A key struck twice at once (the voice and the piano's tune in the full
 // score, two voices on a unison) is struck once, for the longer of the two; both are lit.
-// → { items: [{ id, midi, sec, dur (its own head's time), sound (false: a tie's continuation or a
-//     unison's second note — lit, not struck), hold (sounding length), n (keys struck with it),
-//     k (index in bars), q, grace }], bars: [{ k, mi, sec }], len, pre }
-export function track(T, { bars, span = null, keep, base }) {
+// → { items: [{ id, midi, sec, dur (its own head's time), sound (false: a tie's continuation, a
+//     unison's second note or a muted note — lit, not struck), hold (sounding length), n (keys
+//     struck with it), k (index in bars), q, grace, muted (hear said no: lit, not heard) }],
+//     bars: [{ k, mi, sec }], len, pre }
+export function track(T, { bars, span = null, keep, base, hear = null }) {
   const W = clock(T, base);
   const byBar = new Map();
   for (const e of T.els) {
@@ -196,8 +201,9 @@ export function track(T, { bars, span = null, keep, base }) {
     const graceRank = graceRanks(list);
     for (const e of list) {
       const at = start + (W(e.q) - b0);
+      const muted = !!hear && !hear(e);
       if (e.grace) {
-        items.push({ id: e.id, midi: e.midi, sec: at - GRACE * graceRank.get(e), dur: GRACE, sound: true, hold: GRACE, k, q: e.q, grace: true });
+        items.push({ id: e.id, midi: e.midi, sec: at - GRACE * graceRank.get(e), dur: GRACE, sound: !muted, hold: muted ? 0 : GRACE, k, q: e.q, grace: true, ...(muted ? { muted } : {}) });
         continue;
       }
       if (W(e.q) - b0 >= end - 1e-9) continue; // (an overfilled voice's note starting past the barline)
@@ -205,18 +211,22 @@ export function track(T, { bars, span = null, keep, base }) {
       const dur = Math.max(0.01, stop - at);
       const key = e.part + "|" + e.midi;
       const prev = e.tieStop ? open.get(key) : null;
-      if (prev && Math.abs(prev.sec + prev.hold - at) < 0.002) {
-        prev.hold = stop - prev.sec;
-        items.push({ id: e.id, midi: e.midi, sec: at, dur, sound: false, hold: 0, k, q: e.q });
+      // (a muted note's ties join as a heard one's: its length is kept in `len`, its continuation is
+      // muted with it)
+      if (prev && Math.abs(prev.sec + (prev.muted ? prev.len : prev.hold) - at) < 0.002) {
+        if (prev.muted) prev.len = stop - prev.sec; else prev.hold = stop - prev.sec;
+        items.push({ id: e.id, midi: e.midi, sec: at, dur, sound: false, hold: 0, k, q: e.q, ...(prev.muted ? { muted: true } : {}) });
         if (!e.tieStart) open.delete(key);
         continue;
       }
-      const it = { id: e.id, midi: e.midi, sec: at, dur, sound: true, hold: dur, k, q: e.q };
+      const it = muted ? { id: e.id, midi: e.midi, sec: at, dur, sound: false, hold: 0, k, q: e.q, muted, len: dur }
+        : { id: e.id, midi: e.midi, sec: at, dur, sound: true, hold: dur, k, q: e.q };
       items.push(it);
       if (e.tieStart) open.set(key, it); else open.delete(key);
     }
     sec = start + end;
   });
+  for (const it of items) delete it.len;
   items.sort((a, b) => a.sec - b.sec);
   // (a key struck twice at once: one strike, the longer — two copies of one sample at one instant
   // add up in phase, +6 dB, and the full score's tune went past full scale; then how many keys

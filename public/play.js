@@ -15,7 +15,7 @@ import { spaceChanged } from "./nav.js?v=79";
 import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=79";
 import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=79";
 import { decorate, fullName, labelOf } from "./playnames.js?v=79";
-import { loadPiano, holdPiano, playPiano, keepAlive, pianoBus } from "./piano.js?v=79";
+import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=79";
 import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=79";
 import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=79";
 import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=79";
@@ -24,15 +24,17 @@ const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
 const songSel = $("song"), samplesEl = $("samples"), mineEl = $("mine"), handsSel = $("hands");
 const namesBtn = $("names"), smallerBtn = $("smaller"), biggerBtn = $("bigger"), prevBtn = $("prev"), nextBtn = $("next");
-const pdfBtn = $("pdf"), offerEl = $("offer"), stripEl = $("strip"), bubbleEl = $("bubble");
+const pdfBtn = $("pdf"), offerEl = $("offer"), stripEl = $("strip"), bubbleEl = $("bubble"), keysBtn = $("keys"), dockEl = $("dock");
 const playBtn = $("play"), selbar = $("selbar"), selPlayBtn = $("sel-play"), selLoopBtn = $("sel-loop"), speedSel = $("speed"), selClearBtn = $("sel-clear");
+const hearEl = $("hear");
 
 const K = {
-  play: "resonate.play",        // { songId: { names, view, at, pdfPage, speed, days } } — the account's (space.js DATA_KEYS)
+  play: "resonate.play",        // { songId: { names, view, at, pdfPage, speed, hear, days } } — the account's (space.js DATA_KEYS)
   zoom: "resonate.play.zoom",   // − / +: steps from the default ("+1" … "+8", "-1" … "-8"; none: the default) — this device's (the piano views)
   zoomScore: "resonate.play.zoom.score", // the same for the full score: a size picked for the piano
                                 // doesn't change the score, nor the other way round — this device's
   names: "resonate.play.names", // the level a song opened for the first time starts at — this device's
+  keys: "resonate.play.keys",   // the keyboard under the music (🎹): "on" | "off" (none: on a tablet or a desktop, off on a phone) — this device's
   gen: "resonate.play.gen",     // the songs' database generation seen at the last visit — this device's
   song: "resonate.sing.song",   // the song open, shared with Sing
   timing: "resonate.sing.timing", // Sing's: { songId: { bpm (a tempo typed or tapped for the song), … } } — read only
@@ -68,7 +70,9 @@ const MIN_LETTER = 8;
 // one more staff need ~85 staff spaces of the short side less the bar: about 0.9 of it — Piano Man's
 // 4-staff score two a page at 8.85 on an 11" Air, 7.51 on a mini; v79's 0.75 of the landscape size
 // stopped at 8.5 on a mini: one system a page, 36 pages), of the default on a desktop; else one
-// system a page.
+// system a page. The keyboard (🎹) takes part of that height (~10% in landscape): with it on, the
+// floor shrinks with the stage — the music gives up a little size, not its second system (Piano
+// Man's Full score went to one system a page, 41–42 pages, on every iPad with the floor kept).
 const FIT_STEP = 0.93, FIT_FLOOR = { tablet: 0.9, desktop: 0.75 };
 // The largest step ≤ x (the smallest step when none is), of a step list.
 const stepDown = (x, list) => [...list].reverse().find((s) => s <= x + 0.01) ?? list[0];
@@ -167,6 +171,7 @@ const S = {
   sel: null,        // the stretch picked: { q0, q1 (its last onset), end (where it stops) } in written q
   speed: 1,         // ▶'s speed (resonate.play[id].speed)
   showGen: 0,       // bumped by every drawing of the shown pages
+  hear: null,       // { P, view, groups }: what ▶ can play in the view, a chip each (hearGroups)
 };
 useSize();
 let tk = null;            // the Verovio toolkit (one per page load)
@@ -271,6 +276,7 @@ function fail(kind, err) {
   stopPlay();
   S.ready = false;
   S.failed = kind;
+  renderHear();
   clearPages();
   setBusy(false);
   pgEl.textContent = "";
@@ -296,6 +302,7 @@ async function open(id) {
   S.xml = "";
   S.T = S.Tid = S.qs = S.sel = null;
   S.sing = undefined;
+  renderHear();
   placeSelbar();
   S.st = readPlay()[id] || {};
   if (!S.st || typeof S.st !== "object") S.st = {};
@@ -344,6 +351,7 @@ async function open(id) {
   if (gen !== S.gen || !S.ready) return;
   S.t.open = ms(t0);
   songShown();
+  if (!ac) idle(() => { if (!ac) warmAudio(); }); // (the piano ready for the first press)
   // (what ▶ needs, read while the page waits for a hand: the timeline, Sing's order)
   idle(() => { if (S.song === id && S.P) { songTime(); songSing(); } });
 }
@@ -432,10 +440,16 @@ const scaleOf = (sp) => Math.max(5, Math.round(sp / 0.18)); // (Verovio's scale:
 // single: no spread (a view that fits on one page is laid out at the stage's full width).
 // → { W, H, spread, pw (page width), cap, sp, scale, mode ("fit" | "fitted" | "set" | the phone's
 //   "two" / "one"), base (the default before the fit), auto (stepped: the default's size) }
-function measure(single = false) {
+// The stage's inner size (px, floored).
+function stageSize() {
   const cs = getComputedStyle(stage);
-  const W = Math.floor(stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
-  const H = Math.floor(stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom));
+  return {
+    W: Math.floor(stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)),
+    H: Math.floor(stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)),
+  };
+}
+function measure(single = false) {
+  const { W, H } = stageSize();
   if (W < 60 || H < 60 || !S.P) return null;
   const plan = S.P.views[S.view];
   const cap = Math.min(W / 40, H / tallest(plan));
@@ -508,7 +522,8 @@ function fit(L) {
   const need = twoNeed(S.P.views[S.view]);
   if (L.H / L.sp >= 1.3 * need) return L;
   const t = performance.now();
-  const floor = device() === "tablet" ? Math.min(L.base, FIT_FLOOR.tablet * Math.min(screen.width, screen.height) / PAPER) : FIT_FLOOR.desktop * L.base;
+  const kb = dockEl.hidden ? 0 : dockEl.offsetHeight, room = L.H / (L.H + kb); // (the keyboard's share of the height)
+  const floor = room * (device() === "tablet" ? Math.min(L.base, FIT_FLOOR.tablet * Math.min(screen.width, screen.height) / PAPER) : FIT_FLOOR.desktop * L.base);
   let sp = Math.max(floor, Math.min(L.sp, L.H / need));
   for (let i = 0; i < 8; i++) {
     if (scaleOf(sp) !== L.scale) {
@@ -600,6 +615,9 @@ function placed(L) {
   S.failed = null;
   handsSel.disabled = pdf.on;
   show();
+  renderHear(); // (the view's chips for ▶)
+  KB.w = 0; // (measured again after the chips: the keys take what they leave)
+  drawKeys(); // (the keyboard's range: the view's)
   holdWake();
 }
 
@@ -765,6 +783,7 @@ function sizeButtons() {
   smallerBtn.disabled = !S.ready || pdf.on || nextStep(-1) == null;
   biggerBtn.disabled = !S.ready || pdf.on || nextStep(1) == null;
   namesBtn.disabled = pdf.on;
+  keysBtn.disabled = pdf.on || !keysRoom();
   playButtons();
 }
 function resize(dir) {
@@ -794,6 +813,7 @@ handsSel.addEventListener("change", async () => {
   clearPeek();
   stopPlay(); // (the stretch picked stays: it's a stretch of the song, drawn again in this view)
   S.ready = false;
+  renderHear();
   S.failed = null; // (an earlier view's failure: this one may draw)
   showMsg("");
   setBusy(true);
@@ -807,7 +827,7 @@ handsSel.addEventListener("change", async () => {
 // (the bar's and the stretch's controls over the music)
 const bar = $("bar");
 let tappedSel = null;
-for (const box of [bar, selbar]) {
+for (const box of [bar, selbar, dockEl]) {
   box.addEventListener("change", (e) => { if (e.target.matches?.("select")) e.target.blur(); });
   box.addEventListener("click", (e) => e.target.closest?.("button")?.blur());
   // A menu closed with no new pick (a tap outside, the same song, Escape) fires no change and keeps
@@ -840,26 +860,38 @@ window.addEventListener("keydown", (e) => {
   turn(d);
 });
 
-// A press on the music: on a note (nearHead) it peeks. Moving more than MOVE px — at any time in
-// the press — makes it a drag, which cuts a peek's sound and picks a stretch of the music: from
-// the onset nearest the press to the one nearest the finger, either way, across systems and the
-// two pages of a spread (pickSel). A tap on paper (no note) lets go of the stretch, unless
-// something is playing; a tap on a note peeks and keeps it. Nothing on the PDF (📄): a tap there
-// does nothing. While a finger is on the music ▶'s page turn waits for the lift (afterPress).
+// A press on the music: on a note (nearHead) it strikes — every finger its own (two fingers, two
+// strikes; a trill sounds every note). Moving the first finger (the primary pointer) more than MOVE
+// px — at any time in the press — makes it a drag, which cuts its strike and picks a stretch of the
+// music: from the onset nearest the press to the one nearest the finger, either way, across systems
+// and the two pages of a spread (pickSel). Another finger never drags: it holds its notes. A tap on
+// paper (no note) lets go of the stretch, unless something is playing; a tap on a note strikes and
+// keeps it. Nothing on the PDF (📄): a tap there does nothing. While a finger is on the music ▶'s
+// page turn waits for the last lift (afterPress).
 const MOVE = 12;
-let gest = null; // { id, x, y, t, hit, peek, drag, anchor (the onset the press picked), fx, fy, raf }
+// pointerId → { id, primary, x, y, t, hit, peek, drag, anchor (the onset the press picked), fx, fy, raf }
+const gests = new Map();
 stage.addEventListener("pointerdown", (e) => {
   if (e.target.closest?.("#selbar")) return; // (the stretch's own controls)
-  document.activeElement?.closest?.("#bar select, #selbar select")?.blur(); // (a tap on the music lets go of a menu)
-  if (!e.isPrimary || (e.pointerType === "mouse" && e.button !== 0) || pdf.on) return;
+  if ((e.pointerType === "mouse" && e.button !== 0) || pdf.on) { letGoMenu(); return; }
+  // (sound before sight: the note under the finger and its strike before any change on screen)
+  const t0 = performance.now();
   const hit = S.ready ? nearHead(e.clientX, e.clientY, e.pointerType) : null;
-  gest = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, hit, peek: null, drag: false, anchor: null, fx: 0, fy: 0, raf: 0 };
-  if (hit) gest.peek = peekStart(hit, e);
+  const hitMs = performance.now() - t0;
+  if (!e.isPrimary && !hit) { letGoMenu(); return; } // (another finger on paper: nothing)
+  const old = gests.get(e.pointerId);
+  if (old) { gests.delete(e.pointerId); if (old.peek) peekEnd(old.peek); } // (a lift never heard)
+  const g = { id: e.pointerId, primary: e.isPrimary, x: e.clientX, y: e.clientY, t: e.timeStamp, hit, peek: null, drag: false, anchor: null, fx: 0, fy: 0, raf: 0 };
+  gests.set(e.pointerId, g);
+  if (hit) g.peek = peekStart(hit, e, hitMs);
+  letGoMenu();
   try { stage.setPointerCapture(e.pointerId); } catch {}
 });
+// (a tap on the music lets go of a menu)
+const letGoMenu = () => document.activeElement?.closest?.("#bar select, #selbar select")?.blur();
 stage.addEventListener("pointermove", (e) => {
-  const g = gest;
-  if (!g || e.pointerId !== g.id) return;
+  const g = gests.get(e.pointerId);
+  if (!g || !g.primary) return;
   if (!g.drag) {
     if (Math.hypot(e.clientX - g.x, e.clientY - g.y) <= MOVE) return;
     g.drag = true;
@@ -871,22 +903,22 @@ stage.addEventListener("pointermove", (e) => {
   }
   if (!g.anchor) return;
   g.fx = e.clientX; g.fy = e.clientY;
-  if (!g.raf) g.raf = requestAnimationFrame(() => { g.raf = 0; if (g === gest || !gest) pickSel(g); });
+  if (!g.raf) g.raf = requestAnimationFrame(() => { g.raf = 0; if (gests.get(g.id) === g) pickSel(g); });
 });
 stage.addEventListener("pointerup", (e) => {
-  const g = gest;
-  if (!g || e.pointerId !== g.id) return;
-  gest = null;
+  const g = gests.get(e.pointerId);
+  if (!g) return;
+  gests.delete(e.pointerId);
   if (g.drag) {
     if (g.anchor) { cancelAnimationFrame(g.raf); g.fx = e.clientX; g.fy = e.clientY; pickSel(g); }
-  } else if (g.peek) peekEnd(g.peek, e);
-  else if (!g.hit && S.ready && !pdf.on && S.sel && PB.state === "idle" && !PB.starting) clearSel();
+  } else if (g.peek) peekEnd(g.peek);
+  else if (g.primary && !g.hit && S.ready && !pdf.on && S.sel && PB.state === "idle" && !PB.starting) clearSel();
   afterPress(g);
 });
 stage.addEventListener("pointercancel", (e) => {
-  const g = gest;
-  if (!g || e.pointerId !== g.id) return;
-  gest = null;
+  const g = gests.get(e.pointerId);
+  if (!g) return;
+  gests.delete(e.pointerId);
   cancelAnimationFrame(g.raf);
   if (g.peek) peekCancel(g.peek);
   afterPress(g);
@@ -894,27 +926,47 @@ stage.addEventListener("pointercancel", (e) => {
 stage.addEventListener("contextmenu", (e) => e.preventDefault());
 
 // ---------------------------------------------------------------------------
-// Peek: press a note — at any level, Off included — to see its chord's names (with octaves),
-// hear it until the finger lifts and see its keys on a keyboard strip. Moving off quickly
-// (> 12 px within 200 ms) cancels it and the gesture is a drag.
+// Peek: press a note — at any level, Off included — to hear its chord (everything struck on that
+// staff then) until the finger lifts, see its names (with octaves) and its keys lit on the
+// keyboard (🎹). Each finger's press is a strike of its own: a second finger doesn't cut the first,
+// the same key struck again damps the old note as the new one starts (a clean restrike, no doubled
+// sample).
 //
-// Sound follows the Sing page's chip keys: the session is set to "playback" in the press before
-// a context is made; a context iOS closed or left "interrupted" (or whose resume in a tap never
-// settled) is replaced in a touch, which can then start it. iOS only lets audio start at a
-// touch's end, so the first tap anywhere resumes the context and loads the piano (leaving the
-// session alone: other apps' music isn't stopped before a note plays); a press that couldn't
-// sound at once plays its chord for LIFT_PLAY at the lift, and one that still can't start
-// LATE ms after the lift is dropped rather than played late.
+// Sound before sight (v80): when the context runs and the piano is decoded for it (pianoNow), the
+// press strikes in its own pointerdown — holdPiano at the context's current time, before anything
+// on screen changes; the colours, the names and the keys follow on the next frame (drawSoon). (v79
+// coloured the heads, measured the stage, the chord, the strip and the bubble — forced style and
+// layout on a page-sized SVG — then awaited the piano, then started 10 ms ahead.)
+//
+// Sound follows the Sing page's chip keys: the session is set to "playback" in the press (only when
+// it says something else); a context iOS closed or left "interrupted" (or whose resume in a tap
+// never settled) is replaced in a touch, which can then start it. The context is made, and the
+// piano decoded on it, as soon as the first song is shown (warmAudio; decodeAudioData works on a
+// suspended context, and making one changes nothing until it starts) — so the first press after
+// the first tap has it ready. iOS only lets audio start at a touch's end, so the first tap anywhere
+// resumes the context (leaving the session alone: other apps' music isn't stopped before a note
+// plays); a press that couldn't sound at once plays its chord for LIFT_PLAY at the lift, and one
+// that still can't start LATE ms after the lift is dropped rather than played late.
+//
+// From the first strike or ▶ on, an inaudible source keeps the output awake (keepAwake) — WebKit
+// otherwise flips the page in and out of "playing audio" at every silent gap, and each flip goes
+// round the page, the media session and the UI process just as the next note should start.
 
 const MIN_PRESS = 0.25;  // s: a quick tap still sounds this long
 const LIFT_PLAY = 0.8;   // s: a press that could only sound at the lift
 const LATE = 1500;       // ms
 const MAX_HOLD = 60000;  // ms: a release that never came lets go by itself
-const HIDE_AFTER = 2000; // ms after the lift: the names, the strip and the colour go
+const HIDE_AFTER = 2000; // ms after the lift: the names, the lit keys and the colour go
 const CUT = 0.01;        // s: time constant when a press becomes a drag
+const RESTRIKE = 0.015;  // s: time constant of a key's old note when it's struck again
+// The output kept awake this long after the last press, lift or ▶ (see keepAwake): two minutes
+// covers playing a passage on the real keys between two looks at a note; past it the next press
+// pays the wake-up once. Its cost is the audio route staying on — small beside the screen, which
+// the wake lock keeps on anyway — and it stops at once when the page is hidden or left.
+const AWAKE = 120000;    // ms
 // (the voice: the full score's sung part — its own colour, clear of both hands and the orange of
-// the pressed note)
-const HAND = { rh: "#a64fff", lh: "#4f7cff", voice: "#0b8f78" };
+// the pressed note; part: another part that plays — Piano Man's accordion cue staff, a guitar)
+const HAND = { rh: "#a64fff", lh: "#4f7cff", voice: "#0b8f78", part: "#d6336c" };
 const WHITE = new Set([0, 2, 4, 5, 7, 9, 11]);
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
 
@@ -932,9 +984,9 @@ function freshCtx() {
 }
 // how: "press" (a touch-down: iOS starts audio only at the lift, so a long hold isn't stuck) or
 // "tap" (a lift: a resume still pending after 1.5 s marks the context stuck — the next touch
-// starts over with a new one).
+// starts over with a new one). The session is set only when it isn't "playback" already.
 function getCtx(how) {
-  setSession("playback");
+  try { if (navigator.audioSession && navigator.audioSession.type !== "playback") setSession("playback"); } catch {}
   const a = freshCtx();
   if (a.state !== "running") {
     Promise.race([a.resume().catch(() => {}), sleep(1500)]).then(() => {
@@ -943,6 +995,15 @@ function getCtx(how) {
   }
   return a;
 }
+// The context and the piano on it, ready before the first press (the session left alone).
+function warmAudio() {
+  try {
+    const a = freshCtx();
+    pianoBus(a, BUS);
+    primeHold(a);
+    loadPiano(a).catch(() => {});
+  } catch (err) { console.info("play: audio", err?.message); }
+}
 const UNLOCK = ["pointerup", "click", "keydown"];
 function unlockPlay(e) {
   if (!e.isTrusted) return;
@@ -950,19 +1011,62 @@ function unlockPlay(e) {
   const a = freshCtx();
   if (a.state !== "running") a.resume().catch(() => {});
   loadPiano(a).catch(() => {});
+  try { pianoBus(a, BUS); primeHold(a); } catch {} // (made now, not in the first press)
 }
 for (const t of UNLOCK) document.addEventListener(t, unlockPlay, true);
+// A context's change of state, or ms — whichever comes first.
+const stateOrSleep = (a, ms) => new Promise((resolve) => {
+  const done = () => { clearTimeout(t); a?.removeEventListener?.("statechange", done); resolve(); };
+  const t = setTimeout(done, ms);
+  a?.addEventListener?.("statechange", done);
+});
 
-// The peek on screen (or fading out): { items, names, midis, lit, held, lift, dead, hidden,
-// a (its context), notes (holdPiano handles), t0, end (s: when the sound was let go) }.
-let peek = null;
-const peekLog = []; // what sounded: { midis, how: "hold" | "lift" } (tests)
+// One inaudible source (piano.js keepAlive) on the context in use, from the first strike or ▶ until
+// AWAKE ms after the last of them (or a lift) with nothing held or playing; never while hidden.
+const awake = { a: null, src: null, timer: 0, at: 0 };
+function keepAwake(a) {
+  if (!a || a.state === "closed" || document.visibilityState !== "visible") return;
+  if (awake.a !== a || !awake.src) {
+    sleepAudio();
+    const nodes = [];
+    try { keepAlive(a, nodes); } catch {}
+    awake.a = a;
+    awake.src = nodes[0] || null;
+  }
+  awake.at = performance.now();
+  clearTimeout(awake.timer);
+  awake.timer = setTimeout(quiet, AWAKE);
+}
+function quiet() {
+  awake.timer = 0;
+  if (PB.state !== "idle" || PB.starting || peeks.some((pk) => pk.held)) { awake.timer = setTimeout(quiet, AWAKE); return; }
+  sleepAudio();
+}
+function sleepAudio() {
+  clearTimeout(awake.timer);
+  awake.timer = 0;
+  try { awake.src?.stop(); } catch {}
+  awake.src = awake.a = null;
+}
+
+// The strikes on screen — held (a finger down) or fading out after the lift — oldest first:
+// { pid (the pointer), items, names, midis, lit (midi → { hand, label }), held, lift, dead, hidden,
+//   a (its context), notes (midi → holdPiano handle), t0, end (s: when the sound was let go), cap,
+//   hide, log }.
+let peeks = [];
+const peekLog = []; // what sounded: { midis, how: "hold" | "lift", cut, lag, ahead, hit, ... } (tests)
+// The key's newest note (midi → { pk, h }): struck again, the old one is damped as the new starts.
+let voices = new Map(), voicesOf = null;
 
 // (Melody is the right hand; a hymn's treble part is, its bass part the left. In the full score
-// the sung part is the voice, and another part's staff is a hand by where it's read from.)
+// the sung part is the voice, the piano's staves its hands and another part is a part of its own
+// (v80: its own colour, as its chip — Piano Man's accordion cue staff was lit as the right hand).
+// A view with chips for ▶ (hearGroups) colours each key as its chip.)
 function handOf(f) {
   const plan = S.P?.views[S.view], both = S.P?.views.both;
   if (!plan || plan.kind === "melody" || !both) return "rh";
+  const g = groupOf(f.part, Number(f.staff) || 1);
+  if (g) return g.hand === "piano" ? (plan.low.includes(f.part + "|" + f.staff) ? "lh" : "rh") : g.hand;
   if (plan.kind === "score") {
     if (plan.sung?.includes(f.part)) return "voice";
     return plan.low.includes(f.part + "|" + f.staff) ? "lh" : "rh";
@@ -972,9 +1076,9 @@ function handOf(f) {
   return Number(f.staff) >= 2 ? "lh" : "rh";
 }
 
-function peekStart(hit, e) {
+// A press on a note (hit: nearHead's; e: its pointerdown; hitMs: nearHead's time) → its strike.
+function peekStart(hit, e, hitMs = 0) {
   if (pdf.on || !hit) return null;
-  clearPeek();
   const it0 = hit.item, f0 = it0.fact;
   const chord = it0.g.closest("g.chord") || it0.g;
   // Everything struck on that staff at that moment: the chord, and the other voices' notes starting
@@ -986,50 +1090,87 @@ function peekStart(hit, e) {
   const items = S.items.filter((it) => it.w && (it.g === chord || chord.contains(it.g) || together(it)))
     .sort((a, b) => a.fact.midi - b.fact.midi);
   if (!items.length) return null;
-  const names = [...new Set(items.map((it) => fullName(it.fact)))];
   const lit = new Map();
   for (const it of items) if (!lit.has(it.fact.midi)) lit.set(it.fact.midi, { hand: handOf(it.fact), label: labelOf(it.fact) });
-  const pk = { items, names, midis: [...lit.keys()], lit, held: true, lift: 0, dead: false, hidden: false, a: null, notes: null, t0: 0, end: Infinity, cap: 0, hide: 0 };
-  peek = pk;
-  drawPeek(pk);
+  const pk = { pid: e.pointerId, items, names: null, midis: [...lit.keys()], lit, held: true, lift: 0, dead: false, hidden: false, a: null, notes: null, t0: 0, end: Infinity, cap: 0, hide: 0, log: null };
+  // the sound: the session, a context — struck now when it runs with the piano in, else as soon as
+  // it can (iOS: at the lift)
+  const a = getCtx("press");
+  const piano = a.state === "running" ? pianoNow(a) : null;
+  if (piano) strike(pk, a, piano, e.timeStamp, hitMs);
+  else { loadPiano(a).catch(() => {}); sound(pk, e.timeStamp, hitMs); }
+  // then the screen: strikes already let go give way to this one (their sound rings on)
+  pk.names = [...new Set(items.map((it) => fullName(it.fact)))];
+  for (const o of peeks) if (!o.held) hidePeek(o, false);
+  peeks.push(pk);
+  drawSoon();
   activity("peek");
-  // the sound: the session first, then a context (loading the piano works before audio may start)
-  loadPiano(getCtx("press")).catch(() => {});
   pk.cap = setTimeout(() => peekEnd(pk), MAX_HOLD);
-  sound(pk);
   return pk;
 }
 
 // Start the chord once a context runs and the piano is in: held until the lift if the finger is
 // still down, else for LIFT_PLAY — unless the lift was LATE ms ago.
-async function sound(pk) {
+async function sound(pk, ts, hitMs) {
   const late = () => !pk.held && performance.now() - pk.lift > LATE;
   for (;;) {
     if (pk.dead || late()) return;
     const a = ac;
     if (a && a.state === "running") {
-      let piano;
-      try { piano = await loadPiano(a); } catch (err) { console.warn("piano", err); return; }
-      if (pk.dead || late()) return;
-      if (a !== ac || a.state !== "running") continue; // (replaced meanwhile)
-      const n = pk.midis.length, level = n === 1 ? 1.4 : Math.min(1, 4 / n); // (as Sing's keys; a big chord doesn't clip)
-      pk.a = a;
-      pk.t0 = a.currentTime + 0.01;
-      pk.notes = pk.midis.map((m) => holdPiano(a, piano, pk.t0, m, level, { sustain: pk.held }));
-      peekLog.push((pk.log = { midis: pk.midis, how: pk.held ? "hold" : "lift", cut: false }));
-      if (peekLog.length > 20) peekLog.shift();
-      if (!pk.held) letGo(pk, pk.t0 + LIFT_PLAY);
+      let piano = pianoNow(a);
+      if (!piano) {
+        try { piano = await loadPiano(a); } catch (err) { console.warn("piano", err); return; }
+        if (pk.dead || late()) return;
+        if (a !== ac || a.state !== "running") continue; // (replaced meanwhile)
+      }
+      strike(pk, a, piano, ts, hitMs);
       return;
     }
-    await sleep(30);
+    await stateOrSleep(a, 30);
   }
 }
+// The strike itself: its keys at a.currentTime (as soon as the audio can), into the bus ▶ uses (one
+// soft limiter for every finger and ▶: two hands' chords don't clip) at the level they had going
+// straight out (×1/BUS); a key another strike still sounds is damped as this one starts.
+function strike(pk, a, piano, ts, hitMs) {
+  const n = pk.midis.length, lvl = (n === 1 ? 1.4 : Math.min(1, 4 / n)) / BUS; // (as Sing's keys; a big chord doesn't clip)
+  const bus = pianoBus(a, BUS);
+  pk.a = a;
+  pk.t0 = a.currentTime;
+  const t = performance.now();
+  pk.notes = new Map(pk.midis.map((m) => [m, holdPiano(a, piano, pk.t0, m, lvl, { sustain: pk.held, dest: bus })]));
+  if (voicesOf !== a) { voices = new Map(); voicesOf = a; }
+  // (keys whose note is long over: forgotten)
+  for (const [m, v] of voices) if (!v.pk.held && v.pk.end < pk.t0 - 5) voices.delete(m);
+  const again = [];
+  for (const [m, h] of pk.notes) {
+    const v = voices.get(m);
+    if (v && v.pk !== pk && !v.pk.dead && v.pk.end > pk.t0) { v.h.release(pk.t0, RESTRIKE); again.push(m); }
+    voices.set(m, { pk, h });
+  }
+  pk.log = { midis: pk.midis, how: pk.held ? "hold" : "lift", cut: false, pid: pk.pid, lag: Math.round((t - ts) * 10) / 10, ahead: Math.round((pk.t0 - a.currentTime) * 1e4) / 1e4, hit: Math.round(hitMs * 100) / 100, again, at: Math.round(t) };
+  peekLog.push(pk.log);
+  if (peekLog.length > 40) peekLog.shift();
+  keepAwake(a);
+  if (!pk.held) letGo(pk, pk.t0 + LIFT_PLAY);
+}
+// Let a strike's keys go at `at` — except a key another finger still holds: the note sounding on it
+// (this strike's, the newest) becomes that finger's and goes at its lift, as a real key sounds until
+// the last finger on it lets go. (v80's first build released it: a second finger tapping a key the
+// first held — the same chord again, the voice's note under a held piano chord — silenced it 0.25 s
+// after its lift with the first finger still down.)
 function letGo(pk, at, tc) {
   if (!pk.notes || at >= pk.end) return;
-  for (const n of pk.notes) n.release(at, tc);
+  for (const [m, h] of pk.notes) {
+    const v = voices.get(m), z = v && v.h === h && v.pk === pk ? holderOf(m, pk) : null;
+    if (z) { voices.set(m, { pk: z, h }); z.notes.set(m, h); continue; }
+    h.release(at, tc);
+  }
   pk.end = Math.max(at, pk.a.currentTime);
   if (pk.log) pk.log.cut = tc === CUT;
 }
+// Another strike still held on key m (its finger down, its sound started on the same context).
+const holderOf = (m, pk) => peeks.findLast((o) => o !== pk && o.held && !o.dead && o.notes && o.a === pk.a && o.midis.includes(m)) || null;
 
 // The finger lifted (or MAX_HOLD passed).
 function peekEnd(pk) {
@@ -1039,81 +1180,187 @@ function peekEnd(pk) {
   clearTimeout(pk.cap);
   // (a touch's end is where iOS lets audio start: resume here if the press couldn't)
   if (!ac || ac.state !== "running") getCtx("tap");
-  if (pk.notes) letGo(pk, Math.max(pk.a.currentTime, pk.t0 + MIN_PRESS));
+  if (pk.notes) { letGo(pk, Math.max(pk.a.currentTime, pk.t0 + MIN_PRESS)); keepAwake(pk.a); }
   pk.hide = setTimeout(() => hidePeek(pk), HIDE_AFTER);
 }
-// The press moved off quickly: it's a drag — cut the sound, hide at once.
+// The press moved off: it's a drag — cut the sound, hide at once.
 function peekCancel(pk) {
   if (!pk || pk.dead) return;
   pk.dead = true;
   clearTimeout(pk.cap);
-  clearTimeout(pk.hide);
   if (pk.notes) letGo(pk, pk.a.currentTime, CUT);
   hidePeek(pk);
-  if (peek === pk) peek = null;
 }
-// Any page turn, a new layout, another song, the page hidden: let go and hide.
+// Any page turn, a new layout, another song, the page hidden: let every strike go and hide.
 function clearPeek() {
-  const pk = peek;
-  if (!pk) return;
-  peek = null;
-  pk.dead = true;
-  clearTimeout(pk.cap);
+  if (!peeks.length) return;
+  const all = peeks;
+  peeks = [];
+  for (const pk of all) {
+    pk.dead = true;
+    clearTimeout(pk.cap);
+    if (pk.notes) letGo(pk, pk.a.currentTime);
+    hidePeek(pk, false);
+  }
+  drawPeeks();
+}
+// Off the screen (its sound goes on until let go). draw: now (else the caller draws).
+function hidePeek(pk, draw = true) {
+  if (pk.hidden) return;
+  pk.hidden = true;
   clearTimeout(pk.hide);
-  if (pk.notes) letGo(pk, pk.a.currentTime);
-  hidePeek(pk);
+  peeks = peeks.filter((x) => x !== pk);
+  if (draw) drawPeeks();
+  // (off the screen for good: its heads aren't kept — `voices` keeps a strike until its keys are
+  // struck again, and with its items every page pressed on stayed in memory, a detached SVG each)
+  pk.items = [];
+}
+const peekShown = () => peeks.length > 0;
+
+// The keys of every strike on screen (midi → { hand, label }; the newest strike's on a shared key) —
+// what the keyboard lights.
+function peekKeys() {
+  const keys = new Map();
+  for (const pk of peeks) for (const [m, L] of pk.lit) keys.set(m, L);
+  return keys;
 }
 
-function drawPeek(pk) {
-  for (const it of pk.items) {
-    it.g.classList.add("peek");
-    it.badge?.classList.add("peek");
+// What's on screen follows the strikes on the next frame (or at once: drawPeeks).
+let drawRaf = 0;
+function drawSoon() {
+  if (!drawRaf) drawRaf = requestAnimationFrame(() => { drawRaf = 0; drawPeeks(); });
+}
+let peekEls = new Set(); // the heads and badges coloured
+function drawPeeks() {
+  if (drawRaf) { cancelAnimationFrame(drawRaf); drawRaf = 0; }
+  const t0 = performance.now();
+  const want = new Set();
+  for (const pk of peeks) for (const it of pk.items) { want.add(it.g); if (it.badge) want.add(it.badge); }
+  for (const el of peekEls) if (!want.has(el)) el.classList.remove("peek");
+  for (const el of want) if (!peekEls.has(el)) el.classList.add("peek");
+  peekEls = want;
+  drawKeys(); // (the keyboard: every strike's keys, with what ▶ sounds)
+  const top = peeks.at(-1);
+  if (!top) {
+    bubbleEl.classList.remove("on");
+    placeSelbar();
+    return;
   }
   const st = stage.getBoundingClientRect();
-  let top = Infinity, bottom = -Infinity, cx = 0;
-  for (const it of pk.items) {
+  let ctop = Infinity, cbottom = -Infinity, cx = 0;
+  for (const it of top.items) {
     const b = it.head.getBoundingClientRect();
-    top = Math.min(top, b.top);
-    bottom = Math.max(bottom, b.bottom);
+    ctop = Math.min(ctop, b.top);
+    cbottom = Math.max(cbottom, b.bottom);
     cx += b.left + b.width / 2;
   }
-  cx /= pk.items.length;
-  // The strip over the stage's foot — or its head when the chord sits low.
-  const sh = stripEl.offsetHeight;
-  const side = bottom > st.bottom - sh - 12 && top - st.top > sh + 12 ? "top" : "bottom";
-  stripEl.dataset.side = side;
-  drawStrip(pk.lit);
-  stripEl.classList.add("on");
-  // The names just above the chord (below it when there's no room), clear of the strip.
-  bubbleEl.textContent = pk.names.join(" ");
+  cx /= top.items.length || 1;
+  // The newest strike's names just above its chord (below it when there's no room), on the music
+  // (the keyboard is under the stage: never in the way).
+  bubbleEl.textContent = top.names.join(" ");
   bubbleEl.classList.add("on");
   const bw = bubbleEl.offsetWidth, bh = bubbleEl.offsetHeight;
-  const minY = side === "top" ? sh + 6 : 6, maxY = (side === "bottom" ? st.height - sh - 6 : st.height - 6) - bh;
-  let y = top - st.top - bh - 10;
-  if (y < minY) y = bottom - st.top + 10;
+  const minY = 6, maxY = st.height - 6 - bh;
+  let y = ctop - st.top - bh - 10;
+  if (y < minY) y = cbottom - st.top + 10;
   y = Math.max(minY, Math.min(maxY, y));
   const x = Math.max(6, Math.min(st.width - bw - 6, cx - st.left - bw / 2));
   bubbleEl.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
-  placeSelbar(); // (the stretch's controls clear of the strip, the chord and its names)
-}
-function hidePeek(pk) {
-  if (pk.hidden) return;
-  pk.hidden = true;
-  for (const it of pk.items) {
-    it.g.classList.remove("peek");
-    it.badge?.classList.remove("peek");
-  }
-  if (peek === pk || !peek || peek.hidden) {
-    bubbleEl.classList.remove("on");
-    // (while ▶ plays the strip is its: what sounds, drawn again on the next frame)
-    if (PB.state === "idle") stripEl.classList.remove("on");
-    else PB.stripKey = null;
-    placeSelbar();
-  }
+  placeSelbar(); // (the stretch's controls clear of the chords and the names)
+  S.t.peek = ms(t0);
 }
 
-// The keyboard under the music: the view's range in whole octaves C…B (C3–B5 at least), and the
-// keys lit (midis).
+// ---------------------------------------------------------------------------
+// The keyboard (🎹): docked under the music in a space of its own — the stage ends where it starts,
+// so the music is laid out above it and never drawn under it — and it stays put: nothing slides in
+// with a press, switches sides or goes while ▶ plays. (v79's strip was an overlay that slid in on a
+// press, out 2 s after the lift, and while ▶ played jumped between the stage's foot and head or
+// left the page when neither was clear — "it'll show up and disappear at random times".) The 🎹
+// button shows or hides it — this device's pref, by default on a tablet and a desktop, off on a
+// phone (a short screen: its height is the music's) — and the page is laid out again at the new
+// height, at the same place, as a rotation does. Hidden in the PDF view (📄): nothing there lights
+// it (no presses, no ▶), and the PDF's page gets the height (a page in portrait is fitted by it).
+//
+// What it shows: the view's range in whole octaves (C3–B5 at least), a dot on middle C, and lit —
+// by hand, a letter on each — the keys of the strikes on screen (held, and HIDE_AFTER after the
+// lift) and of what ▶ sounds now. Idle: none. It's a flex row (#dock): what ▶ plays can be chosen
+// at its left end; the keys take the rest of the width (drawn to the size they're given).
+
+const KB = {
+  on: false,       // the 🎹 setting
+  play: new Map(), // what ▶ sounds now: midi → { hand, label }
+  drawn: "",       // what's drawn: range, size, lit keys
+  range: null,     // the range drawn [lo, hi] (kept while a song or a view loads)
+  w: 0, h: 0,      // the keys' size (px; 0: measure)
+  draws: 0,        // drawings (tests)
+};
+const keysDefault = () => device() !== "phone";
+// Room for the keyboard: a window ≥ 360 px wide (narrower, the bar has no place for 🎹 — an iPad's
+// Slide Over, a ⅓ Split View) and ≥ 500 px tall (a phone in landscape: its ~68 px were a quarter of
+// the music's height — Piano Man's full score at 4.2 px a staff space). Without it the keyboard
+// isn't shown whatever the setting, and 🎹 is hidden / disabled — so the keyboard is never on
+// where it can't be turned off (v80's first build kept it on by default in an iPad's 320-px Slide
+// Over, with 🎹 hidden). It comes back with the room (a rotation, a wider window).
+const ROOM = matchMedia("(min-width: 360px) and (min-height: 500px)");
+const keysRoom = () => ROOM.matches;
+function setKeys(on, byHand = false) {
+  KB.on = on;
+  keysBtn.setAttribute("aria-pressed", String(on));
+  if (byHand) keep(K.keys, on ? "on" : "off");
+  dock(byHand);
+}
+keysBtn.addEventListener("click", () => { if (!pdf.on && keysRoom()) setKeys(!KB.on, true); });
+{
+  const onRoom = () => { dock(); sizeButtons(); }; // (the stage's resize lays the music out again)
+  if (ROOM.addEventListener) ROOM.addEventListener("change", onRoom); else ROOM.addListener?.(onRoom);
+}
+// The dock shown when the keyboard is on, has room and the sheet is shown (not the PDF). relay: lay
+// the music out again at the stage's new height now (the 🎹 tap; the resize observer would, 150 ms
+// later).
+function dock(relay = false) {
+  const show = KB.on && !pdf.on && keysRoom();
+  if (dockEl.hidden !== show) return;
+  dockEl.hidden = !show;
+  document.body.dataset.keys = show ? "on" : "off";
+  if (show) KB.w = KB.h = 0; // (measured again: its size may have changed while hidden)
+  renderHear(); // (the chips for ▶: at the keyboard's left end, or in the stretch's controls)
+  if (show) drawKeys();
+  if (relay && S.ready && !pdf.on) { clearTimeout(resizeTimer); relayout(); }
+}
+// The keys lit: what ▶ sounds, and every strike on screen (a strike's on a key both have).
+function keysLit() {
+  const keys = new Map(KB.play);
+  for (const [m, L] of peekKeys()) keys.set(m, L);
+  return keys;
+}
+// Draw the keyboard when what it shows changed (and it's shown). While a song or a view loads it
+// stays as it is (v80's first build drew a C3–B5 placeholder while a song loaded, and the old view's
+// range at another width while a view did) — only what's lit may change: the next range is the new
+// view's (placed).
+function drawKeys() {
+  if (dockEl.hidden) { KB.drawn = ""; return; }
+  if (!KB.w) { const r = stripEl.getBoundingClientRect(); KB.w = Math.round(r.width); KB.h = Math.round(r.height); }
+  const lit = keysLit(), [lo, hi] = loading() && KB.range ? KB.range : stripRange(lit);
+  KB.range = [lo, hi];
+  const key = `${lo}-${hi} ${KB.w}x${KB.h} ` + [...lit].map(([m, L]) => m + L.hand + L.label.letter + (L.label.acc || "")).join(",");
+  if (key === KB.drawn) return;
+  KB.drawn = key;
+  KB.draws++;
+  drawStrip(lit, lo, hi);
+}
+// (its size: a rotation, the 🎹 shown, the chips beside it moved)
+new ResizeObserver((es) => {
+  const r = es[es.length - 1].contentRect;
+  KB.w = Math.round(r.width);
+  KB.h = Math.round(r.height);
+  if (!dockEl.hidden && !hearEl.hidden && !loading()) placeHear(); // (the chips: as many rows as its height holds; still room beside the keys?)
+  drawKeys();
+}).observe(stripEl);
+// A song or a view on its way (shown: placed()).
+const loading = () => !!S.song && !S.ready && !S.failed && !pdf.on;
+
+// The keyboard's range: the view's notes in whole octaves C…B (C3–B5 at least) — and the keys lit
+// (midis), which are the view's anyway.
 function stripRange(lit) {
   const v = S.v;
   if (!v) return [48, 83];
@@ -1131,15 +1378,13 @@ function stripRange(lit) {
   hi = Math.max(83, Number.isFinite(hi) ? 12 * Math.floor(hi / 12) + 11 : 83);
   return [Math.max(0, lo), Math.min(127, hi)];
 }
-// lit: midi → { hand, label } (the peeked chord, or what ▶ sounds now)
-function drawStrip(lit) {
+// lit: midi → { hand, label } (the strikes' keys and what ▶ sounds now); lo…hi: the range.
+function drawStrip(lit, lo, hi) {
   const NS = "http://www.w3.org/2000/svg";
   let svg = stripEl.firstElementChild;
   if (!svg) { svg = document.createElementNS(NS, "svg"); stripEl.appendChild(svg); }
-  const r = svg.getBoundingClientRect();
-  const W = Math.max(60, Math.round(r.width)), H = Math.max(30, Math.round(r.height));
+  const W = Math.max(60, KB.w), H = Math.max(30, KB.h);
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  const [lo, hi] = stripRange(lit);
   const whites = [];
   for (let m = lo; m <= hi; m++) if (WHITE.has(m % 12)) whites.push(m);
   const ww = Math.min(48, W / whites.length), x0 = (W - ww * whites.length) / 2;
@@ -1168,6 +1413,178 @@ function drawStrip(lit) {
     }
   }
   svg.innerHTML = s + tops;
+}
+
+// ---------------------------------------------------------------------------
+// What ▶ plays (v80): the owner — "I want to see the full score so I can see the lyrics and the
+// vocal melody, but I only want to play the piano part". In a view with more than one thing to
+// hear, a chip each, coloured as the keys it lights — the Full score: the sung part(s) "Voice"
+// (several: their names, else Voice 1, 2), the piano "Piano" (both hands' colours) and any other
+// part that plays by its name (a generic one — Piano Man's accordion cue staff, which the converter
+// calls "Voice" — by its place: "Part 3"); a full score that is only the piano (the tune inside it,
+// The Longest Time) or a hymn's pair: RH / LH; Both: RH / LH (a hymn's two parts too); one hand and
+// Melody: none. A tap mutes or unmutes it for ▶ and ⟳ (pressed = heard); at least one stays on.
+// Kept per song and view in resonate.play[id].hear = { score: [muted keys], both: [...] } (keys:
+// a part id, or part|staff for a hand). Where: the keyboard's left end (🎹 on: always there, beside
+// the keys they colour — reachable before ▶), else the stretch's controls (#selbar: with a stretch,
+// and while ▶ plays). A muted part's notes stay on the schedule — lit lighter as the music passes
+// (.hush; their words too), so the words and the tune can be followed — but aren't struck and count
+// neither in a unison nor in a chord's loudness (playtime track's hear). A change while playing
+// takes effect at once: what hasn't started is scheduled again, what a newly muted part sounds is
+// damped (a part unmuted comes in at its next note). A press (peek) sounds what is pressed, always.
+
+const GENERIC = /^(?:|voice|voices|vocals?|voice oohs|vox|melody|tune|piano|keyboard|part|part \d+|staff|staff \d+|instrument|instrument \d+|untitled.*|p\d+)$/i;
+// The view's groups: [{ key, label, hand (voice | piano | rh | lh | part), test(part, staff) }]
+// in score order — none when there's one thing to hear.
+function hearGroups() {
+  const P = S.P, plan = P?.views[S.view];
+  if (!plan) return [];
+  if (S.hear && S.hear.P === P && S.hear.view === S.view) return S.hear.groups;
+  const both = P.views.both, info = new Map(P.parts.map((p) => [p.id, p]));
+  const staves = (pid) => info.get(pid)?.staves || 1;
+  const hands = (pid) => [
+    { key: pid + "|1", label: "RH", hand: "rh", test: (p, s) => p === pid && s < 2 },
+    { key: pid + "|2", label: "LH", hand: "lh", test: (p, s) => p === pid && s >= 2 },
+  ];
+  const whole = (pid, o) => ({ key: pid, test: (p) => p === pid, ...o });
+  let groups = [];
+  if (plan.kind === "score" || (plan.kind === "parts" && plan.parts.length > 1)) {
+    const keyboard = plan.kind === "score" && both && (both.kind === "piano" || both.kind === "hymn") ? both.parts : [];
+    const sung = (plan.kind === "score" ? plan.sung : P.views.score?.sung) || [];
+    const voices = plan.parts.filter((pid) => sung.includes(pid) && !keyboard.includes(pid));
+    const named = (pid) => { const n = (info.get(pid)?.name || "").replace(/\s+/g, " ").trim(); return GENERIC.test(n) ? "" : n; };
+    // (several singers: their names when each has its own, else Voice 1, 2 …)
+    const vn = voices.map(named);
+    const vnames = voices.length > 1 && vn.every((n, i) => n && vn.indexOf(n) === i) ? vn : voices.map((_, i) => (voices.length > 1 ? `Voice ${i + 1}` : "Voice"));
+    plan.parts.forEach((pid, i) => {
+      if (voices.includes(pid)) groups.push(whole(pid, { label: vnames[voices.indexOf(pid)], hand: "voice" }));
+      else if (keyboard.includes(pid)) {
+        if (both.kind === "piano") groups.push(whole(pid, { label: "Piano", hand: "piano" }));
+        else groups.push(whole(pid, pid === both.parts[1] ? { label: "LH", hand: "lh" } : { label: "RH", hand: "rh" }));
+      } else groups.push(whole(pid, { label: named(pid) || `Part ${i + 1}`, hand: "part" }));
+    });
+    // (a name another chip already has — "Voice" twice, "Piano" — goes by its place instead)
+    for (const [i, g] of groups.entries()) if (groups.some((o, j) => j < i && o.label.toLowerCase() === g.label.toLowerCase())) g.label = `Part ${plan.parts.indexOf(g.key) + 1}`;
+    // (the full score is the piano alone — the tune inside it: its hands)
+    if (groups.length === 1 && groups[0].hand === "piano" && staves(groups[0].key) >= 2) groups = hands(groups[0].key);
+  } else if (plan.kind === "piano" && plan.staff == null && plan.parts.length === 1 && staves(plan.parts[0]) >= 2) {
+    groups = hands(plan.parts[0]);
+  } else if (plan.kind === "hymn" && plan.parts.length === 2) {
+    groups = plan.parts.map((pid, i) => whole(pid, i ? { label: "LH", hand: "lh" } : { label: "RH", hand: "rh" }));
+  }
+  if (groups.length < 2) groups = [];
+  S.hear = { P, view: S.view, groups };
+  return groups;
+}
+// The group a note (part, staff number) belongs to, or null.
+function groupOf(part, staff) {
+  for (const g of hearGroups()) if (g.test(part, staff)) return g;
+  return null;
+}
+// The muted groups' keys in the shown view (never all of them: a record that says so hears all).
+function mutedKeys() {
+  const groups = hearGroups();
+  const list = groups.length ? S.st.hear?.[S.view] : null;
+  const keys = new Set(Array.isArray(list) ? list.filter((k) => groups.some((g) => g.key === k)) : []);
+  return keys.size >= groups.length ? new Set() : keys;
+}
+// For playtime track: (el) → heard; null when everything is heard (v79's schedule exactly).
+function hearOf() {
+  const muted = mutedKeys();
+  if (!muted.size) return null;
+  return (e) => !muted.has(groupOf(e.part, e.staff)?.key);
+}
+
+// The chips: in the dock beside the keys when the keyboard shows and the keys keep room, else in
+// the stretch's controls (shown with them). While a song or a view loads the chips stay as they
+// are (v80's first build hid them for the load — the keys redrawn wider, then narrower again).
+let hearDrawn = "", hearShape = ""; // (the chips drawn — with their state; without it)
+function renderHear() {
+  if (loading()) return;
+  const groups = S.ready && !pdf.on ? hearGroups() : [];
+  const muted = mutedKeys();
+  hearEl.hidden = groups.length < 2;
+  hearShape = groups.map((g) => g.key + "=" + g.label + "=" + g.hand).join(",");
+  const key = groups.map((g) => g.key + (muted.has(g.key) ? "-" : "+")).join(",") + " " + hearShape;
+  if (key !== hearDrawn) {
+    hearDrawn = key;
+    hearEl.replaceChildren(...groups.map((g) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.dataset.key = g.key;
+      b.dataset.hand = g.hand;
+      b.textContent = g.label;
+      b.title = g.label;
+      b.setAttribute("aria-pressed", String(!muted.has(g.key)));
+      return b;
+    }));
+  }
+  placeHear();
+}
+// Where the chips go: beside the keys while the keys keep KEY_MIN px a white key there (the view's
+// range across what the chips leave of the dock) — on a phone with 🎹 on, or a narrow Split View,
+// three chips left Piano Man's six octaves 2.6–3.7 px a key: there they go in the stretch's controls,
+// as with the keyboard off. The rule reads the dock's width, never where the chips are now, so a
+// move can't undo itself.
+const KEY_MIN = 8;
+let hearFit = { key: "", fit: true };
+function placeHear() {
+  let home = selbar;
+  if (!dockEl.hidden && !hearEl.hidden) {
+    const cs = getComputedStyle(dockEl);
+    const inner = dockEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const rows = hearRowsFor(KB.h || stripEl.getBoundingClientRect().height);
+    const [lo, hi] = stripRange(new Map());
+    const key = `${Math.round(inner)} ${rows} ${lo}-${hi} ${hearShape}`;
+    if (hearFit.key !== key) {
+      if (hearEl.parentNode !== dockEl) dockEl.insertBefore(hearEl, stripEl);
+      setRows(rows);
+      let whites = 0;
+      for (let m = lo; m <= hi; m++) if (WHITE.has(m % 12)) whites++;
+      const keysW = inner - hearEl.getBoundingClientRect().width - (parseFloat(cs.columnGap) || 0);
+      hearFit = { key, fit: keysW >= KEY_MIN * whites };
+    }
+    if (hearFit.fit) home = dockEl;
+  }
+  if (hearEl.parentNode !== home) {
+    if (home === dockEl) dockEl.insertBefore(hearEl, stripEl);
+    else selbar.insertBefore(hearEl, selClearBtn);
+  }
+  setRows(home === dockEl ? hearRowsFor(KB.h || stripEl.getBoundingClientRect().height) : 1);
+  if (home === selbar && !selbar.hidden) placeSelbar();
+}
+// In the dock the chips fill the keys' height in rows of 44 px (two in portrait), then columns.
+const hearRowsFor = (h) => Math.max(1, Math.floor((h + 6) / 50));
+function setRows(n) {
+  if (hearEl.style.getPropertyValue("--rows") !== String(n)) hearEl.style.setProperty("--rows", String(n));
+}
+hearEl.addEventListener("click", (e) => {
+  const b = e.target.closest?.("button[data-key]");
+  if (!S.ready) return; // (a song or a view loading: the chips shown are the last one's)
+  if (b && !toggleHear(b.dataset.key)) {
+    // (the one heard can't be muted: a shake says so, no words)
+    b.classList.remove("nope");
+    void b.offsetWidth;
+    b.classList.add("nope");
+  }
+});
+// → false when refused (the last one heard).
+function toggleHear(key) {
+  const groups = hearGroups();
+  if (!groups.some((g) => g.key === key)) return true;
+  const muted = mutedKeys();
+  if (muted.has(key)) muted.delete(key);
+  else if (muted.size + 1 < groups.length) muted.add(key);
+  else return false; // (at least one heard)
+  const h = S.st.hear && typeof S.st.hear === "object" && !Array.isArray(S.st.hear) ? { ...S.st.hear } : {};
+  if (muted.size) h[S.view] = groups.filter((g) => muted.has(g.key)).map((g) => g.key);
+  else delete h[S.view];
+  if (Object.keys(h).length) S.st.hear = h;
+  else delete S.st.hear;
+  saveState();
+  renderHear();
+  rehear();
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1379,7 +1796,7 @@ function drawSel() {
 // plays it — its own (typed or tapped there), else the score's — with the score's tempo changes
 // as ratios; speed 50–100% (per song). Sounds are scheduled ≤ AHEAD s ahead (piano.js
 // scheduleAhead: WebKit's cost grows with the sources waiting to start); what sounds is lit — its
-// heads and names in the peek's orange, its keys on the strip by hand — from the audio clock every
+// heads and names in the peek's orange, its keys on the keyboard by hand — from the audio clock every
 // frame; the page turns to the music's page whenever the music moves onto another one (a turn by
 // hand isn't fought: the music's next page change is followed).
 
@@ -1393,18 +1810,16 @@ const PB = {
   kind: null,       // "span" (the stretch picked) | "page" (from the page to the end)
   gen: 0, starting: false,
   a: null, piano: null, bus: null,
-  tr: null, ev: null, base: 0, from: null, // the schedule (playtime track), its events (bars + notes), tempo, Sing-order index
+  args: null, tr: null, ev: null, base: 0, from: null, // what plays (trackArgs), the schedule (playtime track), its events (bars + notes), tempo, Sing-order index
   t0: 0, s0: 0, speed: 1, // the clock: audio time t0 ↔ schedule time s0 (s at 100%; a loop's rounds add up)
   round: 0, idx: 0, // the next event to schedule
-  sched: [],        // scheduled: { id, midi, when, end, sound, X, round, g, src } and bar marks { bar, when, k, mi, round }
+  sched: [],        // scheduled: { id, midi, when, end, sound, muted (lit lighter, not heard), X, round, g, src, off, stop, damped } and bar marks { bar, when, k, mi, round }
   log: [],          // every note struck: { id, midi, when, dur, X, round } (tests)
-  alive: [],        // keepAlive's source
   timer: 0, raf: 0,
-  lit: new Map(), litKey: "", stripKey: "", sysEl: null, // what's lit; the line playing
+  lit: new Map(), litKey: "", sysEl: null, // what's lit (id → "play" | "hush"); the line playing
   k: -1, kr: -1, mi: -1, // the bar the music is in (index in the schedule's bars, its round, its written bar)
   pageOf: new Map(), musicPage: 0, turns: [], defer: null, // defer: a turn waiting for a finger to lift
-  busyRects: [], busyInk: [], // what the strip and the controls keep off while playing (stage px): the line playing, the next, the stretch
-  stripSide: null, stripOff: -1, // the strip's side while playing (null: none); the drawing (S.showGen) it can't fit
+  busyInk: [],      // what the controls keep off while playing (stage px): the ink of the line playing, the next, the stretch
 };
 // A note's level, n keys struck together (a big chord softer: 1 → 1.2, 3 → 1, 6 → 0.57), into a
 // bus at BUS with a soft limiter (piano.js pianoBus): the full score's thickest moments, chords
@@ -1422,13 +1837,15 @@ function songBpm() {
 }
 const tempoBase = () => songBpm() || songSing()?.tempo || songTime()?.first || DEFAULT_TEMPO;
 
-function buildTrack(kind) {
-  const T = songTime(), keep = viewKeep(), base = tempoBase();
+// What ▶ plays: { bars, span, base, from } — kept while it plays, so a change of what's heard
+// (hear) schedules the same music again (trackOf).
+function trackArgs(kind) {
+  const T = songTime(), base = tempoBase();
   if (kind === "span") {
     const { q0, end } = S.sel, bars = [];
     // (to the bar its last note is in: a stretch ending at a barline has nothing of the next one)
     for (let m = barAt(T, q0); m <= barAt(T, end - 1e-3); m++) bars.push(m);
-    return { ...track(T, { bars, span: { q0, q1: end }, keep, base }), base, from: null };
+    return { bars, span: { q0, q1: end }, base, from: null };
   }
   // (from the first played bar that is the page's first written one)
   const order = songSing()?.order || T.bars.map((_, i) => i);
@@ -1436,25 +1853,32 @@ function buildTrack(kind) {
   let from = order.indexOf(first);
   if (from < 0) from = order.findIndex((m) => m > first);
   if (from < 0) from = 0;
-  return { ...track(T, { bars: order.slice(from), keep, base }), base, from };
+  return { bars: order.slice(from), span: null, base, from };
 }
+// The schedule (playtime track) for those, with what's heard now.
+function trackOf(args) {
+  const tr = track(songTime(), { bars: args.bars, span: args.span, keep: viewKeep(), base: args.base, hear: hearOf() });
+  return { ...tr, base: args.base, from: args.from };
+}
+// Its events: the bar marks and the notes, in time (a bar's mark before its notes).
+const eventsOf = (tr) => [...tr.bars.map((b) => ({ bar: true, ...b })), ...tr.items].sort((x, y) => x.sec - y.sec || (y.bar ? 1 : 0) - (x.bar ? 1 : 0));
 
 async function playStart(kind, loop = false) {
   if (pdf.on || !S.ready || (kind === "span" && !S.sel)) return;
   stopPlay();
   const gen = ++PB.gen;
   const a = getCtx("tap"); // (in the tap: iOS starts audio only from one — the session first)
-  let tr;
+  let tr, args;
   const tb = performance.now();
-  try { tr = buildTrack(kind); } catch (err) { console.warn("play", err); return; }
+  try { args = trackArgs(kind); tr = trackOf(args); } catch (err) { console.warn("play", err); return; }
   S.t.track = ms(tb);
   if (!(tr.len > 0)) return;
-  const ev = [...tr.bars.map((b) => ({ bar: true, ...b })), ...tr.items].sort((x, y) => x.sec - y.sec || (y.bar ? 1 : 0) - (x.bar ? 1 : 0));
+  const ev = eventsOf(tr);
   Object.assign(PB, {
-    state: loop ? "looping" : "playing", kind, starting: true, a, piano: null, tr, ev, base: tr.base, from: tr.from,
-    speed: S.speed, t0: 0, s0: 0, round: 0, idx: 0, sched: [], log: [], alive: [],
-    lit: new Map(), litKey: "", stripKey: "", sysEl: null, k: -1, kr: -1, mi: -1, musicPage: 0, turns: [], defer: null,
-    busyRects: [], busyInk: [], stripSide: null, stripOff: -1, drawn: -1,
+    state: loop ? "looping" : "playing", kind, starting: true, a, piano: null, args, tr, ev, base: tr.base, from: tr.from,
+    speed: S.speed, t0: 0, s0: 0, round: 0, idx: 0, sched: [], log: [],
+    lit: new Map(), litKey: "", sysEl: null, k: -1, kr: -1, mi: -1, musicPage: 0, turns: [], defer: null,
+    busyInk: [], drawn: -1,
   });
   activity("play");
   playButtons();
@@ -1477,8 +1901,8 @@ async function playStart(kind, loop = false) {
   }
   PB.starting = false;
   PB.bus = pianoBus(a, BUS);
-  PB.t0 = a.currentTime + LEAD + (tr.pre || 0); // (grace notes before the first note: before 0)
-  keepAlive(a, PB.alive);
+  PB.t0 = a.currentTime + LEAD + (PB.tr.pre || 0); // (grace notes before the first note: before 0; PB.tr: what's heard may have changed meanwhile)
+  keepAwake(a); // (the presses' source: one for both)
   pump();
   PB.timer = setInterval(pump, PUMP);
   PB.raf = requestAnimationFrame(frame);
@@ -1501,13 +1925,15 @@ function pump() {
     PB.idx++;
     if (when < now - 0.05) continue; // (missed: the page was held up longer than the lookahead)
     if (e.bar) { PB.sched.push({ bar: true, when, k: e.k, mi: e.mi, round: PB.round }); continue; }
-    const x = { id: e.id, midi: e.midi, when, end: when + Math.max(e.dur / PB.speed, MIN_LIT), sound: e.sound, X, round: PB.round, hand: e.hand ??= handOf(S.P.facts.get(e.id) || {}) };
+    const x = { id: e.id, midi: e.midi, when, end: when + Math.max(e.dur / PB.speed, MIN_LIT), sound: e.sound, muted: !!e.muted, X, round: PB.round, hand: e.hand ??= handOf(S.P.facts.get(e.id) || {}) };
     if (e.sound) {
       const hold = e.hold / PB.speed, tmp = [];
       x.g = playPiano(a, PB.piano, Math.max(when, now), hold, e.midi, level(e.n), tmp, PB.bus);
       x.src = tmp[0];
+      x.off = when + hold;
       x.stop = when + Math.max(0.12, hold) + 0.8;
-      PB.log.push({ id: e.id, midi: e.midi, when, dur: hold, X, round: PB.round });
+      x.log = { id: e.id, midi: e.midi, when, dur: hold, X, round: PB.round, n: e.n };
+      PB.log.push(x.log);
     }
     PB.sched.push(x);
   }
@@ -1553,7 +1979,7 @@ function follow(mi) {
   PB.musicPage = p;
   PB.defer = null;
   if (shownPages().includes(p)) return;
-  if (gest) { PB.defer = { mi, page: p }; return; }
+  if (gests.size) { PB.defer = { mi, page: p }; return; }
   turnWith(mi, p);
 }
 function turnWith(mi, p) {
@@ -1561,105 +1987,79 @@ function turnWith(mi, p) {
   PB.turns.push({ mi, page: p, k: PB.k, round: PB.kr, t: Math.round(performance.now()) });
   if (PB.turns.length > 50) PB.turns.shift();
 }
-// A press ended (g): the turn it held back is taken now — unless the press picked a stretch (it's
-// on the page shown: the page stays, as after a turn by hand; the music's next page is followed).
+// A press ended (g): the turn it held back is taken at the last finger's lift — unless a press
+// picked a stretch (it's on the page shown: the page stays, as after a turn by hand; the music's
+// next page is followed).
 function afterPress(g) {
+  if (g.drag && g.anchor) PB.defer = null;
+  if (gests.size) return;
   const d = PB.defer;
   PB.defer = null;
-  if (!d || PB.state === "idle" || !S.ready || pdf.on || (g.drag && g.anchor)) return;
+  if (!d || PB.state === "idle" || !S.ready || pdf.on) return;
   if (d.page === PB.musicPage && !shownPages().includes(d.page)) turnWith(d.mi, d.page);
 }
 
-// Light what sounds (ids → scheduled entries) on the shown pages and on the strip; the line
-// playing (its notes', else its bar's) for where the strip and the controls go — found again
-// after every drawing (a turn, a new layout), rests and held notes included.
+// Light what sounds (ids → scheduled entries) on the shown pages (.play; a muted part's notes
+// lighter, .hush) and on the keyboard (what's heard only); the line playing (its notes', else its
+// bar's) for where the controls go — found again after every drawing (a turn, a new layout), rests
+// and held notes included.
+// (PB.lit: id → the class it has — an entry's muted flag can change under it: rehear)
 function setLit(lit) {
-  const key = [...lit.keys()].join(" ");
-  if (key === PB.litKey && PB.drawn === S.showGen) {
-    if (PB.stripKey === null && PB.state !== "idle") playStrip(lit); // (the peek gave the strip back)
-    return;
-  }
+  const cls = new Map([...lit].map(([id, e]) => [id, e.muted ? "hush" : "play"]));
+  const key = [...cls].map(([id, c]) => id + c[0]).join(" ");
+  if (key === PB.litKey && PB.drawn === S.showGen) return;
   PB.litKey = key;
   PB.drawn = S.showGen;
   const on = (id) => { const g = document.getElementById(id); return g && stage.contains(g) ? g : null; };
-  for (const id of PB.lit.keys()) if (!lit.has(id)) on(id)?.classList.remove("play");
+  for (const [id, c] of PB.lit) if (cls.get(id) !== c) on(id)?.classList.remove(c);
   let sys = null;
-  for (const id of lit.keys()) {
+  for (const [id, c] of cls) {
     const g = on(id);
     if (!g) continue;
-    g.classList.add("play");
+    g.classList.add(c);
     sys ||= g.closest("g.system");
   }
-  PB.lit = lit;
+  PB.lit = cls;
   if (!sys && PB.mi >= 0 && S.v && PB.state !== "idle") {
     const m = on("m" + S.v.firstMeasureAtOrAfter(PB.mi));
     sys = m?.closest("g.system") || null;
   }
   if (sys !== PB.sysEl) {
     PB.sysEl = sys;
-    PB.busyRects = busyNow();
+    busyNow();
     placeSelbar();
   }
-  if (PB.state !== "idle") playStrip(lit);
+  if (PB.state !== "idle") playKeys(lit);
 }
 
-// What the strip and the controls keep off while playing (stage px, [left, top, right, bottom]):
-// the line playing, the line after it on the page(s) shown (read next), and a stretch's lines (a
-// loop comes back to them) — for the strip their boxes (PB.busyRects), for the controls their ink
-// (PB.busyInk: each bar's staves with their notes and words, and its marks — the paper above a
-// line's last bar is free).
+// What the controls keep off while playing (PB.busyInk, stage px, [left, top, right, bottom]): the
+// ink of the line playing, of the line after it on the page(s) shown (read next) and a stretch's
+// bands (a loop comes back to them) — each bar's staves with their notes and words, and its marks
+// (the paper above a line's last bar is free).
 function busyNow() {
-  const out = [], ink = [], sys = PB.sysEl;
+  const ink = [], sys = PB.sysEl;
   PB.busyInk = ink;
-  if (!sys?.isConnected) return out;
+  if (!sys?.isConnected) return;
   const st = stage.getBoundingClientRect();
   const box = (el) => { const r = el.getBoundingClientRect(); return [r.left - st.left, r.top - st.top, r.right - st.left, r.bottom - st.top]; };
   const all = [...stage.querySelectorAll(".page g.system")];
   const next = all[all.indexOf(sys) + 1];
   for (const s of next ? [sys, next] : [sys]) {
-    out.push(box(s));
     for (const g of s.querySelectorAll("g.measure > g")) { const b = box(g); if (b[2] > b[0] || b[3] > b[1]) ink.push(b); }
   }
-  if (PB.kind === "span") for (const b of stage.querySelectorAll(".page .sel")) { out.push(box(b)); ink.push(box(b)); }
-  return out;
+  if (PB.kind === "span") for (const b of stage.querySelectorAll(".page .sel")) ink.push(box(b));
 }
 
-// The strip while ▶ plays: the keys sounding, by hand, at the stage's foot or head — where it
-// covers none of busyNow (the line playing, the next, the stretch): the side it's on while that
-// stays clear, else the other; where neither is (two systems a page in landscape, a phone's one
-// system) there's no strip on that page (not one that comes and goes with its lines).
-const overlaps = (t, b, rects) => rects.some((r) => Math.min(b, r[3]) - Math.max(t, r[1]) > 1);
-function stripSideNow() {
-  if (PB.stripOff === S.showGen) return null;
-  const H = stage.getBoundingClientRect().height, sh = stripEl.offsetHeight + 2;
-  const free = { bottom: !overlaps(H - sh, H, PB.busyRects), top: !overlaps(0, sh, PB.busyRects) };
-  const cur = PB.stripSide || "bottom";
-  const side = free[cur] ? cur : free[cur === "top" ? "bottom" : "top"] ? (cur === "top" ? "bottom" : "top") : null;
-  if (!side && PB.busyRects.length) PB.stripOff = S.showGen;
-  return side;
-}
-function playStrip(lit) {
-  if (peek && !peek.hidden) return; // (the peek has it)
+// The keys ▶ sounds now, by hand, on the keyboard (with the strikes') — not a muted part's.
+function playKeys(lit) {
   const keys = new Map();
   for (const e of lit.values()) {
-    if (keys.has(e.midi)) continue;
+    if (e.muted || keys.has(e.midi)) continue;
     const f = S.P.facts.get(e.id);
     if (f) keys.set(e.midi, { hand: e.hand, label: labelOf(f) });
   }
-  const sk = [...keys].map(([m, L]) => m + L.hand).join(",");
-  const side = stripSideNow(), on = stripEl.classList.contains("on");
-  if (sk === PB.stripKey && side === PB.stripSide && on === !!side) return;
-  PB.stripKey = sk;
-  PB.stripSide = side;
-  if (!side) {
-    if (on) { stripEl.classList.remove("on"); placeSelbar(); }
-    return;
-  }
-  const moved = side !== (stripEl.dataset.side || "bottom") || !on;
-  stripEl.dataset.side = side;
-  drawStrip(keys);
-  stripEl.classList.add("on");
-  if (moved) placeSelbar();
+  KB.play = keys;
+  drawKeys();
 }
 
 // ■, the end, or anything that stops it (another ▶, song, view, 📄, the page hidden or left).
@@ -1689,12 +2089,13 @@ function stopPlay(natural = false) {
         }
       } catch {}
     }
-    for (const n of PB.alive) try { n.stop(); } catch {}
   }
-  Object.assign(PB, { state: "idle", kind: null, starting: false, piano: null, sched: [], alive: [], busyRects: [], busyInk: [], sysEl: null, defer: null, stripSide: null, stripOff: -1 });
+  Object.assign(PB, { state: "idle", kind: null, starting: false, piano: null, sched: [], busyInk: [], sysEl: null, defer: null });
   if (!was) return;
+  if (a && awake.src && awake.a === a) keepAwake(a); // (awake AWAKE ms from the stop, as from a lift — never while hidden)
   setLit(new Map());
-  if (!peek || peek.hidden) stripEl.classList.remove("on");
+  KB.play = new Map();
+  drawKeys();
   playButtons();
   placeSelbar();
 }
@@ -1706,7 +2107,12 @@ function setSpeed(v) {
   speedSel.value = String(v);
   if (S.song) { S.st.speed = v; saveState(); }
   if (PB.state === "idle" || !PB.piano) { PB.speed = v; return; }
-  const a = PB.a, now = a.currentTime, at = now + 0.05;
+  reschedule(PB.a.currentTime + 0.05, v);
+}
+// From audio time `at`: what was scheduled to start later is taken back (silenced at its start) and
+// the schedule (PB.ev) laid again from there — at `speed` (the clock stays continuous at `at`).
+function reschedule(at, speed = PB.speed) {
+  const now = PB.a.currentTime;
   const X = PB.s0 + (at - PB.t0) * PB.speed;
   PB.sched = PB.sched.filter((e) => {
     if (e.when <= at) return true;
@@ -1716,13 +2122,51 @@ function setSpeed(v) {
   PB.log = PB.log.filter((e) => e.when <= at);
   PB.t0 = at;
   PB.s0 = X;
-  PB.speed = v;
+  PB.speed = speed;
   const len = PB.tr.len;
   PB.round = PB.state === "looping" && len > 0 ? Math.floor(X / len + 1e-9) : 0;
   const local = X - PB.round * len;
   PB.idx = PB.ev.findIndex((e) => e.sec > local + 1e-9);
   if (PB.idx < 0) PB.idx = PB.ev.length;
   pump();
+}
+// What's heard changed (a chip) while ▶ plays: the same music scheduled again with it from now —
+// everything not yet started is taken back (silenced at its start, as ■ does) and laid again from
+// the new schedule, a heard note due in the next instant included (the unison the muted part had
+// taken is the piano's again); what a newly muted part already sounds is damped (STOP_TC) and lit
+// lighter; a part unmuted comes in at its next note (a note half over isn't struck late). A key
+// nothing heard sounds any more — a unison whose struck twin was the muted part's — is lit lighter
+// too. (v80's first build kept what was due within 50 ms and damped a muted note there as if it
+// sounded: the cancel took its level back to full, so it still started — a blip of the part just
+// muted — and the heard twin it had beaten was never struck.)
+function rehear() {
+  if ((PB.state === "idle" && !PB.starting) || !PB.args) return;
+  const t = performance.now();
+  PB.tr = trackOf(PB.args);
+  PB.ev = eventsOf(PB.tr);
+  S.t.rehear = ms(t);
+  if (!PB.piano) return; // (still starting: it schedules from the new one)
+  const now = PB.a.currentTime;
+  const muted = mutedKeys();
+  const isMuted = (id) => { const e = S.Tid.get(id); return !!e && muted.has(groupOf(e.part, e.staff)?.key); };
+  // (what has started: reschedule below takes back everything later)
+  for (const e of PB.sched) {
+    if (e.bar || e.when > now || !isMuted(e.id)) continue;
+    e.muted = true;
+    if (e.src && !e.damped) {
+      e.damped = true;
+      try { e.g.gain.cancelScheduledValues(now); e.g.gain.setTargetAtTime(0, now, STOP_TC); e.src.stop(now + STOP_TC * 8); } catch {}
+      e.off = Math.min(e.off ?? now, now);
+      if (e.log) e.log.cut = now; // (the log says when it was cut)
+    }
+  }
+  for (const e of PB.sched) {
+    if (e.bar || e.muted || e.src || e.when > now) continue;
+    const live = PB.sched.some((x) => x.src && !x.damped && x.midi === e.midi && x.when <= now && x.off > now);
+    if (!live) e.muted = true;
+  }
+  reschedule(now);
+  S.t.rehear = Math.round((performance.now() - t) * 10) / 10;
 }
 
 const ICONS = {
@@ -1745,8 +2189,8 @@ function playButtons() {
 // The stretch's controls (▶ ⟳ speed ✕; ■ and speed while the page plays): over the music where
 // they cover none of the stretch's bands, the peeked chord and its names, nor — while playing —
 // the ink of the line the music is on, the one after it and the stretch's lines (busyNow): at the
-// stage's foot (above the strip when it's there), else its head (under it), else a corner, else
-// in free paper between two lines; where nothing is clear, the place covering least.
+// stage's foot (just above the keyboard when it's on: it's under the stage), else its head, else a
+// corner, else in free paper between two lines; where nothing is clear, the place covering least.
 function placeSelbar() {
   const on = PB.state !== "idle" || PB.starting;
   const show = S.ready && !pdf.on && (!!S.sel || on);
@@ -1755,18 +2199,16 @@ function placeSelbar() {
   selLoopBtn.hidden = selClearBtn.hidden = !S.sel;
   const st = stage.getBoundingClientRect();
   const w = selbar.offsetWidth, h = selbar.offsetHeight, m = 10;
-  const strip = stripEl.classList.contains("on") ? stripEl.offsetHeight + 4 : 0, side = stripEl.dataset.side || "bottom";
-  const yB = st.height - h - m - (side === "bottom" ? strip : 0), yT = m + (side === "top" ? strip : 0);
+  const yB = st.height - h - m, yT = m;
   const xC = (st.width - w) / 2, xR = st.width - w - m, xL = m;
   const rel = (r) => [r.left - st.left, r.top - st.top, r.right - st.left, r.bottom - st.top];
   const busy = [];
   for (const b of stage.querySelectorAll(".page .sel")) busy.push(rel(b.getBoundingClientRect()));
   if (on) busy.push(...PB.busyInk);
-  if (peek && !peek.hidden) {
-    for (const it of peek.items) busy.push(rel(it.head.getBoundingClientRect()));
+  if (peekShown()) {
+    for (const pk of peeks) for (const it of pk.items) busy.push(rel(it.head.getBoundingClientRect()));
     if (bubbleEl.classList.contains("on")) busy.push(rel(bubbleEl.getBoundingClientRect()));
   }
-  if (strip) busy.push(side === "bottom" ? [0, st.height - strip, st.width, st.height] : [0, 0, st.width, strip]);
   const spots = [[xC, yB, "bottom"], [xC, yT, "top"], [xR, yB, "bottom-right"], [xL, yB, "bottom-left"], [xR, yT, "top-right"], [xL, yT, "top-left"]];
   // (else the free paper of a column — right, middle, left — between what's busy there: between
   // two lines, where the justified page leaves room)
@@ -1904,7 +2346,8 @@ function hideOffer() {
 const PDFJS = new URL("./omr/pdfjs/", import.meta.url).href;
 const PRINT = 96 / 72; // CSS px per pt at print size
 // (open: the opening under way — a newer one or pdfOff wins; gen: the drawing under way)
-const pdf = { has: false, on: false, open: 0, gen: 0, task: null, doc: null, pages: 0, page: 1, spread: false, canvas: null, sizes: [], busy: false };
+// (W, H: the stage the last drawing was made for)
+const pdf = { has: false, on: false, open: 0, gen: 0, task: null, doc: null, pages: 0, page: 1, spread: false, canvas: null, sizes: [], busy: false, W: 0, H: 0 };
 let pdfLib = null;
 let pdfTask = null; // the page drawing under way (pdf.js RenderTask)
 async function pdfjs() {
@@ -1925,12 +2368,15 @@ async function pdfCheck(id, source) {
   pdfBtn.hidden = !has;
 }
 
-pdfBtn.addEventListener("click", () => (pdf.on ? pdfOff() : pdfOn()));
+// (back from the PDF: the sheet is laid out again at once if the stage changed meanwhile — a rotation)
+pdfBtn.addEventListener("click", () => { if (!pdf.on) return pdfOn(); pdfOff(); clearTimeout(resizeTimer); sized(); });
 
 function pdfControls() {
   pdfBtn.setAttribute("aria-pressed", String(pdf.on));
   if (pdf.on) stage.dataset.pdf = "";
   else delete stage.dataset.pdf;
+  dock(); // (the keyboard: hidden over the PDF — the page gets its height)
+  renderHear();
   handsSel.disabled = pdf.on || !S.ready;
   for (const b of offerEl.querySelectorAll("button")) b.disabled = pdf.on; // (kept in place: the bar doesn't move)
   sizeButtons();
@@ -1990,6 +2436,7 @@ function pdfOff() {
   pdf.gen++;
   pdf.on = false;
   pdf.busy = false;
+  pdf.W = pdf.H = 0;
   pdfTask?.cancel();
   if (pdf.canvas) {
     pdf.canvas.width = pdf.canvas.height = 0; // (iOS caps the canvas memory of a page)
@@ -2043,10 +2490,10 @@ async function pdfRender() {
   }
 }
 async function pdfDraw(doc, g) {
-  const cs = getComputedStyle(stage);
-  const W = Math.floor(stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
-  const H = Math.floor(stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom));
+  const { W, H } = stageSize();
   if (W < 60 || H < 60) return false;
+  pdf.W = W; // (the stage this drawing is for: sized() leaves it alone at this size)
+  pdf.H = H;
   const t0 = performance.now();
   const first = await doc.getPage(1);
   if (g !== pdf.gen) return false;
@@ -2106,17 +2553,26 @@ async function pdfDraw(doc, g) {
 let resizeTimer = 0;
 new ResizeObserver(() => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
-    if (pdf.on) pdfRender().then((r) => { if (r === "error") pdfFailed(); });
-    if (!S.P || !tk || S.failed) return;
-    const L = measure();
-    if (!L) return;
-    if (S.waiting) { loadView(S.gen); return; } // (the stage had no size when it loaded)
-    if (S.loaded !== S.v) return;
-    if (Math.abs(L.W - S.W) < 2 && Math.abs(L.H - S.H) < 2) return;
-    relayout();
-  }, 150);
+  resizeTimer = setTimeout(sized, 150);
 }).observe(stage);
+function sized() {
+  // (the PDF drawn again only for a stage of another size: opening it hides the keyboard, and the
+  // stage's growth reached here after the opening had already drawn for it — a second drawing
+  // blanked the page and drew it again)
+  if (pdf.on) {
+    const { W, H } = stageSize();
+    if (W !== pdf.W || H !== pdf.H) pdfRender().then((r) => { if (r === "error") pdfFailed(); });
+  }
+  if (!S.P || !tk || S.failed) return;
+  const L = measure();
+  if (!L) return;
+  if (S.waiting) { loadView(S.gen); return; } // (the stage had no size when it loaded)
+  // (the sheet under the PDF isn't laid out for the stage the PDF has — the keyboard's height in:
+  // back on the sheet it's the size it was, or laid out then)
+  if (S.loaded !== S.v || pdf.on) return;
+  if (Math.abs(L.W - S.W) < 2 && Math.abs(L.H - S.H) < 2) return;
+  relayout();
+}
 
 // ---------------------------------------------------------------------------
 // The screen stays on while a song is shown.
@@ -2144,18 +2600,20 @@ function dropWake() {
 }
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") { lastTick = performance.now(); dropWake(); holdWake(); }
-  else { clearPeek(); stopPlay(); saveState(); }
+  else { clearPeek(); stopPlay(); sleepAudio(); saveState(); }
 });
 // Leaving the page: give the tab's audio session back (iOS keeps a page's type for the whole
 // tab: a "playback" left behind kept the Tuner's microphone from starting) and the PDF's canvas.
 window.addEventListener("pagehide", () => {
   clearPeek();
   stopPlay();
+  sleepAudio();
   if (pdf.on) pdfOff();
   saveState();
   dropWake();
   if (ac) ac.close().catch(() => {});
   ac = null;
+  voices = new Map();
   setSession("auto");
 });
 window.addEventListener("pageshow", (e) => {
@@ -2163,6 +2621,7 @@ window.addEventListener("pageshow", (e) => {
   holdWake();
   lastTick = performance.now();
   for (const t of UNLOCK) document.addEventListener(t, unlockPlay, true); // (the next tap starts the audio again)
+  if (!ac && S.ready) idle(() => { if (!ac) warmAudio(); });
 });
 
 // The cloud sync changed My songs: list again; the open song may be gone.
@@ -2177,6 +2636,7 @@ window.addEventListener("resonate:remote", async (e) => {
 
 engine().catch(() => {});
 setNames(S.names);
+{ const k = recall(K.keys); setKeys(k === "on" ? true : k === "off" ? false : keysDefault()); }
 (async () => {
   const listed = await fillSongs();
   const saved = recall(K.song);
@@ -2199,6 +2659,18 @@ function countAll() {
   return { rendered, pitched: S.v?.pitched ?? 0 };
 }
 
+// The keys lit on the keyboard (tests; none when it's hidden).
+const litKeys = () => (dockEl.hidden ? [] : [...stripEl.querySelectorAll("rect.lit")].map((r) => ({ midi: Number(r.dataset.midi), hand: r.dataset.hand })));
+
+// A strike for tests: its notes, names, finger, whether it's held and what it still sounds.
+function peekInfo(pk) {
+  const live = pk.notes && !pk.dead && (pk.held || (pk.a && pk.a.currentTime < pk.end + 0.3));
+  return {
+    ids: pk.items.map((it) => it.id), names: (pk.names || []).join(" "), held: pk.held, pid: pk.pid,
+    sounding: live ? pk.midis.filter((m) => voices.get(m)?.pk === pk) : [],
+  };
+}
+
 // ▶'s state for tests: what's scheduled and lit, the bar the music is in, the page turns.
 function playDebug() {
   const a = PB.a;
@@ -2209,13 +2681,23 @@ function playDebug() {
     sing: S.sing ? { order: S.sing.order ? S.sing.order.length : null, tempo: S.sing.tempo } : S.sing,
     t0: PB.t0, s0: PB.s0, round: PB.round, now: a && a.state !== "closed" ? a.currentTime : null,
     latency: a ? a.outputLatency || a.baseLatency || 0 : 0,
-    items: PB.tr ? PB.tr.items.map((x) => ({ id: x.id, midi: x.midi, sec: x.sec, dur: x.dur, hold: x.hold, sound: x.sound, k: x.k, n: x.n })) : [],
+    items: PB.tr ? PB.tr.items.map((x) => ({ id: x.id, midi: x.midi, sec: x.sec, dur: x.dur, hold: x.hold, sound: x.sound, k: x.k, n: x.n, ...(x.muted ? { muted: true } : {}) })) : [],
     scheduled: PB.log.map((x) => ({ ...x })),
     lit: [...PB.lit.keys()], litEls: [...stage.querySelectorAll(".page g.note.play")].map((g) => g.id),
-    strip: stripEl.classList.contains("on") ? [...stripEl.querySelectorAll("rect.lit")].map((r) => ({ midi: Number(r.dataset.midi), hand: r.dataset.hand })) : [],
+    hushed: [...PB.lit].filter(([, c]) => c === "hush").map(([id]) => id), hushEls: [...stage.querySelectorAll(".page g.note.hush")].map((g) => g.id),
+    // what ▶ plays: the view's chips (key, label, hand, heard), the muted keys, where the chips are
+    hear: {
+      groups: (S.P ? hearGroups() : []).map((g) => ({ key: g.key, label: g.label, hand: g.hand, heard: !mutedKeys().has(g.key) })),
+      muted: S.P ? [...mutedKeys()] : [], saved: S.st.hear ? JSON.parse(JSON.stringify(S.st.hear)) : null,
+      home: hearEl.hidden ? null : hearEl.parentNode === dockEl ? "dock" : "selbar",
+      shown: !hearEl.hidden && !!hearEl.offsetParent,
+      rect: hearEl.hidden || !hearEl.offsetParent ? null : (() => { const r = hearEl.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(),
+      chips: [...hearEl.querySelectorAll("button")].map((b) => { const r = b.getBoundingClientRect(); return { key: b.dataset.key, label: b.textContent, hand: b.dataset.hand, pressed: b.getAttribute("aria-pressed") === "true", rect: [r.left, r.top, r.width, r.height] }; }),
+    },
+    strip: litKeys(),
     k: PB.k, kr: PB.kr, mi: PB.mi, musicPage: PB.musicPage, turns: PB.turns.map((x) => ({ ...x })), defer: PB.defer ? { ...PB.defer } : null,
     pre: PB.tr?.pre ?? null, bus: PB.bus ? PB.bus.gain.value : null,
-    stripSide: PB.stripSide, stripOff: PB.stripOff === S.showGen, busy: PB.busyRects.map((r) => r.map(Math.round)),
+    busy: PB.busyInk.length,
     bands: [...stage.querySelectorAll(".page .sel")].map((b) => ({ page: Number(b.parentElement.dataset.page), left: b.offsetLeft, top: b.offsetTop, width: b.offsetWidth, height: b.offsetHeight })),
     selbar: selbar.hidden ? null : { at: selbar.dataset.at, loop: !selLoopBtn.hidden, rect: (() => { const r = selbar.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })() },
     geo: () => [...stage.querySelectorAll(".page")].map((pg) => ({ page: Number(pg.dataset.page), rect: (() => { const r = pg.getBoundingClientRect(); return [r.left, r.top]; })(), systems: pageGeo(pg).map((x) => ({ top: x.top, bottom: x.bottom, left: x.left, right: x.right, cols: x.cols.map((c) => [c.q, c.x0, c.x1]) })) })),
@@ -2241,14 +2723,22 @@ window.resonateDebug = () => {
       counts: { rendered, pitched: S.v?.pitched ?? 0, pages: S.counted.size }, countAll,
       get facts() { return S.P ? Object.fromEntries(S.P.facts) : {}; },
       state: { ...S.st },
-      peek: peek && !peek.hidden ? {
-        ids: peek.items.map((it) => it.id), names: peek.names.join(" "), held: peek.held,
-        sounding: peek.notes && (peek.held || (peek.a && peek.a.currentTime < peek.end + 0.3)) ? [...peek.midis] : [],
-        lit: [...stripEl.querySelectorAll("rect.lit")].map((r) => ({ midi: Number(r.dataset.midi), hand: r.dataset.hand })),
-        side: stripEl.dataset.side || "bottom",
+      // the newest strike on screen (peeks: all of them, oldest first)
+      peek: peeks.length ? {
+        ...peekInfo(peeks.at(-1)),
+        lit: litKeys(),
       } : null,
+      // the keyboard (🎹): the setting, its pref, shown, its rect (client px), range and lit keys
+      keys: {
+        on: KB.on, pref: recall(K.keys), dflt: keysDefault(), shown: !dockEl.hidden,
+        rect: dockEl.hidden ? null : (() => { const r = dockEl.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(),
+        range: dockEl.hidden ? null : (() => { const k = [...stripEl.querySelectorAll("rect.key")].map((r) => Number(r.dataset.midi)); return k.length ? [Math.min(...k), Math.max(...k)] : null; })(),
+        lit: litKeys(), draws: KB.draws,
+      },
+      peeks: peeks.map(peekInfo),
       peekLog: peekLog.map((x) => ({ ...x })),
-      audio: ac ? { state: ac.state, stuck: acStuck, session: navigator.audioSession?.type ?? null } : null,
+      audio: ac ? { state: ac.state, stuck: acStuck, session: navigator.audioSession?.type ?? null, rate: ac.sampleRate, base: ac.baseLatency ?? null, out: ac.outputLatency ?? null, piano: !!pianoNow(ac) } : null,
+      awake: { on: !!awake.src, same: !!awake.src && awake.a === ac, idle: awake.src ? Math.round(performance.now() - awake.at) : null, ms: AWAKE },
       offer: { shown: !offerEl.hidden, to: offerTo, days: S.st.days ? { ...S.st.days } : null },
       pdf: {
         has: pdf.has, on: pdf.on, busy: pdf.busy, page: pdf.page, pages: pdf.pages, spread: pdf.spread,
