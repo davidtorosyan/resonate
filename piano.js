@@ -43,8 +43,8 @@ export function loadPiano(ac) {
 }
 
 // Schedule one note. `piano` is the resolved loadPiano() value. Returns the note's
-// gain node (to damp it early).
-export function playPiano(ac, piano, when, dur, midi, level, nodes) {
+// gain node (to damp it early). `dest`: where it goes (the context's output, or a bus).
+export function playPiano(ac, piano, when, dur, midi, level, nodes, dest = ac.destination) {
   let key = piano.keys[0];
   for (const k of piano.keys) if (Math.abs(k - midi) < Math.abs(key - midi)) key = k;
   const src = ac.createBufferSource();
@@ -55,11 +55,49 @@ export function playPiano(ac, piano, when, dur, midi, level, nodes) {
   g.gain.setValueAtTime(level, when);
   g.gain.setTargetAtTime(0, end, RELEASE);
   src.connect(g);
-  g.connect(ac.destination);
+  g.connect(dest);
   src.start(when, ONSET);
   src.stop(end + RELEASE * 6);
   nodes.push(src);
   return g;
+}
+
+// A bus for many notes at once (a whole score played): `gain` on the way in, then a soft limiter —
+// straight through up to KNEE, above it bent smoothly (tanh) towards full scale, never past it — so
+// a thick moment (chords over a melody, their tails still ringing) is rounded off instead of
+// clipping at the output (crackles). A WaveShaper, not a DynamicsCompressor: the compressor isn't a
+// hard limit (a burst ×1.15 over full scale still came out at 1.02 in Chromium, 1.06 in WebKit) and
+// adds its own make-up gain (+0.56 dB) to everything. Inputs to ±2 are shaped (a ½ gain before a
+// curve drawn for twice the range). One per context.
+const KNEE = 0.8;
+const buses = new WeakMap(); // AudioContext -> GainNode
+let shape = null;
+function softCurve() {
+  if (!shape) {
+    const n = 4097;
+    shape = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = 2 * ((2 * i) / (n - 1) - 1), a = Math.abs(x); // (the curve's ±1 is the input's ±2)
+      shape[i] = Math.sign(x) * (a <= KNEE ? a : KNEE + (1 - KNEE) * Math.tanh((a - KNEE) / (1 - KNEE)));
+    }
+  }
+  return shape;
+}
+export function pianoBus(ac, gain = 0.8) {
+  let bus = buses.get(ac);
+  if (!bus) {
+    bus = ac.createGain();
+    const half = ac.createGain(), lim = ac.createWaveShaper();
+    half.gain.value = 0.5;
+    lim.curve = softCurve();
+    lim.oversample = "none";
+    bus.connect(half);
+    half.connect(lim);
+    lim.connect(ac.destination);
+    buses.set(ac, bus);
+  }
+  bus.gain.value = gain;
+  return bus;
 }
 
 // Schedule a long run of sounds (a song's notes, its clicks) a few seconds at a time instead of

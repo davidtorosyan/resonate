@@ -93,6 +93,8 @@ const f1 = (x) => (Math.round(x * 10) / 10).toString();
 // opts.low: the staves ("part|staff") read from the bottom — the Some floor names a bar's bass
 // note there (the piano's left hand, a hymn's bass part), its top note elsewhere (the tune, the
 // right hand); without it, the top note on a system's first staff and the bass note below.
+// opts.minPx: the smallest letter on screen (CSS px) — a small head's pill grows to it where it
+// touches no other pill (growPills).
 // → { heads (badges drawn), ms, items: [{ id, g, fact, cx, cy, h, w, ledgers, some, badge }] }
 export function decorate(pageEl, facts = new Map(), opts = {}) {
   const low = opts.low ? new Set(opts.low) : null;
@@ -168,6 +170,7 @@ export function decorate(pageEl, facts = new Map(), opts = {}) {
       }
     }
   }
+  if (opts.minPx) growPills(live, opts.minPx);
   // Heads a second apart stacked at one x (an engraving collision, e.g. C+C♯+D): their pills move
   // apart vertically so both letters show (each still over its own head).
   for (const list of byStaff.values()) {
@@ -226,6 +229,48 @@ export function decorate(pageEl, facts = new Map(), opts = {}) {
     heads++;
   }
   return { heads, ms: Math.round(performance.now() - t0), items };
+}
+
+// Small heads (a page zoomed out — the printed page's density on an iPad mini, or smaller): a
+// pill 1.3 × its head would hold a letter under minPx on screen, so it grows to hold one that
+// size — as far as it touches no other pill (a neighbour in a run, a chord's next head: grown
+// pills that would overlap give back 15% a round, down to 1.3; a chord's seconds and thirds keep
+// 1.05). Sizes as drawn: px per unit from the page's screen matrix (read before any write).
+function growPills(live, minPx) {
+  const m = live[0]?.g.getScreenCTM();
+  const k = m ? Math.hypot(m.b, m.d) : 0;
+  if (!k) return;
+  const ph = (it) => it.h * (it.grow || it.scale), pw = (it) => ph(it) * (labelOf(it.fact).acc ? 1.45 : 1);
+  let grown = [];
+  for (const it of live) {
+    const want = minPx / (0.78 * k * it.h);
+    if (it.scale === 1.3 && want > 1.3) { it.grow = want; grown.push(it); }
+  }
+  if (!grown.length) return;
+  const byX = [...live].sort((a, b) => a.cx - b.cx);
+  for (let round = 0; round < 4 && grown.length; round++) {
+    const reach = Math.max(...live.map(pw));
+    const cramped = new Set();
+    for (let i = 0; i < byX.length; i++) {
+      const a = byX[i];
+      for (let j = i + 1; j < byX.length; j++) {
+        const b = byX[j];
+        if (b.cx - a.cx >= reach) break;
+        if (!a.grow && !b.grow) continue;
+        if (b.cx - a.cx < (pw(a) + pw(b)) / 2 && Math.abs(a.cy - b.cy) < (ph(a) + ph(b)) / 2) {
+          if (a.grow) cramped.add(a);
+          if (b.grow) cramped.add(b);
+        }
+      }
+    }
+    if (!cramped.size) break;
+    for (const it of cramped) {
+      it.grow *= 0.85;
+      if (it.grow <= 1.3 || round === 3) delete it.grow;
+    }
+    grown = grown.filter((it) => it.grow);
+  }
+  for (const it of grown) { it.scale = it.grow; delete it.grow; }
 }
 
 // The key's ♭/♯ mark (Some): at its own head's height, just right of the head (past its dots and a

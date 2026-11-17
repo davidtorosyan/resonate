@@ -77,6 +77,9 @@
       #smaller, #bigger { line-height: 1; padding: 0; }
       #smaller svg, #bigger svg { width: 22px; height: 22px; display: block; margin: auto; }
       #pdf { padding: 0 0.5rem; }
+      #play { padding: 0; }
+      #play svg { width: 22px; height: 22px; display: block; margin: auto; }
+      #play[data-icon="stop"] { background: rgba(216,107,0,0.25); border-color: #d86b00; }
       #offer { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; color: rgba(255,255,255,0.75); white-space: nowrap; }
       #bar #offer-yes { border-radius: 999px; border-color: #c48bff; color: #e0c8ff; background: transparent; font-weight: 600; }
       #bar #offer-no { background: transparent; border-color: transparent; color: rgba(255,255,255,0.55); min-width: 36px; padding: 0 0.4rem; }
@@ -95,6 +98,9 @@
          them — under 670 px (Split View, phones) the pager goes up by the pages: under the controls
          it took a third row of its own at 507. */
       @media (max-width: 1099px) {
+        /* (the song menu's base leaves ▶ room on the controls' row: in Split View, 507 and 678 px,
+           it wrapped them onto a row of their own) */
+        #song { flex-basis: 7.5rem; }
         .nav { order: 0; }
         #version { order: 1; margin-left: auto; }
         .brk { display: block; order: 2; flex-basis: 100%; height: 0; }
@@ -120,11 +126,24 @@
         #bar:has(#offer:not([hidden])) .pager { order: 1; }
         #bar:has(#offer:not([hidden])) #version { margin-left: 0; }
       }
+      /* ‹ › are the only way to turn a page by touch (a press on the music sounds a note): wide
+         targets on an iPad; on a phone they share the song's row (the bar keeps three rows). */
+      @media (any-pointer: coarse) and (min-width: 740px) {
+        #bar #prev, #bar #next { min-width: 56px; }
+        /* (the fewer-names chip keeps the bar on one row from 1100 px: 44 then) */
+        #bar:has(#offer:not([hidden])) #prev, #bar:has(#offer:not([hidden])) #next { min-width: 44px; }
+      }
       @media (max-width: 479px) {
-        #prev, #next { display: none; }
         /* (room for "12 / 31" while it says "…": the bar doesn't re-wrap — and the music re-lay —
            when the song is in) */
         #pg { min-width: 3.2rem; }
+        .ctl { display: contents; }
+        #version, #bar:has(#offer:not([hidden])) #version { order: 1; margin-left: auto; }
+        /* (the song's basis leaves just the pager's room on its row: what follows wraps under it
+           — no empty break line, whose row gaps made the bar taller than v78's) */
+        #bar #song { order: 3; flex: 1 1 calc(100% - 11rem); min-width: 0; max-width: none; }
+        #bar .pager, #bar:has(#offer:not([hidden])) .pager { order: 4; margin-left: 0; }
+        #hands, #play, #names, .size, #pdf, #offer { order: 6; }
       }
       @media (max-width: 420px) {
         #bar { column-gap: 0.5rem; padding-left: max(0.6rem, env(safe-area-inset-left)); padding-right: max(0.6rem, env(safe-area-inset-right)); }
@@ -132,8 +151,37 @@
         .nav { gap: 0.3rem; }
         .ctl { gap: 0.3rem; }
         #song { flex-basis: 100%; max-width: none; }
+        /* (the controls' row sits .3rem under the song's, as when they shared .ctl's gap: the
+           stage keeps v78's height) */
+        #hands, #play, #names, .size, #pdf, #offer { margin-top: -0.1rem; }
       }
       @media (max-width: 420px) and (any-pointer: coarse) { .nav-link { padding: 0.3rem 0.5rem; } }
+      /* ▶ takes a place on the controls' row: with the fewer-names chip and 📄 the one-row bar is
+         full at 1112–1140 px — the links, the page number and the controls' gaps give a little —
+         and at 320 px the view menu gives way (its name clipped) rather than the − / + taking a
+         row of their own. */
+      @media (min-width: 1100px) {
+        #bar:has(#offer:not([hidden])) .nav-link { padding-left: 0.45rem; padding-right: 0.45rem; }
+        #bar:has(#offer:not([hidden])) #pg { min-width: 3.6rem; }
+        #bar:has(#offer:not([hidden])) .ctl { column-gap: 0.3rem; }
+      }
+      @media (max-width: 359px) {
+        #bar #hands { flex: 1 1 0; min-width: 5rem; text-overflow: ellipsis; }
+      }
+      @media (max-width: 319px) { #bar #hands { min-width: 4rem; } }
+      /* The fewer-names chip with ▶ in the row: on a big phone in portrait (421–479 px) it joins the
+         song's row without its question (the pager took the place v78's chip row went under: a 4th
+         row), and from 480 px the song menu gives way further (an iPhone SE in landscape wrapped
+         the chip to a row of its own) — the bar keeps v78's rows. */
+      @media (min-width: 421px) and (max-width: 479px) {
+        #bar #offer:not([hidden]) { order: 3; }
+        #bar #offer > span { display: none; }
+        #bar .ctl:has(#offer:not([hidden])) #song { flex-basis: 0; min-width: 4rem; }
+      }
+      @media (min-width: 480px) and (max-width: 1099px) {
+        #bar .ctl:has(#offer:not([hidden])) #song { flex-basis: 0; min-width: 4rem; }
+        #bar .ctl:has(#offer:not([hidden])) { column-gap: 0.3rem; }
+      }
 
       /* The paper: one page (or two side by side), drawn to the stage's exact size. */
       #stage {
@@ -192,6 +240,32 @@
       #strip.on { transform: none; }
       #strip svg { display: block; width: 100%; height: 100%; }
       @media (prefers-reduced-motion: reduce) { #strip { transition: none; } }
+      /* ▶: what sounds now — heads and names in the peek's orange. */
+      #stage g.note.play .notehead use { fill: #d86b00; }
+      #stage g.note.play > .nn.nb-f rect { fill: #c45f00; }
+      #stage g.note.play > .nn.nb-h rect { stroke: #c45f00; fill: #ffe3c7; }
+      #stage g.note.play > .nn.nb-h text { fill: #c45f00; }
+      /* A stretch picked by dragging: a band a system, like a text selection (multiplied: the ink
+         stays black, the names readable). */
+      #stage .sel { position: absolute; pointer-events: none; background: #d4e2ff; mix-blend-mode: multiply; border-radius: 3px; }
+      /* Its controls (▶ ⟳ speed ✕), over the music where they cover neither it nor the line
+         playing (play.js placeSelbar). */
+      #selbar {
+        position: absolute; left: 0; top: 0; z-index: 4; display: flex; align-items: center; gap: 4px;
+        padding: 4px; border-radius: 999px; background: #14142c; box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+        color: #e8e8f0; font: 600 0.9rem system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      #selbar[hidden] { display: none; }
+      #selbar button, #selbar select {
+        font: inherit; color: inherit; background: transparent; border: 0; border-radius: 999px;
+        min-width: 44px; height: 44px; padding: 0; cursor: pointer; touch-action: manipulation;
+      }
+      #selbar button[hidden] { display: none; }
+      #selbar button svg { width: 22px; height: 22px; display: block; margin: auto; }
+      #selbar button[aria-pressed="true"] { background: rgba(166,79,255,0.45); }
+      #selbar #sel-play[data-icon="stop"] { background: rgba(216,107,0,0.4); }
+      #selbar select { padding: 0 0.6rem; background: rgba(255,255,255,0.08); -webkit-appearance: none; appearance: none; text-align: center; font-variant-numeric: tabular-nums; }
+      #selbar #sel-clear { font-size: 1rem; color: rgba(255,255,255,0.7); }
       /* The original PDF over the (hidden, still laid out) sheet. (Its descendants too: Verovio
          writes visibility="visible" on some staves, which beats an inherited hidden.) */
       #stage[data-pdf] .page, #stage[data-pdf] .page * { visibility: hidden; }
@@ -212,6 +286,7 @@
           <optgroup id="mine" label="My songs" hidden></optgroup>
         </select>
         <select id="hands" aria-label="Hands" hidden></select>
+        <button id="play" type="button" aria-label="Play" title="Play" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.2v13.6a.8.8 0 0 0 1.2.7l10.6-6.8a.8.8 0 0 0 0-1.4L9.2 4.5A.8.8 0 0 0 8 5.2z" fill="currentColor"/></svg></button>
         <button id="names" type="button" data-level="all" aria-label="Note names: all" title="Note names: all">ABC</button>
         <span class="size">
           <button id="smaller" type="button" aria-label="Smaller" title="Smaller"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg></button>
@@ -226,14 +301,22 @@
         <button id="next" type="button" aria-label="Next page" title="Next page">›</button>
       </span>
       <span class="brk"></span>
-      <span id="version" class="mono">v78</span>
+      <span id="version" class="mono">v79</span>
     </header>
     <main id="stage" data-names="all">
       <p id="msg" hidden></p>
       <div id="bubble"></div>
       <div id="strip" aria-hidden="true"></div>
+      <div id="selbar" hidden>
+        <button id="sel-play" type="button" aria-label="Play" title="Play"></button>
+        <button id="sel-loop" type="button" aria-label="Loop" title="Loop" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 0 1 13-5.1L19.5 9M19.5 4.5V9H15M19.5 12a7.5 7.5 0 0 1-13 5.1L4.5 15M4.5 19.5V15H9"/></svg></button>
+        <select id="speed" aria-label="Speed" title="Speed">
+          <option value="1">100%</option><option value="0.9">90%</option><option value="0.8">80%</option><option value="0.7">70%</option><option value="0.6">60%</option><option value="0.5">50%</option>
+        </select>
+        <button id="sel-clear" type="button" aria-label="Clear" title="Clear">✕</button>
+      </div>
     </main>
-    <script type="module" src="nav.js?v=78"></script>
-    <script type="module" src="play.js?v=78"></script>
+    <script type="module" src="nav.js?v=79"></script>
+    <script type="module" src="play.js?v=79"></script>
   </body>
 </html>

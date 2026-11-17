@@ -7,34 +7,71 @@
 //
 // The place is kept by written measure (S.at): rotation, −/+, a hands switch and reopening the
 // song all come back to the page holding that bar.
-import { spaceChanged } from "./nav.js?v=78";
-import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=78";
-import { prepare, buildView, VIEW_LABELS } from "./playprep.js?v=78";
-import { decorate, fullName, labelOf } from "./playnames.js?v=78";
-import { loadPiano, holdPiano } from "./piano.js?v=78";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=78";
+//
+// ▶ plays the view (playtime.js: the song's written timeline, Sing's performance order): a
+// stretch dragged on the page — once or round after round — or from the page's first bar to the
+// end, its notes lit as they sound and the page turning with the music.
+import { spaceChanged } from "./nav.js?v=79";
+import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=79";
+import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=79";
+import { decorate, fullName, labelOf } from "./playnames.js?v=79";
+import { loadPiano, holdPiano, playPiano, keepAlive, pianoBus } from "./piano.js?v=79";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=79";
+import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=79";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=79";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
 const songSel = $("song"), samplesEl = $("samples"), mineEl = $("mine"), handsSel = $("hands");
 const namesBtn = $("names"), smallerBtn = $("smaller"), biggerBtn = $("bigger"), prevBtn = $("prev"), nextBtn = $("next");
 const pdfBtn = $("pdf"), offerEl = $("offer"), stripEl = $("strip"), bubbleEl = $("bubble");
+const playBtn = $("play"), selbar = $("selbar"), selPlayBtn = $("sel-play"), selLoopBtn = $("sel-loop"), speedSel = $("speed"), selClearBtn = $("sel-clear");
 
 const K = {
-  play: "resonate.play",        // { songId: { names, view, at, pdfPage, days } } — the account's (space.js DATA_KEYS)
-  size: "resonate.play.size",   // staff space in CSS px — this device's (the piano views)
-  scoreSize: "resonate.play.size.score", // the same for the full score: a size picked for the piano
-                                // doesn't make the score one system a page, nor the other way
-                                // round — this device's
+  play: "resonate.play",        // { songId: { names, view, at, pdfPage, speed, days } } — the account's (space.js DATA_KEYS)
+  zoom: "resonate.play.zoom",   // − / +: steps from the default ("+1" … "+8", "-1" … "-8"; none: the default) — this device's (the piano views)
+  zoomScore: "resonate.play.zoom.score", // the same for the full score: a size picked for the piano
+                                // doesn't change the score, nor the other way round — this device's
   names: "resonate.play.names", // the level a song opened for the first time starts at — this device's
   gen: "resonate.play.gen",     // the songs' database generation seen at the last visit — this device's
   song: "resonate.sing.song",   // the song open, shared with Sing
+  timing: "resonate.sing.timing", // Sing's: { songId: { bpm (a tempo typed or tapped for the song), … } } — read only
 };
-// Staff space (CSS px) steps for − / +. Defaults: ~3 mm on a tablet on the music desk, smaller
-// on a desktop screen, a phone shows what fits.
-const SIZES = [7, 8, 9.5, 11, 12.5, 14, 16, 18, 20, 23];
-// The largest size step ≤ x (the smallest step when none is).
-const stepDown = (x) => [...SIZES].reverse().find((s) => s <= x + 0.01) ?? SIZES[0];
+// v77–78's size prefs: a size chosen then (on a tablet 16 was the default) would hide the
+// printed-page default — removed, so every device starts at it.
+const OLD_SIZE_KEYS = ["resonate.play.size", "resonate.play.size.score"];
+// The default on a tablet and a desktop: the printed page's density — PAPER staff spaces across
+// the page (margins in), as many bars a system as the printed piano/vocal sheets. Calibrated on the
+// owner's five converted songs against their own printed system breaks (Audiveris keeps them:
+// <print new-system>): at 90 across, bars a system (mean over each whole song) come out within
+// −21%…+9% of print, 0.97× overall — Killing Me Softly 3.14–3.29 (print 3.14), Songbird 4.41
+// (4.41), The Longest Time 4.05 (3.71), Piano Man 4.9–5.0 (5.26), Wichita Lineman 2.43 (3.09) —
+// and the median the print's on four of five; 100 across put 1.16× print's bars in a system. On
+// an 11" iPad Air in portrait that is 9.11 px a staff space, ~1.74 mm: the printed size. The
+// width only (rotated, the same density across the long side); a desktop's clamped to DESK; a
+// phone — or a tablet window narrower than TABLET_W (Split View, Slide Over: 5 px at 320 wide) —
+// shows what fits (PHONE).
+const PAPER = 90, DESK = [9.5, 12.5], PHONE = 9.5, TABLET_W = 700;
+// Two pages side by side only when each holds a system at about the printed density.
+const SPREAD = 110;
+// − / +: a step is ×STEP from the default (the size it shows: the printed density, or its fit),
+// up to STEPS either way, never under MIN_SP; the default itself is step 0. Kept as steps — the
+// same steps from the default in either orientation, on any iPad: "+" in portrait is one step
+// bigger in landscape too, not one absolute size (v79's 8 px from portrait made landscape smaller
+// than its default, and − / + never came back to the default).
+const STEP = 1.15, STEPS = 8, MIN_SP = 5;
+// The smallest name letter on screen (CSS px): − to 6 or 5 px a staff space makes heads ~6 px —
+// a pill grows to hold a letter this size where it touches no other pill (playnames growPills).
+const MIN_LETTER = 8;
+// Two systems a page where the stage allows (in landscape): the default steps down by FIT_STEP,
+// not under FIT_FLOOR of the device's portrait density on a tablet (two systems of voice + piano +
+// one more staff need ~85 staff spaces of the short side less the bar: about 0.9 of it — Piano Man's
+// 4-staff score two a page at 8.85 on an 11" Air, 7.51 on a mini; v79's 0.75 of the landscape size
+// stopped at 8.5 on a mini: one system a page, 36 pages), of the default on a desktop; else one
+// system a page.
+const FIT_STEP = 0.93, FIT_FLOOR = { tablet: 0.9, desktop: 0.75 };
+// The largest step ≤ x (the smallest step when none is), of a step list.
+const stepDown = (x, list) => [...list].reverse().find((s) => s <= x + 0.01) ?? list[0];
 const LEVELS = ["all", "some", "off"];
 const FIRST = Object.keys(SAMPLES)[0];
 // (header "none": "auto" prints every OCR'd credit, "Authorized for use by: …" included.
@@ -80,17 +117,19 @@ const paint = () => new Promise((resolve) => {
   setTimeout(go, 100);
 });
 
-function defaultSize() {
-  const coarse = matchMedia("(any-pointer: coarse)").matches;
-  if (!coarse) return 12.5;
-  return Math.min(screen.width, screen.height) >= 700 ? 16 : 9.5;
+// "tablet" (a coarse pointer, the screen's short side ≥ 700), "phone" (coarse, smaller), "desktop".
+function device() {
+  if (!matchMedia("(any-pointer: coarse)").matches) return "desktop";
+  return Math.min(screen.width, screen.height) >= 700 ? "tablet" : "phone";
 }
-// The size pref of a view: the full score has its own. → { key, size, auto (none chosen yet) }
+// The size pref of a view: the full score has its own. → { key, step (− / +: steps from the
+// default, 0 = the default) }
 const sizeKind = (view) => (view === "score" ? "score" : "piano");
 function savedSize(kind) {
-  const key = kind === "score" ? K.scoreSize : K.size, v = Number(recall(key));
-  return { key, size: SIZES.includes(v) ? v : defaultSize(), auto: !SIZES.includes(v) };
+  const key = kind === "score" ? K.zoomScore : K.zoom, v = recall(key);
+  return { key, step: /^[+-][1-8]$/.test(v || "") ? Number(v) : 0 };
 }
+for (const k of OLD_SIZE_KEYS) keep(k, null);
 
 const S = {
   gen: 0,           // bumped by every song open / hands switch: a newer one wins
@@ -106,10 +145,12 @@ const S = {
   st: {},           // the song's own record in resonate.play
   names: LEVELS.includes(recall(K.names)) ? recall(K.names) : "all",
   sizes: { piano: savedSize("piano"), score: savedSize("score") }, // this device's size prefs
-  size: 0,          // the shown view's staff space wanted (its pref: useSize)
-  sizeAuto: true,   // no size chosen on this device yet for the shown view
+  step: 0,          // the shown view's steps from the default (− / +; 0: the default — useSize)
   W: 0, H: 0, spread: false, sp: 0, scale: 0,
-  hard: 0,          // the staff space the screen allows (sp may be under it: the landscape default)
+  cap: 0,           // the largest staff space the screen allows (≥ 40 across, a whole system a page)
+  base: 0,          // the default's staff space before the two-systems fit (the printed density)
+  auto: 0,          // the default's staff space (after its fit): what a step is taken from
+  mode: "",         // how sp was chosen: "set" (− / +; a phone's piano views), "fit" / "fitted" (the default), "one" (one system a page), "two" (a phone's score)
   pages: 0, page: 1,
   at: 0,            // written measure index the shown place is anchored to
   items: [],        // decorate() items of the shown pages (heads with their facts and boxes)
@@ -117,7 +158,15 @@ const S = {
   lgen: 0,          // layout generation: the page cache and prefetches belong to one
   mine: new Set(),  // library song ids
   t: {},            // timings (ms)
-  fitLog: [],       // the full score's two-system sizes tried: [{ sp, share }] (tests)
+  fitLog: [],       // the two-system sizes tried for the default: [{ sp, share }] (tests)
+  xml: "",          // the song's MusicXML (as catalog.js gives it: Sing's order is read from it)
+  T: null,          // playtime timeline(): every note and rest at its written place (built once a song)
+  Tid: null,        // id → its timeline element
+  sing: undefined,  // Sing's parse: { order (written bar per played bar) | null, tempo } (null: failed)
+  qs: null,         // { view, qs }: the view's onsets (written q) — the columns a stretch is picked by
+  sel: null,        // the stretch picked: { q0, q1 (its last onset), end (where it stops) } in written q
+  speed: 1,         // ▶'s speed (resonate.play[id].speed)
+  showGen: 0,       // bumped by every drawing of the shown pages
 };
 useSize();
 let tk = null;            // the Verovio toolkit (one per page load)
@@ -205,7 +254,8 @@ function setBusy(busy) {
   handsSel.disabled = busy || pdf.on;
   if (busy) {
     pgEl.textContent = "…";
-    for (const b of [smallerBtn, biggerBtn, prevBtn, nextBtn]) b.disabled = true;
+    for (const b of [smallerBtn, biggerBtn, prevBtn, nextBtn, playBtn]) b.disabled = true;
+    placeSelbar(); // (the stretch's controls wait for the drawing)
   }
 }
 function showMsg(text) {
@@ -218,18 +268,21 @@ function clearPages() {
 }
 function fail(kind, err) {
   if (err) console.warn(kind === "engine" ? "music engine" : "song", err);
+  stopPlay();
   S.ready = false;
   S.failed = kind;
   clearPages();
   setBusy(false);
   pgEl.textContent = "";
   showMsg(kind === "engine" ? "Couldn't load the music — check the connection." : "Couldn't open this song.");
+  placeSelbar();
 }
 
 async function open(id) {
   const gen = ++S.gen;
   if (S.song && S.song !== id) { saveState(); songClosed(); }
   clearPeek();
+  stopPlay();
   if (pdf.on) pdfOff();
   pdf.has = false;
   pdfBtn.hidden = true;
@@ -240,8 +293,14 @@ async function open(id) {
   S.P = null;
   S.v = null;
   S.built = new Map();
+  S.xml = "";
+  S.T = S.Tid = S.qs = S.sel = null;
+  S.sing = undefined;
+  placeSelbar();
   S.st = readPlay()[id] || {};
   if (!S.st || typeof S.st !== "object") S.st = {};
+  S.speed = SPEEDS.includes(S.st.speed) ? S.st.speed : 1;
+  speedSel.value = String(S.speed);
   S.at = Number.isInteger(S.st.at) && S.st.at >= 0 ? S.st.at : 0;
   // (a song opened for the first time starts at the level chosen last, and keeps it: a level
   // chosen later on another song leaves this one alone)
@@ -264,6 +323,7 @@ async function open(id) {
   }
   S.t.song = ms(t0);
   S.title = song.title;
+  S.xml = song.xml;
   pdfCheck(id, song.source);
   await paint();
   if (gen !== S.gen) return;
@@ -284,6 +344,8 @@ async function open(id) {
   if (gen !== S.gen || !S.ready) return;
   S.t.open = ms(t0);
   songShown();
+  // (what ▶ needs, read while the page waits for a hand: the timeline, Sing's order)
+  idle(() => { if (S.song === id && S.P) { songTime(); songSing(); } });
 }
 
 // Load the current view into Verovio (its MusicXML built once per song) and show the anchor's page.
@@ -333,102 +395,167 @@ async function loadView(gen) {
   S.t.data = ms(t);
   S.loaded = ok ? v : null;
   if (!ok || !tk.getPageCount()) return fail("song");
-  placed(fitScore(L));
+  placed(settle(L));
 }
 
-// The shown view's size pref: S.size (staff space wanted) and S.sizeAuto (none chosen yet).
+// The shown view's size pref: S.step (steps from the default; 0: the default).
 function useSize() {
-  const z = S.sizes[sizeKind(S.view)];
-  S.size = z.size;
-  S.sizeAuto = z.auto;
+  S.step = S.sizes[sizeKind(S.view)].step;
 }
 
-// The page size for the stage, from the staff size wanted: two pages side by side when each still
-// holds ≥ 48 staff spaces; ≥ 40 staff spaces across a system; ≥ one system a page. Until a size
-// is chosen on this device, a grand staff in landscape gets a size step that leaves room for two
-// systems a page (a grand-staff system with its margins takes ~27 staff spaces; not under 11):
-// at 16 an 11" iPad's or a mini's landscape stage held one system and a third of blank paper —
-// 14 on an 11" iPad Air, 12.5 on a mini; + from there is the next step.
+// Systems' heights in staff spaces, measured on the owner's songs (laid out unjustified, the page
+// margins in). The tallest, which a page must hold: 12 a staff in a piano view; a full score's
+// 3 staves SCORE_SYS, SCORE_STAFF less for a staff less and SCORE_EXTRA more for each staff beyond
+// (the accordion's system, 53 — at 7.5 Piano Man's ran off the foot of the page). Two systems,
+// for the default's fit (twoNeed, about the 3rd quartile; the fit checks the real layout): voice +
+// piano 61–73 (Songbird's dynamics and hairpins 78), with the accordion 81–93, a hymn or a tune in
+// the piano 52–63, a grand staff 38–57, one staff 24–43.
+const SCORE_SYS = 38, SCORE_STAFF = 7.5, SCORE_EXTRA = 15;
+function tallest(plan) {
+  const staves = plan?.staves || 1;
+  if (plan?.kind !== "score") return 12 * staves;
+  return SCORE_SYS + (staves > 3 ? SCORE_EXTRA : SCORE_STAFF) * (staves - 3);
+}
+function twoNeed(plan) {
+  const staves = plan?.staves || 1;
+  if (plan?.kind === "score") return 70 + (staves > 3 ? 15 : 8) * (staves - 3);
+  return staves > 1 ? 50 : 36;
+}
+const scaleOf = (sp) => Math.max(5, Math.round(sp / 0.18)); // (Verovio's scale: a whole percent)
+
+// The page size for the stage: the default (none chosen) — on a tablet the printed page's density
+// across the stage's width (PAPER), on a desktop the same within DESK, then two systems a page
+// where the stage allows (fit — in landscape); a phone, or a tablet window narrower than TABLET_W,
+// shows what fits (phoneSize, v78's rules) — or S.step steps from it (stepped: − / +), as two pages
+// side by side when each still holds SPREAD staff spaces (zoomed well out, in landscape). Always
+// ≥ 40 staff spaces across a system and a whole system on a page (S.cap).
 // single: no spread (a view that fits on one page is laid out at the stage's full width).
+// → { W, H, spread, pw (page width), cap, sp, scale, mode ("fit" | "fitted" | "set" | the phone's
+//   "two" / "one"), base (the default before the fit), auto (stepped: the default's size) }
 function measure(single = false) {
   const cs = getComputedStyle(stage);
   const W = Math.floor(stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
   const H = Math.floor(stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom));
   if (W < 60 || H < 60 || !S.P) return null;
   const plan = S.P.views[S.view];
-  const staves = plan?.staves || 1;
-  const want = S.size;
-  // (the full score's pages are ≥ SCORE_WIDE staff spaces across, as its own size keeps them: a
-  // chosen size in narrower halves held one bar a system — and less music than one page)
-  const spread = !single && W > H && W / 2 / want >= (plan?.kind === "score" ? SCORE_WIDE : 48);
-  const pw = spread ? Math.floor(W / 2) : W;
-  if (plan?.kind === "score") {
-    // (a size this view was already fitted to at this page size: laid out once — fitScore)
-    const z = scoreSize(plan, pw, H, want), hit = z.mode === "two" && S.v?.fit?.get(fitKey(pw, H, want));
-    return { W, H, spread, pw, ...z, ...(hit || {}) };
+  const cap = Math.min(W / 40, H / tallest(plan));
+  const at = (sp, mode, more) => ({ W, H, spread: false, pw: W, cap, sp, scale: scaleOf(sp), mode, base: sp, ...more });
+  const dev = device();
+  let L;
+  if (dev === "phone" || (dev === "tablet" && W < TABLET_W)) L = phoneSize(plan, at, W, H, cap);
+  else {
+    const paper = W / PAPER;
+    const base = Math.min(cap, dev === "tablet" ? Math.max(MIN_SP, paper) : Math.min(DESK[1], Math.max(DESK[0], paper)));
+    // (a page size this view was already fitted to: laid out once — a rotation back)
+    const hit = S.v?.fit?.get(fitKey(W, H));
+    L = hit ? at(hit.sp, "fitted", { base }) : at(base, "fit", { base });
   }
-  const hard = Math.min(want, pw / 40, H / (12 * staves));
-  const two = S.sizeAuto && staves > 1 && W > H ? stepDown(Math.max(11, H / (27 * staves))) : Infinity;
-  const sp = Math.min(hard, two);
-  const scale = Math.max(5, Math.round(sp / 0.18));
-  return { W, H, spread, pw, sp, hard, scale };
+  // (a step from the default needs the default's size: known unless it's still to be fitted)
+  return S.step && !needsFit(L) ? stepped(L, single) : L;
 }
-// The full score's staff space. Measured on the owner's songs (systems laid out unjustified, page
-// margins in): two voice + piano systems take 62–74 staff spaces a page (median 66, the 3rd
-// quartile 69, the most 81 — dynamics and hairpins make Songbird's the tallest), one 33–46; with
-// an accordion staff too, two take 79–94 (one 42–53); a grand staff with words in it, two 48–61.
-// So a system of 3 staves takes SCORE_OPT staff spaces for most songs, SCORE_SYS on the safe
-// side, SCORE_STAFF less for a staff less, and SCORE_EXTRA more for each staff beyond three — the
-// tallest one measured (the accordion's system, 53: budgeted at 45.5, Piano Man's ran off the foot
-// of the page at the largest size + allowed, and on a phone in landscape). And the words spread
-// the bars: at 14 px an iPad in portrait (58 staff spaces across) held 1–2 bars a system —
-// Wichita Lineman 13 pages, 2.6 bars a page; at 11 (74 across) 2–4 bars, at 9.5 2–5.
-// The size always leaves a whole system on a page. Until one is chosen (its own pref: a size
-// picked for Both doesn't make the score one system a page, nor the other way round): ≥ SCORE_WIDE
-// staff spaces across (not under SCORE_MIN), two systems a page when that leaves ≥ SCORE_MIN px
-// a staff space (print size on an iPad), checked on the layout (fitScore); else one, as large as
-// fits — unless one alone would leave a third of the page blank (a phone): then two, smaller
-// (checked too).
-const SCORE_SYS = 38, SCORE_OPT = 34, SCORE_STAFF = 7.5, SCORE_EXTRA = 15, SCORE_MIN = 9.5, SCORE_WIDE = 72;
-function scoreSize(plan, pw, H, want) {
-  // (a staff beyond the voice and the grand staff — an accordion's, a guitar's — is often left out
-  // of a system where it rests: the two-system size is tried as if it were, then checked)
-  // (sys: the tallest system, which must fit — the extra staves in; typ: one without them, for
-  // whether one system a page leaves a third of it blank)
-  const more = (plan.staves > 3 ? SCORE_EXTRA : SCORE_STAFF) * (plan.staves - 3), sys = SCORE_SYS + more, opt = SCORE_OPT + Math.min(0, more);
-  const typ = SCORE_SYS + Math.min(0, more);
-  const hard = Math.min(want, pw / 40, H / sys);
-  const cap = Math.min(hard, Math.max(SCORE_MIN, stepDown(pw / SCORE_WIDE)));
-  const one = Math.min(cap, stepDown(H / sys)), two = Math.min(cap, stepDown(H / (2 * opt)));
-  const at = (sp, mode) => ({ sp, hard, scale: Math.max(5, Math.round(sp / 0.18)), mode, one, typ });
-  if (!S.sizeAuto) return at(hard, "set");
-  if (two >= SCORE_MIN - 0.01) return at(two, "two"); // (checked on the layout: fitScore)
-  return one * typ < (2 / 3) * H ? at(two, "two") : at(one, "one");
+// The default still to be checked on the layout (fit, phoneFit).
+function needsFit(L) {
+  if (L.mode === "two") return true;
+  return L.mode === "fit" && L.H / L.sp < 1.3 * twoNeed(S.P.views[S.view]);
 }
-const fitKey = (pw, H, want) => pw + "x" + H + "@" + want;
-// The two-system size measure() picked, checked on the layout just made: Verovio's page-based MEI
-// lists each page's systems (~15 ms). Stepped down while fewer than 3 pages in 4 (the last aside)
-// hold two systems, not under SCORE_MIN; then one system a page — or, where one would leave a
-// third of the page blank, two at the next size down. → the layout kept.
-function fitScore(L) {
+// S.step steps from the default L (laid out, fitted): ×STEP a step, ≥ MIN_SP, ≤ the cap — a spread
+// when zoomed out in landscape so far that each half holds SPREAD staff spaces.
+function stepped(L, single = false) {
+  if (!S.step || L.stepped) return L;
+  const want = Math.max(MIN_SP, L.sp * STEP ** S.step);
+  const spread = !single && S.step < 0 && L.W > L.H && L.W / 2 / want >= SPREAD;
+  const pw = spread ? Math.floor(L.W / 2) : L.W;
+  const cap = Math.min(pw / 40, L.H / tallest(S.P.views[S.view]));
+  const sp = Math.min(want, cap);
+  return { W: L.W, H: L.H, spread, pw, cap, sp, scale: scaleOf(sp), mode: "set", base: L.base, auto: L.sp, stepped: true };
+}
+// After a layout at L (measure): the default's fit, then the step from it — laid out again when
+// the step changes the page.
+function settle(L, single = false) {
+  L = fit(L);
+  const s = stepped(L, single);
+  if (s !== L && (s.scale !== L.scale || s.pw !== L.pw)) {
+    setPageSize(s);
+    tk.redoLayout();
+  }
+  return s;
+}
+
+// A phone (v78's rules, unchanged): PHONE as far as the screen allows; the full score two systems a
+// page where that leaves ≥ SCORE_MIN px a staff space (checked on the layout: phoneFit), else one
+// as large as fits — or, where one would leave a third of the page blank, two smaller (checked too).
+const V78 = [7, 8, 9.5, 11, 12.5, 14, 16, 18, 20, 23], SCORE_OPT = 34, SCORE_MIN = 9.5;
+function phoneSize(plan, at, pw, H, cap) {
+  const c = Math.min(PHONE, cap);
+  if (plan?.kind !== "score") return at(c, "set");
+  const more = (plan.staves > 3 ? SCORE_EXTRA : SCORE_STAFF) * (plan.staves - 3);
+  const opt = SCORE_OPT + Math.min(0, more), typ = SCORE_SYS + Math.min(0, more);
+  const one = Math.min(c, stepDown(H / tallest(plan), V78)), two = Math.min(c, stepDown(H / (2 * opt), V78));
+  const hit = S.v?.fit?.get(fitKey(pw, H));
+  const L = two >= SCORE_MIN - 0.01 || one * typ < (2 / 3) * H ? at(two, "two", { one, typ }) : at(one, "one");
+  return hit && L.mode === "two" ? at(hit.sp, "fitted") : L;
+}
+
+const fitKey = (pw, H) => pw + "x" + H;
+// The default's two systems a page, checked on the layout just made: Verovio's page-based MEI lists
+// each page's systems (~15 ms; no check where two fit with room to spare — in portrait). From the
+// estimate (twoNeed) down by FIT_STEP while fewer than 3 pages in 4 (the last aside) hold two, not
+// under the floor (FIT_FLOOR); else one system a page at the default. → the layout kept.
+function fit(L) {
   S.fitLog = [];
-  if (L.mode !== "two") return L;
+  if (L.mode === "two") return phoneFit(L);
+  if (L.mode !== "fit") return L;
+  const need = twoNeed(S.P.views[S.view]);
+  if (L.H / L.sp >= 1.3 * need) return L;
+  const t = performance.now();
+  const floor = device() === "tablet" ? Math.min(L.base, FIT_FLOOR.tablet * Math.min(screen.width, screen.height) / PAPER) : FIT_FLOOR.desktop * L.base;
+  let sp = Math.max(floor, Math.min(L.sp, L.H / need));
+  for (let i = 0; i < 8; i++) {
+    if (scaleOf(sp) !== L.scale) {
+      L = { ...L, sp, scale: scaleOf(sp) };
+      setPageSize(L);
+      tk.redoLayout();
+    } else L = { ...L, sp };
+    const share = twoShare();
+    S.fitLog.push({ sp: Math.round(L.sp * 100) / 100, share: Math.round(share * 100) / 100 });
+    if (share >= 0.75) break;
+    if (sp <= floor + 0.01) {
+      // (two don't fit even a little smaller: one a page, at the printed density)
+      if (L.scale !== scaleOf(L.base)) {
+        L = { ...L, sp: L.base, scale: scaleOf(L.base) };
+        setPageSize(L);
+        tk.redoLayout();
+      }
+      L = { ...L, sp: L.base, mode: "one" };
+      break;
+    }
+    sp = Math.max(floor, sp * FIT_STEP);
+  }
+  return remember(L, t);
+}
+// v78's full-score fit on a phone: stepped down while fewer than 3 pages in 4 hold two systems,
+// not under SCORE_MIN; then one system a page — or, where one would leave a third of the page
+// blank, two at the next size down.
+function phoneFit(L) {
   const t = performance.now();
   for (;;) {
     const share = twoShare();
     S.fitLog.push({ sp: L.sp, share: Math.round(share * 100) / 100 });
     if (share >= 0.75) break;
-    const next = [...SIZES].reverse().find((s) => s < L.sp - 0.01);
+    const next = [...V78].reverse().find((s) => s < L.sp - 0.01);
     const sp = next >= SCORE_MIN - 0.01 ? next : L.one * L.typ < (2 / 3) * L.H && next ? next : L.one;
-    L = { ...L, sp, scale: Math.max(5, Math.round(sp / 0.18)), mode: next >= SCORE_MIN - 0.01 ? "two" : "one" };
+    L = { ...L, sp, scale: scaleOf(sp), mode: next >= SCORE_MIN - 0.01 ? "two" : "one" };
     setPageSize(L);
     tk.redoLayout();
     if (L.mode !== "two") break;
   }
+  return remember(L, t);
+}
+// (remembered for this view and page size: a rotation back lays out once — Piano Man's landscape
+// tried three sizes, ~0.4 s, on every rotation)
+function remember(L, t) {
   S.t.fit = ms(t);
-  // (remembered for this view and page size: a rotation back to it lays out once — Piano Man's
-  // landscape tried three sizes, ~0.4 s, on every rotation)
-  if (S.v) (S.v.fit ||= new Map()).set(fitKey(L.pw, L.H, S.size), { sp: L.sp, scale: L.scale, mode: L.mode });
+  if (S.v) (S.v.fit ||= new Map()).set(fitKey(L.pw, L.H), { sp: L.sp });
   return L;
 }
 // The share of pages (the last aside) holding two systems or more.
@@ -451,10 +578,13 @@ function placed(L) {
     L = measure(true) || { ...L, spread: false, pw: L.W };
     setPageSize(L);
     tk.redoLayout();
-    L = fitScore(L);
+    L = settle(L, true);
   }
-  S.W = L.W; S.H = L.H; S.spread = L.spread; S.sp = L.sp; S.hard = L.hard; S.scale = L.scale;
+  S.W = L.W; S.H = L.H; S.spread = L.spread; S.sp = L.sp; S.cap = L.cap; S.base = L.base; S.scale = L.scale; S.mode = L.mode;
+  S.auto = L.auto ?? L.sp;
   cache.clear();
+  PB.pageOf = new Map(); // (the bars' pages: this layout's)
+  PB.musicPage = 0;
   S.counted = new Map();
   S.lgen++;
   S.pages = tk.getPageCount();
@@ -483,7 +613,7 @@ function relayout() {
   const t = performance.now();
   tk.redoLayout();
   S.t.layout = ms(t);
-  placed(fitScore(L));
+  placed(settle(L));
 }
 
 // ---------------------------------------------------------------------------
@@ -520,11 +650,15 @@ function show() {
   S.t.show = ms(t0);
   const t1 = performance.now();
   for (const d of els) {
-    const r = decorate(d, S.P.facts, { low: S.P.views[S.view]?.low });
+    const r = decorate(d, S.P.facts, { low: S.P.views[S.view]?.low, minPx: MIN_LETTER });
     for (const it of r.items) S.items.push(it);
     S.counted.set(Number(d.dataset.page), r.items.length);
   }
   S.t.badges = ms(t1);
+  S.showGen++;
+  PB.lit = new Map(); // (new elements: what sounds is lit again on the next frame)
+  PB.litKey = "";
+  drawSel();
   pager();
   // the next page(s), ready for the turn
   const lg = S.lgen;
@@ -557,20 +691,28 @@ function firstMeasureShown() {
 function turn(d) {
   if (pdf.on) return pdfTurn(d);
   if (!S.ready) return false;
-  clearPeek();
   const p = Math.max(1, Math.min(lastPage(), S.page + d * (S.spread ? 2 : 1)));
   if (p === S.page) return false;
+  goPage(p);
+  activity("turn");
+  return true;
+}
+// Show page p (odd in a spread) and keep the place there.
+function goPage(p) {
+  clearPeek();
   S.page = p;
   show();
   const mi = firstMeasureShown();
   if (mi != null) { S.at = mi; S.st.at = mi; saveSoon(); }
-  activity("turn");
-  return true;
 }
 
-// The notehead nearest a point (client px), within max(16 px, 1.2 × the head's height):
-// → { item (a decorate() item: g, fact, …), x, y (its centre, client px), d } or null.
-function nearHead(x, y) {
+// The notehead nearest a point (client px), within max(HIT px, 1.2 × the head's height): a finger
+// (~40 px) on the printed-density page (a head ~8 px) means the nearest head under it — 22 px
+// round its point, 16 for a mouse. → { item (a decorate() item: g, fact, …), x, y (its centre,
+// client px), d } or null.
+const HIT = { touch: 22, pen: 16, mouse: 16 };
+function nearHead(x, y, type = "touch") {
+  const r0 = HIT[type] ?? HIT.touch;
   let best = null;
   const ctms = new Map(); // (one screen matrix per layer)
   for (const it of S.items) {
@@ -581,7 +723,7 @@ function nearHead(x, y) {
     if (!m) continue;
     const px = m.a * it.cx + m.c * it.cy + m.e, py = m.b * it.cx + m.d * it.cy + m.f;
     const d = Math.hypot(x - px, y - py);
-    if (d <= Math.max(16, 1.2 * it.h * Math.hypot(m.b, m.d)) && (!best || d < best.d)) best = { item: it, x: px, y: py, d };
+    if (d <= Math.max(r0, 1.2 * it.h * Math.hypot(m.b, m.d)) && (!best || d < best.d)) best = { item: it, x: px, y: py, d };
   }
   return best;
 }
@@ -605,31 +747,34 @@ function setNames(level, byHand = false) {
 }
 namesBtn.addEventListener("click", () => !pdf.on && setNames(LEVELS[(LEVELS.indexOf(S.names) + 1) % LEVELS.length], true));
 
-// − / +: the staff size, as far as the screen allows (+ stops where the width caps it — not
-// where the landscape default does: + from there is the size shown next).
-const clamped = () => (S.hard || S.sp) < S.size - 0.01;
+// − / +: the next step from the default (S.step ± 1, or further while it's under 3% from the size
+// shown, or the cap or MIN_SP leave it there) — the default 9.11 on an iPad Air in portrait:
+// − 7.92, + 10.48 — as far as the screen allows (a step past the cap shows the cap). Step 0 is the
+// default again (its pref removed). The steps are this device's pref for the view's kind.
+function nextStep(dir) {
+  const auto = S.auto || S.sp;
+  if (!S.ready || !auto) return null;
+  for (let n = S.step + dir; Math.abs(n) <= STEPS; n += dir) {
+    if (n === 0) return 0;
+    const raw = auto * STEP ** n, sp = Math.min(S.cap, Math.max(MIN_SP, raw));
+    if (dir > 0 ? raw > S.sp * 1.03 && sp > S.sp + 0.01 : raw < S.sp * 0.97 && sp < S.sp - 0.01) return n;
+  }
+  return null;
+}
 function sizeButtons() {
-  const shown = Math.min(S.size, S.sp || S.size);
-  smallerBtn.disabled = !S.ready || pdf.on || shown <= SIZES[0] + 0.01;
-  biggerBtn.disabled = !S.ready || pdf.on || S.size >= SIZES[SIZES.length - 1] || clamped();
+  smallerBtn.disabled = !S.ready || pdf.on || nextStep(-1) == null;
+  biggerBtn.disabled = !S.ready || pdf.on || nextStep(1) == null;
   namesBtn.disabled = pdf.on;
+  playButtons();
 }
 function resize(dir) {
   if (!S.ready || pdf.on) return;
-  if (dir > 0) {
-    const next = SIZES.find((s) => s > Math.min(S.size, S.sp || S.size) + 0.01);
-    if (!next || clamped()) return;
-    S.size = next;
-  } else {
-    const shown = Math.min(S.size, S.sp);
-    const prev = [...SIZES].reverse().find((s) => s < shown - 0.01);
-    if (!prev) return;
-    S.size = prev;
-  }
-  S.sizeAuto = false;
+  const n = nextStep(dir);
+  if (n == null) return;
+  S.step = n;
   const z = S.sizes[sizeKind(S.view)];
-  Object.assign(z, { size: S.size, auto: false });
-  keep(z.key, String(S.size));
+  z.step = n;
+  keep(z.key, n ? (n > 0 ? "+" : "") + n : null);
   relayout();
 }
 smallerBtn.addEventListener("click", () => resize(-1));
@@ -647,6 +792,7 @@ handsSel.addEventListener("change", async () => {
   const gen = ++S.gen;
   S.view = handsSel.value;
   clearPeek();
+  stopPlay(); // (the stretch picked stays: it's a stretch of the song, drawn again in this view)
   S.ready = false;
   S.failed = null; // (an earlier view's failure: this one may draw)
   showMsg("");
@@ -658,20 +804,24 @@ handsSel.addEventListener("change", async () => {
   if (gen === S.gen && (S.ready || S.waiting)) { S.st.view = S.view; saveState(); }
 });
 // A focused control keeps the pedal's keys (a select's arrows, a button's Space/Enter): let go.
+// (the bar's and the stretch's controls over the music)
 const bar = $("bar");
-bar.addEventListener("change", (e) => { if (e.target.matches?.("select")) e.target.blur(); });
-bar.addEventListener("click", (e) => e.target.closest?.("button")?.blur());
-// A menu closed with no new pick (a tap outside, the same song, Escape) fires no change and keeps
-// focus — an iPad never blurs it — so the pedal's next arrow / Page key would pick the next song
-// or hands view. A select focused by a tap lets go of the page-turn keys; one reached with Tab
-// keeps them.
 let tappedSel = null;
-bar.addEventListener("pointerdown", (e) => { tappedSel = e.target.closest?.("select") || null; });
-bar.addEventListener("focusin", (e) => { if (e.target !== tappedSel) tappedSel = null; });
-bar.addEventListener("focusout", (e) => { if (e.target === tappedSel) tappedSel = null; });
+for (const box of [bar, selbar]) {
+  box.addEventListener("change", (e) => { if (e.target.matches?.("select")) e.target.blur(); });
+  box.addEventListener("click", (e) => e.target.closest?.("button")?.blur());
+  // A menu closed with no new pick (a tap outside, the same song, Escape) fires no change and keeps
+  // focus — an iPad never blurs it — so the pedal's next arrow / Page key would pick the next song
+  // or hands view. A select focused by a tap lets go of the page-turn keys; one reached with Tab
+  // keeps them.
+  box.addEventListener("pointerdown", (e) => { tappedSel = e.target.closest?.("select") || null; });
+  box.addEventListener("focusin", (e) => { if (e.target !== tappedSel) tappedSel = null; });
+  box.addEventListener("focusout", (e) => { if (e.target === tappedSel) tappedSel = null; });
+}
 
 // ---------------------------------------------------------------------------
-// Turning pages: keys (Bluetooth page turners send these), a tap on the outer quarters, a swipe.
+// Turning pages: the ‹ › buttons and the keys (Bluetooth page turners send these). Nothing on the
+// music turns a page: a press there sounds a note, a drag is for picking notes (below).
 
 const FWD = new Set(["ArrowRight", "ArrowDown", "PageDown", " ", "Spacebar", "Enter"]);
 const BACK = new Set(["ArrowLeft", "ArrowUp", "PageUp", "Backspace"]);
@@ -690,47 +840,63 @@ window.addEventListener("keydown", (e) => {
   turn(d);
 });
 
-let gest = null; // { id, x, y, t, hit, peek }
+// A press on the music: on a note (nearHead) it peeks. Moving more than MOVE px — at any time in
+// the press — makes it a drag, which cuts a peek's sound and picks a stretch of the music: from
+// the onset nearest the press to the one nearest the finger, either way, across systems and the
+// two pages of a spread (pickSel). A tap on paper (no note) lets go of the stretch, unless
+// something is playing; a tap on a note peeks and keeps it. Nothing on the PDF (📄): a tap there
+// does nothing. While a finger is on the music ▶'s page turn waits for the lift (afterPress).
+const MOVE = 12;
+let gest = null; // { id, x, y, t, hit, peek, drag, anchor (the onset the press picked), fx, fy, raf }
 stage.addEventListener("pointerdown", (e) => {
-  document.activeElement?.closest?.("#bar select")?.blur(); // (a tap on the music lets go of a menu)
-  if (!e.isPrimary || (e.pointerType === "mouse" && e.button !== 0)) return;
-  const hit = S.ready && !pdf.on ? nearHead(e.clientX, e.clientY) : null;
-  gest = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, hit, peek: null };
+  if (e.target.closest?.("#selbar")) return; // (the stretch's own controls)
+  document.activeElement?.closest?.("#bar select, #selbar select")?.blur(); // (a tap on the music lets go of a menu)
+  if (!e.isPrimary || (e.pointerType === "mouse" && e.button !== 0) || pdf.on) return;
+  const hit = S.ready ? nearHead(e.clientX, e.clientY, e.pointerType) : null;
+  gest = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, hit, peek: null, drag: false, anchor: null, fx: 0, fy: 0, raf: 0 };
   if (hit) gest.peek = peekStart(hit, e);
   try { stage.setPointerCapture(e.pointerId); } catch {}
 });
 stage.addEventListener("pointermove", (e) => {
   const g = gest;
-  if (!g || e.pointerId !== g.id || !g.peek) return;
-  if (e.timeStamp - g.t <= 200 && Math.hypot(e.clientX - g.x, e.clientY - g.y) > 12) {
-    peekCancel(g.peek);
-    g.peek = null;
+  if (!g || e.pointerId !== g.id) return;
+  if (!g.drag) {
+    if (Math.hypot(e.clientX - g.x, e.clientY - g.y) <= MOVE) return;
+    g.drag = true;
+    if (g.peek) { peekCancel(g.peek); g.peek = null; }
+    if (!S.ready || pdf.on) return;
+    g.anchor = colAt(g.x, g.y);
+    // (a new stretch: the old one's playing stops; playing from the page goes on)
+    if (g.anchor && PB.kind === "span" && PB.state !== "idle") stopPlay();
   }
+  if (!g.anchor) return;
+  g.fx = e.clientX; g.fy = e.clientY;
+  if (!g.raf) g.raf = requestAnimationFrame(() => { g.raf = 0; if (g === gest || !gest) pickSel(g); });
 });
 stage.addEventListener("pointerup", (e) => {
   const g = gest;
   if (!g || e.pointerId !== g.id) return;
   gest = null;
-  if (g.peek) { peekEnd(g.peek, e); return; } // (a peek never turns the page)
-  const dx = e.clientX - g.x, dy = e.clientY - g.y;
-  if (Math.abs(dx) > 50 && Math.abs(dx) > 1.5 * Math.abs(dy)) { turn(dx < 0 ? 1 : -1); return; }
-  if (g.hit || Math.hypot(dx, dy) >= 10 || e.timeStamp - g.t > 500) return;
-  const r = stage.getBoundingClientRect(), fx = (e.clientX - r.left) / r.width;
-  if (fx >= 0.75) turn(1);
-  else if (fx <= 0.25) turn(-1);
+  if (g.drag) {
+    if (g.anchor) { cancelAnimationFrame(g.raf); g.fx = e.clientX; g.fy = e.clientY; pickSel(g); }
+  } else if (g.peek) peekEnd(g.peek, e);
+  else if (!g.hit && S.ready && !pdf.on && S.sel && PB.state === "idle" && !PB.starting) clearSel();
+  afterPress(g);
 });
 stage.addEventListener("pointercancel", (e) => {
   const g = gest;
   if (!g || e.pointerId !== g.id) return;
   gest = null;
+  cancelAnimationFrame(g.raf);
   if (g.peek) peekCancel(g.peek);
+  afterPress(g);
 });
 stage.addEventListener("contextmenu", (e) => e.preventDefault());
 
 // ---------------------------------------------------------------------------
 // Peek: press a note — at any level, Off included — to see its chord's names (with octaves),
 // hear it until the finger lifts and see its keys on a keyboard strip. Moving off quickly
-// (> 12 px within 200 ms) cancels it and the gesture is a swipe; a peek never turns the page.
+// (> 12 px within 200 ms) cancels it and the gesture is a drag.
 //
 // Sound follows the Sing page's chip keys: the session is set to "playback" in the press before
 // a context is made; a context iOS closed or left "interrupted" (or whose resume in a tap never
@@ -745,7 +911,7 @@ const LIFT_PLAY = 0.8;   // s: a press that could only sound at the lift
 const LATE = 1500;       // ms
 const MAX_HOLD = 60000;  // ms: a release that never came lets go by itself
 const HIDE_AFTER = 2000; // ms after the lift: the names, the strip and the colour go
-const CUT = 0.01;        // s: time constant when a press becomes a swipe
+const CUT = 0.01;        // s: time constant when a press becomes a drag
 // (the voice: the full score's sung part — its own colour, clear of both hands and the orange of
 // the pressed note)
 const HAND = { rh: "#a64fff", lh: "#4f7cff", voice: "#0b8f78" };
@@ -809,8 +975,15 @@ function handOf(f) {
 function peekStart(hit, e) {
   if (pdf.on || !hit) return null;
   clearPeek();
-  const chord = hit.item.g.closest("g.chord") || hit.item.g;
-  const items = S.items.filter((it) => it.w && (it.g === chord || chord.contains(it.g)))
+  const it0 = hit.item, f0 = it0.fact;
+  const chord = it0.g.closest("g.chord") || it0.g;
+  // Everything struck on that staff at that moment: the chord, and the other voices' notes starting
+  // there (a converted score splits a chord's notes into voices loosely — a press used to sound only
+  // the pressed note's voice), a tied-over head drawn there too. Not a grace note's neighbours, not a
+  // note started earlier and still held (drawn elsewhere).
+  const at = f0.onset != null && !f0.grace;
+  const together = (it) => at && it.staff === it0.staff && it.fact.mi === f0.mi && !it.fact.grace && it.fact.onset != null && Math.abs(it.fact.onset - f0.onset) < 1e-6;
+  const items = S.items.filter((it) => it.w && (it.g === chord || chord.contains(it.g) || together(it)))
     .sort((a, b) => a.fact.midi - b.fact.midi);
   if (!items.length) return null;
   const names = [...new Set(items.map((it) => fullName(it.fact)))];
@@ -869,7 +1042,7 @@ function peekEnd(pk) {
   if (pk.notes) letGo(pk, Math.max(pk.a.currentTime, pk.t0 + MIN_PRESS));
   pk.hide = setTimeout(() => hidePeek(pk), HIDE_AFTER);
 }
-// The press moved off quickly: it's a swipe — cut the sound, hide at once.
+// The press moved off quickly: it's a drag — cut the sound, hide at once.
 function peekCancel(pk) {
   if (!pk || pk.dead) return;
   pk.dead = true;
@@ -909,7 +1082,7 @@ function drawPeek(pk) {
   const sh = stripEl.offsetHeight;
   const side = bottom > st.bottom - sh - 12 && top - st.top > sh + 12 ? "top" : "bottom";
   stripEl.dataset.side = side;
-  drawStrip(pk);
+  drawStrip(pk.lit);
   stripEl.classList.add("on");
   // The names just above the chord (below it when there's no room), clear of the strip.
   bubbleEl.textContent = pk.names.join(" ");
@@ -921,6 +1094,7 @@ function drawPeek(pk) {
   y = Math.max(minY, Math.min(maxY, y));
   const x = Math.max(6, Math.min(st.width - bw - 6, cx - st.left - bw / 2));
   bubbleEl.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+  placeSelbar(); // (the stretch's controls clear of the strip, the chord and its names)
 }
 function hidePeek(pk) {
   if (pk.hidden) return;
@@ -930,13 +1104,17 @@ function hidePeek(pk) {
     it.badge?.classList.remove("peek");
   }
   if (peek === pk || !peek || peek.hidden) {
-    stripEl.classList.remove("on");
     bubbleEl.classList.remove("on");
+    // (while ▶ plays the strip is its: what sounds, drawn again on the next frame)
+    if (PB.state === "idle") stripEl.classList.remove("on");
+    else PB.stripKey = null;
+    placeSelbar();
   }
 }
 
-// The keyboard under the music: the view's range in whole octaves C…B (C3–B5 at least).
-function stripRange() {
+// The keyboard under the music: the view's range in whole octaves C…B (C3–B5 at least), and the
+// keys lit (midis).
+function stripRange(lit) {
   const v = S.v;
   if (!v) return [48, 83];
   if (!v.range) {
@@ -948,19 +1126,20 @@ function stripRange() {
     v.range = [lo, hi];
   }
   let [lo, hi] = v.range;
-  for (const m of peek?.midis || []) { lo = Math.min(lo, m); hi = Math.max(hi, m); }
+  for (const m of lit.keys()) { lo = Math.min(lo, m); hi = Math.max(hi, m); }
   lo = Math.min(48, Number.isFinite(lo) ? 12 * Math.floor(lo / 12) : 48);
   hi = Math.max(83, Number.isFinite(hi) ? 12 * Math.floor(hi / 12) + 11 : 83);
   return [Math.max(0, lo), Math.min(127, hi)];
 }
-function drawStrip(pk) {
+// lit: midi → { hand, label } (the peeked chord, or what ▶ sounds now)
+function drawStrip(lit) {
   const NS = "http://www.w3.org/2000/svg";
   let svg = stripEl.firstElementChild;
   if (!svg) { svg = document.createElementNS(NS, "svg"); stripEl.appendChild(svg); }
   const r = svg.getBoundingClientRect();
   const W = Math.max(60, Math.round(r.width)), H = Math.max(30, Math.round(r.height));
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  const [lo, hi] = stripRange();
+  const [lo, hi] = stripRange(lit);
   const whites = [];
   for (let m = lo; m <= hi; m++) if (WHITE.has(m % 12)) whites.push(m);
   const ww = Math.min(48, W / whites.length), x0 = (W - ww * whites.length) / 2;
@@ -971,7 +1150,7 @@ function drawStrip(pk) {
   const r0 = Math.max(2, Math.min(ww * 0.11, 4)), dotY = H - r0 - 3;
   let s = "", tops = "";
   for (const m of whites) {
-    const x = xOf.get(m), L = pk.lit.get(m);
+    const x = xOf.get(m), L = lit.get(m);
     s += `<rect class="key${L ? " lit" : ""}" data-midi="${m}"${L ? ` data-hand="${L.hand}"` : ""} x="${f1(x + 0.5)}" y="0" width="${f1(ww - 1)}" height="${H}" rx="${f1(Math.min(3, ww * 0.12))}" fill="${L ? HAND[L.hand] : "#f3f0e8"}"/>`;
     if (L) s += label(L.label, x + ww / 2, dotY - r0 - 3, Math.min(ww * 0.58, H * 0.22));
     if (m === 60) s += `<circle class="mc" cx="${f1(x + ww / 2)}" cy="${f1(dotY)}" r="${f1(r0)}" fill="${L ? "#e8e4ff" : "#9b9aa6"}"/>`;
@@ -979,7 +1158,7 @@ function drawStrip(pk) {
   const bw = ww * 0.58, bh = H * 0.6;
   for (let m = lo; m <= hi; m++) {
     if (WHITE.has(m % 12) || !xOf.has(m + 1)) continue;
-    const x = xOf.get(m + 1) - bw / 2, L = pk.lit.get(m);
+    const x = xOf.get(m + 1) - bw / 2, L = lit.get(m);
     tops += `<rect class="key${L ? " lit" : ""}" data-midi="${m}"${L ? ` data-hand="${L.hand}"` : ""} x="${f1(x)}" y="0" width="${f1(bw)}" height="${f1(bh)}" rx="${f1(Math.min(2, bw * 0.15))}" fill="${L ? HAND[L.hand] : "#101018"}" stroke="#14142c" stroke-width="1"/>`;
     if (L) {
       // (a black key is too narrow for its name: a tag in its colour just under it)
@@ -990,6 +1169,631 @@ function drawStrip(pk) {
   }
   svg.innerHTML = s + tops;
 }
+
+// ---------------------------------------------------------------------------
+// A stretch of the music (S.sel), picked by dragging over the page: written time [q0, end) — from
+// an onset (a column: where the view's notes or rests start, every staff of a system) to the
+// onset after the last one picked, so its rhythm, a rest at its end too, is kept. Drawn like a
+// text selection, a band a system over all its staves, from the written times again after every
+// drawing (a new layout, a turn, another view — where that view has onsets in it). Another song
+// lets go of it. A new drag picks only on the page(s) shown.
+
+const EPS = 1e-6;
+const geoCache = new WeakMap(); // a .page element → its systems (pageGeo)
+
+// The song's timeline (playtime.js), built once a song.
+function songTime() {
+  if (!S.T && S.P) {
+    const t = performance.now();
+    S.T = timeline(S.P.doc, S.P.facts);
+    S.Tid = new Map(S.T.els.map((e) => [e.id, e]));
+    S.t.timeline = ms(t);
+  }
+  return S.T;
+}
+// Sing's reading of the song (musicxml.js parseMusicXml): its performance order — the written bar
+// of each bar it sings, repeats, endings, D.S. / To Coda / Fine taken — and its tempo at 100%.
+// null: Sing can't read it (the written order, the score's own tempo).
+function songSing() {
+  if (S.sing === undefined && S.xml) {
+    const t = performance.now();
+    try {
+      const sc = parseMusicXml(S.xml);
+      S.sing = { order: sc.measureOf || null, tempo: sc.tempo };
+    } catch (err) { console.info("play: Sing's order", err?.message); S.sing = null; }
+    S.t.order = ms(t);
+  }
+  return S.sing;
+}
+const viewKeep = () => { const plan = S.P.views[S.view]; return (e) => keeps(plan, e.part, e.staff, e.voice); };
+function viewOnsets() {
+  if (!S.qs || S.qs.view !== S.view) S.qs = { view: S.view, qs: onsets(songTime(), viewKeep()) };
+  return S.qs.qs;
+}
+
+// A shown page's systems, top to bottom: { top, bottom (its staves' outer lines), left, right,
+// cols: [{ q, x0, x1, br (the right end of its bar) }] (each onset's heads and rests, accidentals
+// and grace notes in) left to right } in px from the page element's corner. A whole-bar rest is
+// drawn in the middle of its bar but starts it: it makes a column only where nothing else starts
+// with the bar (a bar all staves rest), kept between its neighbours — else Killing's intro, the
+// left hand resting under the tune, stretched the bar's first column over half the bar.
+function pageGeo(pg) {
+  let out = geoCache.get(pg);
+  if (out) return out;
+  songTime();
+  const t0 = performance.now();
+  const pr = pg.getBoundingClientRect();
+  const bySys = new Map(); // g.system → { cols, whole (whole-bar rests), graces } by onset
+  const ends = new Map();  // g.measure → the x its staff lines end at (its barline)
+  const barEnd = (m) => {
+    let x = ends.get(m);
+    if (x === undefined) {
+      x = null;
+      for (const st of m.querySelectorAll(":scope > g.staff")) {
+        const line = st.querySelector(":scope > path");
+        if (line) { const r = line.getBoundingClientRect(); if (r.width) x = Math.max(x ?? -Infinity, r.right - pr.left); }
+      }
+      ends.set(m, x);
+    }
+    return x;
+  };
+  for (const el of pg.querySelectorAll("g.note, g.rest, g.mRest, g.multiRest")) {
+    const e = S.Tid.get(el.id);
+    if (!e || el.getAttribute("visibility") === "hidden") continue;
+    const sys = el.closest("g.system");
+    if (!sys) continue;
+    const note = el.matches("g.note");
+    const r = ((note && el.querySelector(":scope > g.notehead")) || el).getBoundingClientRect();
+    if (!r.width && !r.height) continue;
+    let x0 = r.left;
+    const ac = note && el.querySelector(":scope > g.accid");
+    if (ac) { const a = ac.getBoundingClientRect(); if (a.width) x0 = Math.min(x0, a.left); }
+    let o = bySys.get(sys);
+    if (!o) bySys.set(sys, (o = { cols: new Map(), whole: new Map(), graces: [] }));
+    const key = Math.round(e.q * 1e4);
+    if (e.grace) { o.graces.push({ key, x0: x0 - pr.left }); continue; }
+    const into = e.mrest || (!note && el.matches("g.mRest, g.multiRest")) ? o.whole : o.cols;
+    const c = into.get(key);
+    if (c) { c.x0 = Math.min(c.x0, x0 - pr.left); c.x1 = Math.max(c.x1, r.right - pr.left); }
+    else into.set(key, { q: e.q, x0: x0 - pr.left, x1: r.right - pr.left, m: el.closest("g.measure") });
+  }
+  out = [];
+  for (const sys of pg.querySelectorAll("g.system")) {
+    const bars = sys.querySelectorAll("g.measure");
+    if (!bars.length) continue;
+    let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
+    for (const m of [bars[0], bars[bars.length - 1]]) {
+      for (const st of m.querySelectorAll(":scope > g.staff")) {
+        const lines = [];
+        for (const c of st.children) { if (c.nodeName.toLowerCase() !== "path" || lines.length === 5) break; lines.push(c); }
+        if (!lines.length) continue;
+        const a = lines[0].getBoundingClientRect(), b = lines[lines.length - 1].getBoundingClientRect();
+        top = Math.min(top, a.top, b.top); bottom = Math.max(bottom, a.bottom, b.bottom);
+        left = Math.min(left, a.left); right = Math.max(right, a.right, b.right);
+      }
+    }
+    if (!(bottom > top)) continue;
+    const o = bySys.get(sys) || { cols: new Map(), whole: new Map(), graces: [] };
+    for (const [key, c] of o.whole) if (!o.cols.has(key)) o.cols.set(key, { ...c, whole: true });
+    for (const g of o.graces) { const c = o.cols.get(g.key); if (c) c.x0 = Math.min(c.x0, g.x0); }
+    const cols = [...o.cols.values()].sort((a, b) => a.q - b.q);
+    cols.forEach((c, i) => {
+      // (a whole-bar rest's column between its neighbours, as near its rest as they allow)
+      if (c.whole) {
+        const lo = i > 0 ? cols[i - 1].x1 + 1 : -Infinity, hi = i + 1 < cols.length ? cols[i + 1].x0 - 1 : Infinity;
+        const w = Math.min(c.x1 - c.x0, Math.max(1, hi - lo));
+        if (c.x1 > hi) { c.x1 = hi; c.x0 = hi - w; }
+        if (c.x0 < lo) { c.x0 = lo; c.x1 = lo + w; }
+      }
+      c.br = c.m ? barEnd(c.m) : null;
+    });
+    out.push({ el: sys, top: top - pr.top, bottom: bottom - pr.top, left: left - pr.left, right: right - pr.left, cols });
+  }
+  out.sort((a, b) => a.top - b.top);
+  geoCache.set(pg, out);
+  S.t.geo = ms(t0);
+  return out;
+}
+// Where two columns' shares of the line meet: their bar's barline when they're in two bars (a
+// finger lifted just short of a barline ends the stretch in that bar — v79 took the next bar's
+// first beat in), else halfway.
+const edge = (a, b) => (a.m !== b.m && a.br != null && a.br >= a.x1 - 1 && a.br <= b.x0 + 1 ? a.br : (a.x1 + b.x0) / 2);
+
+// The onset under a point (client px): on the page under it (the nearer of a spread's two), the
+// system nearest it, the column whose share of the line holds it. → { q, page, col } or null
+// (nothing drawn there).
+function colAt(x, y) {
+  let best = null;
+  for (const pg of stage.querySelectorAll(".page")) {
+    const r = pg.getBoundingClientRect();
+    const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+    if (!best || dx < best.dx) best = { pg, r, dx };
+  }
+  if (!best) return null;
+  const px = x - best.r.left, py = y - best.r.top;
+  let sys = null, sd = Infinity;
+  for (const s of pageGeo(best.pg)) {
+    if (!s.cols.length) continue;
+    const d = py < s.top ? s.top - py : py > s.bottom ? py - s.bottom : 0;
+    if (d < sd) { sd = d; sys = s; }
+  }
+  if (!sys) return null;
+  const c = sys.cols;
+  let i = 0;
+  while (i + 1 < c.length && px >= edge(c[i], c[i + 1])) i++;
+  return { q: c[i].q, page: Number(best.pg.dataset.page), col: i };
+}
+
+// The finger moved (g: the press): from the press's onset to the finger's, either way.
+function pickSel(g) {
+  const f = colAt(g.fx, g.fy);
+  if (!f || !g.anchor) return;
+  setSel(Math.min(g.anchor.q, f.q), Math.max(g.anchor.q, f.q));
+}
+function setSel(q0, q1) {
+  const end = nextOnset(viewOnsets(), q1, songTime().length);
+  if (S.sel && Math.abs(S.sel.q0 - q0) < EPS && Math.abs(S.sel.end - end) < EPS) return;
+  S.sel = { q0, q1, end };
+  drawSel();
+}
+function clearSel() {
+  if (!S.sel) return;
+  S.sel = null;
+  drawSel();
+}
+
+// The bands: a system's share of [q0, end) — from where its first onset's share of the line
+// starts (halfway from the onset before, or the barline; the line's start when the stretch began
+// on an earlier line) to where its last one's ends (the line's end when it goes on).
+function drawSel() {
+  for (const b of stage.querySelectorAll(".page .sel")) b.remove();
+  const sel = S.sel;
+  if (sel && S.ready) {
+    const pad = 0.6 * S.sp, vpad = 1.2 * S.sp;
+    for (const pg of stage.querySelectorAll(".page")) {
+      const ph = pg.getBoundingClientRect().height;
+      for (const sys of pageGeo(pg)) {
+        const c = sys.cols;
+        const i = c.findIndex((x) => x.q >= sel.q0 - EPS);
+        if (i < 0 || c[i].q >= sel.end - EPS) continue;
+        let j = i;
+        while (j + 1 < c.length && c[j + 1].q < sel.end - EPS) j++;
+        const left = i > 0 ? edge(c[i - 1], c[i]) : sel.q0 < c[0].q - EPS ? sys.left : Math.max(sys.left, c[0].x0 - pad);
+        const right = j < c.length - 1 ? edge(c[j], c[j + 1]) : sys.right;
+        const top = Math.max(0, sys.top - vpad), bottom = Math.min(ph, sys.bottom + vpad);
+        const d = document.createElement("div");
+        d.className = "sel";
+        d.style.cssText = `left:${left.toFixed(1)}px;top:${top.toFixed(1)}px;width:${Math.max(2, right - left).toFixed(1)}px;height:${(bottom - top).toFixed(1)}px`;
+        pg.appendChild(d);
+      }
+    }
+  }
+  playButtons();
+  placeSelbar();
+}
+
+// ---------------------------------------------------------------------------
+// ▶ — the view's notes on the peek's piano and context: the stretch picked (once, or ⟳ round after
+// round, each round starting one stretch-length after the last began), else from the shown page's
+// first bar (a spread's left page) to the end in Sing's order. At 100% the song's tempo as Sing
+// plays it — its own (typed or tapped there), else the score's — with the score's tempo changes
+// as ratios; speed 50–100% (per song). Sounds are scheduled ≤ AHEAD s ahead (piano.js
+// scheduleAhead: WebKit's cost grows with the sources waiting to start); what sounds is lit — its
+// heads and names in the peek's orange, its keys on the strip by hand — from the audio clock every
+// frame; the page turns to the music's page whenever the music moves onto another one (a turn by
+// hand isn't fought: the music's next page change is followed).
+
+const SPEEDS = [1, 0.9, 0.8, 0.7, 0.6, 0.5];
+const AHEAD = 4, PUMP = 400; // s scheduled ahead; ms between top-ups
+const LEAD = 0.12;           // s from the tap to the first note
+const MIN_LIT = 0.09;        // s: a short note stays lit at least this long
+const STOP_TC = 0.04;        // s: ■ damps what sounds this fast
+const PB = {
+  state: "idle",    // "idle" | "playing" | "looping"
+  kind: null,       // "span" (the stretch picked) | "page" (from the page to the end)
+  gen: 0, starting: false,
+  a: null, piano: null, bus: null,
+  tr: null, ev: null, base: 0, from: null, // the schedule (playtime track), its events (bars + notes), tempo, Sing-order index
+  t0: 0, s0: 0, speed: 1, // the clock: audio time t0 ↔ schedule time s0 (s at 100%; a loop's rounds add up)
+  round: 0, idx: 0, // the next event to schedule
+  sched: [],        // scheduled: { id, midi, when, end, sound, X, round, g, src } and bar marks { bar, when, k, mi, round }
+  log: [],          // every note struck: { id, midi, when, dur, X, round } (tests)
+  alive: [],        // keepAlive's source
+  timer: 0, raf: 0,
+  lit: new Map(), litKey: "", stripKey: "", sysEl: null, // what's lit; the line playing
+  k: -1, kr: -1, mi: -1, // the bar the music is in (index in the schedule's bars, its round, its written bar)
+  pageOf: new Map(), musicPage: 0, turns: [], defer: null, // defer: a turn waiting for a finger to lift
+  busyRects: [], busyInk: [], // what the strip and the controls keep off while playing (stage px): the line playing, the next, the stretch
+  stripSide: null, stripOff: -1, // the strip's side while playing (null: none); the drawing (S.showGen) it can't fit
+};
+// A note's level, n keys struck together (a big chord softer: 1 → 1.2, 3 → 1, 6 → 0.57), into a
+// bus at BUS with a soft limiter (piano.js pianoBus): the full score's thickest moments, chords
+// over the tune with the last ones still ringing, went past full scale (crackles).
+const level = (n) => Math.min(1.2, 4 / ((n || 1) + 1));
+const BUS = 0.8;
+const whenOf = (X) => PB.t0 + (X - PB.s0) / PB.speed;
+
+// The song's own tempo (Sing's "Type a tempo" / "Tap the beat": quarter notes a minute).
+function songBpm() {
+  try {
+    const b = Number(JSON.parse(recall(K.timing) || "{}")?.[S.song]?.bpm);
+    return b >= 20 && b <= 400 ? b : null;
+  } catch { return null; }
+}
+const tempoBase = () => songBpm() || songSing()?.tempo || songTime()?.first || DEFAULT_TEMPO;
+
+function buildTrack(kind) {
+  const T = songTime(), keep = viewKeep(), base = tempoBase();
+  if (kind === "span") {
+    const { q0, end } = S.sel, bars = [];
+    // (to the bar its last note is in: a stretch ending at a barline has nothing of the next one)
+    for (let m = barAt(T, q0); m <= barAt(T, end - 1e-3); m++) bars.push(m);
+    return { ...track(T, { bars, span: { q0, q1: end }, keep, base }), base, from: null };
+  }
+  // (from the first played bar that is the page's first written one)
+  const order = songSing()?.order || T.bars.map((_, i) => i);
+  const first = firstMeasureShown() ?? 0;
+  let from = order.indexOf(first);
+  if (from < 0) from = order.findIndex((m) => m > first);
+  if (from < 0) from = 0;
+  return { ...track(T, { bars: order.slice(from), keep, base }), base, from };
+}
+
+async function playStart(kind, loop = false) {
+  if (pdf.on || !S.ready || (kind === "span" && !S.sel)) return;
+  stopPlay();
+  const gen = ++PB.gen;
+  const a = getCtx("tap"); // (in the tap: iOS starts audio only from one — the session first)
+  let tr;
+  const tb = performance.now();
+  try { tr = buildTrack(kind); } catch (err) { console.warn("play", err); return; }
+  S.t.track = ms(tb);
+  if (!(tr.len > 0)) return;
+  const ev = [...tr.bars.map((b) => ({ bar: true, ...b })), ...tr.items].sort((x, y) => x.sec - y.sec || (y.bar ? 1 : 0) - (x.bar ? 1 : 0));
+  Object.assign(PB, {
+    state: loop ? "looping" : "playing", kind, starting: true, a, piano: null, tr, ev, base: tr.base, from: tr.from,
+    speed: S.speed, t0: 0, s0: 0, round: 0, idx: 0, sched: [], log: [], alive: [],
+    lit: new Map(), litKey: "", stripKey: "", sysEl: null, k: -1, kr: -1, mi: -1, musicPage: 0, turns: [], defer: null,
+    busyRects: [], busyInk: [], stripSide: null, stripOff: -1, drawn: -1,
+  });
+  activity("play");
+  playButtons();
+  placeSelbar();
+  // the context running (iOS: from the tap's resume) and the piano in
+  const t0 = performance.now();
+  for (;;) {
+    if (gen !== PB.gen) return;
+    if (a.state === "running") {
+      let piano;
+      try { piano = await loadPiano(a); } catch (err) { console.warn("piano", err); if (gen === PB.gen) stopPlay(); return; }
+      if (gen !== PB.gen) return;
+      if (a.state !== "running") continue;
+      PB.piano = piano;
+      break;
+    }
+    // (a context that won't start is given up: the next tap starts over with a new one)
+    if (a.state === "closed" || a !== ac || performance.now() - t0 > 3000) { if (gen === PB.gen) stopPlay(); return; }
+    await sleep(30);
+  }
+  PB.starting = false;
+  PB.bus = pianoBus(a, BUS);
+  PB.t0 = a.currentTime + LEAD + (tr.pre || 0); // (grace notes before the first note: before 0)
+  keepAlive(a, PB.alive);
+  pump();
+  PB.timer = setInterval(pump, PUMP);
+  PB.raf = requestAnimationFrame(frame);
+  playButtons();
+}
+
+// Schedule what starts within AHEAD s (round after round in a loop).
+function pump() {
+  if (PB.state === "idle" || !PB.piano) return;
+  const a = PB.a, now = a.currentTime, until = now + AHEAD, ev = PB.ev, len = PB.tr.len;
+  for (let guard = 0; guard < 50000; guard++) {
+    if (PB.idx >= ev.length) {
+      if (PB.state !== "looping") break;
+      PB.round++;
+      PB.idx = 0;
+      continue;
+    }
+    const e = ev[PB.idx], X = PB.round * len + e.sec, when = whenOf(X);
+    if (when >= until) break;
+    PB.idx++;
+    if (when < now - 0.05) continue; // (missed: the page was held up longer than the lookahead)
+    if (e.bar) { PB.sched.push({ bar: true, when, k: e.k, mi: e.mi, round: PB.round }); continue; }
+    const x = { id: e.id, midi: e.midi, when, end: when + Math.max(e.dur / PB.speed, MIN_LIT), sound: e.sound, X, round: PB.round, hand: e.hand ??= handOf(S.P.facts.get(e.id) || {}) };
+    if (e.sound) {
+      const hold = e.hold / PB.speed, tmp = [];
+      x.g = playPiano(a, PB.piano, Math.max(when, now), hold, e.midi, level(e.n), tmp, PB.bus);
+      x.src = tmp[0];
+      x.stop = when + Math.max(0.12, hold) + 0.8;
+      PB.log.push({ id: e.id, midi: e.midi, when, dur: hold, X, round: PB.round });
+    }
+    PB.sched.push(x);
+  }
+  // (forget what's long over: notes rung out, bar marks older than a long bar)
+  const old = now - 1;
+  PB.sched = PB.sched.filter((x) => (x.bar ? x.when > now - 30 : Math.max(x.end, x.stop || 0) > old));
+  if (PB.log.length > 8000) PB.log.splice(0, PB.log.length - 8000);
+}
+
+// Every frame: what sounds (lit), the bar the music is in (the page follows), the end.
+function frame() {
+  PB.raf = 0;
+  if (PB.state === "idle") return;
+  const a = PB.a;
+  if (!a || a.state === "closed") { stopPlay(); return; }
+  const now = a.currentTime - (a.outputLatency || a.baseLatency || 0); // (what is heard now)
+  if (PB.state === "playing" && now >= whenOf(PB.tr.len) + 0.05) { stopPlay(true); return; }
+  const lit = new Map();
+  let bar = null;
+  for (const e of PB.sched) {
+    if (e.bar) { if (e.when <= now + 0.001 && (!bar || e.when >= bar.when)) bar = e; }
+    else if (e.when <= now && now < e.end) lit.set(e.id, e);
+  }
+  if (bar && (bar.k !== PB.k || bar.round !== PB.kr)) {
+    PB.k = bar.k; PB.kr = bar.round; PB.mi = bar.mi;
+    follow(bar.mi);
+  }
+  setLit(lit);
+  PB.raf = requestAnimationFrame(frame);
+}
+
+// The music moved into written bar mi: turn to its page when it's another page and not shown —
+// not under a finger: while one is on the music (a peek held, a stretch being dragged) the turn
+// waits for the lift (afterPress).
+function follow(mi) {
+  if (!S.ready || pdf.on || !S.v || S.loaded !== S.v) return;
+  let p = PB.pageOf.get(mi);
+  if (p === undefined) {
+    try { p = tk.getPageWithElement("m" + S.v.firstMeasureAtOrAfter(mi)) || 0; } catch { p = 0; }
+    PB.pageOf.set(mi, p);
+  }
+  if (!p || p === PB.musicPage) return;
+  PB.musicPage = p;
+  PB.defer = null;
+  if (shownPages().includes(p)) return;
+  if (gest) { PB.defer = { mi, page: p }; return; }
+  turnWith(mi, p);
+}
+function turnWith(mi, p) {
+  goPage(S.spread && p % 2 === 0 ? p - 1 : p);
+  PB.turns.push({ mi, page: p, k: PB.k, round: PB.kr, t: Math.round(performance.now()) });
+  if (PB.turns.length > 50) PB.turns.shift();
+}
+// A press ended (g): the turn it held back is taken now — unless the press picked a stretch (it's
+// on the page shown: the page stays, as after a turn by hand; the music's next page is followed).
+function afterPress(g) {
+  const d = PB.defer;
+  PB.defer = null;
+  if (!d || PB.state === "idle" || !S.ready || pdf.on || (g.drag && g.anchor)) return;
+  if (d.page === PB.musicPage && !shownPages().includes(d.page)) turnWith(d.mi, d.page);
+}
+
+// Light what sounds (ids → scheduled entries) on the shown pages and on the strip; the line
+// playing (its notes', else its bar's) for where the strip and the controls go — found again
+// after every drawing (a turn, a new layout), rests and held notes included.
+function setLit(lit) {
+  const key = [...lit.keys()].join(" ");
+  if (key === PB.litKey && PB.drawn === S.showGen) {
+    if (PB.stripKey === null && PB.state !== "idle") playStrip(lit); // (the peek gave the strip back)
+    return;
+  }
+  PB.litKey = key;
+  PB.drawn = S.showGen;
+  const on = (id) => { const g = document.getElementById(id); return g && stage.contains(g) ? g : null; };
+  for (const id of PB.lit.keys()) if (!lit.has(id)) on(id)?.classList.remove("play");
+  let sys = null;
+  for (const id of lit.keys()) {
+    const g = on(id);
+    if (!g) continue;
+    g.classList.add("play");
+    sys ||= g.closest("g.system");
+  }
+  PB.lit = lit;
+  if (!sys && PB.mi >= 0 && S.v && PB.state !== "idle") {
+    const m = on("m" + S.v.firstMeasureAtOrAfter(PB.mi));
+    sys = m?.closest("g.system") || null;
+  }
+  if (sys !== PB.sysEl) {
+    PB.sysEl = sys;
+    PB.busyRects = busyNow();
+    placeSelbar();
+  }
+  if (PB.state !== "idle") playStrip(lit);
+}
+
+// What the strip and the controls keep off while playing (stage px, [left, top, right, bottom]):
+// the line playing, the line after it on the page(s) shown (read next), and a stretch's lines (a
+// loop comes back to them) — for the strip their boxes (PB.busyRects), for the controls their ink
+// (PB.busyInk: each bar's staves with their notes and words, and its marks — the paper above a
+// line's last bar is free).
+function busyNow() {
+  const out = [], ink = [], sys = PB.sysEl;
+  PB.busyInk = ink;
+  if (!sys?.isConnected) return out;
+  const st = stage.getBoundingClientRect();
+  const box = (el) => { const r = el.getBoundingClientRect(); return [r.left - st.left, r.top - st.top, r.right - st.left, r.bottom - st.top]; };
+  const all = [...stage.querySelectorAll(".page g.system")];
+  const next = all[all.indexOf(sys) + 1];
+  for (const s of next ? [sys, next] : [sys]) {
+    out.push(box(s));
+    for (const g of s.querySelectorAll("g.measure > g")) { const b = box(g); if (b[2] > b[0] || b[3] > b[1]) ink.push(b); }
+  }
+  if (PB.kind === "span") for (const b of stage.querySelectorAll(".page .sel")) { out.push(box(b)); ink.push(box(b)); }
+  return out;
+}
+
+// The strip while ▶ plays: the keys sounding, by hand, at the stage's foot or head — where it
+// covers none of busyNow (the line playing, the next, the stretch): the side it's on while that
+// stays clear, else the other; where neither is (two systems a page in landscape, a phone's one
+// system) there's no strip on that page (not one that comes and goes with its lines).
+const overlaps = (t, b, rects) => rects.some((r) => Math.min(b, r[3]) - Math.max(t, r[1]) > 1);
+function stripSideNow() {
+  if (PB.stripOff === S.showGen) return null;
+  const H = stage.getBoundingClientRect().height, sh = stripEl.offsetHeight + 2;
+  const free = { bottom: !overlaps(H - sh, H, PB.busyRects), top: !overlaps(0, sh, PB.busyRects) };
+  const cur = PB.stripSide || "bottom";
+  const side = free[cur] ? cur : free[cur === "top" ? "bottom" : "top"] ? (cur === "top" ? "bottom" : "top") : null;
+  if (!side && PB.busyRects.length) PB.stripOff = S.showGen;
+  return side;
+}
+function playStrip(lit) {
+  if (peek && !peek.hidden) return; // (the peek has it)
+  const keys = new Map();
+  for (const e of lit.values()) {
+    if (keys.has(e.midi)) continue;
+    const f = S.P.facts.get(e.id);
+    if (f) keys.set(e.midi, { hand: e.hand, label: labelOf(f) });
+  }
+  const sk = [...keys].map(([m, L]) => m + L.hand).join(",");
+  const side = stripSideNow(), on = stripEl.classList.contains("on");
+  if (sk === PB.stripKey && side === PB.stripSide && on === !!side) return;
+  PB.stripKey = sk;
+  PB.stripSide = side;
+  if (!side) {
+    if (on) { stripEl.classList.remove("on"); placeSelbar(); }
+    return;
+  }
+  const moved = side !== (stripEl.dataset.side || "bottom") || !on;
+  stripEl.dataset.side = side;
+  drawStrip(keys);
+  stripEl.classList.add("on");
+  if (moved) placeSelbar();
+}
+
+// ■, the end, or anything that stops it (another ▶, song, view, 📄, the page hidden or left).
+// natural: the music ran out (its last notes ring on).
+function stopPlay(natural = false) {
+  PB.gen++;
+  const was = PB.state !== "idle" || PB.starting;
+  clearInterval(PB.timer);
+  PB.timer = 0;
+  if (PB.raf) cancelAnimationFrame(PB.raf);
+  PB.raf = 0;
+  const a = PB.a;
+  if (a && a.state !== "closed") {
+    const now = a.currentTime;
+    for (const e of PB.sched) {
+      if (!e.src) continue;
+      try {
+        if (e.when > now + 0.005) {
+          // (not started: never will — as holdPiano's release before the start)
+          e.g.gain.cancelScheduledValues(0);
+          e.g.gain.setValueAtTime(0, now);
+          e.src.stop(e.when);
+        } else if (!natural) {
+          e.g.gain.cancelScheduledValues(now);
+          e.g.gain.setTargetAtTime(0, now, STOP_TC);
+          e.src.stop(now + STOP_TC * 8);
+        }
+      } catch {}
+    }
+    for (const n of PB.alive) try { n.stop(); } catch {}
+  }
+  Object.assign(PB, { state: "idle", kind: null, starting: false, piano: null, sched: [], alive: [], busyRects: [], busyInk: [], sysEl: null, defer: null, stripSide: null, stripOff: -1 });
+  if (!was) return;
+  setLit(new Map());
+  if (!peek || peek.hidden) stripEl.classList.remove("on");
+  playButtons();
+  placeSelbar();
+}
+
+// Change the speed: what hasn't started is taken back and scheduled again from here at the new one.
+function setSpeed(v) {
+  if (!SPEEDS.includes(v)) return;
+  S.speed = v;
+  speedSel.value = String(v);
+  if (S.song) { S.st.speed = v; saveState(); }
+  if (PB.state === "idle" || !PB.piano) { PB.speed = v; return; }
+  const a = PB.a, now = a.currentTime, at = now + 0.05;
+  const X = PB.s0 + (at - PB.t0) * PB.speed;
+  PB.sched = PB.sched.filter((e) => {
+    if (e.when <= at) return true;
+    if (e.src) try { e.g.gain.cancelScheduledValues(0); e.g.gain.setValueAtTime(0, now); e.src.stop(e.when); } catch {}
+    return false;
+  });
+  PB.log = PB.log.filter((e) => e.when <= at);
+  PB.t0 = at;
+  PB.s0 = X;
+  PB.speed = v;
+  const len = PB.tr.len;
+  PB.round = PB.state === "looping" && len > 0 ? Math.floor(X / len + 1e-9) : 0;
+  const local = X - PB.round * len;
+  PB.idx = PB.ev.findIndex((e) => e.sec > local + 1e-9);
+  if (PB.idx < 0) PB.idx = PB.ev.length;
+  pump();
+}
+
+const ICONS = {
+  play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.2v13.6a.8.8 0 0 0 1.2.7l10.6-6.8a.8.8 0 0 0 0-1.4L9.2 4.5A.8.8 0 0 0 8 5.2z" fill="currentColor"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="1.6" fill="currentColor"/></svg>',
+};
+function setIcon(btn, kind, label) {
+  if (btn.dataset.icon !== kind) { btn.dataset.icon = kind; btn.innerHTML = ICONS[kind]; }
+  btn.setAttribute("aria-label", label);
+  btn.title = label;
+}
+function playButtons() {
+  const on = PB.state !== "idle" || PB.starting;
+  setIcon(playBtn, on ? "stop" : "play", on ? "Stop" : "Play");
+  playBtn.disabled = !on && (!S.ready || pdf.on);
+  setIcon(selPlayBtn, on ? "stop" : "play", on ? "Stop" : "Play");
+  selLoopBtn.setAttribute("aria-pressed", String(PB.state === "looping"));
+}
+
+// The stretch's controls (▶ ⟳ speed ✕; ■ and speed while the page plays): over the music where
+// they cover none of the stretch's bands, the peeked chord and its names, nor — while playing —
+// the ink of the line the music is on, the one after it and the stretch's lines (busyNow): at the
+// stage's foot (above the strip when it's there), else its head (under it), else a corner, else
+// in free paper between two lines; where nothing is clear, the place covering least.
+function placeSelbar() {
+  const on = PB.state !== "idle" || PB.starting;
+  const show = S.ready && !pdf.on && (!!S.sel || on);
+  selbar.hidden = !show;
+  if (!show) return;
+  selLoopBtn.hidden = selClearBtn.hidden = !S.sel;
+  const st = stage.getBoundingClientRect();
+  const w = selbar.offsetWidth, h = selbar.offsetHeight, m = 10;
+  const strip = stripEl.classList.contains("on") ? stripEl.offsetHeight + 4 : 0, side = stripEl.dataset.side || "bottom";
+  const yB = st.height - h - m - (side === "bottom" ? strip : 0), yT = m + (side === "top" ? strip : 0);
+  const xC = (st.width - w) / 2, xR = st.width - w - m, xL = m;
+  const rel = (r) => [r.left - st.left, r.top - st.top, r.right - st.left, r.bottom - st.top];
+  const busy = [];
+  for (const b of stage.querySelectorAll(".page .sel")) busy.push(rel(b.getBoundingClientRect()));
+  if (on) busy.push(...PB.busyInk);
+  if (peek && !peek.hidden) {
+    for (const it of peek.items) busy.push(rel(it.head.getBoundingClientRect()));
+    if (bubbleEl.classList.contains("on")) busy.push(rel(bubbleEl.getBoundingClientRect()));
+  }
+  if (strip) busy.push(side === "bottom" ? [0, st.height - strip, st.width, st.height] : [0, 0, st.width, strip]);
+  const spots = [[xC, yB, "bottom"], [xC, yT, "top"], [xR, yB, "bottom-right"], [xL, yB, "bottom-left"], [xR, yT, "top-right"], [xL, yT, "top-left"]];
+  // (else the free paper of a column — right, middle, left — between what's busy there: between
+  // two lines, where the justified page leaves room)
+  for (const [x, at] of [[xR, "gap-right"], [xC, "gap"], [xL, "gap-left"]]) {
+    const cuts = busy.filter(([l, , r]) => r > x && l < x + w).map(([, t, , b]) => [t, b]).sort((a, b) => a[0] - b[0]);
+    let y0 = m;
+    for (const [t, b] of [...cuts, [st.height - m, st.height - m]]) {
+      if (t - y0 >= h + 4) spots.push([x, (y0 + t - h) / 2, at]);
+      y0 = Math.max(y0, b);
+    }
+  }
+  let best = null;
+  for (const [x, y, at] of spots) {
+    let o = 0;
+    for (const [l, t, r, b] of busy) o += Math.max(0, Math.min(r, x + w) - Math.max(l, x)) * Math.max(0, Math.min(b, y + h) - Math.max(t, y));
+    if (!best || o < best.o - 0.5) best = { x, y, o, at };
+    if (o === 0) break;
+  }
+  selbar.style.transform = `translate(${Math.round(best.x)}px, ${Math.round(best.y)}px)`;
+  selbar.dataset.at = best.at;
+}
+
+playBtn.addEventListener("click", () => (PB.state !== "idle" || PB.starting ? stopPlay() : playStart(S.sel ? "span" : "page")));
+selPlayBtn.addEventListener("click", () => (PB.state !== "idle" || PB.starting ? stopPlay() : playStart("span")));
+selLoopBtn.addEventListener("click", () => (PB.state === "looping" ? stopPlay() : playStart("span", true)));
+selClearBtn.addEventListener("click", () => { if (PB.kind === "span") stopPlay(); clearSel(); });
+speedSel.addEventListener("change", () => setSpeed(Number(speedSel.value)));
 
 // ---------------------------------------------------------------------------
 // Fading: after a few practice days at a level, the bar offers fewer names — never by itself,
@@ -1019,7 +1823,7 @@ function days() {
 function countDay(x) {
   if (!x.done && x.act && x.ms >= DAY_MS) { x.n++; x.done = true; }
 }
-// A page turn or a peek on the open song.
+// A page turn, a peek or a ▶ on the open song.
 function activity() {
   if (!S.song || !S.ready) return;
   const x = days();
@@ -1063,6 +1867,8 @@ function showOffer() {
   yes.type = "button";
   yes.id = "offer-yes";
   yes.textContent = offerTo === "some" ? "Some" : "Off";
+  yes.title = "Fewer names: " + yes.textContent; // (a big phone shows the button without the question)
+  yes.setAttribute("aria-label", yes.title);
   yes.addEventListener("click", () => { const to = offerTo; hideOffer(); if (to) setNames(to, true); });
   const no = document.createElement("button");
   no.type = "button";
@@ -1091,8 +1897,8 @@ function hideOffer() {
 // ---------------------------------------------------------------------------
 // The original PDF (📄): for a song made with PDF → Song whose PDF is on this device. pdf.js
 // (shipped for the OMR) draws one page — two side by side when each is still ≥ 75% of print
-// size — into one reused canvas at the screen's pixel ratio; the same keys, taps and swipes
-// turn its pages. The sheet stays laid out underneath (hidden), so going back is instant and
+// size — into one reused canvas at the screen's pixel ratio; the same ‹ › and keys turn its
+// pages (a tap on it does nothing). The sheet stays laid out underneath (hidden), so going back is instant and
 // at its place. There's no mapping between the two.
 
 const PDFJS = new URL("./omr/pdfjs/", import.meta.url).href;
@@ -1128,6 +1934,7 @@ function pdfControls() {
   handsSel.disabled = pdf.on || !S.ready;
   for (const b of offerEl.querySelectorAll("button")) b.disabled = pdf.on; // (kept in place: the bar doesn't move)
   sizeButtons();
+  placeSelbar(); // (the stretch's controls: not over the PDF)
   // (the PDF also opens when the sheet couldn't be drawn)
   if (pdf.on || S.ready) pager();
   else {
@@ -1148,6 +1955,7 @@ async function pdfOn() {
   if (!pdf.has || pdf.on || !S.song) return;
   const id = S.song, g = ++pdf.open;
   clearPeek();
+  stopPlay();
   pdf.on = true;
   pdf.busy = true;
   pdfControls();
@@ -1336,12 +2144,13 @@ function dropWake() {
 }
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") { lastTick = performance.now(); dropWake(); holdWake(); }
-  else { clearPeek(); saveState(); }
+  else { clearPeek(); stopPlay(); saveState(); }
 });
 // Leaving the page: give the tab's audio session back (iOS keeps a page's type for the whole
 // tab: a "playback" left behind kept the Tuner's microphone from starting) and the PDF's canvas.
 window.addEventListener("pagehide", () => {
   clearPeek();
+  stopPlay();
   if (pdf.on) pdfOff();
   saveState();
   dropWake();
@@ -1390,6 +2199,33 @@ function countAll() {
   return { rendered, pitched: S.v?.pitched ?? 0 };
 }
 
+// ▶'s state for tests: what's scheduled and lit, the bar the music is in, the page turns.
+function playDebug() {
+  const a = PB.a;
+  return {
+    state: PB.state, kind: PB.kind, starting: PB.starting, speed: S.speed, playSpeed: PB.speed,
+    span: S.sel ? { ...S.sel } : null, tempo: PB.base || (S.P ? tempoBase() : null), bpm: S.song ? songBpm() : null,
+    from: PB.from, order: PB.tr ? PB.tr.bars.map((b) => b.mi) : null, len: PB.tr?.len ?? null,
+    sing: S.sing ? { order: S.sing.order ? S.sing.order.length : null, tempo: S.sing.tempo } : S.sing,
+    t0: PB.t0, s0: PB.s0, round: PB.round, now: a && a.state !== "closed" ? a.currentTime : null,
+    latency: a ? a.outputLatency || a.baseLatency || 0 : 0,
+    items: PB.tr ? PB.tr.items.map((x) => ({ id: x.id, midi: x.midi, sec: x.sec, dur: x.dur, hold: x.hold, sound: x.sound, k: x.k, n: x.n })) : [],
+    scheduled: PB.log.map((x) => ({ ...x })),
+    lit: [...PB.lit.keys()], litEls: [...stage.querySelectorAll(".page g.note.play")].map((g) => g.id),
+    strip: stripEl.classList.contains("on") ? [...stripEl.querySelectorAll("rect.lit")].map((r) => ({ midi: Number(r.dataset.midi), hand: r.dataset.hand })) : [],
+    k: PB.k, kr: PB.kr, mi: PB.mi, musicPage: PB.musicPage, turns: PB.turns.map((x) => ({ ...x })), defer: PB.defer ? { ...PB.defer } : null,
+    pre: PB.tr?.pre ?? null, bus: PB.bus ? PB.bus.gain.value : null,
+    stripSide: PB.stripSide, stripOff: PB.stripOff === S.showGen, busy: PB.busyRects.map((r) => r.map(Math.round)),
+    bands: [...stage.querySelectorAll(".page .sel")].map((b) => ({ page: Number(b.parentElement.dataset.page), left: b.offsetLeft, top: b.offsetTop, width: b.offsetWidth, height: b.offsetHeight })),
+    selbar: selbar.hidden ? null : { at: selbar.dataset.at, loop: !selLoopBtn.hidden, rect: (() => { const r = selbar.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })() },
+    geo: () => [...stage.querySelectorAll(".page")].map((pg) => ({ page: Number(pg.dataset.page), rect: (() => { const r = pg.getBoundingClientRect(); return [r.left, r.top]; })(), systems: pageGeo(pg).map((x) => ({ top: x.top, bottom: x.bottom, left: x.left, right: x.right, cols: x.cols.map((c) => [c.q, c.x0, c.x1]) })) })),
+    onsets: () => (S.P ? viewOnsets().slice() : []),
+    timeline: () => (S.P ? { bars: songTime().bars.map((b) => ({ ...b })), length: S.T.length, tempos: S.T.tempos, first: S.T.first, els: S.T.els.map((e) => ({ ...e })) } : null),
+    singOrder: () => (S.P ? songSing()?.order?.slice() ?? null : null),
+    pageOf: (mi) => (S.ready && S.v ? tk.getPageWithElement("m" + S.v.firstMeasureAtOrAfter(mi)) || 0 : 0),
+  };
+}
+
 window.resonateDebug = () => {
   const plan = S.P?.views[S.view];
   let rendered = 0;
@@ -1399,8 +2235,8 @@ window.resonateDebug = () => {
       ready: S.ready, failed: S.failed, song: S.song, title: S.title, view: S.view,
       views: S.P ? Object.keys(S.P.views) : [], parts: S.P?.parts ?? [],
       keep: plan ? { ...plan, ids: S.v?.ids ?? [] } : null,
-      pages: S.pages, page: S.page, shown: shownPages(), spread: S.spread, sp: S.sp, scale: S.scale, size: S.size,
-      sizeAuto: S.sizeAuto, sizes: JSON.parse(JSON.stringify(S.sizes)), hard: S.hard, fitLog: S.fitLog.map((x) => ({ ...x })),
+      pages: S.pages, page: S.page, shown: shownPages(), spread: S.spread, sp: S.sp, scale: S.scale, step: S.step, size: S.step ? S.sp : null,
+      sizeAuto: !S.step, auto: S.auto, sizes: JSON.parse(JSON.stringify(S.sizes)), cap: S.cap, base: S.base, mode: S.mode, device: device(), fitLog: S.fitLog.map((x) => ({ ...x })),
       W: S.W, H: S.H, names: S.names, at: S.at,
       counts: { rendered, pitched: S.v?.pitched ?? 0, pages: S.counted.size }, countAll,
       get facts() { return S.P ? Object.fromEntries(S.P.facts) : {}; },
@@ -1419,6 +2255,7 @@ window.resonateDebug = () => {
         canvas: pdf.canvas?.isConnected ? [pdf.canvas.width, pdf.canvas.height] : null,
       },
       wake: { held: !!wake && !wake.released, requests: wakeRequests },
+      playback: playDebug(),
       t: { ...S.t },
     },
   };
