@@ -11,21 +11,22 @@
 // ▶ plays the view (playtime.js: the song's written timeline, Sing's performance order): a
 // stretch dragged on the page — once or round after round — or from the page's first bar to the
 // end, its notes lit as they sound and the page turning with the music.
-import { spaceChanged } from "./nav.js?v=84";
-import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=84";
-import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=84";
-import { decorate, fullName, labelOf } from "./playnames.js?v=84";
-import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=84";
-import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=84";
-import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=84";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=84";
+import { spaceChanged } from "./nav.js?v=85";
+import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=85";
+import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=85";
+import { decorate, fullName, labelOf } from "./playnames.js?v=85";
+import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=85";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=85";
+import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=85";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=85";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
 const songSel = $("song"), samplesEl = $("samples"), mineEl = $("mine"), handsSel = $("hands");
 const namesBtn = $("names"), smallerBtn = $("smaller"), biggerBtn = $("bigger"), prevBtn = $("prev"), nextBtn = $("next");
 const pdfBtn = $("pdf"), offerEl = $("offer"), stripEl = $("strip"), bubbleEl = $("bubble"), keysBtn = $("keys"), dockEl = $("dock");
-const playBtn = $("play"), selbar = $("selbar"), selPlayBtn = $("sel-play"), selLoopBtn = $("sel-loop"), speedSel = $("speed"), selClearBtn = $("sel-clear");
+// (▶: the one-page shell hands its own over — Sing's page there has a #play of its own)
+const playBtn = window.resonatePlay?.playBtn || $("play"), selbar = $("selbar"), selPlayBtn = $("sel-play"), selLoopBtn = $("sel-loop"), speedSel = $("speed"), selClearBtn = $("sel-clear");
 const hearEl = $("hear");
 
 const K = {
@@ -455,8 +456,11 @@ function measure(single = false) {
   const cap = Math.min(W / 40, H / tallest(plan));
   const at = (sp, mode, more) => ({ W, H, spread: false, pw: W, cap, sp, scale: scaleOf(sp), mode, base: sp, ...more });
   const dev = device();
+  // (the one-page shell lays the Score out in a region of the window: a Split View is the window's
+  // width there, not the region's — an iPad's landscape column keeps the tablet's rules)
+  const narrow = (window.resonatePlay?.region ? document.documentElement.clientWidth : W) < TABLET_W;
   let L;
-  if (dev === "phone" || (dev === "tablet" && W < TABLET_W)) L = phoneSize(plan, at, W, H, cap);
+  if (dev === "phone" || (dev === "tablet" && narrow)) L = phoneSize(plan, at, W, H, cap);
   else {
     const paper = W / PAPER;
     const base = Math.min(cap, dev === "tablet" ? Math.max(MIN_SP, paper) : Math.min(DESK[1], Math.max(DESK[0], paper)));
@@ -847,6 +851,7 @@ const FWD = new Set(["ArrowRight", "ArrowDown", "PageDown", " ", "Spacebar", "En
 const BACK = new Set(["ArrowLeft", "ArrowUp", "PageUp", "Backspace"]);
 window.addEventListener("keydown", (e) => {
   if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (window.resonatePlay?.turnKeys?.() === false) return; // (the one-page shell: the Score isn't shown, or a sheet is open)
   const t = e.target instanceof Element ? e.target : null;
   let d = FWD.has(e.key) ? 1 : BACK.has(e.key) ? -1 : 0;
   const own = e.key === " " || e.key === "Spacebar" || e.key === "Enter";
@@ -1079,6 +1084,7 @@ function handOf(f) {
 // A press on a note (hit: nearHead's; e: its pointerdown; hitMs: nearHead's time) → its strike.
 function peekStart(hit, e, hitMs = 0) {
   if (pdf.on || !hit) return null;
+  if (window.resonatePlay?.quiet?.()) return null; // (the one-page shell: Sing records — a press stays silent)
   const it0 = hit.item, f0 = it0.fact;
   const chord = it0.g.closest("g.chord") || it0.g;
   // Everything struck on that staff at that moment: the chord, and the other voices' notes starting
@@ -1094,7 +1100,8 @@ function peekStart(hit, e, hitMs = 0) {
   for (const it of items) if (!lit.has(it.fact.midi)) lit.set(it.fact.midi, { hand: handOf(it.fact), label: labelOf(it.fact) });
   const pk = { pid: e.pointerId, items, names: null, midis: [...lit.keys()], lit, held: true, lift: 0, dead: false, hidden: false, a: null, notes: null, t0: 0, end: Infinity, cap: 0, hide: 0, log: null };
   // the sound: the session, a context — struck now when it runs with the piano in, else as soon as
-  // it can (iOS: at the lift)
+  // it can (iOS: at the lift). (The one-page shell's tuner gives its mic up first, and Sing stops.)
+  window.resonatePlay?.beforeSound?.();
   const a = getCtx("press");
   const piano = a.state === "running" ? pianoNow(a) : null;
   if (piano) strike(pk, a, piano, e.timeStamp, hitMs);
@@ -1865,6 +1872,8 @@ const eventsOf = (tr) => [...tr.bars.map((b) => ({ bar: true, ...b })), ...tr.it
 
 async function playStart(kind, loop = false) {
   if (pdf.on || !S.ready || (kind === "span" && !S.sel)) return;
+  if (window.resonatePlay?.quiet?.()) return; // (the one-page shell: Sing records)
+  window.resonatePlay?.beforeSound?.(); // (the shell's tuner gives its mic up first, and Sing stops)
   stopPlay();
   const gen = ++PB.gen;
   const a = getCtx("tap"); // (in the tap: iOS starts audio only from one — the session first)
@@ -2643,6 +2652,18 @@ setNames(S.names);
   if (listed) prune().catch(() => {});
   await open(known(saved) ? saved : FIRST);
 })();
+
+// The one-page shell (shell.html) mounts this page as its Score: it opens songs, stops everything
+// before it leaves the song or before Sing sounds, and lays the music out again when the Score's
+// region changes size (a module shown or hidden). It sets region / beforeSound / quiet / turnKeys
+// before it imports this. (On play.html nothing calls these.)
+window.resonatePlay = Object.assign(window.resonatePlay || {}, {
+  open: (id) => open(id),
+  stopAll: async () => { clearPeek(); stopPlay(); },
+  state: () => ({ song: S.song, title: S.title, ready: S.ready, busy: PB.state !== "idle" || PB.starting, held: peeks.some((pk) => pk.held && !pk.dead),
+    page: S.page, pages: S.pages, at: S.at, lgen: S.lgen, W: S.W, H: S.H, sp: S.sp, mode: S.mode }),
+  resize: () => { clearTimeout(resizeTimer); sized(); },
+});
 
 // Every head of every page of the current layout, counted from the SVG (tests).
 function countAll() {

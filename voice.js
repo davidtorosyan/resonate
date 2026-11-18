@@ -5,10 +5,10 @@
 // then does the same going up. The lowest and highest notes held are your limits; the
 // comfortable range starts a few notes inside them and can be adjusted by hand.
 
-import { openMic, createReader, FFT_SIZE } from "./pitch.js?v=84";
-import { loadPiano, holdPiano } from "./piano.js?v=84";
-import { noteName, median } from "./music.js?v=84";
-import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=84";
+import { openMic, createReader, FFT_SIZE } from "./pitch.js?v=85";
+import { loadPiano, holdPiano } from "./piano.js?v=85";
+import { noteName, median } from "./music.js?v=85";
+import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=85";
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");

@@ -7,7 +7,7 @@
 //
 // Note ids ("n<i>", document order over the whole score) are set once on the parsed score, so
 // every view shares them and the facts map (built from the whole score) serves them all.
-import { pickMelody } from "./musicxml.js?v=84";
+import { pickMelody } from "./musicxml.js?v=85";
 
 const STEP_PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 const PIANO = /piano|pno|keyboard|klavier|clavier|organ/i;

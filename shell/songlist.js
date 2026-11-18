@@ -1,11 +1,11 @@
 // Songs (bottom right): My songs and the samples, + Add (PDF in the background, MusicXML, a link),
 // and home's Next-up card (the song open last). Choosing a song makes it the open song the way Sing
 // does (resonate.sing.song) and opens it in place with Sing (singview.js, set by boot.js).
-import { listSongs, addSong, listPdfIds } from "../library.js?v=84";
-import { SAMPLES } from "../catalog.js?v=84";
-import { readScoreFile, parseMusicXml } from "../musicxml.js?v=84";
-import { spaceChanged } from "../nav.js?v=84";
-import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=84";
+import { listSongs, addSong, listPdfIds } from "../library.js?v=85";
+import { SAMPLES } from "../catalog.js?v=85";
+import { readScoreFile, parseMusicXml } from "../musicxml.js?v=85";
+import { spaceChanged } from "../nav.js?v=85";
+import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=85";
 
 const SONG_KEY = "resonate.sing.song";
 const $ = (id) => document.getElementById(id);
@@ -18,11 +18,11 @@ function setOpenSong(id, { newSong = false } = {}) {
     if (newSong) localStorage.removeItem("resonate.sing.verse"); // (as Sing's import)
   } catch {}
 }
-let opener = null; // (boot.js: Sing in place)
+let opener = null; // (boot.js: the song in place — Sing, the Score)
 export const setOpener = (fn) => { opener = fn; };
-export function openSong(id) {
+export function openSong(id, opts = {}) {
   setOpenSong(id);
-  if (opener) opener(id);
+  if (opener) opener(id, opts);
   else go("sing.html");
 }
 
@@ -223,5 +223,5 @@ export async function mountNextUp(el) {
     <span class="mid"><span class="t"></span><span class="s">Last song</span></span><span class="go">${fic("play")}</span>`;
   el.querySelector(".t").textContent = title;
   el.setAttribute("aria-label", `${title} — sing`);
-  el.onclick = () => openSong(id);
+  el.onclick = () => openSong(id, { sing: true }); // (it advertises a singing step: Sing shows)
 }
