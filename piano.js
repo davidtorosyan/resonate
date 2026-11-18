@@ -160,6 +160,31 @@ export function keepAlive(ac, nodes) {
   src.connect(ac.destination);
   src.start();
   nodes.push(src);
+  awake.add(src);
+  src.addEventListener("ended", () => awake.delete(src));
+}
+
+// Asleep in the background (the owner: "the app needs to go to sleep when I background Safari"):
+// a running context — even a silent one, or a keep-alive source — kept iOS's audio going after
+// the app went to the background. A page registers the contexts it owns (ownContext) and, when it
+// is hidden or left, stops what it plays itself, then calls sleepAudio(): every keep-alive source
+// stops, every registered context is suspended (the page's own getter resumes it — or replaces
+// it — in the next tap; nothing starts by itself on return) and the audio session goes "auto".
+const owned = new Set(); // AudioContexts a page registered
+const awake = new Set(); // keepAlive sources not yet ended
+export function ownContext(ac) {
+  for (const c of owned) if (c.state === "closed") owned.delete(c);
+  owned.add(ac);
+  return ac;
+}
+export function sleepAudio() {
+  for (const src of awake) try { src.stop(); } catch {}
+  awake.clear();
+  for (const ac of owned) {
+    if (ac.state === "closed") owned.delete(ac);
+    else if (ac.state !== "suspended") ac.suspend().catch(() => {}); // (also an "interrupted" one: it mustn't come back by itself)
+  }
+  try { if (navigator.audioSession) navigator.audioSession.type = "auto"; } catch {}
 }
 
 // Hold a note down like a piano key, until release(at). The samples die away fast (mid

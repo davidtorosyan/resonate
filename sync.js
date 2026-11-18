@@ -19,9 +19,9 @@
 // pages' "resonate:data" events (debounced), when the page becomes visible, and every 2 minutes
 // while it's open — one at a time across tabs (Web Locks).
 
-import { supabase, savedUser } from "./auth.js?v=85";
-import { activeSpace, SYNC_META } from "./space.js?v=85";
-import { listSongs, getSong, putSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, countClips, listTakes, getTake, putTake, removeTake, persistent, dbGen } from "./library.js?v=85";
+import { supabase, savedUser } from "./auth.js?v=86";
+import { activeSpace, SYNC_META } from "./space.js?v=86";
+import { listSongs, getSong, putSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, countClips, listTakes, getTake, putTake, removeTake, persistent, dbGen } from "./library.js?v=86";
 
 export const SONG_LIMIT = 10;
 const FILE_LIMIT = 10 * 1024 * 1024;

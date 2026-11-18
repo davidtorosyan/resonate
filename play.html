@@ -80,7 +80,7 @@
       #smaller, #bigger { line-height: 1; padding: 0; }
       #smaller svg, #bigger svg { width: 22px; height: 22px; display: block; margin: auto; }
       #pdf { padding: 0 0.5rem; }
-      #bar #play, #bar #keys { padding: 0; }
+      #bar #play, #bar #keys, #bar #chords { padding: 0; }
       #play svg { width: 22px; height: 22px; display: block; margin: auto; }
       #play[data-icon="stop"] { background: rgba(216,107,0,0.25); border-color: #d86b00; }
       #offer { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; color: rgba(255,255,255,0.75); white-space: nowrap; }
@@ -153,7 +153,7 @@
            — no empty break line, whose row gaps made the bar taller than v78's) */
         #bar #song { order: 3; flex: 1 1 calc(100% - 11rem); min-width: 0; max-width: none; }
         #bar .pager, #bar:has(#offer:not([hidden])) .pager { order: 4; margin-left: 0; }
-        #hands, #play, #names, #keys, .size, #pdf, #offer { order: 6; }
+        #hands, #play, #names, #chords, #keys, .size, #pdf, #offer { order: 6; }
         /* (the controls' row holds the view menu, ▶, ABC, 🎹, − +, 📄 with v78's gaps a little
            closer) */
         #bar { column-gap: 0.5rem; }
@@ -166,7 +166,7 @@
         #song { flex-basis: 100%; max-width: none; }
         /* (the controls' row sits .3rem under the song's, as when they shared .ctl's gap: the
            stage keeps v78's height) */
-        #hands, #play, #names, #keys, .size, #pdf, #offer { margin-top: -0.1rem; }
+        #hands, #play, #names, #chords, #keys, .size, #pdf, #offer { margin-top: -0.1rem; }
       }
       @media (max-width: 420px) and (any-pointer: coarse) { .nav-link { padding: 0.3rem 0.5rem; } }
       /* ▶ takes a place on the controls' row: with the fewer-names chip and 📄 the one-row bar is
@@ -195,6 +195,28 @@
         #bar .ctl:has(#offer:not([hidden])) #song { flex-basis: 0; min-width: 4rem; }
         #bar .ctl:has(#offer:not([hidden])) { column-gap: 0.3rem; }
       }
+
+      /* The chord names button (v86) beside ABC: the song menu gives way further for it (its title
+         cut sooner) — the bar keeps its rows at every width; under 480 px it sits on the song's
+         row, right above ABC. */
+      @media (min-width: 1100px) { #song { flex-basis: 8rem; } }
+      @media (min-width: 480px) and (max-width: 1099px) { #song { flex-basis: 4.5rem; min-width: 4.5rem; } }
+      @media (max-width: 479px) {
+        #bar #chords { order: 3; margin-top: 0; }
+        #bar #song { flex-basis: calc(100% - 14.3rem); }
+      }
+      /* (with 📄 on an iPad's controls row: the gaps, ABC and the page number's room ("12 / 31") a
+         little closer, so the view menu keeps its whole name and the song menu v80's 5rem) */
+      @media (min-width: 670px) and (max-width: 1099px) {
+        .ctl:has(#pdf:not([hidden])) { column-gap: 0.25rem; }
+        .ctl:has(#pdf:not([hidden])) #names { min-width: 2.75rem; padding: 0 0.4rem; }
+        #bar:has(#pdf:not([hidden])) { column-gap: 0.5rem; }
+        #bar:has(#pdf:not([hidden])) #pg { min-width: 3.4rem; }
+      }
+      /* (the fewer-names chip without its question where the row is full — its button says it:
+         "Fewer names: Some" — as on a big phone) */
+      @media (min-width: 480px) and (max-width: 669px) { #bar #offer > span { display: none; } }
+      @media (min-width: 670px) and (max-width: 1199px) { #bar:has(#pdf:not([hidden])) #offer > span { display: none; } }
 
       /* The paper: one page (or two side by side), drawn to the stage's exact size. */
       #stage {
@@ -245,32 +267,24 @@
       /* The keyboard (🎹): docked under the music, in its own space — the music is laid out above it
          (the stage ends where it starts), and it stays: nothing slides, switches sides or goes with a
          press or ▶. It takes the bottom safe area (the stage's own padding goes). A flex row: what
-         ▶ plays can go at its left end; the keys take the rest. It takes no touch. */
+         ▶ plays can go at its left end; the keys take the rest — and can be played (keyboard.js). */
       #dock {
         flex: 0 0 auto; display: flex; align-items: stretch; gap: 8px; background: #14142c;
         padding: 6px max(8px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
       }
       #dock[hidden] { display: none; }
       body[data-keys="on"] #stage { padding-bottom: 0; }
-      #strip { flex: 1 1 auto; min-width: 0; height: clamp(56px, 9vh, 110px); pointer-events: none; }
+      #strip { flex: 1 1 auto; min-width: 0; height: clamp(56px, 9vh, 110px); touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: pointer; }
       #strip svg { display: block; width: 100%; height: 100%; }
-      #keys svg { width: 24px; height: 24px; display: block; margin: auto; }
-      #keys[aria-pressed="true"] { background: rgba(166,79,255,0.28); border-color: #a64fff; }
+      #keys svg, #chords svg { width: 24px; height: 24px; display: block; margin: auto; }
+      #keys[aria-pressed="true"], #chords[aria-pressed="true"] { background: rgba(166,79,255,0.28); border-color: #a64fff; }
       /* ▶: what sounds now — heads and names in the peek's orange. */
       #stage g.note.play .notehead use { fill: #d86b00; }
       #stage g.note.play > .nn.nb-f rect { fill: #c45f00; }
       #stage g.note.play > .nn.nb-h rect { stroke: #c45f00; fill: #ffe3c7; }
       #stage g.note.play > .nn.nb-h text { fill: #c45f00; }
-      /* A muted part's notes as the music passes (what ▶ plays, below): lighter — the place, not a
-         sound — and the words under them, so the tune and the words can be followed. */
-      /* (a muted note pressed is sounding: the peek's orange wins) */
-      #stage g.note.hush:not(.peek) .notehead use { fill: #f0a560; }
-      #stage g.note.hush > .nn.nb-f:not(.peek) rect { fill: #ffd8b3; }
-      #stage g.note.hush > .nn.nb-f:not(.peek) text { fill: #a84f00; }
-      #stage g.note.hush > .nn.nb-h:not(.peek) rect { stroke: #f0a560; fill: #fff3e6; }
-      #stage g.note.hush > .nn.nb-h:not(.peek) text { fill: #c0661c; }
+      /* (and the words under it: a muted part's notes aren't lit — what ▶ plays, below) */
       #stage g.note.play > g.verse text { fill: #c45f00; }
-      #stage g.note.hush > g.verse text { fill: #d27a2c; }
       /* A stretch picked by dragging: a band a system, like a text selection (multiplied: the ink
          stays black, the names readable). */
       #stage .sel { position: absolute; pointer-events: none; background: #d4e2ff; mix-blend-mode: multiply; border-radius: 3px; }
@@ -339,6 +353,7 @@
         <select id="hands" aria-label="Hands" hidden></select>
         <button id="play" type="button" aria-label="Play" title="Play" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.2v13.6a.8.8 0 0 0 1.2.7l10.6-6.8a.8.8 0 0 0 0-1.4L9.2 4.5A.8.8 0 0 0 8 5.2z" fill="currentColor"/></svg></button>
         <button id="names" type="button" data-level="all" aria-label="Note names: all" title="Note names: all">ABC</button>
+        <button id="chords" type="button" aria-label="Chord names" title="Chord names" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><ellipse cx="9.6" cy="18.2" rx="3.3" ry="2.3" transform="rotate(-22 9.6 18.2)"/><ellipse cx="9.6" cy="12.6" rx="3.3" ry="2.3" transform="rotate(-22 9.6 12.6)"/><ellipse cx="9.6" cy="7" rx="3.3" ry="2.3" transform="rotate(-22 9.6 7)"/></g><path d="M12.6 18V2.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M16 21.2h5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
         <button id="keys" type="button" aria-label="Keyboard" title="Keyboard" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.83 12.5V19M15.17 12.5V19" stroke="currentColor" stroke-width="1.4"/><rect x="7.2" y="5.6" width="3.3" height="7.4" rx="0.5" fill="currentColor"/><rect x="13.5" y="5.6" width="3.3" height="7.4" rx="0.5" fill="currentColor"/></svg></button>
         <span class="size">
           <button id="smaller" type="button" aria-label="Smaller" title="Smaller"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg></button>
@@ -353,7 +368,7 @@
         <button id="next" type="button" aria-label="Next page" title="Next page">›</button>
       </span>
       <span class="brk"></span>
-      <span id="version" class="mono">v85</span>
+      <span id="version" class="mono">v86</span>
     </header>
     <main id="stage" data-names="all">
       <p id="msg" hidden></p>
@@ -371,7 +386,7 @@
       <div id="hear" class="hear" role="group" aria-label="Hear" hidden></div>
       <div id="strip" aria-hidden="true"></div>
     </div>
-    <script type="module" src="nav.js?v=85"></script>
-    <script type="module" src="play.js?v=85"></script>
+    <script type="module" src="nav.js?v=86"></script>
+    <script type="module" src="play.js?v=86"></script>
   </body>
 </html>

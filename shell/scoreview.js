@@ -6,8 +6,8 @@
 // first time the Score is shown, never before. Another song goes through play.js's own open
 // (resonatePlay.open). play.js lays the music out to its stage's box; the shell tells it when the
 // region changed size (resize), and play.js's own ResizeObserver catches the rest (a rotation).
-import { scopeCss } from "./scopecss.js?v=85";
-import { ic } from "./chrome.js?v=85";
+import { scopeCss } from "./scopecss.js?v=86";
+import { ic } from "./chrome.js?v=86";
 
 const $ = (id) => document.getElementById(id);
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
@@ -81,7 +81,7 @@ export function mountScore({ version, hooks, toSing, onLoad = () => {} }) {
     return (loading ||= (async () => {
       await mount();
       window.resonatePlay = Object.assign(window.resonatePlay || {}, hooks, { region: true, playBtn: el.play });
-      await import("../play.js?v=85");
+      await import("../play.js?v=86");
       P = window.resonatePlay;
       playDebug = window.resonateDebug;
       P.debug = playDebug; // (tests: Play's own resonateDebug, as on play.html)

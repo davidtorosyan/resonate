@@ -2,23 +2,23 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=85";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=85";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=85";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=85";
-import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=85";
-import * as P from "./practice.js?v=85";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=85";
-import { startCapture, playVoice } from "./capture.js?v=85";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=85";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=85";
-import { listSongs, getSong, addSong, removeSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=85";
-import { SAMPLES, songXml } from "./catalog.js?v=85";
-import { activeProfile } from "./profiles.js?v=85";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=85";
-import { DATA_KEYS } from "./space.js?v=85";
-import { spaceChanged } from "./nav.js?v=85";
-import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=85";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=86";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=86";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=86";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=86";
+import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=86";
+import * as P from "./practice.js?v=86";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=86";
+import { startCapture, playVoice } from "./capture.js?v=86";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=86";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=86";
+import { listSongs, getSong, addSong, removeSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=86";
+import { SAMPLES, songXml } from "./catalog.js?v=86";
+import { activeProfile } from "./profiles.js?v=86";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=86";
+import { DATA_KEYS } from "./space.js?v=86";
+import { spaceChanged } from "./nav.js?v=86";
+import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=86";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -726,6 +726,7 @@ async function beginSing(part) {
   updateButtons(); // (the old take's Play bar goes: a Play tapped while the mic opens would run under the take)
   singBtn.disabled = listenBtn.disabled = true;
   statusEl.textContent = "requesting mic…";
+  const slept0 = sleeps;
   let mic;
   try {
     mic = await openMic({ ac: part?.ac });
@@ -738,7 +739,11 @@ async function beginSing(part) {
     return;
   }
   micWasOpen = true;
-  if (part && !partAlive(part)) { await mic.close(); return; } // the loop stopped meanwhile
+  ownContext(mic.ac);
+  // The loop stopped meanwhile, or the page went to the background (a whole take doesn't start there).
+  const gone = () => (part && !partAlive(part)) || document.hidden || sleeps !== slept0;
+  const standDown = () => { if (!part) { statusEl.textContent = "stopped (backgrounded)"; singBtn.disabled = listenBtn.disabled = false; updateButtons(); } };
+  if (gone()) { await mic.close(); return standDown(); }
   const ac = mic.ac;
   const g = part?.guide ?? guide;
   let piano = null;
@@ -752,10 +757,10 @@ async function beginSing(part) {
   const capture = await startCapture(ac, mic.source, { keepSeconds: part && !part.record ? 10 : Infinity, onChunk: (c) => features.push(c) });
   let wakeLock = null;
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
-  if (part && !partAlive(part)) { // the loop stopped while the piano loaded
+  if (gone()) { // the loop stopped while the piano loaded (or the page was hidden)
     try { await wakeLock?.release(); } catch {}
     await mic.close();
-    return;
+    return standDown();
   }
 
   if (session) stopSession(); // anything that started while the mic opened (its sounds would play on)
@@ -1114,7 +1119,7 @@ function freshPlayCtx(how = "tap") {
     || (how !== "auto" && (playCtxStuck || playCtx.state === "interrupted"));
   if (bad) {
     if (playCtx && playCtx.state !== "closed") playCtx.close().catch(() => {});
-    playCtx = new (window.AudioContext || window.webkitAudioContext)();
+    playCtx = ownContext(new (window.AudioContext || window.webkitAudioContext)());
     playCtxStuck = false;
   }
   return playCtx;
@@ -1551,7 +1556,7 @@ chipsEl.addEventListener("scroll", () => { lastChipScroll = performance.now(); }
 // the audio session is left alone (not "playback"), so other apps' music isn't stopped
 // before a note actually plays. The piano starts loading too.
 function unlockPlay(e) {
-  if (!e.isTrusted || session?.kind === "sing" || e.target.closest?.("#sing, #tapalong, #taptempo")) return;
+  if (!e.isTrusted || document.hidden || session?.kind === "sing" || e.target.closest?.("#sing, #tapalong, #taptempo")) return;
   for (const t of ["pointerup", "keydown"]) document.removeEventListener(t, unlockPlay, true);
   if (freshPlayCtx().state !== "running") playCtx.resume().catch(() => {});
   loadPiano(playCtx).catch(() => {});
@@ -1584,7 +1589,7 @@ function monitorOn() {
   // for recording, like the Voice page's). If a key, Listen or Play is sounding, the
   // session goes straight back to playback so it stays loud; the mic opens after.
   setSession("play-and-record");
-  const micCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const micCtx = ownContext(new (window.AudioContext || window.webkitAudioContext)());
   micCtx.resume().catch(() => {});
   if (keys.size || starting === "play" || (session && session.kind !== "sing")) setSession("playback");
   const analyser = micCtx.createAnalyser();
@@ -1781,7 +1786,7 @@ function startLoop(li) {
   // In the tap: the mic's context is made for recording, then the playback context
   // starts (getPlayCtx, in startPlay) — so later rounds can start both without a tap.
   setSession("play-and-record");
-  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const ac = ownContext(new (window.AudioContext || window.webkitAudioContext)());
   ac.resume().catch(() => {});
   drill = {
     li, range: [j0, j1], from: qToT(score.measures[m]), fromQ: score.measures[m], fromM: m, until: last.t + last.d + MAX_SHIFT + 0.3,
@@ -2061,7 +2066,7 @@ function runPlan() {
 // In the tap: the mic's context (later rounds start without a tap, like the phrase loop).
 function tapContext() {
   setSession("play-and-record");
-  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const ac = ownContext(new (window.AudioContext || window.webkitAudioContext)());
   ac.resume().catch(() => {});
   return ac;
 }
@@ -2791,6 +2796,7 @@ async function runRemote(action, a) {
     case "listen":
     case "play_take": {
       if (session?.kind === "sing" || drill) return { ok: false, error: "Not while singing — stop first." };
+      if (document.hidden) return { ok: false, error: "The page isn't in front on this device — bring it up and ask again." }; // (asleep in the background)
       if (action === "play_take" && !(take && take.endT !== null)) return { ok: false, error: "No take to play back yet." };
       const li = lineArg(a);
       if (li !== null) cursorToLine(li);
@@ -3670,27 +3676,33 @@ document.addEventListener("drop", (e) => {
   if (file && session?.kind !== "sing") importFile(file);
 });
 
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) stopKeys();
-  if (document.hidden && drill) stopLoop();
-  if (document.hidden && gblock) stopGuided();
-  if (document.hidden && mon) {
+// The page hidden (Safari in the background, the screen locked) or left: the page goes to sleep —
+// every sound stops (keys, Listen / Play, a loop, a guided step, an assistant's countdown), the
+// mics close (a take stops as Stop does: it's kept), the contexts are suspended and the session
+// goes back to "auto" (sleepAudio). Nothing starts again by itself: the next tap resumes the
+// playback context (unlockPlay, getPlayCtx).
+let sleeps = 0; // bumped each time the page sleeps: a take whose mic opened across one stands down
+function sleepPage() {
+  sleeps++;
+  if (cancelGetReady()) remoteTake = null;
+  for (const key of [...keys.values()]) dropKey(key, true, 0.002); // (cut, not damped: the context is suspended next, and a tail would ring on when it resumes)
+  stopLoop();
+  stopGuided();
+  if (mon) {
     monitorOff();
     statusEl.textContent = "pitch off (backgrounded)";
   }
-  if (document.hidden && session) {
-    stopSession();
-    statusEl.textContent = "stopped (backgrounded)";
-  }
-});
+  const was = session;
+  stopSession(); // (also when there's none: a Listen still loading stands down)
+  if (was) statusEl.textContent = "stopped (backgrounded)";
+  sleepAudio();
+  for (const t of ["pointerup", "keydown"]) document.addEventListener(t, unlockPlay, true);
+}
+document.addEventListener("visibilitychange", () => { if (document.hidden) sleepPage(); });
 // Leaving the page: give the tab's audio session back. iOS keeps its type across pages,
 // and a "playback" left behind kept the Tuner's microphone from starting.
 window.addEventListener("pagehide", () => {
-  stopKeys();
-  stopLoop();
-  stopGuided();
-  monitorOff();
-  stopSession();
+  sleepPage();
   if (playCtx) playCtx.close().catch(() => {});
   playCtx = null;
   setSession("auto");
