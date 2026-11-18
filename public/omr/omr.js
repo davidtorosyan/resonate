@@ -2,7 +2,7 @@
 // (a WebAssembly JVM) inside a Web Worker (omr-worker.js), with OCR by the
 // WebAssembly build of Tesseract (ocr-engine.js) in the same worker.
 //
-//   const omr = await import('./omr/omr.js?v=83');
+//   const omr = await import('./omr/omr.js?v=84');
 //   const { mxls, title, log } = await omr.convertPdf(file, { onProgress, onEvent });
 //
 // Each conversion runs in a new worker (Audiveris keeps global state per Java runtime), so a page
@@ -10,8 +10,8 @@
 //
 // See omr/README.md for how the pieces are built and licensed.
 
-import { renderPdf, buildTiff, placeholder } from './pdfprep.js?v=83';
-import { createTrace, EXPORT_LOST } from './trace.js?v=83';
+import { renderPdf, buildTiff, placeholder } from './pdfprep.js?v=84';
+import { createTrace, EXPORT_LOST } from './trace.js?v=84';
 
 const BASE = new URL('.', import.meta.url).href;          // .../omr/
 
@@ -209,7 +209,7 @@ export async function convertPdf(input, opts = {}) {
     onProgress?.({ phase: 'recognize', sheet, sheets: sheetCount, page: pageOf(sheet), step: name, fraction: done / (sheetCount * STEPS.length) });
   };
   const classpath = JARS.map((j) => `/app${new URL(`lib/${j}`, BASE).pathname}`).join(':');
-  const worker = new Worker(`${BASE}omr-worker.js?v=83`);
+  const worker = new Worker(`${BASE}omr-worker.js?v=84`);
   const stop = () => worker.terminate();
   signal?.addEventListener('abort', stop);
   try {

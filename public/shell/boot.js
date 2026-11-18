@@ -2,12 +2,13 @@
 // Songs (bottom right) holds the song list and + Add; a PDF is read in the background (the Reader
 // tray); the avatar (top right) opens the account menu. nav.js ran first (shell.html), so whose
 // data the device shows is settled before anything here reads it.
-import { spaceChanged } from "../nav.js?v=83";
-import { mountTuner, tunerHtml } from "./tuner.js?v=83";
-import { mountSongs, mountNextUp, openSong } from "./songlist.js?v=83";
-import { mountTray } from "./tray.js?v=83";
-import { mountAccount } from "./account-menu.js?v=83";
-import { ic, fic, device } from "./chrome.js?v=83";
+import { spaceChanged } from "../nav.js?v=84";
+import { mountTuner, tunerHtml } from "./tuner.js?v=84";
+import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=84";
+import { mountSingView } from "./singview.js?v=84";
+import { mountTray } from "./tray.js?v=84";
+import { mountAccount } from "./account-menu.js?v=84";
+import { ic, fic, device, overlayOpen } from "./chrome.js?v=84";
 
 const $ = (id) => document.getElementById(id);
 const version = $("version").textContent.trim();
@@ -33,9 +34,21 @@ $("rec-btn").querySelector(".b").innerHTML = fic("rec");
 const tray = mountTray({ version, spaceChanged, openSong: (id) => openSong(id), onChange: () => songs.render() });
 const songs = mountSongs({ tray });
 const nextUp = $("nextup");
-mountNextUp(nextUp).catch(() => { nextUp.hidden = true; });
+const showNextUp = () => mountNextUp(nextUp).catch(() => { nextUp.hidden = true; });
+showNextUp();
 mountAccount({ version });
-window.resonateBusy = () => tray.busy(); // (nav.js: a reload for another tab's sign-in/out waits for it)
+
+// --- a song opens in place with Sing ------------------------------------------------------------
+const sing = mountSingView({ tuner, version, onLoad: hooks, onLeave: showNextUp, openSongs: () => songs.open() });
+setOpener((id) => sing.open(id));
+function hooks() { // (sing.js sets its own when it loads: the shell's go back on top, with Sing's inside)
+  window.resonateBusy = () => tray.busy() || sing.busy(); // (nav.js: a reload for another tab's sign-in/out waits for it)
+  window.resonateDebug = () => ({
+    device: device(), tuner: tuner.debug(), import: tray.debug(), eventList: tray.eventList, song: sing.debug(), sing: sing.singDebug(),
+    overlay: document.querySelector("body > .sheet:not([hidden]), .pop:not([hidden])")?.id || (overlayOpen("tuner") ? "tuner" : null),
+  });
+}
+hooks();
 
 // Test hook: read a PDF from a URL (?pdf=…) without the picker; else continue an unfinished import.
 const testPdf = new URLSearchParams(location.search).get("pdf");
@@ -46,7 +59,3 @@ if (testPdf) {
 // Back from the back/forward cache (a song page's Back): the page as left — sheets closed.
 addEventListener("pageshow", (e) => { if (e.persisted) location.reload(); });
 
-window.resonateDebug = () => ({
-  device: device(), tuner: tuner.debug(), import: tray.debug(), eventList: tray.eventList,
-  overlay: document.querySelector(".sheet:not([hidden]), .pop:not([hidden])")?.id || null,
-});

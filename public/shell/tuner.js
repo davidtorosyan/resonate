@@ -2,10 +2,14 @@
 // waveform. Detection is today's Tuner's (app.js): pitch.js's YIN with the same gates, and its
 // locked-note logic — a long median for the cents, a short one that re-locks the shown note
 // after it stays > 50¢ off for 250 ms. Nothing opens the mic until Start.
-import { openMic, createYin, MIN_RMS, MIN_CLARITY, MIN_FREQ, MAX_FREQ, FFT_SIZE } from "../pitch.js?v=83";
-import { SHARPS } from "../music.js?v=83";
-import { activeProfile } from "../profiles.js?v=83";
-import { ic } from "./chrome.js?v=83";
+// Forms (REDESIGN §5): "full" (home, and the drop over a song), "strip" (a phone with a song open)
+// and "docked" (a tablet / desktop with a song open) — one DOM, laid out by data-form; the small
+// forms carry their own mic button (.tmic) and a state word: "parked · tap to listen" while a song
+// is open and the mic is off, "take" / "paused" while the song holds the sound (setHold).
+import { openMic, createYin, MIN_RMS, MIN_CLARITY, MIN_FREQ, MAX_FREQ, FFT_SIZE } from "../pitch.js?v=84";
+import { SHARPS } from "../music.js?v=84";
+import { activeProfile } from "../profiles.js?v=84";
+import { ic } from "./chrome.js?v=84";
 
 const PITCH_WINDOW_MS = 1500; // long window: the cents number and needle
 const SWITCH_WINDOW_MS = 300; // short window: is the singer still on the shown note?
@@ -23,8 +27,9 @@ export function mountTuner(root, { onState = () => {} } = {}) {
   const el = {
     ribbon: $(".ribbon-wrap", root), gauge: $(".gauge", root), note: $(".note-text", root), cents: $(".cents", root),
     msg: $(".tmsg", root), level: $(".level", root), levelFill: $(".level .bar i", root), levelN: $(".level .n", root),
-    scope: $(".scope canvas", root),
+    scope: $(".scope canvas", root), tmic: $(".tmic", root), word: $(".tword", root), cdot: $(".cbar i", root),
   };
+  let form = "full", hold = null;
   const ctx2d = el.scope.getContext("2d");
 
   // --- the voice profile: range ribbon and volume calibration -------------------------------
@@ -96,7 +101,23 @@ export function mountTuner(root, { onState = () => {} } = {}) {
     root.dataset.mic = s;
     el.msg.textContent = msg;
     el.msg.hidden = !msg;
+    showMic();
     onState(s);
+  }
+  // The small forms' mic button and word.
+  const WORDS = { blocked: "mic blocked", noanswer: "tap again", error: "tap again", starting: "starting…" };
+  function showMic() {
+    const on = state === "listening" || state === "starting";
+    el.tmic.dataset.mic = state;
+    el.tmic.disabled = !!hold;
+    el.tmic.querySelector(".b").innerHTML = on ? '<span class="sq"></span>' : ic(state === "blocked" ? "micoff" : hold === "paused" ? "pause" : "mic");
+    el.tmic.querySelector(".tl").textContent = on ? "Listening" : "Start";
+    el.tmic.setAttribute("aria-label", hold ? "Tuner paused" : on ? "Listening — tap to park" : "Start listening");
+    el.tmic.setAttribute("aria-pressed", String(on));
+    const w = hold === "take" ? "take" : hold ? "paused" : WORDS[state] || (state === "off" && form !== "full" ? "parked · tap to listen" : "");
+    el.word.textContent = w;
+    el.word.dataset.kind = hold || state;
+    root.dataset.hold = hold || "";
   }
 
   // --- the locked note (app.js updatePitchDisplay) -------------------------------------------
@@ -137,6 +158,7 @@ export function mountTuner(root, { onState = () => {} } = {}) {
       el.note.removeAttribute("data-onnote");
       el.cents.textContent = "";
       el.cents.removeAttribute("data-tune");
+      el.cdot.hidden = true;
       needle.setAttribute("visibility", "hidden");
       const mk = $(".mk", el.ribbon); if (mk) mk.hidden = true;
       return;
@@ -148,6 +170,9 @@ export function mountTuner(root, { onState = () => {} } = {}) {
     el.cents.textContent = `${p.cents > 0 ? "+" : p.cents < 0 ? "−" : "±"}${Math.abs(p.cents)}¢`;
     el.cents.dataset.tune = tune;
     const c = Math.max(-50, Math.min(50, p.cents)), col = COL[tune];
+    el.cdot.hidden = false;
+    el.cdot.style.left = `${50 + c}%`;
+    el.cdot.dataset.tune = tune;
     const [nx, ny] = pt(c, R + 9), [x0, y0] = pt(c, R - 30), [x1, y1] = pt(c, R + 2);
     nLine.setAttribute("x1", x0.toFixed(1)); nLine.setAttribute("y1", y0.toFixed(1));
     nLine.setAttribute("x2", x1.toFixed(1)); nLine.setAttribute("y2", y1.toFixed(1));
@@ -266,6 +291,25 @@ export function mountTuner(root, { onState = () => {} } = {}) {
     setState("off");
   }
   const toggle = () => (state === "listening" || state === "starting" ? stop() : start());
+  // Give the mic up now, synchronously — the tracks stop and the session goes back to auto
+  // before the song's own handler sets its session (stop() sets auto only once the context closed).
+  function park() {
+    if (state !== "listening" && state !== "starting") return;
+    gen++;
+    clearTimeout(watchdog);
+    cancelAnimationFrame(raf); raf = 0;
+    const m = mic;
+    mic = null;
+    m?.close(); // (stops the tracks at once; the context closes later)
+    setSession("auto");
+    hist.length = 0; vols.length = 0; peaks.length = 0; locked = null; offSince = 0;
+    render(null);
+    drawScope();
+    el.levelFill.style.width = "0%";
+    el.levelN.textContent = "—";
+    setState("off");
+  }
+  el.tmic.addEventListener("click", (e) => { e.stopPropagation(); if (!hold) toggle(); });
 
   document.addEventListener("visibilitychange", () => { if (document.hidden && mic) stop(); });
   addEventListener("pagehide", () => { if (mic || state === "starting") stop(); setSession("auto"); });
@@ -274,17 +318,23 @@ export function mountTuner(root, { onState = () => {} } = {}) {
   render(null);
 
   return {
-    start, stop, toggle,
+    start, stop, toggle, park,
     get state() { return state; },
-    debug: () => ({ state, note: shown.midi ?? null, cents: shown.cents ?? null, frames: peaks.length, calibrated, range: !!range }),
+    setForm(f) { form = f; root.dataset.form = f; showMic(); },
+    setHold(h) { if ((h || null) !== hold) { hold = h || null; showMic(); } },
+    debug: () => ({ state, note: shown.midi ?? null, cents: shown.cents ?? null, frames: peaks.length, calibrated, range: !!range,
+      form, hold, word: el.word.textContent, live: !!mic?.stream?.getAudioTracks().some((t) => t.readyState === "live") }),
   };
 }
 
 export const tunerHtml = () => `
+  <button class="tmic" type="button" aria-pressed="false"><span class="b"></span><span class="tl">Start</span></button>
   <a class="ribbon-wrap" href="voice.html" hidden></a>
   <div class="gauge"></div>
   <div class="note-text" aria-live="off">—</div>
   <div class="cents"></div>
+  <div class="cbar" aria-hidden="true"><b></b><i hidden></i></div>
+  <span class="tword"></span>
   <div class="tmsg" role="status" hidden></div>
   <div class="level">${ic("level")}<div class="bar"><i></i><div class="ticks">${"<b></b>".repeat(9)}</div></div><span class="n mono" hidden>—</span><a class="cal" href="voice.html" aria-label="Mic level (voice profile)">${ic("sliders")}</a></div>
   <div class="scope"><canvas></canvas></div>`;

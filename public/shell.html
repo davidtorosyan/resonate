@@ -233,7 +233,7 @@
       .traybar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); flex: none; flex-wrap: wrap; }
       .traybar #tray-msg { flex: 1 1 10rem; font: 600 13px/1.3 var(--font); color: var(--warn); }
       .traybar .btns { display: flex; gap: 8px; }
-      .chip { height: 44px; padding: 0 14px; border-radius: 12px; background: var(--control); box-shadow: inset 0 0 0 1px var(--line-2); font: 650 13.5px/1 var(--font); color: var(--text); }
+      .traybar .chip { height: 44px; padding: 0 14px; border-radius: 12px; background: var(--control); box-shadow: inset 0 0 0 1px var(--line-2); font: 650 13.5px/1 var(--font); color: var(--text); }
       .toast { position: fixed; left: 50%; bottom: calc(var(--sab) + 120px); transform: translateX(-50%); z-index: 55; padding: 10px 14px; border-radius: 12px; background: #2b2b58; font: 600 13px/1 var(--font); box-shadow: var(--shadow-pop); }
 
       /* --- phone: the import tile / done row in the dock --------------------------------------------- */
@@ -295,20 +295,107 @@
         .ribbon-wrap { margin-bottom: 4px; }
         .level { margin-top: 12px; }
       }
+
+      /* --- a song open: Sing in place (shell/singview.js); the tuner as a strip (phone) or docked ----- */
+      .app[data-song] .brand { min-width: 44px; justify-content: center; }
+      .app[data-song] .brand .bt { display: none; }
+      .songpill { height: 44px; min-width: 0; max-width: min(56vw, 360px); display: inline-flex; align-items: center; gap: 6px; padding: 0 10px 0 14px; border-radius: 14px;
+        background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); font: 700 15px/1 var(--font); }
+      .songpill .t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .songpill svg { width: 16px; height: 16px; color: var(--text-3); }
+      .app { --tslot: 52px; }
+      .app[data-form="docked"] { --tslot: 150px; }
+      .app[data-song] .home { flex: none; height: var(--tslot); margin-bottom: 8px; padding: 0; justify-content: flex-start; align-items: stretch; }
+      .app[data-song] .nextup { display: none; }
+      .tmic, .cbar, .tword { display: none; }
+      .tuner[data-form="strip"], .tuner[data-form="docked"] { cursor: pointer; background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); }
+      .tuner[data-form="strip"] > :is(.ribbon-wrap, .gauge, .level, .scope, .tmsg),
+      .tuner[data-form="docked"] > :is(.ribbon-wrap, .gauge, .tmsg) { display: none !important; }
+      .tmic { width: 44px; height: 44px; flex: none; display: none; align-items: center; gap: 10px; }
+      .tmic .b { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--control); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text-2); flex: none; }
+      .tmic .b svg { width: 20px; height: 20px; }
+      .tmic .sq { width: 14px; height: 14px; border-radius: 3px; background: #fff; }
+      .tmic[data-mic="listening"] .b, .tmic[data-mic="starting"] .b { background: var(--grad-primary); color: #fff; box-shadow: var(--glow-primary), 0 0 0 4px rgba(166,79,255,.2); }
+      .tuner[data-hold="take"] .tmic .b { background: var(--grad-live); color: #fff; box-shadow: none; }
+      .tmic:disabled { cursor: default; }
+      .tmic .tl { display: none; font: 650 15px/1 var(--font); color: var(--text-2); }
+      .cbar { position: relative; height: 22px; }
+      .cbar b { position: absolute; left: 0; right: 0; top: 9px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.08); }
+      .cbar b::before { content: ""; position: absolute; left: 45%; width: 10%; top: -2px; height: 8px; border-radius: 4px; background: rgba(74,222,128,.28); }
+      .cbar b::after { content: ""; position: absolute; left: 50%; top: -5px; width: 1.5px; height: 14px; margin-left: -.75px; background: rgba(236,235,244,.35); }
+      .cbar i { position: absolute; top: 4px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 10px rgba(74,222,128,.6); }
+      .cbar i[data-tune="close"] { background: var(--close); box-shadow: 0 0 10px rgba(196,155,255,.5); }
+      .cbar i[data-tune="aim"] { background: var(--aim); box-shadow: 0 0 10px rgba(245,168,90,.5); }
+      .tword { font: 600 12px/1.2 var(--font); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tword:empty { display: none !important; }
+      .tword[data-kind="take"] { color: #ff8a9a; }
+      .tword[data-kind="take"]::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ff4f6f; margin-right: 6px; vertical-align: 0; }
+      /* the strip: mic · note · cents bar · cents · word */
+      .tuner[data-form="strip"] { flex-direction: row; height: 52px; gap: 10px; padding: 0 12px 0 4px; border-radius: 16px; }
+      .tuner[data-form="strip"] .tmic { display: flex; }
+      .tuner[data-form="strip"] .note-text { font-size: 30px; min-width: 1.6em; justify-content: center; }
+      .tuner[data-form="strip"] .cents { margin: 0; font-size: 13px; min-width: 42px; text-align: right; min-height: 0; }
+      .tuner[data-form="strip"] .cbar { display: block; flex: 1; min-width: 40px; }
+      .tuner[data-form="strip"] .tword { display: block; flex: 0 1 auto; min-width: 0; }
+      .tuner[data-form="strip"][data-hold="take"] { box-shadow: inset 0 0 0 1px rgba(255,79,111,.55); background: rgba(255,79,111,.07); }
+      /* docked (tablet, desktop): the note · word, cents bar, cents + level · mic; a faint waveform edge */
+      .tuner[data-form="docked"] { height: 150px; border-radius: 22px; display: grid; grid-template-columns: auto 1fr auto; grid-template-rows: auto auto auto 1fr;
+        column-gap: 24px; row-gap: 4px; align-items: center; padding: 14px 22px 0; overflow: hidden; }
+      .tuner[data-form="docked"] .note-text { grid-area: 1 / 1 / 4 / 2; font-size: 88px; min-width: 1.2em; }
+      .tuner[data-form="docked"] .tword { display: block; grid-area: 1 / 2; }
+      .tuner[data-form="docked"] .cbar { display: block; grid-area: 2 / 2; }
+      .tuner[data-form="docked"] .cents { grid-area: 3 / 2; justify-self: start; margin: 0; }
+      .tuner[data-form="docked"] .level { grid-area: 3 / 2; margin: 0 0 0 60px; width: auto; max-width: 420px; }
+      .tuner[data-form="docked"] .level > svg, .tuner[data-form="docked"] .level .cal, .tuner[data-form="docked"] .level .n { display: none; }
+      .tuner[data-form="docked"] .level .bar { height: 4px; }
+      .tuner[data-form="docked"] .tmic { display: flex; grid-area: 1 / 3 / 4 / 4; width: 64px; height: 64px; }
+      .tuner[data-form="docked"] .tmic .b { width: 64px; height: 64px; }
+      .tuner[data-form="docked"] .tmic .b svg { width: 26px; height: 26px; }
+      .tuner[data-form="docked"] .scope { grid-area: 4 / 1 / 5 / 4; height: auto; min-height: 0; align-self: stretch; margin: 6px -22px 0; width: auto; opacity: .35; }
+      .tuner[data-form="docked"][data-hold="take"] { box-shadow: inset 0 0 0 1px rgba(255,79,111,.55); }
+      /* the drop: the full tuner over the song, with its own mic button (tap / swipe up closes it) */
+      .tuner[data-drop] { position: fixed; z-index: 45; left: 0; right: 0; top: calc(var(--sat) + var(--top-h)); padding: 14px var(--gutter) 22px; cursor: pointer;
+        background: linear-gradient(180deg, var(--sheet), var(--sheet-2)); border-radius: 0 0 var(--r-sheet) var(--r-sheet); box-shadow: 0 24px 50px rgba(0,0,0,.6); }
+      .tuner[data-drop] .tmic { display: flex; order: 10; width: auto; margin-top: 14px; }
+      .tuner[data-drop] .tmic .b { width: 56px; height: 56px; }
+      .tuner[data-drop] .tmic .tl { display: inline; }
+      .tuner[data-drop] .tword { display: block; order: 9; margin-top: 8px; }
+      .tuner[data-drop]::after { content: ""; order: 11; width: 40px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.2); margin-top: 12px; }
+      .tuner[data-drop] .scope { margin-top: 10px; }
+      /* the dock with Sing: ▶ Listen · the step's primary (Sing's #sing) · Songs */
+      .app:not([data-song]) #listen-w, .app:not([data-song]) .dock #sing, .app[data-song] #rec-btn, .app[data-song] #main-btn { display: none; }
+      .app[data-song] .dock .row { display: flex; align-items: center; gap: 12px; }
+      .app[data-song] .dock .row > .corner { margin-left: auto; }
+      #listen { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; background: var(--control); box-shadow: inset 0 0 0 1px var(--line-2); font-size: 0; color: var(--text); }
+      #listen::before { content: "\25B6\FE0E"; font-size: 19px; line-height: 1; margin-left: 3px; }
+      #listen[data-stop]::before { content: "\25A0\FE0E"; margin-left: 0; font-size: 20px; }
+      #listen:disabled { opacity: .4; cursor: default; }
+      .dock #sing { flex: 1 1 auto; min-width: 0; max-width: 340px; height: 58px; margin: 0 auto; padding: 0 18px; border-radius: 20px; background: var(--grad-primary); color: #fff;
+        font: 700 17px/1.1 var(--display); box-shadow: var(--glow-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .dock #sing[data-active="true"] { background: var(--grad-live); box-shadow: 0 10px 28px -10px rgba(255,79,111,.7); }
+      .dock #sing:disabled { opacity: .45; cursor: default; }
+      @media (min-width: 700px) {
+        .app[data-song] .dock .row { max-width: 900px; width: 100%; margin: 0 auto; }
+        .tuner[data-drop] { left: 50%; right: auto; width: 640px; transform: translateX(-50%); border-radius: 0 0 24px 24px; }
+        #listen { width: 58px; height: 58px; }
+      }
     </style>
   </head>
   <body>
     <div class="app" id="app">
       <header class="top">
-        <a class="brand" href="shell.html" aria-label="Resonate — home"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6f8dff"/><stop offset=".55" stop-color="#a64fff"/><stop offset="1" stop-color="#ff5fa8"/></linearGradient></defs><circle cx="12" cy="12" r="9.5" fill="none" stroke="url(#lg)" stroke-width="2.4"/><path d="M6.5 12.5c1.2 0 1.4-4 2.8-4s1.4 7 2.8 7 1.4-5 2.7-5 1 2 2.7 2" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg><span>Resonate</span></a>
+        <a class="brand" id="brand" href="shell.html" aria-label="Resonate — home"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6f8dff"/><stop offset=".55" stop-color="#a64fff"/><stop offset="1" stop-color="#ff5fa8"/></linearGradient></defs><circle cx="12" cy="12" r="9.5" fill="none" stroke="url(#lg)" stroke-width="2.4"/><path d="M6.5 12.5c1.2 0 1.4-4 2.8-4s1.4 7 2.8 7 1.4-5 2.7-5 1 2 2.7 2" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg><span class="bt">Resonate</span></a>
+        <button class="songpill" id="song-pill" type="button" hidden><span class="t"></span><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button>
         <span class="spacer"></span>
-        <span id="version" class="ver mono">v83</span>
+        <span class="sing-scope sing-top" id="sing-top" hidden></span>
+        <span id="version" class="ver mono">v84</span>
         <button class="avatar" id="avatar" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Account"></button>
       </header>
       <main class="home">
         <section class="tuner" id="tuner" aria-label="Tuner"></section>
         <button class="nextup" id="nextup" type="button" hidden></button>
       </main>
+      <section class="sing-root sing-scope" id="sing-region" aria-label="Sing" hidden></section>
       <footer class="dock">
         <div class="capsule" id="imp-done" role="status" hidden>
           <span class="okring"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
@@ -361,7 +448,7 @@
     <input id="xml-input" type="file" hidden />
     <input id="pdf-input" type="file" accept=".pdf,application/pdf" hidden />
 
-    <script type="module" src="nav.js?v=83"></script>
-    <script type="module" src="shell/boot.js?v=83"></script>
+    <script type="module" src="nav.js?v=84"></script>
+    <script type="module" src="shell/boot.js?v=84"></script>
   </body>
 </html>
