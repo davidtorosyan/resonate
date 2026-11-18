@@ -22,6 +22,8 @@ const ICONS = {
   level: '<path d="M5 18v-3M9 18v-6M13 18V9M17 18V6"/>',
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
   rec: '<circle cx="12" cy="12" r="7"/>',
+  pause: '<path d="M9 6.5v11M15 6.5v11"/>',
+  home: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3"/>',
   expand: '<path d="M6 14l6-6 6 6"/>',
   chevr: '<path d="M9 6l6 6-6 6"/>',
   out: '<path d="M14 5h5v5M19 5l-8 8"/><path d="M17 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 4 18.5v-10A1.5 1.5 0 0 1 5.5 7H10"/>',
@@ -37,13 +39,13 @@ export function device() {
   if (!matchMedia("(any-pointer: coarse)").matches) return "desktop";
   return Math.min(screen.width, screen.height) >= 700 ? "tablet" : "phone";
 }
-export const songPage = () => (device() === "tablet" ? "play.html" : "sing.html");
 
 // --- the overlay layer -------------------------------------------------------------------------
 const scrim = document.getElementById("scrim");
 let top = null; // { name, close(fromPop) }
 let pushed = false;
 let expectPop = 0; // our own history.back()s: their popstate isn't the singer's Back
+let page = null; // a page inside the shell (an open song): { name, close(), back() } — its own history entry, under the sheets
 
 // Show an overlay (closing another first). `close` hides it; `light`: a scrim that keeps context.
 export function openOverlay(name, close, { light = false } = {}) {
@@ -69,11 +71,44 @@ export function go(url) {
   else location.assign(url);
 }
 
+// Open a page inside the shell (a song): one history entry, so Back closes its sheets, then it.
+// A sheet open now (Songs, the tray) hands its entry over; a page already open keeps its own.
+// back(): the page's own topmost sheet closed (true), else Back closes the page (close()).
+export function openPage(name, { close, back = () => false }) {
+  if (page) {
+    if (top) closeOverlay();
+  } else {
+    if (top) closeOverlay({ keepHistory: true });
+    if (pushed) { pushed = false; history.replaceState({ shellPage: name }, ""); }
+    else history.pushState({ shellPage: name }, "");
+  }
+  page = { name, close, back };
+}
+// Close the page (◎): its entry goes, and a sheet's above it.
+export function closePage() {
+  if (!page) return;
+  const p = page;
+  page = null;
+  let n = 1;
+  if (top) { const t = top; top = null; scrim.hidden = true; t.close(); }
+  if (pushed) { pushed = false; n++; }
+  expectPop++;
+  history.go(-n);
+  p.close();
+}
+export const pageOpen = () => page?.name || null;
+
 scrim.addEventListener("click", () => closeOverlay());
 addEventListener("popstate", () => {
   if (expectPop) { expectPop--; return; }
-  if (top || pushed) closeOverlay({ fromPop: true });
+  if (top || pushed) { closeOverlay({ fromPop: true }); return; }
+  if (page) {
+    if (page.back()) { history.pushState({ shellPage: page.name }, ""); return; } // (its own sheet closed: the page stays)
+    const p = page;
+    page = null;
+    p.close();
+  }
 });
 addEventListener("keydown", (e) => { if (e.key === "Escape" && top && !e.defaultPrevented) closeOverlay(); });
-// A reload with a sheet's entry current: that entry is the page now.
-if (history.state?.shellSheet) history.replaceState(null, "");
+// A reload with a sheet's or a song's entry current: that entry is home now.
+if (history.state?.shellSheet || history.state?.shellPage) history.replaceState(null, "");

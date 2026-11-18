@@ -2,23 +2,23 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=83";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=83";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=83";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=83";
-import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=83";
-import * as P from "./practice.js?v=83";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=83";
-import { startCapture, playVoice } from "./capture.js?v=83";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=83";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=83";
-import { listSongs, getSong, addSong, removeSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=83";
-import { SAMPLES, songXml } from "./catalog.js?v=83";
-import { activeProfile } from "./profiles.js?v=83";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=83";
-import { DATA_KEYS } from "./space.js?v=83";
-import { spaceChanged } from "./nav.js?v=83";
-import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=83";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=84";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=84";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=84";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=84";
+import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=84";
+import * as P from "./practice.js?v=84";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=84";
+import { startCapture, playVoice } from "./capture.js?v=84";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive } from "./piano.js?v=84";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=84";
+import { listSongs, getSong, addSong, removeSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=84";
+import { SAMPLES, songXml } from "./catalog.js?v=84";
+import { activeProfile } from "./profiles.js?v=84";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=84";
+import { DATA_KEYS } from "./space.js?v=84";
+import { spaceChanged } from "./nav.js?v=84";
+import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=84";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -478,6 +478,7 @@ function setScore(sc, stored = null) {
   practiceJ = -1;
   applySong();
   flushRemote(); // (cloud changes that came while it loaded)
+  window.resonateSing?.onSong?.(songId, sc.title);
 }
 
 // id: a sample key, or a saved song's id (from library.js). Its last take comes back with it.
@@ -703,6 +704,7 @@ let starting = null;
 // record (keep the recording: runs, and rounds for "▶ You"), phrases ([[note j…]], the phrases
 // judged — rhythm per phrase, PhraseRhythm in take.rhythm.phrases).
 async function startSing(part = null) {
+  window.resonateSing?.beforeSound?.(); // (the shell's tuner gives its mic up first; nothing on sing.html)
   starting = "sing";
   monitorSync();
   try { await beginSing(part); } finally { starting = null; monitorSync(MON_RESUME); flushRemote(); }
@@ -1134,6 +1136,7 @@ async function getPlayCtx(how = "tap") {
 // kind: "listen" (melody) or "playback" (per playMode).
 // opts: { mode (voice / melody / both, instead of the play mode), until (s), line (review row) }
 async function startPlay(kind, from, opts = {}) {
+  window.resonateSing?.beforeSound?.();
   starting = "play";
   monitorSync();
   try { await beginPlay(kind, from, opts); } finally { starting = null; monitorSync(MON_RESUME); flushRemote(); }
@@ -3778,6 +3781,28 @@ if (!navigator.mediaDevices?.getUserMedia) {
   const known = SAMPLES[savedSong] || (savedSong && [...mySongsEl.querySelectorAll("option")].some((o) => o.value === savedSong));
   await selectSong(known ? savedSong : "amazing-grace");
 })();
+
+// The one-page shell (shell.html) mounts this page's Sing: it opens songs, stops everything
+// before it leaves the song, and reads what runs. (On sing.html nothing calls these.)
+async function stopAll() {
+  if (cancelGetReady()) remoteTake = null;
+  for (let i = 0; i < 160 && starting; i++) await sleep(50); // (a take or Listen still starting: it starts, then stops)
+  stopKeys();
+  stopLoop();
+  stopGuided();
+  monitorOff();
+  if (session?.kind === "sing") await stopSing();
+  else stopSession();
+  for (let i = 0; i < 400 && finishing; i++) await sleep(50); // (a take being finished is recorded and saved first)
+  closeReview();
+  closeMore();
+  for (const id of ["options", "taptempo", "tapalong"]) $(id).hidden = true;
+}
+window.resonateSing = Object.assign(window.resonateSing || {}, {
+  open: async (id) => { await refreshLibrary(); return selectSong(id); },
+  stopAll,
+  state: () => ({ busy: busyNow() || !!getReady, take: session?.kind === "sing" || starting === "sing", song: scoreId, title: score?.title || "" }),
+});
 
 // Debug hook for automated tests / devtools.
 window.resonateDebug = () => ({ score, notes, lines, take, session: session && { kind: session.kind, line: session.line, mode: session.mode, count: session.count, beatSec: session.beatSec }, nowT, scrollT, practiceJ, reviewRows, rate, laneMode,

@@ -11,14 +11,14 @@
 // ▶ plays the view (playtime.js: the song's written timeline, Sing's performance order): a
 // stretch dragged on the page — once or round after round — or from the page's first bar to the
 // end, its notes lit as they sound and the page turning with the music.
-import { spaceChanged } from "./nav.js?v=83";
-import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=83";
-import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=83";
-import { decorate, fullName, labelOf } from "./playnames.js?v=83";
-import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=83";
-import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=83";
-import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=83";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=83";
+import { spaceChanged } from "./nav.js?v=84";
+import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=84";
+import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=84";
+import { decorate, fullName, labelOf } from "./playnames.js?v=84";
+import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=84";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=84";
+import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=84";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=84";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");

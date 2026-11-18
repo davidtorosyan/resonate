@@ -1,11 +1,11 @@
 // Songs (bottom right): My songs and the samples, + Add (PDF in the background, MusicXML, a link),
 // and home's Next-up card (the song open last). Choosing a song makes it the open song the way Sing
-// does (resonate.sing.song) and opens today's Sing page — Play on a tablet.
-import { listSongs, addSong, listPdfIds } from "../library.js?v=83";
-import { SAMPLES } from "../catalog.js?v=83";
-import { readScoreFile, parseMusicXml } from "../musicxml.js?v=83";
-import { spaceChanged } from "../nav.js?v=83";
-import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go, songPage } from "./chrome.js?v=83";
+// does (resonate.sing.song) and opens it in place with Sing (singview.js, set by boot.js).
+import { listSongs, addSong, listPdfIds } from "../library.js?v=84";
+import { SAMPLES } from "../catalog.js?v=84";
+import { readScoreFile, parseMusicXml } from "../musicxml.js?v=84";
+import { spaceChanged } from "../nav.js?v=84";
+import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=84";
 
 const SONG_KEY = "resonate.sing.song";
 const $ = (id) => document.getElementById(id);
@@ -18,9 +18,12 @@ function setOpenSong(id, { newSong = false } = {}) {
     if (newSong) localStorage.removeItem("resonate.sing.verse"); // (as Sing's import)
   } catch {}
 }
-export function openSong(id, page = songPage()) {
+let opener = null; // (boot.js: Sing in place)
+export const setOpener = (fn) => { opener = fn; };
+export function openSong(id) {
   setOpenSong(id);
-  go(page);
+  if (opener) opener(id);
+  else go("sing.html");
 }
 
 const age = (t) => {
@@ -144,7 +147,7 @@ export function mountSongs({ tray }) {
     const id = await addSong(sc.title, xml, { source });
     setOpenSong(id, { newSong: true });
     say(`✓ ${sc.title}`, "ok");
-    go(songPage());
+    openSong(id);
   }
   async function importFile(file) {
     say(`Opening “${file.name}”…`);
@@ -220,5 +223,5 @@ export async function mountNextUp(el) {
     <span class="mid"><span class="t"></span><span class="s">Last song</span></span><span class="go">${fic("play")}</span>`;
   el.querySelector(".t").textContent = title;
   el.setAttribute("aria-label", `${title} — sing`);
-  el.onclick = () => openSong(id, "sing.html");
+  el.onclick = () => openSong(id);
 }

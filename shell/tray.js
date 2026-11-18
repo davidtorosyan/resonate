@@ -5,12 +5,12 @@
 // As pdf-import.js: a reload continues an unfinished import of this space, the Reader's ✕ (two
 // taps) stops and forgets it, a stage that stopped twice offers Skip / Retry, the importer holds the
 // engine's Web Lock and the screen wake lock, and pagehide stops the engine.
-import { createImporter } from "../omr/importer.js?v=83";
-import { mount as mountReader } from "../omr/reader.js?v=83";
-import { readFlag } from "../omr/jobs.js?v=83";
-import { activeSpace, activeDb } from "../space.js?v=83";
-import { etaText } from "../omr/readerstate.js?v=83";
-import { ic, esc, openOverlay, closeOverlay, overlayOpen } from "./chrome.js?v=83";
+import { createImporter } from "../omr/importer.js?v=84";
+import { mount as mountReader } from "../omr/reader.js?v=84";
+import { readFlag } from "../omr/jobs.js?v=84";
+import { activeSpace, activeDb } from "../space.js?v=84";
+import { etaText } from "../omr/readerstate.js?v=84";
+import { ic, esc, openOverlay, closeOverlay, overlayOpen } from "./chrome.js?v=84";
 
 const $ = (id) => document.getElementById(id);
 const STAGE = { prep: "pages", boot: "engine", export: "MusicXML", save: "saving" };
