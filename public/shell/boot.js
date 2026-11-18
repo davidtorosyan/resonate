@@ -2,13 +2,13 @@
 // Songs (bottom right) holds the song list and + Add; a PDF is read in the background (the Reader
 // tray); the avatar (top right) opens the account menu. nav.js ran first (shell.html), so whose
 // data the device shows is settled before anything here reads it.
-import { spaceChanged } from "../nav.js?v=84";
-import { mountTuner, tunerHtml } from "./tuner.js?v=84";
-import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=84";
-import { mountSingView } from "./singview.js?v=84";
-import { mountTray } from "./tray.js?v=84";
-import { mountAccount } from "./account-menu.js?v=84";
-import { ic, fic, device, overlayOpen } from "./chrome.js?v=84";
+import { spaceChanged } from "../nav.js?v=85";
+import { mountTuner, tunerHtml } from "./tuner.js?v=85";
+import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=85";
+import { mountSongView } from "./songview.js?v=85";
+import { mountTray } from "./tray.js?v=85";
+import { mountAccount } from "./account-menu.js?v=85";
+import { ic, fic, device, overlayOpen } from "./chrome.js?v=85";
 
 const $ = (id) => document.getElementById(id);
 const version = $("version").textContent.trim();
@@ -38,13 +38,13 @@ const showNextUp = () => mountNextUp(nextUp).catch(() => { nextUp.hidden = true;
 showNextUp();
 mountAccount({ version });
 
-// --- a song opens in place with Sing ------------------------------------------------------------
-const sing = mountSingView({ tuner, version, onLoad: hooks, onLeave: showNextUp, openSongs: () => songs.open() });
-setOpener((id) => sing.open(id));
-function hooks() { // (sing.js sets its own when it loads: the shell's go back on top, with Sing's inside)
-  window.resonateBusy = () => tray.busy() || sing.busy(); // (nav.js: a reload for another tab's sign-in/out waits for it)
+// --- a song opens in place: Sing, the Score or both ---------------------------------------------
+const song = mountSongView({ tuner, version, onLoad: hooks, onLeave: showNextUp, openSongs: () => songs.open() });
+setOpener((id, opts) => song.open(id, opts));
+function hooks() { // (sing.js and play.js set their own when they load: the shell's go back on top, with theirs inside)
+  window.resonateBusy = () => tray.busy() || song.busy(); // (nav.js: a reload for another tab's sign-in/out waits for it)
   window.resonateDebug = () => ({
-    device: device(), tuner: tuner.debug(), import: tray.debug(), eventList: tray.eventList, song: sing.debug(), sing: sing.singDebug(),
+    device: device(), tuner: tuner.debug(), import: tray.debug(), eventList: tray.eventList, song: song.debug(), sing: song.singDebug(), score: song.scoreDebug(),
     overlay: document.querySelector("body > .sheet:not([hidden]), .pop:not([hidden])")?.id || (overlayOpen("tuner") ? "tuner" : null),
   });
 }

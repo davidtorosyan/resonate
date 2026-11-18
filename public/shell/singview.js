@@ -3,10 +3,11 @@
 // layer at the end of the body, 📡 into the top bar — never its page header), its CSS is scoped
 // under .sing-scope (sing.html styles body, header, main, footer… directly), and sing.js is imported
 // once; another song goes through sing.js's own song switch (resonateSing.open → selectSong).
-// The tuner shrinks while a song is open (strip on a phone, docked elsewhere — only when a song
-// opens or closes) and starts parked: a touch that can start sound or a mic in Sing parks it first,
-// synchronously, so Sing's handler finds no live track and sets its own audio session.
-import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, go, ic, device } from "./chrome.js?v=84";
+// The song page around it (songview.js) opens and closes it; a touch that can start sound or a mic
+// in Sing parks the tuner and stops the Score first (beforeSound), synchronously, so Sing's handler
+// finds no live track and sets its own audio session.
+import { ic, device } from "./chrome.js?v=85";
+import { scopeCss } from "./scopecss.js?v=85";
 
 const $ = (id) => document.getElementById(id);
 // Controls in Sing that can't start sound or a mic: a touch there leaves the tuner listening.
@@ -40,69 +41,28 @@ const OVERRIDES = `
 @media (min-width: 700px) { .sing-root #score-btn { width: auto; padding: 0 12px; } .sing-root #score-btn .sl { display: inline; } }
 `;
 
-// Rewrite sing.html's CSS under the scope: `body` → the region, `body[…] x` → `body[…] .sing-scope x`,
-// `main` → .s-main, everything else → `.sing-scope x`; html / :root / * rules are the shell's.
-function scopeCss(text) {
-  const tmp = document.createElement("style");
-  tmp.media = "not all"; // (parsed, never applied)
-  tmp.textContent = text;
-  document.head.append(tmp);
-  const fix = (s) => s.replace(/(^|[\s>+~(])main(?=$|[\s.#:[>+~),])/g, "$1.s-main");
-  const one = (s) => {
-    s = s.trim();
-    if (s === ":root" || s === "*") return null;
-    if (s === "body") return ".sing-root";
-    const m = s.match(/^body((?:\[[^\]]*\])*)\s+(.+)$/);
-    if (m) return `body${m[1]} .sing-scope ${fix(m[2])}`;
-    return /^(html|body)\b/.test(s) ? null : `.sing-scope ${fix(s)}`;
-  };
-  const split = (sel) => { // top-level commas only
-    const out = [];
-    let depth = 0, cur = "";
-    for (const c of sel) {
-      if (c === "(" || c === "[") depth++;
-      else if (c === ")" || c === "]") depth--;
-      if (c === "," && !depth) { out.push(cur); cur = ""; } else cur += c;
-    }
-    return [...out, cur];
-  };
-  const walk = (rules) => {
-    let out = "";
-    for (const r of rules) {
-      if (r instanceof CSSStyleRule) {
-        const parts = split(r.selectorText);
-        if (parts.some((p) => p.trim() === "html")) continue; // (html, body: the shell's)
-        const sels = parts.map(one).filter(Boolean);
-        if (sels.length) out += `${sels.join(", ")} { ${r.style.cssText} }\n`;
-      } else if (r instanceof CSSMediaRule) out += `@media ${r.conditionText || r.media.mediaText} {\n${walk(r.cssRules)}}\n`;
-      else out += `${r.cssText}\n`; // (keyframes)
-    }
-    return out;
-  };
-  const out = walk(tmp.sheet.cssRules);
-  tmp.remove();
-  return out;
-}
-
-export function mountSingView({ tuner, version, onLoad = () => {}, onLeave = () => {}, openSongs = () => {} }) {
-  const app = $("app"), region = $("sing-region"), pill = $("song-pill"), brand = $("brand"), top = $("sing-top");
-  let loaded = null;   // the load's promise (markup + CSS + sing.js)
+// beforeSound(): the tuner parks and the Score stops (a touch or a start that can sound);
+// onSong(id, title): sing.js opened a song; toScore(): the phone's Score button (Sing's head).
+export function mountSing({ version, beforeSound, onSong, toScore, onLoad = () => {} }) {
+  const region = $("sing-region"), top = $("sing-top");
+  let loading = null;  // the load's promise (markup + CSS + sing.js)
   let S = null;        // window.resonateSing once sing.js runs
-  let singDebug = null, singBusy = null;
-  let isOpen = false, closing = null, watch = 0, title = "";
-  const formFor = () => (device() === "phone" ? "strip" : "docked");
+  let singDebug = null, singBusy = null, lw = null, singBtn = null;
 
   // --- mount sing.html once ------------------------------------------------------------------------
   let mounted = false;
-  async function load() {
-    if (!mounted) await mount();
-    mounted = true;
-    await import("../sing.js?v=84");
-    S = window.resonateSing;
-    singDebug = window.resonateDebug;
-    singBusy = window.resonateBusy;
-    S.debug = singDebug; // (tests: Sing's own resonateDebug, as on sing.html)
-    onLoad(); // (boot.js puts its own resonateDebug / resonateBusy back, with Sing's inside)
+  function load() {
+    return (loading ||= (async () => {
+      if (!mounted) await mount();
+      mounted = true;
+      await import("../sing.js?v=85");
+      S = window.resonateSing;
+      singDebug = window.resonateDebug;
+      singBusy = window.resonateBusy;
+      S.debug = singDebug; // (tests: Sing's own resonateDebug, as on sing.html)
+      onLoad(); // (boot.js puts its own resonateDebug / resonateBusy back, with Sing's inside)
+      for (let i = 0; i < 100 && !S.state().song; i++) await new Promise((r) => setTimeout(r, 100)); // (sing.js opens the saved song itself)
+    })().catch((err) => { if (!S) loading = null; throw err; })); // (offline before Sing ever loaded: the next open tries again)
   }
   async function mount() {
     const res = await fetch(`sing.html?v=${encodeURIComponent(version.replace(/^v/, ""))}`);
@@ -110,7 +70,7 @@ export function mountSingView({ tuner, version, onLoad = () => {}, onLeave = () 
     const doc = new DOMParser().parseFromString(await res.text(), "text/html");
     const style = document.createElement("style");
     style.id = "sing-css";
-    style.textContent = scopeCss(doc.querySelector("style")?.textContent || "") + OVERRIDES;
+    style.textContent = scopeCss(doc.querySelector("style")?.textContent || "", { root: ".sing-root", scope: ".sing-scope", main: ".s-main" }) + OVERRIDES;
     document.head.append(style);
     const take = (sel) => document.importNode(doc.querySelector(sel), true);
     // The region: Sing's main content; its first row (song menu, Open, Link) stays hidden but works.
@@ -128,13 +88,15 @@ export function mountSingView({ tuner, version, onLoad = () => {}, onLeave = () 
     score.title = "Score";
     score.setAttribute("aria-label", "Score");
     score.innerHTML = `${ic("score")}<span class="sl">Score</span>`;
+    score.hidden = device() !== "phone"; // (a tablet / desktop: the top bar's Sing · Score)
     head.append(score);
     head.append(take("#status"));
     // 📡 and the assistant's chip: the top bar.
     top.append(take("#assistant-chip"), take("#remote-btn"));
     // Listen and Sing: the dock (Songs stays at the right).
     const listen = take("#listen"), sing = take("#sing");
-    const lw = document.createElement("span");
+    singBtn = sing;
+    lw = document.createElement("span");
     lw.className = "round listen-w";
     lw.id = "listen-w";
     lw.innerHTML = '<span class="bw"></span><span class="l">Listen</span>';
@@ -153,126 +115,50 @@ export function mountSingView({ tuner, version, onLoad = () => {}, onLeave = () 
     for (const id of ["drop", "getready", "options", "taptempo", "tapalong", "more", "review"]) layer.append(take(`#${id}`));
     document.body.append(layer);
 
-    score.addEventListener("click", async () => { await S?.stopAll(); go("play.html"); });
-    // A touch that can start sound or a mic parks the tuner first (capture: before Sing's handlers).
+    score.addEventListener("click", () => toScore()); // (a phone: the Score alone, and back from its bar)
+    // A touch that can start sound or a mic parks the tuner and stops the Score first (capture:
+    // before Sing's handlers).
     const park = (e) => {
       if (e.type === "keydown" && e.key !== "Enter" && e.key !== " ") return;
       const t = e.target.closest?.("button, a, .chip, .syl, [role=button], input");
-      if (t && !t.matches(SILENT)) tuner.park();
+      if (t && !t.matches(SILENT)) beforeSound();
     };
     for (const el of [region, layer, lw, sing]) for (const t of ["pointerdown", "keydown"]) el.addEventListener(t, park, true);
     // (and Sing's own starts — a guided round, an assistant's command — call beforeSound)
-    window.resonateSing = Object.assign(window.resonateSing || {}, {
-      beforeSound: () => tuner.park(),
-      onSong: (id, t) => { title = t || ""; pill.querySelector(".t").textContent = title; },
-    });
+    window.resonateSing = Object.assign(window.resonateSing || {}, { beforeSound, onSong });
   }
 
-  // --- open / close ---------------------------------------------------------------------------------
+  // Sing on the song (loaded the first time); another song goes through sing.js's own switch.
   async function open(id) {
-    if (closing) await closing;
-    openPage("song", { close: leave, back: closeSheet });
-    if (isOpen) {
-      if (S?.state().song === id) return;
-      await S?.stopAll();
-      return S?.open(id);
-    }
-    isOpen = true;
-    tuner.park(); // (a song open: the tuner starts parked)
-    const form = formFor();
-    app.dataset.song = "";
-    app.dataset.form = form;
-    tuner.setForm(form);
-    region.hidden = false;
-    top.hidden = false;
-    pill.hidden = false;
-    pill.querySelector(".t").textContent = title || "…";
-    clearInterval(watch);
-    watch = setInterval(follow, 100);
-    try {
-      if (!loaded) {
-        loaded = load();
-        await loaded;
-        for (let i = 0; i < 100 && !S.state().song; i++) await new Promise((r) => setTimeout(r, 100)); // (sing.js opens the saved song itself)
-      }
-      await loaded;
-      if (isOpen && S.state().song !== id) await S.open(id);
-    } catch (err) {
-      console.error(err);
-      if (!S) { loaded = null; closePage(); } // (offline before Sing ever loaded: home again; the next open tries again)
-    }
+    await load();
+    if (S.state().song !== id) await S.open(id);
   }
-  // Back: Sing's own topmost sheet first (the page stays), then the song.
+  async function stopAll() {
+    try { await S?.stopAll(); } catch (err) { console.warn("sing stop", err); }
+  }
+  // Back: Sing's own topmost sheet first (→ true: one closed, the page stays).
   function closeSheet() {
-    if (overlayOpen()) return false;
     for (const [sheet, btn] of [["getready", null], ["tapalong", "ta-close"], ["taptempo", "tt-close"], ["options", "op-close"], ["more", "mo-close"], ["review", "rv-close"]]) {
       const el = $(sheet);
       if (el && !el.hidden) { btn ? $(btn).click() : el.click(); return true; }
     }
     return false;
   }
-  // Leave the song (◎, Back, Close): whatever Sing runs stops first — a take being stopped is
-  // finished and saved as on sing.html — then home.
-  function leave() {
-    if (!isOpen || closing) return closing;
-    closing = (async () => {
-      try { await S?.stopAll(); } catch (err) { console.warn("sing stop", err); }
-      isOpen = false;
-      clearInterval(watch);
-      dropClose();
-      tuner.setHold(null);
-      tuner.setForm("full");
-      delete app.dataset.song;
-      delete app.dataset.form;
-      region.hidden = true;
-      top.hidden = true;
-      pill.hidden = true;
-      onLeave();
-    })().finally(() => { closing = null; });
-    return closing;
+  const sheetOpen = () => ["getready", "tapalong", "taptempo", "options", "more", "review"].some((id) => { const el = $(id); return el && !el.hidden; });
+  // Shown or not (the region, its dock buttons, 📡): the shell's layout decides.
+  function show(on) {
+    region.hidden = !on;
+    top.hidden = !on;
+    if (lw) lw.hidden = !on;
+    if (singBtn) singBtn.hidden = !on;
+    if (mounted) $("score-btn").hidden = device() !== "phone"; // (a tablet / desktop: the top bar's Sing · Score)
   }
-  // While Sing holds the sound the tuner's mic button is off: "take" (red) or "paused".
-  function follow() {
-    if (!S) return;
-    const st = S.state();
-    tuner.setHold(st.take ? "take" : st.busy ? "paused" : null);
-    if (st.busy && tuner.state !== "off") tuner.park(); // (a safety net: every start parks it already)
-  }
-
-  brand.addEventListener("click", (e) => {
-    if (!isOpen) return;
-    e.preventDefault();
-    closePage();
-  });
-  pill.addEventListener("click", () => openSongs());
-
-  // --- the tuner drop: the rest of the strip / docked tuner drops the full tuner over the song -----
-  const tEl = $("tuner");
-  let dropped = false;
-  function dropOpen() {
-    if (dropped) return;
-    dropped = true;
-    tEl.dataset.drop = "";
-    tuner.setForm("full");
-    openOverlay("tuner", () => { dropped = false; delete tEl.dataset.drop; tuner.setForm(isOpen ? formFor() : "full"); });
-  }
-  function dropClose() { if (dropped) overlayOpen("tuner") ? closeOverlay() : (dropped = false, delete tEl.dataset.drop); }
-  let y0 = null, swiped = 0; // (a swipe up closes it)
-  tEl.addEventListener("click", (e) => {
-    if (!isOpen || e.target.closest(".tmic, a") || performance.now() - swiped < 500) return;
-    dropped ? closeOverlay() : dropOpen();
-  });
-  tEl.addEventListener("pointerdown", (e) => { y0 = dropped ? e.clientY : null; });
-  tEl.addEventListener("pointerup", (e) => {
-    if (dropped && y0 !== null && e.clientY - y0 < -40 && overlayOpen("tuner")) { swiped = performance.now(); closeOverlay(); }
-    y0 = null;
-  });
 
   return {
-    open, leave,
-    get isOpen() { return isOpen; },
-    busy: () => !!(singBusy?.() || closing),
-    debug: () => ({ open: isOpen, loaded: !!S, title, drop: dropped, form: app.dataset.form || "full", state: S?.state() || null }),
-    singDebug: () => (isOpen && singDebug ? singDebug() : null),
+    load, open, stopAll, closeSheet, sheetOpen, show,
+    get loaded() { return !!S; },
+    state: () => S?.state() || null,
+    busy: () => !!singBusy?.(),
+    debug: () => (S ? singDebug() : null),
   };
 }
