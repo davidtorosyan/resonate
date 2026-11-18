@@ -21,6 +21,7 @@ const files = [
   ...readdirSync(root).filter((f) => /\.(html|js)$/.test(f)).map((f) => join(root, f)),
   ...readdirSync(join(root, "omr")).filter((f) => /\.js$/.test(f)).map((f) => join(root, "omr", f)),
   ...readdirSync(join(root, "oauth")).filter((f) => /\.(html|js)$/.test(f)).map((f) => join(root, "oauth", f)),
+  ...readdirSync(join(root, "shell")).filter((f) => /\.js$/.test(f)).map((f) => join(root, "shell", f)),
 ];
 let changed = 0;
 for (const file of files) {
