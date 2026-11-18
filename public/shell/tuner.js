@@ -6,10 +6,10 @@
 // and "docked" (a tablet / desktop with a song open) — one DOM, laid out by data-form; the small
 // forms carry their own mic button (.tmic) and a state word: "parked · tap to listen" while a song
 // is open and the mic is off, "take" / "paused" while the song holds the sound (setHold).
-import { openMic, createYin, MIN_RMS, MIN_CLARITY, MIN_FREQ, MAX_FREQ, FFT_SIZE } from "../pitch.js?v=85";
-import { SHARPS } from "../music.js?v=85";
-import { activeProfile } from "../profiles.js?v=85";
-import { ic } from "./chrome.js?v=85";
+import { openMic, createYin, MIN_RMS, MIN_CLARITY, MIN_FREQ, MAX_FREQ, FFT_SIZE } from "../pitch.js?v=86";
+import { SHARPS } from "../music.js?v=86";
+import { activeProfile } from "../profiles.js?v=86";
+import { ic } from "./chrome.js?v=86";
 
 const PITCH_WINDOW_MS = 1500; // long window: the cents number and needle
 const SWITCH_WINDOW_MS = 300; // short window: is the singer still on the shown note?
@@ -294,7 +294,7 @@ export function mountTuner(root, { onState = () => {} } = {}) {
   // Give the mic up now, synchronously — the tracks stop and the session goes back to auto
   // before the song's own handler sets its session (stop() sets auto only once the context closed).
   function park() {
-    if (state !== "listening" && state !== "starting") return;
+    if (state !== "listening" && state !== "starting" && state !== "noanswer") return;
     gen++;
     clearTimeout(watchdog);
     cancelAnimationFrame(raf); raf = 0;
@@ -311,8 +311,14 @@ export function mountTuner(root, { onState = () => {} } = {}) {
   }
   el.tmic.addEventListener("click", (e) => { e.stopPropagation(); if (!hold) toggle(); });
 
-  document.addEventListener("visibilitychange", () => { if (document.hidden && mic) stop(); });
-  addEventListener("pagehide", () => { if (mic || state === "starting") stop(); setSession("auto"); });
+  // Hidden (Safari in the background, the screen locked): the mic closes — also one still opening —
+  // and the session goes "auto"; nothing listens again by itself.
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) return;
+    if (mic || state === "starting" || state === "noanswer") stop(); // (noanswer: a late answer would start it)
+    setSession("auto");
+  });
+  addEventListener("pagehide", () => { if (mic || state === "starting" || state === "noanswer") stop(); setSession("auto"); });
   if (!navigator.mediaDevices?.getUserMedia) setState("error", "No mic here — open over HTTPS");
   else setState("off");
   render(null);

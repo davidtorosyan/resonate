@@ -9,9 +9,9 @@
 // stops what sounds first, never during a take. One sound at a time: a touch or a start in one
 // module parks the tuner and stops the other first (beforeSound); a press on the Score while Sing
 // records stays silent. ◎, Back and another song stop both first.
-import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=85";
-import { mountSing } from "./singview.js?v=85";
-import { mountScore } from "./scoreview.js?v=85";
+import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=86";
+import { mountSing } from "./singview.js?v=86";
+import { mountScore } from "./scoreview.js?v=86";
 
 const $ = (id) => document.getElementById(id);
 const PREF = "resonate.shell.modules"; // { phone | tablet | desktop: "sing" | "score" | "both" } — this device's

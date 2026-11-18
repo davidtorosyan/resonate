@@ -2,10 +2,10 @@
 // notes you sang, and play it back (your voice and/or the notes on piano).
 // Song-based scoring lives on the Sing page (sing.js).
 
-import { noteName as nameOf, BLACK, median, centsLabel } from "./music.js?v=85";
-import { openMic, ANALYSIS_LAG } from "./pitch.js?v=85";
-import { startCapture, playVoice } from "./capture.js?v=85";
-import { loadPiano, pianoReady, playPiano, scheduleAhead, keepAlive } from "./piano.js?v=85";
+import { noteName as nameOf, BLACK, median, centsLabel } from "./music.js?v=86";
+import { openMic, ANALYSIS_LAG } from "./pitch.js?v=86";
+import { startCapture, playVoice } from "./capture.js?v=86";
+import { loadPiano, pianoReady, playPiano, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=86";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("roll");
@@ -381,12 +381,15 @@ function tick() {
   statusEl.textContent = `${r.db.toFixed(0)} dB`;
 }
 
+let sleeps = 0; // bumped each time the page is hidden: a take whose mic opened across one stands down
 async function startRecording() {
+  const s0 = sleeps;
   try {
     recBtn.disabled = true;
     statusEl.textContent = "requesting mic…";
     stopPlayback();
     mic = await openMic();
+    ownContext(mic.ac);
     capture = await startCapture(mic.ac, mic.source);
     frames = [];
     segments = [];
@@ -407,6 +410,12 @@ async function startRecording() {
     canvas.dataset.pannable = "false";
     renderTranscript();
     try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+    if (document.hidden || sleeps !== s0) { // (hidden while the mic opened: no take in the background)
+      recBtn.disabled = false;
+      if (recording) await stopRecording(); // (else the hidden handler already stopped it)
+      statusEl.textContent = "auto-stopped (backgrounded)";
+      return;
+    }
     recBtn.textContent = "Stop";
     recBtn.dataset.recording = "true";
     timerEl.dataset.rec = "true";
@@ -455,20 +464,32 @@ function effectiveMode() {
   return voice ? playMode : "notes";
 }
 
+// A context that won't run (suspended in the background and not resuming, "interrupted" by iOS,
+// closed) is replaced in the tap, as Sing's getPlayCtx does; a start superseded meanwhile (Stop,
+// the page hidden, another Play: playGen) stands down.
+let playStuck = false, playGen = 0;
 async function startPlayback(from) {
   stopPlayback();
   if (recording || (!voice && !segments.length)) return;
+  const gen = playGen;
   try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch {}
-  if (!playCtx || playCtx.state === "closed") playCtx = new (window.AudioContext || window.webkitAudioContext)();
-  if (playCtx.state === "suspended") await playCtx.resume();
+  if (!playCtx || playCtx.state === "closed" || playCtx.state === "interrupted" || playStuck) {
+    if (playCtx && playCtx.state !== "closed") playCtx.close().catch(() => {});
+    playCtx = ownContext(new (window.AudioContext || window.webkitAudioContext)());
+  }
   const ac = playCtx;
+  if (ac.state !== "running") await Promise.race([ac.resume().catch(() => {}), new Promise((r) => setTimeout(r, 1500))]);
+  if (gen !== playGen) return;
+  playStuck = ac.state !== "running";
+  if (playStuck) { statusEl.textContent = "the sound didn't start — tap again"; return; }
+  if (statusEl.textContent.startsWith("the sound didn't")) statusEl.textContent = "idle";
   const mode = effectiveMode();
   let piano = null;
   if (mode !== "voice") {
     if (!pianoReady(ac)) { playBtn.textContent = "Loading…"; playBtn.disabled = true; }
     try { piano = await loadPiano(ac); } catch (err) { console.warn("Piano samples unavailable", err); }
     playBtn.disabled = false;
-    if (playing) return; // another play started while loading
+    if (playing || gen !== playGen) return; // another play started while loading (or a stop)
   }
   from = Math.max(0, Math.min(from, duration));
   if (from >= duration - 0.05) from = 0;
@@ -508,6 +529,7 @@ async function startPlayback(from) {
 }
 
 function stopPlayback() {
+  playGen++;
   for (const n of playNodes) try { n.stop(); } catch {}
   playNodes = [];
   const was = playing;
@@ -569,15 +591,25 @@ playModesEl.addEventListener("click", (e) => {
 // Leaving the page: give the tab's audio session back. iOS keeps its type across pages,
 // and a "playback" left behind kept the Tuner's microphone from starting.
 window.addEventListener("pagehide", () => {
-  if (playing) stopPlayback();
+  stopPlayback();
+  mic?.stream.getTracks().forEach((t) => t.stop());
+  sleepAudio();
   if (playCtx) playCtx.close().catch(() => {});
   playCtx = null;
   try { if (navigator.audioSession) navigator.audioSession.type = "auto"; } catch {}
 });
 
+// Hidden (Safari in the background, the screen locked): the page goes to sleep — playback stops,
+// a take stops (kept, as Stop), the mic closes at once (the recording still flushes), the contexts
+// are suspended and the session goes "auto" (sleepAudio). The next tap's Play resumes the context.
 document.addEventListener("visibilitychange", async () => {
-  if (document.hidden && playing) stopPlayback();
-  if (document.hidden && recording) {
+  if (!document.hidden) return;
+  sleeps++;
+  stopPlayback();
+  const rec = recording;
+  mic?.stream.getTracks().forEach((t) => t.stop());
+  sleepAudio();
+  if (rec) {
     await stopRecording();
     statusEl.textContent = "auto-stopped (backgrounded)";
   }

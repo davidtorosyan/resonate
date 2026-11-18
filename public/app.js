@@ -499,9 +499,11 @@ function draw() {
 // prompt. Capture needs "play-and-record"; set it first, like pitch.js openMic().
 const setAudioSession = (type) => { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {} };
 let startGen = 0; // a newer Start (or Stop) makes an older, still-pending one stand down
+let pendingStarts = 0; // Starts still waiting for the mic (the page hidden meanwhile: stop() makes them stand down)
 
 async function start() {
   const gen = ++startGen;
+  pendingStarts++;
   button.disabled = true;
   statusEl.textContent = "requesting mic…";
   setAudioSession("play-and-record");
@@ -565,6 +567,7 @@ async function start() {
       : `mic error: ${err.name || err.message} — try again or reload`;
   } finally {
     clearTimeout(watchdog);
+    pendingStarts--;
   }
 }
 
@@ -607,10 +610,13 @@ button.addEventListener("click", () => {
 });
 
 // Auto-stop when the page is backgrounded — minimized, tab hidden, or the phone
-// screen locked. Otherwise the mic keeps capturing while the app isn't visible.
+// screen locked. Otherwise the mic keeps capturing while the app isn't visible. A Start still
+// waiting for the mic stands down too, and the audio session goes back to "auto" either way.
 document.addEventListener("visibilitychange", async () => {
-  if (document.hidden && button.dataset.recording === "true") {
-    await stop();
+  if (!document.hidden) return;
+  setAudioSession("auto");
+  if (button.dataset.recording === "true" || pendingStarts > 0) {
+    await stop(); // (the tracks stop at once, then the context closes)
     statusEl.textContent = "auto-stopped (backgrounded)";
   }
 });

@@ -2,13 +2,13 @@
 // Songs (bottom right) holds the song list and + Add; a PDF is read in the background (the Reader
 // tray); the avatar (top right) opens the account menu. nav.js ran first (shell.html), so whose
 // data the device shows is settled before anything here reads it.
-import { spaceChanged } from "../nav.js?v=85";
-import { mountTuner, tunerHtml } from "./tuner.js?v=85";
-import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=85";
-import { mountSongView } from "./songview.js?v=85";
-import { mountTray } from "./tray.js?v=85";
-import { mountAccount } from "./account-menu.js?v=85";
-import { ic, fic, device, overlayOpen } from "./chrome.js?v=85";
+import { spaceChanged } from "../nav.js?v=86";
+import { mountTuner, tunerHtml } from "./tuner.js?v=86";
+import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=86";
+import { mountSongView } from "./songview.js?v=86";
+import { mountTray } from "./tray.js?v=86";
+import { mountAccount } from "./account-menu.js?v=86";
+import { ic, fic, device, overlayOpen } from "./chrome.js?v=86";
 
 const $ = (id) => document.getElementById(id);
 const version = $("version").textContent.trim();

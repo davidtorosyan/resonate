@@ -5,10 +5,10 @@
 // then does the same going up. The lowest and highest notes held are your limits; the
 // comfortable range starts a few notes inside them and can be adjusted by hand.
 
-import { openMic, createReader, FFT_SIZE } from "./pitch.js?v=85";
-import { loadPiano, holdPiano } from "./piano.js?v=85";
-import { noteName, median } from "./music.js?v=85";
-import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=85";
+import { openMic, createReader, FFT_SIZE } from "./pitch.js?v=86";
+import { loadPiano, holdPiano, ownContext, sleepAudio } from "./piano.js?v=86";
+import { noteName, median } from "./music.js?v=86";
+import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=86";
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
@@ -153,17 +153,27 @@ function renderStrip(r) {
   }
 }
 
-// Play a note (outside a test).
-let playCtx = null;
+// Play a note (outside a test). A context that won't run (suspended in the background and not
+// resuming, "interrupted" by iOS, closed) is replaced in the tap, as Sing's getPlayCtx does.
+let playCtx = null, playStuck = false, heard = null; // heard: the last note played (cut when the page sleeps)
+let hearGen = 0; // bumped by every hear() and by the page sleeping: a note still loading then stays silent
 async function hear(midi) {
+  const g = ++hearGen;
   try {
     if (run) return;
     try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch {}
-    if (!playCtx || playCtx.state === "closed") playCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (playCtx.state === "suspended") await playCtx.resume();
+    if (!playCtx || playCtx.state === "closed" || playCtx.state === "interrupted" || playStuck) {
+      if (playCtx && playCtx.state !== "closed") playCtx.close().catch(() => {});
+      playCtx = ownContext(new (window.AudioContext || window.webkitAudioContext)());
+    }
+    if (playCtx.state !== "running") await Promise.race([playCtx.resume().catch(() => {}), sleep(1500)]);
+    playStuck = playCtx.state !== "running";
+    if (playStuck) return; // (the next tap starts over with a new one)
     const piano = await loadPiano(playCtx);
+    if (g !== hearGen || document.hidden) return;
     const t = playCtx.currentTime + 0.03;
-    holdPiano(playCtx, piano, t, midi, REF_LEVEL).release(t + NOTE_SEC);
+    heard = holdPiano(playCtx, piano, t, midi, REF_LEVEL);
+    heard.release(t + NOTE_SEC);
   } catch (err) {
     console.warn(err);
   }
@@ -231,7 +241,7 @@ const setSession = (type) => { try { if (navigator.audioSession) navigator.audio
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function newCtx() {
-  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const ac = ownContext(new (window.AudioContext || window.webkitAudioContext)());
   ac.resume().catch(() => {});
   return ac;
 }
@@ -269,6 +279,8 @@ async function startRun(kind) {
       showMsg(`Couldn't open the microphone: ${err.message || err.name}`, "error");
       return;
     }
+    ownContext(mic.ac);
+    if (document.hidden) { statusEl.textContent = "idle"; return mic.close(); } // (hidden while it opened)
     run = { kind, mic, read: mic.read, raf: 0, lastT: 0, recent: [], phase: "", phaseT: performance.now() };
   } else {
     // Inside the tap: both contexts start now (playback first, then the microphone's).
@@ -577,16 +589,24 @@ tStop.addEventListener("click", () => {
   stopRun();
   showMsg("");
 });
+// Hidden (Safari in the background, the screen locked): a test stops, the mics close, the
+// contexts are suspended and the session goes "auto" (sleepAudio); the next tap resumes them.
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden && run) {
+  if (!document.hidden) return;
+  if (run) {
     stopRun();
     showMsg("Stopped (page hidden)", "error");
   }
+  if (heard && playCtx?.state === "running") heard.release(playCtx.currentTime, 0.002); // (cut: a tail would ring on when the context resumes)
+  heard = null;
+  hearGen++;
+  sleepAudio();
 });
 // Leaving the page: stop a test and give the tab's audio session back. iOS keeps its type
 // across pages, and a "playback" left behind kept the Tuner's microphone from starting.
 window.addEventListener("pagehide", () => {
   if (run) stopRun();
+  sleepAudio();
   if (playCtx) playCtx.close().catch(() => {});
   playCtx = null;
   setSession("auto");

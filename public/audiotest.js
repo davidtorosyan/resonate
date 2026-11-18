@@ -17,7 +17,7 @@
 // ac.currentTime moves once per render wake-up, so its steps (in frames) show how the output
 // pulls audio — the speaker's are small and even; bursts or uneven steps are what WebKit turns
 // into holes. "speed" is the audio clock against the wall clock (1.00 = right).
-import { loadPiano, holdPiano } from "./piano.js?v=85";
+import { loadPiano, holdPiano } from "./piano.js?v=86";
 
 const NOTE = 57; // A3
 const SECS = 4;
@@ -29,7 +29,8 @@ const extras = [], streams = []; // the mic rows' other contexts and mic streams
 
 const setSession = (t) => { try { if (navigator.audioSession) navigator.audioSession.type = t; } catch {} };
 const sessionType = () => navigator.audioSession?.type ?? "–";
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// (A test going on in the background ends at its next wait: the page was put to sleep — sleepPage.)
+const sleep = (ms) => new Promise((r, j) => setTimeout(() => (document.hidden ? j(new Error("page hidden")) : r()), ms));
 const ms = (s) => (typeof s === "number" && isFinite(s) ? `${Math.round(s * 1000)} ms` : "–");
 
 // Everything a test opened is closed — and the close awaited — before the next one starts, so
@@ -246,6 +247,7 @@ const MIC = { audio: { echoCancellation: false, noiseSuppression: false, autoGai
 const ssState = () => navigator.audioSession?.state ?? "–";
 const now = () => performance.now();
 async function getMic() {
+  if (document.hidden) throw new Error("page hidden");
   const t0 = now();
   const st = await navigator.mediaDevices.getUserMedia(MIC);
   streams.push(st);
@@ -487,5 +489,9 @@ $("copy").addEventListener("click", async () => {
   catch { window.prompt("Copy:", text); }
 });
 
-window.addEventListener("pagehide", () => { closeAll(); setSession("auto"); });
+// Hidden (Safari in the background, the screen locked) or left: everything a test opened closes
+// and the session goes "auto" — a test under way ends with an error at its next step.
+const sleepPage = () => { closeAll(); setSession("auto"); };
+document.addEventListener("visibilitychange", () => { if (document.hidden) sleepPage(); });
+window.addEventListener("pagehide", sleepPage);
 window.resonateDebug = () => ({ results, running });
