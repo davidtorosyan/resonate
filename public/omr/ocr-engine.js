@@ -72,6 +72,11 @@ async function recognize({ gray, width, height, lang, psm, dpi }) {
   const api = await getApi(lang);
   const ptr = TessModule._malloc(width * height);
   try {
+    // Every call as if by a new engine, like Audiveris's TesseractOrder (a TessBaseAPI per call):
+    // the legacy engine's adaptive classifier otherwise learns from the pages read before, so a
+    // page's words depended on the pages before it — and a resumed import, whose engine starts at a
+    // later page, read some differently (Greensleeves: "my" → "ny.", a chord name lost).
+    api.ClearAdaptiveClassifier();
     TessModule.HEAPU8.set(gray instanceof Uint8Array ? gray : new Uint8Array(gray), ptr);
     api.SetImage(ptr, width, height, 1, width);
     if (dpi !== -1) api.SetSourceResolution(dpi);

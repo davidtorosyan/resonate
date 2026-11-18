@@ -234,7 +234,8 @@ $("signout").addEventListener("click", () => busy(async () => {
     let text = "Changes on this device may not be in the cloud and will be removed from it. Sign out?";
     if (m) {
       if (!m.syncOff()) await m.syncNow();
-      text = signOutWarning(await m.unsynced());
+      // (+ an unfinished PDF → Song import: its job lives only on this device, and goes with the account)
+      text = signOutWarning({ ...(await m.unsynced()), importing: !!localStorage.getItem("resonate.import") });
     }
     if (text && !confirm(text)) return;
   }
@@ -261,6 +262,7 @@ function signOutWarning(u) {
   if (u.recordings) parts.push([`the recording${u.recordings > 1 ? "s" : ""} of your last take${u.recordings > 1 ? "s" : ""}`, u.recordings > 1]);
   if (u.clips) parts.push(["your practice recordings", true]);
   if (u.calibration) parts.push(["your mic calibration", false]);
+  if (u.importing) parts.push(["your unfinished PDF → Song import", false]);
   if (!parts.length) return null;
   const list = parts.length === 1 ? parts[0][0] : `${parts.slice(0, -1).map((p) => p[0]).join(", ")} and ${parts[parts.length - 1][0]}`;
   const plural = parts.length > 1 || parts[0][1];
