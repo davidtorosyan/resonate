@@ -36,6 +36,7 @@ export const DATA_KEYS = [
   "resonate.sing.practice",   // per song: guided practice marks (practice.js; device only until v1.1)
   "resonate.sing.session",    // guided practice: the session under way
   "resonate.play",            // per song: Play's names level, hands, place, PDF page, practice days (device only)
+  "resonate.import",          // an unfinished PDF → Song import (omr/jobs.js: its id; the job itself is in IndexedDB, per space)
   "resonate.profiles",        // voice profiles
   "resonate.volCal",          // the Tuner's calibration before profiles
   "resonate.sing.customXml", "resonate.sing.customName", "resonate.sing.transpose", // (legacy)
@@ -72,6 +73,21 @@ export function dbName() {
   return n;
 }
 export const isFresh = () => !read(); // no space was ever set up on this device
+// The active space's database name, read only (dbName may pick the signed-out space a new one).
+export function activeDb() {
+  const s = read();
+  if (!s) return DEFAULT_DB;
+  if (s.active !== "anon") return s.db[s.active] || `${DEFAULT_DB}-${s.active}`;
+  return s.db.anon || (owned(s, DEFAULT_DB) ? null : DEFAULT_DB);
+}
+// Every songs' database a space still has on this device (active, shelved or parked).
+export function knownDbs() {
+  const s = read();
+  if (!s) return new Set([DEFAULT_DB]);
+  const out = new Set(Object.values(s.db));
+  if (!s.db.anon && !owned(s, DEFAULT_DB)) out.add(DEFAULT_DB);
+  return out;
+}
 
 // A device's first visit since v71: signed out → its data is the signed-out user's (as it
 // always was); already signed in (an account made before spaces existed) → the account
@@ -182,7 +198,11 @@ export async function leave(uid) {
   // (Never reopen the databases being deleted: an older tab can hold the delete up.)
   if (anonDb(s) === db) s.db.anon = randomName(DEFAULT_DB);
   write(s);
-  if (db) await deleteDbs(db);
+  if (db) {
+    await deleteDbs(db);
+    // An unfinished PDF → Song import of this account (its PDF, the engine's book) goes with it.
+    try { await (await import("./omr/jobs.js?v=80")).deleteJobsOf(db); } catch {}
+  }
   return true;
 }
 

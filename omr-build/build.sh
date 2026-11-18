@@ -36,6 +36,8 @@ for jar in "$WORK/audiveris/app/build/install/app/lib/"*.jar; do
   java "$HERE/StripVolatile.java" "$jar" "$OUT/$(basename "$jar")" | tail -1
 done
 echo "jars in $OUT: $(ls "$OUT" | wc -l)"
+# The engine's identity for resumable imports (public/omr/omr.js ENGINE): change it with these jars.
+echo "ENGINE = '$(git -C "$WORK/audiveris" rev-parse --short=7 HEAD)-$(sha256sum "$OUT/audiveris.jar" | cut -c1-8)-cj4.2'  (public/omr/omr.js)"
 
 # The music font, served next to the jars: omr-worker.js hands it to Java in memory
 # (audiveris.fonts.dir=/str, patch 0005) instead of a temp copy in IndexedDB.

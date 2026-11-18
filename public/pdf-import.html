@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0f0f1e" />
     <title>Resonate · PDF → Song</title>
+    <script>
+      // An import left unfinished here (omr/jobs.js's flag, this space's — its songs' database, as
+      // space.js activeDb): no picker flash on a reload — pdf-import.js shows the Reader as soon as it
+      // runs, or the picker again whenever it doesn't (the job gone, the space put away meanwhile).
+      try {
+        const f = JSON.parse(localStorage.getItem("resonate.import") || "null");
+        const sp = JSON.parse(localStorage.getItem("resonate.space") || "null");
+        const a = sp?.active || "anon";
+        const db = !sp ? "resonate" : a !== "anon" ? sp.db?.[a] || `resonate-${a}` : sp.db?.anon || "resonate";
+        if (f && f.id && (f.db ? f.db === db : f.space === a) && !/[?&]pdf=/.test(location.search)) document.documentElement.dataset.resume = "";
+      } catch {}
+    </script>
     <style>
       :root { color-scheme: dark; }
       * { box-sizing: border-box; }
@@ -83,15 +95,13 @@
         text-decoration: none;
       }
       [hidden] { display: none !important; }
-      #stage { font-size: 1rem; font-weight: 600; }
-      #detail { font-size: 0.85rem; opacity: 0.7; margin-top: 0.2rem; min-height: 1.2em; }
-      .bar { height: 10px; border-radius: 5px; background: rgba(255,255,255,0.08); overflow: hidden; margin-top: 0.7rem; }
-      .bar > div { height: 100%; width: 0%; background: linear-gradient(90deg, #4f7cff, #a64fff 70%, #ff4f9f); transition: width 0.4s ease; }
-      #times { display: flex; justify-content: space-between; font-size: 0.75rem; opacity: 0.6; margin-top: 0.4rem; }
-      ol.steps { margin: 0.7rem 0 0; padding-left: 1.2rem; font-size: 0.88rem; line-height: 1.7; }
-      ol.steps li { opacity: 0.45; }
-      ol.steps li[data-state="active"] { opacity: 1; color: #ffe6a0; }
-      ol.steps li[data-state="done"] { opacity: 0.85; color: #4ade80; }
+      html[data-resume] #pick, html[data-resume] #warning { display: none; }
+      /* The Reader (omr/reader.js) gets the width an iPad offers; the cards stay readable. */
+      main.reading { max-width: 1120px; }
+      main.reading > :not(#reader-host) { width: 100%; max-width: 640px; align-self: center; }
+      main.reading:not(.min) #intro, html[data-resume] #intro { display: none; } /* (the Reader says it all) */
+      /* The page's height: under it the code and the rail (~150 px), beside it only the rail. */
+      #reader-host { --rd-page-max-h: max(300px, calc(100svh - 310px)); --rd-page-max-h-side: max(340px, calc(100svh - 230px)); }
       details summary { cursor: pointer; font-size: 0.85rem; opacity: 0.7; }
       #log {
         max-height: 40vh;
@@ -105,7 +115,12 @@
         padding: 0.6rem;
         margin: 0.5rem 0 0;
       }
+      #job-bar { align-items: center; justify-content: flex-end; }
+      #job-bar > * { flex: 0 0 auto; }
+      #job-msg { flex: 1 1 auto; font-size: 0.9rem; color: #ffd58a; }
+      #job-bar .ghost { padding: 0.55rem 0.9rem; min-height: 44px; min-width: 44px; }
       #result-title { font-size: 1.15rem; font-weight: 700; }
+      #result-title:empty { display: none; }
       .credit { font-size: 0.72rem; opacity: 0.5; line-height: 1.5; text-align: center; margin: 0.5rem 0 0; }
       .credit a { color: inherit; }
       .error { border-color: rgba(255,111,111,0.5); background: rgba(255,111,111,0.07); }
@@ -122,12 +137,12 @@
       <span id="version" class="mono">v80</span>
     </header>
     <main>
-      <section class="card">
+      <section class="card" id="intro">
         <p>Sheet music with lyrics → <b>My songs</b>. Read on this device; the PDF isn't uploaded.</p>
       </section>
 
       <section class="card warn" id="warning">
-        <p>~60&nbsp;MB download the first time · ½–1&nbsp;min per page · keep this tab open, screen on.</p>
+        <p>~60&nbsp;MB download the first time · ½–1&nbsp;min per page · screen on · interrupted, it picks up where it was.</p>
         <p>Expect some wrong notes and syllables, mostly on scans.</p>
       </section>
 
@@ -136,27 +151,20 @@
         <input id="file" type="file" accept=".pdf,application/pdf" hidden />
       </section>
 
-      <section id="progress" class="card" hidden>
-        <div id="stage">Starting…</div>
-        <div id="detail"></div>
-        <div class="bar"><div id="bar"></div></div>
-        <div id="times" class="mono"><span id="elapsed">0:00</span><span id="eta"></span></div>
-        <ol class="steps" id="steps">
-          <li data-step="pages">Find the music pages</li>
-          <li data-step="engine">Start the recognition engine</li>
-          <li data-step="recognize">Recognize each page</li>
-          <li data-step="save">Save to My songs</li>
-        </ol>
+      <!-- The import job (omr/importer.js): another tab reading it; Skip / Retry after a page stopped the
+           engine twice. (✕ — stop and forget — is on the Reader.) Above it: the Reader fills the screen. -->
+      <section id="job-bar" class="row" hidden>
+        <span id="job-msg"></span>
+        <button id="job-skip" class="ghost" type="button" hidden>Skip page</button>
+        <button id="job-retry" class="ghost" type="button" hidden>Retry</button>
       </section>
+      <section id="reader-host" hidden></section>
+
 
       <section id="result" class="card" hidden>
         <div id="result-title"></div>
         <p id="result-detail"></p>
         <p id="result-missing" class="missing" hidden></p>
-        <div class="row" style="margin-top:0.8rem">
-          <a id="sing-it" class="big-btn" href="sing.html" style="text-align:center;text-decoration:none">Sing it</a>
-          <a id="play-it" class="big-btn" href="play.html" style="text-align:center;text-decoration:none">Play it</a>
-        </div>
         <div class="row" style="margin-top:0.6rem">
           <button id="download" class="ghost" type="button">Download MusicXML</button>
           <button class="ghost again" type="button">Convert another</button>
