@@ -5,11 +5,11 @@
 // leaving the page and coming back continues it where it was (at most the page under way is read
 // again); the Reader (omr/reader.js) draws it.
 
-import { spaceChanged } from "./nav.js?v=81";
-import { activeSpace, activeDb } from "./space.js?v=81";
-import { mount as mountReader } from "./omr/reader.js?v=81";
-import { createImporter } from "./omr/importer.js?v=81";
-import { readFlag } from "./omr/jobs.js?v=81";
+import { spaceChanged } from "./nav.js?v=82";
+import { activeSpace, activeDb } from "./space.js?v=82";
+import { mount as mountReader } from "./omr/reader.js?v=82";
+import { createImporter } from "./omr/importer.js?v=82";
+import { readFlag } from "./omr/jobs.js?v=82";
 
 const $ = (id) => document.getElementById(id);
 const chooseBtn = $("choose");
