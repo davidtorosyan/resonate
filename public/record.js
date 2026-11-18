@@ -2,12 +2,14 @@
 // notes you sang, and play it back (your voice and/or the notes on piano).
 // Song-based scoring lives on the Sing page (sing.js).
 
-import { noteName as nameOf, BLACK, median, centsLabel } from "./music.js?v=86";
-import { openMic, ANALYSIS_LAG } from "./pitch.js?v=86";
-import { startCapture, playVoice } from "./capture.js?v=86";
-import { loadPiano, pianoReady, playPiano, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=86";
+import { noteName as nameOf, BLACK, median, centsLabel } from "./music.js?v=87";
+import { openMic, ANALYSIS_LAG } from "./pitch.js?v=87";
+import { startCapture, playVoice } from "./capture.js?v=87";
+import { loadPiano, pianoReady, playPiano, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=87";
 
-const $ = (id) => document.getElementById(id);
+// (In the one-page shell this page is mounted in a sheet: its own elements first — sing.html has a
+// #play and a #status too. On record.html resonateRecord isn't set: the document.)
+const $ = (id) => window.resonateRecord?.root?.querySelector(`#${id}`) || document.getElementById(id);
 const canvas = $("roll");
 const ctx = canvas.getContext("2d");
 const recBtn = $("rec");
@@ -677,6 +679,13 @@ if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
 
 renderTranscript();
 render();
+
+// The one-page shell (shell.html) mounts this page in a sheet: closing it stops playback and a take
+// (kept, as Stop) — also one whose mic is still opening. (On record.html nothing calls these.)
+window.resonateRecord = Object.assign(window.resonateRecord || {}, {
+  stopAll: async () => { sleeps++; stopPlayback(); if (recording) await stopRecording(); },
+  state: () => ({ recording, playing, segments: segments.length, duration }),
+});
 
 // Debug hook for automated tests / poking around in devtools.
 window.resonateDebug = () => ({ voice, segments, frames, duration, playing, playhead, cursorT });

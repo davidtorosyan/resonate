@@ -13,8 +13,8 @@
 // their `device_commands` row. Only for a signed-in, approved account whose data is on this
 // device and whose sync is on (as sync.js); nothing at all otherwise.
 
-import { supabase, savedUser } from "./auth.js?v=86";
-import { activeSpace } from "./space.js?v=86";
+import { supabase, savedUser } from "./auth.js?v=87";
+import { activeSpace } from "./space.js?v=87";
 
 const SYNC_OFF = "resonate.sync.off";
 const DEVICE_KEY = "resonate.device"; // { id, name }
@@ -127,8 +127,14 @@ export const remote = {
   available: false, // signed in, approved, sync on
   settings: { start_delay_s: 4, review_after_remote: false }, // the Assistants page's (assistant_settings)
   on: false,        // this device takes commands
-  async start(hooks) {
+  // (Started once per page: a second start — the one-page shell starts it at home, then Sing's own
+  // inside the shell — gives its hooks to the remote already running.)
+  start(hooks) {
     this.hooks = hooks;
+    if (this.starting) return this.starting.then((ok) => { if (ok) hooks.changed?.(this.on); return ok; });
+    return (this.starting = this.begin());
+  },
+  async begin() {
     const c = await ready();
     if (!c) return false;
     this.ctx = c;
@@ -138,7 +144,7 @@ export const remote = {
     this.on = !!data?.remote;
     // The assistant active lately (the page shows it by 📡).
     c.sb.from("assistant_activity").select("name,logo,last_at,last_tool").order("last_at", { ascending: false }).limit(1)
-      .then(({ data: a }) => { if (a?.[0]) hooks.assistant?.({ name: a[0].name, logo: a[0].logo, tool: a[0].last_tool, at: a[0].last_at }); }, () => {});
+      .then(({ data: a }) => { if (a?.[0]) this.hooks?.assistant?.({ name: a[0].name, logo: a[0].logo, tool: a[0].last_tool, at: a[0].last_at }); }, () => {});
     await this.beat();
     await this.listen();
     // (old commands go: an hour is plenty to look back on)
@@ -146,7 +152,7 @@ export const remote = {
     setInterval(() => { if (!document.hidden) this.beat(); }, 30000);
     document.addEventListener("visibilitychange", () => { this.beat(); if (!document.hidden) this.catchUp(); });
     window.addEventListener("pagehide", () => this.beat(true));
-    hooks.changed?.(this.on);
+    this.hooks?.changed?.(this.on);
     return true;
   },
   // Switch it on here (and so off everywhere else), or off.

@@ -48,9 +48,20 @@
         padding: var(--sat) calc(var(--gutter) + env(safe-area-inset-right)) 0 calc(var(--gutter) + env(safe-area-inset-left));
       }
       .top { height: var(--top-h); flex: none; position: relative; z-index: 46; display: flex; align-items: center; gap: 8px; }
-      .brand { display: flex; align-items: center; gap: 8px; height: 44px; font: 700 17px/1 var(--display); letter-spacing: -.01em; }
-      .brand .mark { width: 22px; height: 22px; }
+      .brand { display: flex; align-items: center; gap: 8px; height: 44px; min-width: 44px; flex: none; font: 700 17px/1 var(--display); letter-spacing: -.01em; }
+      .brand .mark { width: 22px; height: 22px; transform-origin: 0 50%; transition: transform .3s cubic-bezier(.22,.8,.24,1); }
+      .brand .bt { display: inline-block; overflow: hidden; white-space: nowrap; max-width: 5em; transition: max-width .3s cubic-bezier(.22,.8,.24,1), opacity .2s ease; }
+      .app[data-song] .brand { gap: 0; }
+      .app[data-song] .brand .bt { max-width: 0; opacity: 0; }
+      .app[data-song] .brand .mark { transform: scale(.88); }
       .ver { font: 600 11px/1 var(--mono); color: var(--accent-hi); letter-spacing: .02em; }
+      /* 📡 while Sing isn't shown (with Sing, its own 📡 is in the top bar: the same switch) */
+      .hremote { position: relative; z-index: 60; flex: none; min-width: 44px; height: 44px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--control);
+        font: 600 14px/1 var(--font); color: var(--text); opacity: .75; white-space: nowrap; touch-action: manipulation; }
+      .hremote[data-on="true"] { opacity: 1; background: #a64fff; border-color: #c48bff; box-shadow: 0 0 0 3px rgba(166,79,255,.25); animation: hremote-pulse 2.4s ease-in-out infinite; }
+      @keyframes hremote-pulse { 50% { box-shadow: 0 0 0 6px rgba(166,79,255,.12); } }
+      @media (prefers-reduced-motion: reduce) { .hremote[data-on="true"] { animation: none; } }
+      .app[data-sing] .hremote { display: none; }
       .avatar { position: relative; width: 44px; height: 44px; flex: none; display: grid; place-items: center; z-index: 60; }
       .avatar .face { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--grad-primary); font: 700 15px/1 var(--display); color: #fff;
         box-shadow: 0 0 0 2px #0d0d1c, 0 0 0 3.5px rgba(166,79,255,.55); }
@@ -60,6 +71,7 @@
 
       /* --- home: the full tuner + Next-up ------------------------------------------------------ */
       .home { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: safe center; padding-bottom: 6px; }
+      .app:not([data-tin="home"]) .home { display: none; }
       .tuner { width: 100%; display: flex; flex-direction: column; align-items: center; flex: none; }
       .ribbon-wrap { display: block; width: min(100%, 340px); margin-bottom: 18px; }
       .ribbon-wrap .lbl { display: flex; justify-content: space-between; font: 600 11px/1 var(--font); color: var(--text-3); letter-spacing: .04em; margin-bottom: 7px; }
@@ -94,20 +106,22 @@
       .level .cal svg { width: 17px; height: 17px; }
       .scope { width: calc(100% + 2 * var(--gutter)); margin: 14px calc(-1 * var(--gutter)) 0; height: 96px; flex: none; }
       .scope canvas { display: block; width: 100%; height: 100%; }
-      .nextup { margin-top: 16px; width: min(100%, 380px); display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 18px; background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); text-align: left; flex: none; }
-      .nextup .thumb { width: 56px; height: 44px; border-radius: 11px; position: relative; overflow: hidden; flex: none; }
-      .nextup .thumb svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-      .nextup .mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-      .nextup .t { font: 700 15px/1.1 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .nextup .s { font: 600 12.5px/1.2 var(--font); color: var(--text-2); }
-      .nextup .go { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; background: var(--grad-primary); box-shadow: var(--glow-primary); flex: none; color: #fff; }
-      .nextup .go svg { width: 17px; height: 17px; }
+      /* Next-up: a one-line chip just above Songs */
+      .nextup { align-self: flex-end; height: 44px; max-width: min(100%, 320px); display: inline-flex; align-items: center; gap: 8px; padding: 0 14px 0 6px; border-radius: 22px;
+        background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); font: 650 14px/1 var(--font); color: var(--text-2); flex: none; }
+      .nextup .go { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--grad-primary); color: #fff; flex: none; }
+      .nextup .go svg { width: 12px; height: 12px; margin-left: 2px; }
+      .nextup .t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
       /* --- the dock ---------------------------------------------------------------------------- */
-      .dock { flex: none; padding: 8px 0 calc(8px + var(--sab)); display: flex; flex-direction: column; gap: 10px; position: relative; z-index: 20; }
-      .dock .row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; min-height: 70px; }
-      .dock .row > .rec { justify-self: start; }
-      .dock .row > .corner { justify-self: end; }
+      .dock { flex: none; padding: 8px 0 calc(8px + var(--sab)); display: flex; flex-direction: column; gap: 8px; position: relative; z-index: 20; }
+      /* (the corner — Songs and the module toggles — sits at the row's bottom right in every state: the row's
+         height may change, its bottom edge doesn't) */
+      .dock .row { display: flex; align-items: flex-end; gap: 10px; min-height: 70px; }
+      .app[data-form="full"] .dock .row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; gap: 8px; }
+      .dock .row > .rec { justify-self: start; grid-column: 1; }
+      .dock .row > .main { grid-column: 2; }
+      .dock .row > .corner { justify-self: end; grid-column: 3; margin-left: auto; }
       .round { display: flex; flex-direction: column; align-items: center; gap: 5px; width: 64px; flex: none; }
       .round .bw { position: relative; }
       .round .b { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; background: var(--control); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text); }
@@ -124,7 +138,14 @@
       .round.main[data-mic="blocked"] .b, .round.main[data-mic="noanswer"] .b, .round.main[data-mic="error"] .b { background: var(--control); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text-2); }
       .round.songs .b { background: linear-gradient(160deg, rgba(255,255,255,.12), rgba(255,255,255,.05)); box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 8px 22px -10px rgba(0,0,0,.7); }
       body[data-done] .round.songs .b { box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 0 0 3px rgba(74,222,128,.75); }
-      .corner { display: flex; align-items: center; gap: 8px; flex: none; }
+      .corner { display: flex; align-items: flex-start; gap: 8px; flex: none; }
+      .corner > .imptile { margin-top: 3px; }
+      /* the module toggles: Sing · Score (a song open) · Piano — beside Songs */
+      .mods { display: flex; gap: 2px; height: 54px; border-radius: 17px; background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); flex: none; }
+      .mod { width: 44px; height: 54px; border-radius: 17px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--text-3); font: 650 10.5px/1 var(--font); }
+      .mod svg { width: 20px; height: 20px; }
+      .mod[aria-pressed="true"] { background: rgba(166,79,255,.24); color: var(--text); box-shadow: inset 0 0 0 1.5px rgba(166,79,255,.7); }
+      .mod:disabled { opacity: .4; cursor: default; }
 
       /* the folded import: a tile beside Songs (a pill on a wide screen), and the done row */
       .imptile { position: relative; width: 48px; height: 48px; border-radius: 14px; flex: none; display: grid; place-items: center;
@@ -248,7 +269,6 @@
         .ribbon-wrap { margin-bottom: 6px; }
         .scope { height: 52px; margin-top: 10px; }
         .level { margin-top: 8px; }
-        .nextup { margin-top: 10px; }
         .dock .row { min-height: 0; }
         .round.main .b { width: 66px; height: 66px; }
       }
@@ -260,12 +280,13 @@
         .ribbon-wrap, .gauge { width: min(100%, 520px); }
         .level { width: min(100%, 420px); }
         .scope { height: 170px; }
-        .nextup { width: 440px; margin-top: 22px; }
         .round .b { width: 58px; height: 58px; }
         .round.main .b { width: 84px; height: 84px; }
-        .dock { padding: 12px 24px calc(10px + var(--sab)); flex-direction: row; align-items: flex-end; }
-        .dock .row { flex: 1; min-height: 0; }
-        .dock .capsule { order: -1; position: absolute; right: 24px; bottom: calc(var(--sab) + 110px); width: 380px; }
+        .dock { padding: 12px 24px calc(10px + var(--sab)); }
+        .dock .row { min-height: 0; }
+        .dock .capsule { position: absolute; right: 24px; bottom: calc(100% + 6px); width: 380px; }
+        .mods { height: 58px; border-radius: 18px; }
+        .mod { width: 54px; height: 58px; border-radius: 18px; font-size: 11px; }
         #scrim[data-light] { background: rgba(5,5,14,.22); backdrop-filter: none; -webkit-backdrop-filter: none; }
         .sheet.songs { left: auto; right: var(--gutter); bottom: calc(var(--sab) + 108px); width: 440px; height: min(760px, calc(100dvh - var(--sat) - var(--top-h) - 120px)); padding-bottom: 0; border-radius: 24px; box-shadow: var(--shadow-pop); }
         .sheet.songs .grab, .sheet.acct .grab { display: none; }
@@ -279,7 +300,6 @@
         .note-text { font-size: 156px; }
         .ribbon-wrap { margin-bottom: 8px; }
         .scope { height: 96px; }
-        .nextup { margin-top: 14px; }
         .tray { width: min(1040px, calc(100vw - 2 * var(--gutter))); }
         .sheet.songs { height: min(620px, calc(100dvh - var(--sat) - var(--top-h) - 120px)); }
         /* the folded import: a pill beside Songs */
@@ -288,6 +308,7 @@
         .imptile .pw { display: flex; flex-direction: column; min-width: 0; }
         .imptile .pt { font: 650 13.5px/1.2 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
         .imptile .ps { font: 600 11.5px/1.2 var(--mono); color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+        .corner > .imptile { margin-top: 1px; }
       }
       @media (min-width: 700px) and (max-height: 860px) {
         .note-text { font-size: 140px; }
@@ -296,17 +317,19 @@
         .level { margin-top: 12px; }
       }
 
-      /* --- a song open: Sing in place (shell/singview.js); the tuner as a strip (phone) or docked ----- */
-      .app[data-song] .brand { min-width: 44px; justify-content: center; }
-      .app[data-song] .brand .bt { display: none; }
-      .songpill { height: 44px; min-width: 0; max-width: min(56vw, 360px); display: inline-flex; align-items: center; gap: 6px; padding: 0 10px 0 14px; border-radius: 14px;
-        background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); font: 700 15px/1 var(--font); }
+      /* --- a song open: the pill (title · ✕), the tuner's small forms, the modules (songview.js) ------- */
+      .songpill { height: 44px; min-width: 0; max-width: min(60vw, 400px); display: inline-flex; align-items: center; border-radius: 14px; flex: 0 1 auto;
+        background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); }
+      .songpill .pt { height: 44px; min-width: 0; flex: 0 1 auto; display: inline-flex; align-items: center; gap: 6px; padding: 0 2px 0 14px; font: 700 15px/1 var(--font); }
       .songpill .t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .songpill svg { width: 16px; height: 16px; color: var(--text-3); }
+      .songpill .pt svg { width: 16px; height: 16px; color: var(--text-3); }
+      .songpill .px { width: 44px; height: 44px; flex: none; display: grid; place-items: center; color: var(--text-2); border-radius: 14px; }
+      .songpill .px svg { width: 17px; height: 17px; }
+      .songpill[data-loading] .t { animation: shpulse 1s ease-in-out infinite alternate; }
+      @keyframes shpulse { to { opacity: .45; } }
       .app { --tslot: 52px; }
       .app[data-form="docked"] { --tslot: 150px; }
-      .app[data-song] .home { flex: none; height: var(--tslot); margin-bottom: 8px; padding: 0; justify-content: flex-start; align-items: stretch; }
-      .app[data-song] .nextup { display: none; }
+      .app[data-tin="home"]:not([data-form="full"]) .home { flex: none; height: var(--tslot); margin-bottom: 8px; padding: 0; justify-content: flex-start; align-items: stretch; }
       .tmic, .cbar, .tword { display: none; }
       .tuner[data-form="strip"], .tuner[data-form="docked"] { cursor: pointer; background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); }
       .tuner[data-form="strip"] > :is(.ribbon-wrap, .gauge, .level, .scope, .tmsg),
@@ -362,98 +385,110 @@
       .tuner[data-drop] .tword { display: block; order: 9; margin-top: 8px; }
       .tuner[data-drop]::after { content: ""; order: 11; width: 40px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.2); margin-top: 12px; }
       .tuner[data-drop] .scope { margin-top: 10px; }
-      /* the dock with Sing: ▶ Listen · the step's primary (Sing's #sing) · Songs */
-      .app:not([data-song]) #listen-w, .app:not([data-song]) .dock #sing, .app[data-song] #rec-btn, .app[data-song] #main-btn { display: none; }
-      .app[data-song] .dock .row { display: flex; align-items: center; gap: 12px; }
-      .app[data-song] .dock .row > .corner { margin-left: auto; }
+      /* the dock: Record · Start while the tuner is the full one; Sing's ▶ Listen · its primary while Sing shows; the
+         Score's ▶ Play while the Score shows alone */
+      .app[data-song] #rec-btn, .app:not([data-form="full"]) #main-btn, .app:not([data-sing]) #listen-w, .app:not([data-sing]) .dock #sing { display: none; }
       #listen { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; background: var(--control); box-shadow: inset 0 0 0 1px var(--line-2); font-size: 0; color: var(--text); }
       #listen::before { content: "\25B6\FE0E"; font-size: 19px; line-height: 1; margin-left: 3px; }
       #listen[data-stop]::before { content: "\25A0\FE0E"; margin-left: 0; font-size: 20px; }
       #listen:disabled { opacity: .4; cursor: default; }
-      .dock #sing { flex: 1 1 auto; min-width: 0; max-width: 340px; height: 58px; margin: 0 auto; padding: 0 18px; border-radius: 20px; background: var(--grad-primary); color: #fff;
+      .dock #sing { flex: 1 1 auto; align-self: flex-start; min-width: 0; max-width: 340px; height: 58px; margin: -2px auto 0; padding: 0 16px; border-radius: 20px; background: var(--grad-primary); color: #fff;
         font: 700 17px/1.1 var(--display); box-shadow: var(--glow-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .dock #sing[data-active="true"] { background: var(--grad-live); box-shadow: 0 10px 28px -10px rgba(255,79,111,.7); }
       .dock #sing:disabled { opacity: .45; cursor: default; }
+      @media (max-width: 699px) {
+        .dock .row { gap: 8px; }
+        .round.listen-w { width: 56px; }
+        .round.songs { width: 56px; }
+        .dock #sing, .dock #play { font-size: 15px; padding: 0 10px; }
+      }
+      .dock #sing, .dock #play { min-width: 72px; }
+      @media (max-width: 499px) {
+        /* a song open on a narrow phone: three toggles and Songs leave no room to centre Start — it centres
+           in what's left, and the import tile floats above the corner instead of squeezing the row */
+        .app[data-form="full"][data-song] .dock .row { grid-template-columns: 1fr auto; }
+        .app[data-form="full"][data-song] .dock .row > .main { grid-column: 1; justify-self: center; }
+        .app[data-form="full"][data-song] .dock .row > .corner { grid-column: 2; }
+        .app[data-song] .corner { position: relative; }
+        .app[data-song] .corner > .imptile { position: absolute; right: 4px; bottom: calc(100% + 12px); margin: 0; }
+      }
       @media (min-width: 700px) {
-        .app[data-song] .dock .row { max-width: 900px; width: 100%; margin: 0 auto; }
         .tuner[data-drop] { left: 50%; right: auto; width: 640px; transform: translateX(-50%); border-radius: 0 0 24px 24px; }
         #listen { width: 58px; height: 58px; }
       }
-      /* --- the Score (shell/scoreview.js: play.html mounted) and which modules show (songview.js) ---- */
+      /* --- the modules: Sing, the Score (shell/scoreview.js: play.html mounted), the Piano ---------------- */
       .stack { display: none; }
-      .app[data-song] .stack { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
-      .app[data-song]:not([data-mods="sing"]) .home { display: none; }
-      .app[data-mods="both"] .sing-root { flex: none; height: 400px; }
-      /* the Score full-bleed (the paper to the window's edges, as on play.html) */
-      .app[data-song] .score-root { margin: 0 calc(-1 * var(--gutter) - env(safe-area-inset-right)) 0 calc(-1 * var(--gutter) - env(safe-area-inset-left)); }
-      /* (the shell's dock under it: the paper and keyboard keep no bottom safe area of their own) */
-      .app:not([data-desk]) .score-root #stage { padding-bottom: 0; }
-      .app:not([data-desk]) .score-root #dock { padding-bottom: 6px; }
-      @media (min-width: 1024px) {
-        .app[data-mods="both"] .stack { flex-direction: row; gap: 12px; }
-        .app[data-mods="both"] .sing-root { height: auto; width: 420px; }
-        .app[data-mods="both"] .score-root { margin-left: 0; }
+      .app[data-sing] .stack, .app[data-score] .stack, .stack[data-leaving] { flex: 1; min-height: 0; display: flex !important; flex-direction: column; gap: 8px; }
+      /* (a module sliding out stays drawn while it goes) */
+      .sing-root[data-leaving][hidden], .score-root[data-leaving][hidden], .pianobar[data-leaving][hidden] { display: flex !important; }
+      .ghost { transition: none !important; }
+      /* Sing and the Score both: Sing above (400 px; a phone: about half), side by side from 1024 px */
+      .app[data-sing][data-score] .sing-root { flex: none; height: 400px; }
+      @media (max-width: 699px) {
+        .app[data-sing][data-score] .sing-root { flex: 1 1 0; height: auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+        .app[data-sing][data-score] .score-root { flex: 1.15 1 0; }
       }
-      /* the desk: no dock (Songs at the keyboard's right end); the done row floats above the keys */
-      .app[data-desk] .dock { padding: 0; }
-      .app[data-desk] .dock .row { display: none; }
-      /* Sing · Score in the top bar (a tablet, a desktop) */
-      .layers { display: inline-flex; gap: 2px; padding: 0; border-radius: 14px; background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); flex: none; }
-      .layers button { height: 44px; min-width: 44px; padding: 0 12px; border-radius: 14px; display: inline-flex; align-items: center; gap: 6px; font: 650 14px/1 var(--font); color: var(--text-3); }
-      .layers button svg { width: 18px; height: 18px; }
-      .layers button[aria-pressed="true"] { background: var(--control-hi); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-2); }
-      /* the tuner in the top bar (both on): a strip that gives way to the song pill and the toggles */
+      /* the Score full-bleed (the paper to the window's edges, as on play.html); the shell's dock under it */
+      .score-root { margin: 0 calc(-1 * var(--gutter) - env(safe-area-inset-right)) 0 calc(-1 * var(--gutter) - env(safe-area-inset-left)); }
+      .score-root #stage { padding-bottom: 0; }
+      .score-root #dock { padding-bottom: 6px; }
+      @media (min-width: 1024px) {
+        .app[data-sing][data-score] .stack { flex-direction: row; gap: 12px; }
+        .app[data-sing][data-score] .sing-root { height: auto; width: 420px; }
+        .app[data-sing][data-score] .score-root { margin-left: 0; }
+      }
+      /* the Piano on its own (no Score shown): above the dock, full-bleed */
+      .pianobar { flex: none; display: flex; margin: 8px calc(-1 * var(--gutter) - env(safe-area-inset-right)) 0 calc(-1 * var(--gutter) - env(safe-area-inset-left));
+        padding: 6px max(8px, env(safe-area-inset-right)) 6px max(8px, env(safe-area-inset-left)); background: #14142c; position: relative; z-index: 1; }
+      .pianobar .kb { flex: 1 1 auto; min-width: 0; height: clamp(56px, 9vh, 110px); touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: pointer; }
+      .pianobar .kb svg { display: block; width: 100%; height: 100%; }
+      /* the tuner in the top bar (Sing and the Score, ≥ 700 px): a strip that gives way to the song pill */
       .top > .tuner[data-form="strip"] { width: auto; flex: 1 1 260px; min-width: 200px; max-width: 460px; }
       .top > .tuner[data-form="strip"] .tword { display: none !important; }
-      .app[data-mods="both"] .songpill { flex: 0 1 auto; min-width: 60px; }
+      .app[data-tin="top"] .songpill { min-width: 60px; }
       /* the mic chip (the Score alone): its button and the note it last heard */
       .tuner[data-form="chip"] { flex-direction: row; align-items: center; gap: 2px; width: auto; height: 44px; cursor: pointer; flex: none; background: none; }
       .tuner[data-form="chip"] > :not(.tmic):not(.note-text) { display: none !important; }
       .tuner[data-form="chip"] .tmic { display: flex; }
       .tuner[data-form="chip"] .note-text { font-size: 22px; min-width: 1.7em; opacity: .8; justify-content: center; }
       .tuner[data-form="chip"][data-hold="take"] .tmic .b { background: var(--grad-live); }
-      /* the phone: Sing in the Score's bar; the Score's ‹ › and ▶ in the dock */
-      .app[data-dev="phone"] .score-root #bar #to-sing { display: inline-flex; }
       @media (max-width: 479px) {
         .app .score-root #bar, .app .score-root #bar .ctl { column-gap: 4px; }
         .tuner[data-form="chip"] .note-text { display: none; }
       }
-      .app[data-mods="score"] #listen-w, .app[data-mods="score"] .dock #sing { display: none; }
-      .dock .pager { display: flex; align-items: center; gap: 0; height: 56px; padding: 0 4px; border-radius: 18px; background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); flex: none; }
-      .dock .pager button { width: 44px; height: 48px; font: 500 26px/1 var(--font); color: var(--text); }
-      .dock .pager button:disabled { opacity: .3; cursor: default; }
-      .dock #pg { font: 600 13px/1 var(--mono); color: var(--text-2); min-width: 3.4rem; text-align: center; font-variant-numeric: tabular-nums; }
-      .dock #play { flex: 1 1 auto; min-width: 0; max-width: 340px; height: 58px; margin: 0 auto; padding: 0 18px; border-radius: 20px; background: var(--grad-primary); color: #fff;
-        display: flex; align-items: center; justify-content: center; gap: 8px; font: 700 17px/1 var(--display); box-shadow: var(--glow-primary); }
+      /* the Score alone: its ▶ Play in the dock */
+      .dock #play { flex: 1 1 auto; align-self: flex-start; min-width: 0; max-width: 340px; height: 58px; margin: -2px auto 0; padding: 0 18px; border-radius: 20px; background: var(--grad-primary); color: #fff;
+        display: flex; align-items: center; justify-content: center; gap: 8px; font: 700 17px/1 var(--display); box-shadow: var(--glow-primary); border: 0; }
       .dock #play svg { width: 18px; height: 18px; }
       .dock #play::after { content: "Play"; }
       .dock #play[data-icon="stop"] { background: var(--grad-live); box-shadow: 0 10px 28px -10px rgba(255,79,111,.7); }
       .dock #play[data-icon="stop"]::after { content: "Stop"; }
       .dock #play:disabled { opacity: .45; cursor: default; }
+      @media (prefers-reduced-motion: reduce) {
+        .brand .bt, .brand .mark { transition: opacity .15s ease; }
+        .songpill[data-loading] .t { animation: none; opacity: .6; }
+      }
     </style>
   </head>
   <body>
-    <div class="app" id="app">
+    <div class="app" id="app" data-form="full" data-tin="home">
       <header class="top">
         <a class="brand" id="brand" href="shell.html" aria-label="Resonate — home"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6f8dff"/><stop offset=".55" stop-color="#a64fff"/><stop offset="1" stop-color="#ff5fa8"/></linearGradient></defs><circle cx="12" cy="12" r="9.5" fill="none" stroke="url(#lg)" stroke-width="2.4"/><path d="M6.5 12.5c1.2 0 1.4-4 2.8-4s1.4 7 2.8 7 1.4-5 2.7-5 1 2 2.7 2" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg><span class="bt">Resonate</span></a>
-        <button class="songpill" id="song-pill" type="button" hidden><span class="t"></span><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button>
+        <span class="songpill" id="song-pill" hidden><button class="pt" id="song-title" type="button" aria-haspopup="dialog"><span class="t"></span><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button><button class="px" id="song-close" type="button" aria-label="Close the song" title="Close"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>
         <span class="spacer"></span>
         <span class="sing-scope sing-top" id="sing-top" hidden></span>
-        <span class="layers" id="layers" role="group" aria-label="Show" hidden>
-          <button id="lay-sing" type="button" aria-pressed="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h2.5l2-5 3 10 3-13 3 13 2-5H21"/></svg><span>Sing</span></button>
-          <button id="lay-score" type="button" aria-pressed="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18M3 11h18M3 15h18"/><ellipse cx="9" cy="15.2" rx="2.7" ry="2" transform="rotate(-22 9 15.2)" fill="currentColor"/><path d="M11.4 14.2V3.8l4 1.4"/></svg><span>Score</span></button>
-        </span>
-        <span id="version" class="ver mono">v86</span>
+        <button class="hremote" id="home-remote" type="button" aria-pressed="false" hidden>📡</button>
+        <span id="version" class="ver mono">v87</span>
         <button class="avatar" id="avatar" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Account"></button>
       </header>
       <main class="home">
         <section class="tuner" id="tuner" aria-label="Tuner"></section>
-        <button class="nextup" id="nextup" type="button" hidden></button>
       </main>
       <div class="stack" id="stack">
         <section class="sing-root sing-scope" id="sing-region" aria-label="Sing" hidden></section>
         <section class="score-root play-scope" id="score-region" aria-label="Score" hidden></section>
       </div>
+      <section class="pianobar" id="piano-region" aria-label="Piano" hidden><div class="kb"></div></section>
       <footer class="dock">
         <div class="capsule" id="imp-done" role="status" hidden>
           <span class="okring"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
@@ -461,6 +496,7 @@
           <button class="openbtn" type="button">Open</button>
           <button class="x" type="button" aria-label="Dismiss"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
         </div>
+        <button class="nextup" id="nextup" type="button" hidden></button>
         <div class="row">
           <a class="round rec" id="rec-btn" href="record.html"><span class="bw"><span class="b"></span></span><span class="l">Record</span></a>
           <button class="round main" id="main-btn" type="button" data-mic="off"><span class="bw"><span class="b"></span></span><span class="l">Start</span></button>
@@ -470,6 +506,11 @@
               <span class="n mono"></span>
               <span class="pw"><span class="pt"></span><span class="ps"></span></span>
             </button>
+            <span class="mods" id="mods" role="group" aria-label="Show">
+              <button class="mod" id="mod-sing" type="button" aria-pressed="false" title="Sing" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h2.5l2-5 3 10 3-13 3 13 2-5H21"/></svg><span>Sing</span></button>
+              <button class="mod" id="mod-score" type="button" aria-pressed="false" title="Score" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18M3 11h18M3 15h18"/><ellipse cx="9" cy="15.2" rx="2.7" ry="2" transform="rotate(-22 9 15.2)" fill="currentColor"/><path d="M11.4 14.2V3.8l4 1.4"/></svg><span>Score</span></button>
+              <button class="mod" id="mod-piano" type="button" aria-pressed="false" title="Piano"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M9 14v5M15 14v5"/><rect x="7.4" y="5" width="3.2" height="9" rx=".6" fill="currentColor" stroke="none"/><rect x="13.4" y="5" width="3.2" height="9" rx=".6" fill="currentColor" stroke="none"/></svg><span>Piano</span></button>
+            </span>
             <button class="round songs" id="songs-btn" type="button" aria-haspopup="dialog" aria-expanded="false"><span class="bw"><span class="b"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h9M4 11h9M4 16h5"/><path d="M18 4.5v11"/><circle cx="15.6" cy="16.2" r="2.4"/><path d="M18 4.5c1.2.4 2.3 1.1 2.6 2.6"/></svg></span></span><span class="l">Songs</span></button>
           </span>
         </div>
@@ -505,8 +546,9 @@
     <div class="toast" id="toast" role="status" hidden></div>
     <input id="xml-input" type="file" hidden />
     <input id="pdf-input" type="file" accept=".pdf,application/pdf" hidden />
+    <div id="places"></div><!-- Record, Voice, Assistants in place (shell/places.js) -->
 
-    <script type="module" src="nav.js?v=86"></script>
-    <script type="module" src="shell/boot.js?v=86"></script>
+    <script type="module" src="nav.js?v=87"></script>
+    <script type="module" src="shell/boot.js?v=87"></script>
   </body>
 </html>
