@@ -1,59 +1,29 @@
 // PDF → Song: run Audiveris in the browser (omr/omr.js) on a PDF and save the
 // resulting MusicXML to My songs. No settings: pages without staves are skipped
 // automatically, English OCR for lyrics, the title is taken from the score.
+// The import is a job (omr/importer.js) kept on this device as it goes: a reload, a crash or
+// leaving the page and coming back continues it where it was (at most the page under way is read
+// again); the Reader (omr/reader.js) draws it.
 
-import { readScoreFile, parseMusicXml } from "./musicxml.js?v=80";
-import { addSong } from "./library.js?v=80";
-import { fixOmrScore, joinMovements } from "./omr/fixscore.js?v=80";
-import { spaceChanged } from "./nav.js?v=80";
+import { spaceChanged } from "./nav.js?v=81";
+import { activeSpace, activeDb } from "./space.js?v=81";
+import { mount as mountReader } from "./omr/reader.js?v=81";
+import { createImporter } from "./omr/importer.js?v=81";
+import { readFlag } from "./omr/jobs.js?v=81";
 
 const $ = (id) => document.getElementById(id);
 const chooseBtn = $("choose");
 const fileInput = $("file");
 
-let wakeLock = null;
 let running = false;
 let unsaved = false; // a finished conversion not saved (another tab signed in or out meanwhile)
 window.resonateBusy = () => running || unsaved; // (nav.js: a reload for another tab's sign-in/out waits for it)
-let t0 = 0;
-let timer = null;
-let lastFraction = 0;
-let sheetStart = { sheet: 0, at: 0 };
-let sheetTimes = [];
 let finalXml = null;
 let baseName = "song";
-
-const STEP_LABELS = {
-  LOAD: "loading the page", BINARY: "black & white", SCALE: "measuring staff size", GRID: "finding staves & systems",
-  HEADERS: "clefs, keys, time signatures", STEM_SEEDS: "stems", BEAMS: "beams", LEDGERS: "ledger lines",
-  HEADS: "note heads", STEMS: "stems", REDUCTION: "resolving conflicts", CUE_BEAMS: "cue notes", TEXTS: "reading lyrics & text (OCR)",
-  MEASURES: "measures", CHORDS: "chords", CURVES: "ties & slurs", SYMBOLS: "symbols", LINKS: "linking symbols",
-  RHYTHMS: "rhythms", PAGE: "finishing the page",
-};
-
-function fmt(sec) {
-  sec = Math.max(0, Math.round(sec));
-  const m = Math.floor(sec / 60), s = sec % 60;
-  return m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function setStep(name) {
-  const order = ["pages", "engine", "recognize", "save"];
-  const idx = order.indexOf(name);
-  for (const li of $("steps").children) {
-    const i = order.indexOf(li.dataset.step);
-    li.dataset.state = i < idx ? "done" : i === idx ? "active" : "";
-  }
-}
-
-function setBar(fraction) {
-  lastFraction = Math.max(lastFraction, Math.min(1, fraction));
-  $("bar").style.width = `${(lastFraction * 100).toFixed(1)}%`;
-}
-
-function tick() {
-  $("elapsed").textContent = `elapsed ${fmt((performance.now() - t0) / 1000)}`;
-}
+let reader = null;
+let importState = "idle";
+let jobId = null;
+const events = []; // every event of this run, as the Reader got them (what a resume would replay)
 
 // The first lines (browser/device) are kept when the log is trimmed: they're what
 // makes a pasted failure report diagnosable.
@@ -65,199 +35,173 @@ function appendLog(line) {
   if ($("log-wrap").open) log.scrollTop = log.scrollHeight;
 }
 
-function onProgress(p) {
-  if (p.phase === "pages") {
-    setStep("pages");
-    $("stage").textContent = "Finding the music pages";
-    $("detail").textContent = p.page ? `page ${p.page} of ${p.pages}` : "opening the PDF";
-    setBar(0.02 * (p.fraction || 0));
-  } else if (p.phase === "engine") {
-    setStep("engine");
-    $("stage").textContent = "Starting the recognition engine";
-    $("detail").textContent = "~60 MB download the first time";
-    setBar(0.03);
-  } else if (p.phase === "recognize") {
-    setStep("recognize");
-    const now = performance.now();
-    if (p.sheet !== sheetStart.sheet) {
-      if (sheetStart.sheet) sheetTimes.push((now - sheetStart.at) / 1000);
-      sheetStart = { sheet: p.sheet, at: now };
-    }
-    $("stage").textContent = `Recognizing page ${p.sheet} of ${p.sheets}`;
-    $("detail").textContent = STEP_LABELS[p.step] || p.step || "";
-    setBar(0.05 + 0.93 * p.fraction);
-    if (sheetTimes.length) {
-      const avg = sheetTimes.reduce((a, b) => a + b, 0) / sheetTimes.length;
-      const left = avg * (p.sheets - p.sheet + 1) - (now - sheetStart.at) / 1000;
-      $("eta").textContent = `~${fmt(left)} left`;
-    } else {
-      $("eta").textContent = "estimating time…";
-    }
-  } else if (p.phase === "export") {
-    $("detail").textContent = "writing MusicXML";
-    setBar(0.99);
-  }
+// --- The Reader: the run as events (omr/readerstate.js has the contract) ---------------------
+function push(ev) {
+  const e = Number.isFinite(ev.at) ? ev : { ...ev, at: Date.now() };
+  events.push(e);
+  reader?.push(e);
 }
 
-// The title, best source first: the PDF's own text (exact; vector PDFs only), the file
-// name when it's clearly a title (a seller's name like Musicnotes'
-// "Wichita_Lineman_-_F_Major_-_MN0305807" → "Wichita Lineman"; or anything that isn't a
-// camera/scanner default like "Scanned Document 2" or "IMG_0042"), then the largest-font
-// text Audiveris read on the first page (OCR: often a footer like "Authorized for use by:
-// …" or a chord name, hence last), else the file name as it is.
-const NOT_TITLE = /authori[sz]ed for use|musicnotes|copyright|©|all rights reserved|published (by|under)|words and music/i;
-const GENERIC_NAME = /^((scanned )?(document|scan|img|image|photo|picture|page|untitled|score|sheet ?music|music|download|file|song|pdf|camscanner|adobe scan)\b)?[\s\d_\-().:,]*$/i;
-const SELLER = /\s+-\s+[A-G][b#♭♯]?\s*(major|minor|maj|min)\b.*$|\s*-?\s*\bMN\d{5,}\b.*$/i;
+const imp = createImporter({
+  app: $("version").textContent, spaceChanged, onEvent: push, onLog: appendLog, onState: showState,
+});
 
-function cleanFileName(name) {
-  const plain = name.replace(/_+/g, " ").replace(/\s+/g, " ").trim();
-  const title = plain.replace(SELLER, "").trim();
-  return { title: title || plain, seller: title !== plain && !!title };
+// The import's state → the Reader and the job bar under it. The Reader's ✕ (two taps) stops and
+// forgets the import — also after an error that kept it (Try again continues it) — except while
+// another tab runs it. The job bar says what isn't on the Reader: another tab is reading it, or a stage
+// stopped twice (a crash loop — iOS ends a tab that uses too much memory): Retry, and Skip for a page.
+const STAGE = { prep: "pages", boot: "engine", export: "MusicXML", save: "saving" };
+function showState({ state, job }) {
+  importState = state;
+  // Not reading here (stuck on a page, another tab reading, stopped): the Reader's clocks stop and
+  // nothing breathes until the next event.
+  if (state === "stuck" || state === "waiting" || state === "idle") reader?.hold(true);
+  reader?.canStop(state !== "waiting");
+  if (job?.id) jobId = job.id;
+  const stuck = state === "stuck" && job?.stuck;
+  $("job-bar").hidden = !(state === "waiting" || stuck);
+  $("job-msg").textContent = !stuck ? (state === "waiting" ? "Running in another tab" : "")
+    : stuck.page ? `Page ${stuck.page} stopped twice` : `Stopped twice: ${STAGE[stuck.stage] || stuck.stage}`;
+  $("job-retry").hidden = !stuck;
+  $("job-skip").hidden = !stuck?.page;
+  if (stuck?.page) $("job-skip").textContent = `Skip page ${stuck.page}`;
 }
 
-// The key's mode a seller put in the file name ("…_-_F_Major_-_MN0305807"), or null.
-function modeFromFileName(name) {
-  const m = /[\s_]-[\s_]+[A-G][b#♭♯]?[\s_]*(major|minor)\b/i.exec(name);
-  return m ? m[1].toLowerCase() : null;
+// Minimized or not is a device pref (resonate.import.min) for a reload: the page comes back the way
+// the singer left it. Arriving here (the pill on another page, a link) or picking a file opens it —
+// minimized, this page would be empty but for the corner pill. Only the singer's own taps change the
+// pref (the page's expand at the end doesn't).
+const MIN_PREF = "resonate.import.min";
+const NAV = performance.getEntriesByType?.("navigation")?.[0]?.type || "navigate";
+let autoExpand = false;
+function showReader({ fresh = false } = {}) {
+  $("pick").hidden = true;
+  $("warning").hidden = true;
+  $("log-wrap").hidden = false;
+  document.documentElement.removeAttribute("data-resume");
+  document.querySelector("main").classList.add("reading");
+  const host = $("reader-host");
+  host.hidden = false;
+  if (reader) return;
+  let min = false;
+  try { min = !fresh && (NAV === "reload" || NAV === "back_forward") && localStorage.getItem(MIN_PREF) === "1"; } catch {}
+  const remember = (v) => { if (autoExpand) return; try { v ? localStorage.setItem(MIN_PREF, "1") : localStorage.removeItem(MIN_PREF); } catch {} };
+  reader = mountReader(host, {
+    minimized: min, onStop: stopImport,
+    onMinimize: () => { remember(true); document.querySelector("main").classList.add("min"); },
+    onExpand: () => { remember(false); document.querySelector("main").classList.remove("min"); },
+  });
+  document.querySelector("main").classList.toggle("min", min);
+}
+// ✕ on the Reader: stop and forget this import, back to the picker.
+let leaving = false;
+async function stopImport() {
+  leaving = true; // (no "leave the page?" prompt for an import being thrown away)
+  const id = imp.current?.id || jobId;
+  try { if (id) await imp.discard(id); } catch (err) { console.warn("discard", err); }
+  location.replace(location.pathname);
+}
+// The picker again (a job the flag named was gone: finished or forgotten in another tab).
+function showPicker() {
+  reader?.destroy();
+  reader = null;
+  events.length = 0;
+  document.documentElement.removeAttribute("data-resume");
+  document.querySelector("main").classList.remove("reading");
+  $("reader-host").hidden = true;
+  $("log-wrap").hidden = true;
+  $("pick").hidden = false;
+  $("warning").hidden = false;
 }
 
-// Write <mode> into every <key> that has none (the Sing page names keys "F" vs "Dm").
-function setMode(xml, mode) {
-  const doc = new DOMParser().parseFromString(xml, "application/xml");
-  let n = 0;
-  for (const key of doc.querySelectorAll("key")) {
-    if (key.querySelector("mode") || !key.querySelector("fifths")) continue;
-    const m = doc.createElement("mode");
-    m.textContent = mode;
-    key.querySelector("fifths").after(m);
-    n++;
-  }
-  return n ? new XMLSerializer().serializeToString(doc) : xml;
-}
-
-function chooseTitle(res, xml, firstFailed) {
-  if (res.title) return res.title;
-  const file = cleanFileName(baseName);
-  if (file.seller || (file.title && !GENERIC_NAME.test(file.title))) return file.title;
-  return (!firstFailed && pickTitle(xml, null)) || file.title || baseName;
-}
-
-// The largest-font credit Audiveris read on the first page, if it looks like words.
-function pickTitle(xml, fallback) {
-  const doc = new DOMParser().parseFromString(xml, "application/xml");
-  let best = null, size = 0;
-  for (const c of doc.querySelectorAll("credit")) {
-    if ((c.getAttribute("page") || "1") !== "1") continue;
-    for (const w of c.querySelectorAll("credit-words")) {
-      const t = (w.textContent || "").trim();
-      const s = parseFloat(w.getAttribute("font-size")) || 0;
-      // Words (letters and digits not run together like "Blzmaj7", "C2"), not a publisher's line.
-      if (s > size && /\p{L}{3}|^\d{2,}$/u.test(t) && !/\p{L}\d|\d\p{L}/u.test(t) && !NOT_TITLE.test(t) && t.length >= 2 && t.length <= 80) { size = s; best = t; }
-    }
-  }
-  return best || fallback;
-}
-
-function setTitle(xml, title) {
-  const doc = new DOMParser().parseFromString(xml, "application/xml");
-  const root = doc.documentElement;
-  let mt = root.querySelector(":scope > movement-title");
-  if (!mt) {
-    mt = doc.createElement("movement-title");
-    root.insertBefore(mt, root.firstElementChild);
-  }
-  mt.textContent = title;
-  return new XMLSerializer().serializeToString(doc);
+function writeLogHead(name, size) {
+  const mem = navigator.deviceMemory ? `${navigator.deviceMemory} GB RAM` : "RAM unknown";
+  logHead = `Resonate ${$("version").textContent} · ${new Date().toISOString()}\n` +
+    `${navigator.userAgent}\n${navigator.hardwareConcurrency || "?"} CPU threads · ${mem} · ` +
+    `PDF ${((size || 0) / 1e6).toFixed(1)} MB${name ? ` · ${name}` : ""}\n`;
+  appendLog(logHead.trimEnd());
 }
 
 function fail(err) {
   console.error(err);
-  $("progress").hidden = true;
+  if (events.at(-1)?.t !== "error") push({ t: "error", message: err?.message || String(err) }); // (the importer's own, usually)
   $("error").hidden = false;
   $("error-msg").textContent = err?.message || String(err);
   $("log-wrap").hidden = false;
 }
 
-async function run(file) {
+// One path for a new import and a stored one: the Reader shows (a stored one first draws what it
+// showed so far, at once — reader.load), the importer runs, the result shows.
+async function drive(job, go, fresh = false) {
+  if (running) return;
   running = true;
-  baseName = file.name.replace(/\.pdf$/i, "") || "song";
-  $("pick").hidden = true;
-  $("warning").hidden = true;
-  $("progress").hidden = false;
-  $("log-wrap").hidden = false;
-  t0 = performance.now();
-  timer = setInterval(tick, 1000);
-  try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
-  document.addEventListener("visibilitychange", async () => {
-    if (!document.hidden && running && !wakeLock) {
-      try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
-    }
-  });
-
-  const mem = navigator.deviceMemory ? `${navigator.deviceMemory} GB RAM` : "RAM unknown";
-  logHead = `Resonate ${$("version").textContent} · ${new Date().toISOString()}\n` +
-    `${navigator.userAgent}\n${navigator.hardwareConcurrency || "?"} CPU threads · ${mem} · ` +
-    `PDF ${(file.size / 1e6).toFixed(1)} MB\n`;
-  appendLog(logHead.trimEnd());
-
+  baseName = (job.name || "").replace(/\.pdf$/i, "") || "song";
+  if (job.id) jobId = job.id;
+  showReader({ fresh });
   try {
-    const omr = await import("./omr/omr.js?v=80");
-    const res = await omr.convertPdf(file, { onProgress, onLog: appendLog });
-
-    setStep("save");
-    $("stage").textContent = "Saving to My songs";
-    const xmls = [];
-    for (const [i, b] of res.mxls.entries()) xmls.push(await readScoreFile(new File([b], `${baseName}-${i + 1}.mxl`)));
-    const joined = joinMovements(xmls);
-    if (xmls.length > 1) appendLog(`[fix] ${xmls.length} scores (movements) joined into one`);
-    const fixed = fixOmrScore(joined, res.log, { tempo: res.tempo });
-    for (const c of fixed.changes) appendLog(`[fix] ${c}`);
-    const xml = fixed.xml;
-    // Page 1's credits (title) are gone when the first music page failed; don't take page 2's.
-    const firstFailed = res.failed.some((f) => f.sheet === 1);
-    const title = chooseTitle(res, xml, firstFailed);
-    finalXml = setTitle(xml, title);
-    const mode = modeFromFileName(baseName);
-    if (mode) {
-      finalXml = setMode(finalXml, mode);
-      appendLog(`[fix] key mode from the file name: ${mode}`);
-    }
-    const score = parseMusicXml(finalXml, title);
-    // The original PDF is kept with the song (and synced with it, up to 10 MB, when signed in).
-    let pdf = null;
-    try { pdf = await file.arrayBuffer(); } catch {}
-    // Signed in or out in another tab meanwhile: My songs is someone else's now — not saved
-    // there (Download MusicXML keeps it).
-    unsaved = spaceChanged();
-    if (!unsaved) {
-      const id = await addSong(score.title, finalXml, { source: "pdf", ...(pdf ? { pdf, pdfName: file.name } : {}) });
-      try { localStorage.setItem("resonate.sing.song", id); localStorage.removeItem("resonate.sing.verse"); } catch {}
-    }
-    setBar(1);
-
-    const lyrics = score.notes.filter((n) => Object.keys(n.verses).length).length;
-    $("progress").hidden = true;
-    $("result").hidden = false;
-    $("result-title").textContent = `“${score.title}”`;
-    const read = res.pages.filter((p) => !res.failed.some((f) => f.page === p));
-    $("result-detail").textContent =
-      `${score.notes.length} notes · ${lyrics} with lyrics${score.verses.length > 1 ? ` · ${score.verses.length} verses` : ""} · ` +
-      `page${read.length === 1 ? "" : "s"} ${read.join(", ")} · ${unsaved ? "not saved (signed in or out in another tab) — download it" : "saved to My songs"}`;
-    if (res.failed.length) {
-      const pages = res.failed.map((f) => f.page);
-      $("result-missing").hidden = false;
-      $("result-missing").textContent =
-        `Page${pages.length === 1 ? "" : "s"} ${pages.join(", ")} couldn't be read, left out` +
-        (firstFailed ? "; title, tempo and time signature may be off" : "") +
-        ". Why: Details → Copy log.";
-    }
+    const res = await go();
+    if (res) showResult(res);
+    else if (importState === "idle") location.reload(); // finished (or forgotten) in another tab
   } catch (err) {
-    fail(err);
+    if (err?.name !== "AbortError") fail(err);
   } finally {
     running = false;
-    clearInterval(timer);
-    tick();
-    try { await wakeLock?.release(); } catch {}
+  }
+}
+
+function run(file) {
+  return drive({ name: file.name }, () => {
+    writeLogHead(file.name, file.size);
+    return imp.start(file);
+  }, true);
+}
+
+// An import left unfinished on this device: shown at once as far as it got, then continued.
+function continueJob(job, opts = {}) {
+  return drive(job, async () => {
+    if (!events.length || events.every((e) => e.t === "job")) {
+      const stored = await imp.storedEvents(job.id);
+      events.length = 0;
+      events.push(...stored);
+      reader.load(stored);
+      writeLogHead(job.name, job.size);
+      appendLog(`[resume] ${job.name}: ${job.done} of ${job.of || "?"} pages read before`);
+    }
+    return imp.resume(job.id, opts);
+  });
+}
+
+function showResult(res) {
+  finalXml = res.xml;
+  unsaved = res.unsaved;
+  $("job-bar").hidden = true;
+  autoExpand = true; // (the end shows itself; the singer's minimized pref stays)
+  reader?.expand();
+  autoExpand = false;
+  const score = res.score;
+  const lyrics = score.notes.filter((n) => Object.keys(n.verses).length).length;
+  $("result").hidden = false;
+  const read = res.pages.filter((p) => !res.failed.some((f) => f.page === p));
+  $("result-detail").textContent =
+    `${score.notes.length} notes · ${lyrics} with lyrics${score.verses.length > 1 ? ` · ${score.verses.length} verses` : ""} · ` +
+    `page${read.length === 1 ? "" : "s"} ${read.join(", ")} · ${unsaved ? "not saved (signed in or out in another tab) — download it" : "saved to My songs"}`;
+  // Pages the engine gave up on; bars of read pages the export couldn't write (their notes are missing).
+  const missing = [];
+  if (res.failed.length) {
+    const pages = res.failed.map((f) => f.page);
+    const firstFailed = res.failed.some((f) => f.sheet === 1);
+    missing.push(`Page${pages.length === 1 ? "" : "s"} ${pages.join(", ")} couldn't be read, left out` +
+      (firstFailed ? "; title, tempo and time signature may be off" : ""));
+  }
+  const lostBars = new Map();
+  for (const l of res.lost || []) {
+    if (!lostBars.has(l.page)) lostBars.set(l.page, new Set());
+    lostBars.get(l.page).add(l.measure);
+  }
+  for (const [page, bars] of lostBars) missing.push(`Page ${page}: ${bars.size} bar${bars.size === 1 ? "" : "s"} left out`);
+  if (missing.length) {
+    $("result-missing").hidden = false;
+    $("result-missing").textContent = `${missing.join(". ")}. Why: Details → Copy log.`;
   }
 }
 
@@ -288,13 +232,51 @@ $("copy-log").addEventListener("click", async () => {
   setTimeout(() => { btn.textContent = "Copy log"; }, 2500);
 });
 for (const b of document.querySelectorAll(".again")) b.addEventListener("click", () => location.reload());
+// A reload continues a kept import; only one that couldn't be kept (storage full) asks first.
 window.addEventListener("beforeunload", (e) => {
-  if (running) { e.preventDefault(); e.returnValue = ""; }
+  if (running && !leaving && imp.busy() && !imp.resumable()) { e.preventDefault(); e.returnValue = ""; }
 });
+// Another page of the site, from this page's header, while it reads: the engine stops with this page
+// (a page of its own), so ask once — the import goes on where it was when the singer comes back (the
+// pill on the other pages says it's paused).
+document.querySelector("header")?.addEventListener("click", (e) => {
+  const a = e.target.closest?.("a[href]");
+  if (!a || !running || leaving || !imp.busy() || !imp.resumable() || a.target === "_blank") return;
+  if (new URL(a.href, location.href).origin !== location.origin) return;
+  if (!confirm("Pause the import? It picks up where it was when you come back.")) e.preventDefault();
+});
+// Back from the back/forward cache: the engine was stopped on pagehide — start the page afresh.
+window.addEventListener("pageshow", (e) => { if (e.persisted && jobId) location.reload(); });
+$("job-skip")?.addEventListener("click", () => { running = false; continueJob({ id: jobId, name: baseName, size: 0 }, { skip: true }); });
+$("job-retry")?.addEventListener("click", () => { running = false; continueJob({ id: jobId, name: baseName, size: 0 }, { retry: true }); });
 
 // Test hook: start a conversion from a URL (?pdf=...) without the file picker.
 const testPdf = new URLSearchParams(location.search).get("pdf");
 if (testPdf) {
-  fetch(testPdf).then((r) => r.blob()).then((b) => run(new File([b], testPdf.split("/").pop())));
+  fetch(testPdf).then((r) => r.blob()).then((b) => run(new File([b], testPdf.split("/").pop(), { type: "application/pdf" })));
+} else {
+  // An unfinished import of this space: the Reader at once (the flag names the job — no picker in
+  // between; the head's script hid it already), its stored events as soon as the database answers.
+  const flag = readFlag();
+  if (flag?.id && (flag.db ? flag.db === activeDb() : flag.space === activeSpace())) {
+    showReader();
+    reader.push({ t: "job", id: flag.id, name: flag.name || "", resumed: true });
+  }
+  // No job after all (gone, or the flag the head's script saw was another space's — nav.js put the
+  // account away before this ran): the picker, whether the Reader showed or not.
+  imp.pending().then((job) => {
+    if (job) continueJob(job);
+    else if (!running) showPicker();
+  }).catch((err) => { console.warn("import jobs", err); if (!running) showPicker(); });
 }
-window.resonateDebug = () => ({ running, lastFraction, sheetTimes, hasResult: !!finalXml });
+window.resonateDebug = () => {
+  const st = reader?.status();
+  return {
+    running, hasResult: !!finalXml, events: events.length, reader: st || null, readerDebug: reader?.debug() || null,
+    import: { state: importState, job: imp.current, jobId, resumable: imp.resumable() },
+    eventList: events, // (tests: the events as the Reader got them)
+    // One line for test logs: "phase page/of label · eta".
+    stage: st ? `${st.phase} ${st.page ?? ""}/${st.of} ${st.label}${st.eta != null ? ` · ${Math.round(st.eta)} s left` : ""}` : "",
+    fraction: st?.fraction ?? 0,
+  };
+};

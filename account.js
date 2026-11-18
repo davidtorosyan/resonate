@@ -6,8 +6,8 @@
 // (adopt); signing in to an existing account shelves it and brings the account's from the cloud
 // (enter, then sync.js); signing out removes the account's data from the device and brings the
 // shelved data back (leave).
-import { supabase, accountUrl, savedUser, STORAGE_KEY } from "./auth.js?v=80";
-import { ensureSpace, activeSpace, adopt, enter, leave, park } from "./space.js?v=80";
+import { supabase, accountUrl, savedUser, STORAGE_KEY } from "./auth.js?v=81";
+import { ensureSpace, activeSpace, adopt, enter, leave, park } from "./space.js?v=81";
 
 const ADOPT = "resonate.adopt"; // { email, at }: an account being made on this device (sign up)
 const SYNC_OFF = "resonate.sync.off"; // (sync.js OFF_KEY: this device doesn't sync)
@@ -120,7 +120,7 @@ async function settle(s) {
 }
 async function startSync() {
   try {
-    const m = await import("./sync.js?v=80");
+    const m = await import("./sync.js?v=81");
     if (!m.syncOff()) m.start();
     return m;
   } catch (err) { console.warn("sync", err); return null; }
@@ -234,12 +234,13 @@ $("signout").addEventListener("click", () => busy(async () => {
     let text = "Changes on this device may not be in the cloud and will be removed from it. Sign out?";
     if (m) {
       if (!m.syncOff()) await m.syncNow();
-      text = signOutWarning(await m.unsynced());
+      // (+ an unfinished PDF → Song import: its job lives only on this device, and goes with the account)
+      text = signOutWarning({ ...(await m.unsynced()), importing: !!localStorage.getItem("resonate.import") });
     }
     if (text && !confirm(text)) return;
   }
   // No sync from here on (a pass under way could otherwise write into the data coming back).
-  if (m || window.resonateSync) { try { await (m || await import("./sync.js?v=80")).stop(); } catch {} }
+  if (m || window.resonateSync) { try { await (m || await import("./sync.js?v=81")).stop(); } catch {} }
   // The account's data goes before the session does: other tabs, told of the sign-out, then
   // find nothing to put away (space.js park). (Another account found active is parked.)
   // This device only — other devices stay signed in. (Offline, or when the server fails, the
@@ -261,6 +262,7 @@ function signOutWarning(u) {
   if (u.recordings) parts.push([`the recording${u.recordings > 1 ? "s" : ""} of your last take${u.recordings > 1 ? "s" : ""}`, u.recordings > 1]);
   if (u.clips) parts.push(["your practice recordings", true]);
   if (u.calibration) parts.push(["your mic calibration", false]);
+  if (u.importing) parts.push(["your unfinished PDF → Song import", false]);
   if (!parts.length) return null;
   const list = parts.length === 1 ? parts[0][0] : `${parts.slice(0, -1).map((p) => p[0]).join(", ")} and ${parts[parts.length - 1][0]}`;
   const plural = parts.length > 1 || parts[0][1];
