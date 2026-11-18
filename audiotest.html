@@ -30,6 +30,12 @@
       .test .out { font-size: 0.72rem; opacity: 0.7; min-height: 1em; overflow-wrap: anywhere; }
       .test[data-state="playing"] { border-color: #a64fff; }
       #copy { align-self: flex-start; font: inherit; font-size: 0.85rem; color: #e8e8f0; background: none; border: 1px solid rgba(255,255,255,0.25); border-radius: 999px; padding: 0.35rem 0.9rem; }
+      h2 { font-size: 0.95rem; margin: 1rem 0 0; font-weight: 600; opacity: 0.85; }
+      .test .pad { grid-column: 1 / -1; margin-top: 0.4rem; padding: 1.1rem; text-align: center; font-weight: 700; border-radius: 0.8rem; background: #2c2c55; border: 2px solid #a64fff; touch-action: none; user-select: none; -webkit-user-select: none; }
+      .test .ask { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; margin-top: 0.35rem; font-size: 0.8rem; }
+      .test .ask span { opacity: 0.7; margin-right: 0.2rem; }
+      .test .ask button { grid-row: auto; min-width: 0; font-size: 0.8rem; font-weight: 500; padding: 0.45rem 0.7rem; min-height: 2.4rem; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; }
+      .test .ask button[aria-pressed="true"] { background: #a64fff; border-color: #a64fff; }
       #status { font-size: 0.8rem; opacity: 0.6; min-height: 1.2em; }
     </style>
   </head>
@@ -40,14 +46,17 @@
         <a class="nav-link" href="tools.html">Tools</a>
         <a class="nav-link" href="sing.html">Sing</a>
       </div>
-      <span id="version" class="mono">v81</span>
+      <span id="version" class="mono">v82</span>
     </header>
     <main>
       <p class="hint">Same note, 7 ways. Which crackle?</p>
       <div id="tests"></div>
+      <h2>Mic + speaker</h2>
+      <p class="hint">Phone speaker first, then AirPods, then the car. Answer under each row.</p>
+      <div id="mic"></div>
       <div id="status" class="mono"></div>
       <button id="copy" type="button">Copy results</button>
     </main>
-    <script type="module" src="audiotest.js?v=81"></script>
+    <script type="module" src="audiotest.js?v=82"></script>
   </body>
 </html>
