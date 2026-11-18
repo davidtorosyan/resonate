@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0d0d1c" />
+    <meta name="color-scheme" content="dark" />
+    <title>Resonate</title>
+    <style>
+      /* Resonate on one page — the shell preview. Tokens (REDESIGN §15), then the shell's own rules. */
+      :root {
+        color-scheme: dark;
+        --bg: #0d0d1c; --bg-glow: #1c1a44; --sheet: #1a1a38; --sheet-2: #121228;
+        --card: rgba(255,255,255,.035); --card-2: rgba(255,255,255,.055); --control: rgba(255,255,255,.07); --control-hi: rgba(255,255,255,.12);
+        --line: rgba(255,255,255,.08); --line-2: rgba(255,255,255,.16); --well: rgba(4,4,14,.42);
+        --text: #ecebf4; --text-2: rgba(236,235,244,.68); --text-3: rgba(236,235,244,.58);
+        --accent: #a64fff; --accent-hi: #c48bff;
+        --grad-primary: linear-gradient(135deg, #4f7cff, #a64fff);
+        --grad-note: linear-gradient(100deg, #6f8dff 0%, #a64fff 55%, #ff5fa8 100%);
+        --grad-live: linear-gradient(135deg, #ff4f6f, #ff8a4f);
+        --good: #4ade80; --close: #c49bff; --aim: #f5a85a; --now: #ffe6a0;
+        --ok: #8ee6a8; --warn: #ffd58a; --error: #ffb38a;
+        --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif;
+        --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter Display", Inter, system-ui, sans-serif;
+        --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+        --r-card: 18px; --r-sheet: 24px; --gutter: 12px; --top-h: 52px;
+        --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
+        --shadow-pop: 0 24px 60px -18px rgba(0,0,0,.75), 0 0 0 1px rgba(255,255,255,.07);
+        --shadow-sheet: 0 -16px 50px rgba(0,0,0,.55);
+        --glow-primary: 0 10px 28px -10px rgba(110,100,255,.75);
+        --dock-h: 108px;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+      body { background: var(--bg); color: var(--text); font: 15px/1.35 var(--font); -webkit-font-smoothing: antialiased; }
+      button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+      a { color: inherit; text-decoration: none; }
+      [hidden] { display: none !important; }
+      svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+      svg.i.fill { fill: currentColor; stroke: none; }
+      .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+      .spacer { flex: 1; }
+
+      /* --- the shell: one fixed viewport, four bands ------------------------------------------ */
+      .app {
+        position: relative; height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; /* (no stacking context: the top bar sits above the scrim) */
+        background: radial-gradient(120% 60% at 50% -8%, var(--bg-glow) 0%, rgba(28,26,68,0) 62%), radial-gradient(80% 50% at 100% 110%, rgba(79,124,255,.08), transparent 60%), var(--bg);
+        padding: var(--sat) calc(var(--gutter) + env(safe-area-inset-right)) 0 calc(var(--gutter) + env(safe-area-inset-left));
+      }
+      .top { height: var(--top-h); flex: none; position: relative; z-index: 46; display: flex; align-items: center; gap: 8px; }
+      .brand { display: flex; align-items: center; gap: 8px; height: 44px; font: 700 17px/1 var(--display); letter-spacing: -.01em; }
+      .brand .mark { width: 22px; height: 22px; }
+      .ver { font: 600 11px/1 var(--mono); color: var(--accent-hi); letter-spacing: .02em; }
+      .avatar { position: relative; width: 44px; height: 44px; flex: none; display: grid; place-items: center; z-index: 60; }
+      .avatar .face { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--grad-primary); font: 700 15px/1 var(--display); color: #fff;
+        box-shadow: 0 0 0 2px #0d0d1c, 0 0 0 3.5px rgba(166,79,255,.55); }
+      .avatar[data-out] .face { background: var(--control); box-shadow: inset 0 0 0 1.5px var(--line-2); color: var(--text-2); }
+      .avatar[data-out] .face svg { width: 20px; height: 20px; }
+      .avatar[aria-expanded="true"] .face { box-shadow: 0 0 0 2px #0d0d1c, 0 0 0 3.5px var(--accent); }
+
+      /* --- home: the full tuner + Next-up ------------------------------------------------------ */
+      .home { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: safe center; padding-bottom: 6px; }
+      .tuner { width: 100%; display: flex; flex-direction: column; align-items: center; flex: none; }
+      .ribbon-wrap { display: block; width: min(100%, 340px); margin-bottom: 18px; }
+      .ribbon-wrap .lbl { display: flex; justify-content: space-between; font: 600 11px/1 var(--font); color: var(--text-3); letter-spacing: .04em; margin-bottom: 7px; }
+      .ribbon-wrap .lbl b { color: var(--text-2); font-weight: 650; letter-spacing: 0; }
+      .ribbon-wrap .rb { position: relative; height: 26px; }
+      .rb .trk { position: absolute; left: 0; right: 0; top: 2px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.07); }
+      .rb .lim { position: absolute; top: 2px; height: 6px; border-radius: 3px; background: rgba(166,79,255,.25); }
+      .rb .cmf { position: absolute; top: 1px; height: 8px; border-radius: 4px; background: linear-gradient(90deg,#6f8dff,#a64fff); box-shadow: 0 0 12px rgba(166,79,255,.45); }
+      .rb .tk { position: absolute; top: 0; width: 1px; height: 10px; background: rgba(255,255,255,.18); }
+      .rb .ol { position: absolute; top: 15px; transform: translateX(-50%); font: 600 9.5px/1 var(--mono); color: var(--text-3); }
+      .rb .mk { position: absolute; top: -4px; width: 4px; height: 18px; margin-left: -2px; border-radius: 2px; background: #fff; box-shadow: 0 0 10px 2px rgba(74,222,128,.8); }
+      .gauge { width: min(100%, 340px); }
+      .gauge svg { display: block; width: 100%; height: auto; overflow: visible; }
+      .note-text { font-family: var(--display); font-weight: 800; letter-spacing: -.04em; font-size: 124px; line-height: .9;
+        background: var(--grad-note); -webkit-background-clip: text; background-clip: text; color: transparent; display: inline-flex; align-items: flex-start; min-height: .9em; }
+      .note-text .acc { font-weight: 700; letter-spacing: 0; font-size: .58em; margin-left: .02em; margin-top: .06em; }
+      .note-text .oct { font-weight: 700; font-size: .36em; margin-left: .06em; margin-top: .14em; letter-spacing: 0; opacity: .9; }
+      .note-text[data-onnote="false"] { opacity: .55; }
+      .tuner[data-mic="off"] .note-text, .tuner[data-mic="blocked"] .note-text, .tuner[data-mic="noanswer"] .note-text, .tuner[data-mic="error"] .note-text { opacity: .35; }
+      .cents { font: 600 15px/1 var(--mono); color: var(--good); margin-top: 6px; letter-spacing: .02em; min-height: 15px; }
+      .cents[data-tune="close"] { color: var(--close); }
+      .cents[data-tune="aim"] { color: var(--aim); }
+      .tmsg { font: 600 13px/1.3 var(--font); color: var(--warn); margin-top: 8px; text-align: center; max-width: 320px; }
+      .tuner:not([data-mic="blocked"]):not([data-mic="error"]) .tmsg { color: var(--text-2); }
+      .level { display: flex; align-items: center; gap: 10px; width: min(100%, 300px); margin-top: 18px; color: var(--text-3); }
+      .level .bar { flex: 1; height: 8px; border-radius: 4px; background: rgba(255,255,255,.06); position: relative; overflow: hidden; }
+      .level .bar i { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 4px; background: linear-gradient(90deg,#4f7cff,#a64fff 70%,#ff5fa8); }
+      .level .ticks { position: absolute; inset: 0; display: flex; justify-content: space-between; padding: 0 1px; }
+      .level .ticks b { width: 1.5px; background: rgba(13,13,28,.9); }
+      .level .n { font: 600 12px/1 var(--mono); color: var(--text-2); width: 18px; text-align: right; }
+      .level .cal { width: 44px; height: 44px; margin: -12px -10px -12px -6px; display: grid; place-items: center; border-radius: 9px; color: var(--text-3); }
+      .level .cal svg { width: 17px; height: 17px; }
+      .scope { width: calc(100% + 2 * var(--gutter)); margin: 14px calc(-1 * var(--gutter)) 0; height: 96px; flex: none; }
+      .scope canvas { display: block; width: 100%; height: 100%; }
+      .nextup { margin-top: 16px; width: min(100%, 380px); display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 18px; background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); text-align: left; flex: none; }
+      .nextup .thumb { width: 56px; height: 44px; border-radius: 11px; position: relative; overflow: hidden; flex: none; }
+      .nextup .thumb svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+      .nextup .mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+      .nextup .t { font: 700 15px/1.1 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .nextup .s { font: 600 12.5px/1.2 var(--font); color: var(--text-2); }
+      .nextup .go { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; background: var(--grad-primary); box-shadow: var(--glow-primary); flex: none; color: #fff; }
+      .nextup .go svg { width: 17px; height: 17px; }
+
+      /* --- the dock ---------------------------------------------------------------------------- */
+      .dock { flex: none; padding: 8px 0 calc(8px + var(--sab)); display: flex; flex-direction: column; gap: 10px; position: relative; z-index: 20; }
+      .dock .row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; min-height: 70px; }
+      .dock .row > .rec { justify-self: start; }
+      .dock .row > .corner { justify-self: end; }
+      .round { display: flex; flex-direction: column; align-items: center; gap: 5px; width: 64px; flex: none; }
+      .round .bw { position: relative; }
+      .round .b { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; background: var(--control); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text); }
+      .round .b svg { width: 22px; height: 22px; }
+      .round .l { font: 600 11px/1 var(--font); color: var(--text-3); white-space: nowrap; }
+      .round.rec .b { color: #ff6b7d; }
+      .round.rec .b svg { width: 18px; height: 18px; }
+      .round.main { width: 96px; }
+      .round.main .b { width: 74px; height: 74px; background: var(--grad-primary); color: #fff; box-shadow: var(--glow-primary), 0 0 0 6px rgba(166,79,255,.12); }
+      .round.main .b svg { width: 28px; height: 28px; }
+      .round.main .l { color: var(--text-2); }
+      .round.main .sq { width: 20px; height: 20px; border-radius: 4px; background: #fff; }
+      .round.main[data-mic="listening"] .b { box-shadow: var(--glow-primary), 0 0 0 6px rgba(166,79,255,.28), 0 0 26px 4px rgba(166,79,255,.45); }
+      .round.main[data-mic="blocked"] .b, .round.main[data-mic="noanswer"] .b, .round.main[data-mic="error"] .b { background: var(--control); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text-2); }
+      .round.songs .b { background: linear-gradient(160deg, rgba(255,255,255,.12), rgba(255,255,255,.05)); box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 8px 22px -10px rgba(0,0,0,.7); }
+      body[data-done] .round.songs .b { box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 0 0 3px rgba(74,222,128,.75); }
+      .corner { display: flex; align-items: center; gap: 8px; flex: none; }
+
+      /* the folded import: a tile beside Songs (a pill on a wide screen), and the done row */
+      .imptile { position: relative; width: 48px; height: 48px; border-radius: 14px; flex: none; display: grid; place-items: center;
+        background: linear-gradient(180deg,#24244c,#1b1b3a); box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); text-align: left; }
+      .imptile .ringw { position: relative; width: 38px; height: 38px; flex: none; }
+      .imptile .ringw svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+      .imptile .ringw .arc { transition: stroke-dasharray .6s ease; }
+      .imptile .ringw .arc.spin { stroke-dasharray: 22 107 !important; transform-origin: 20px 20px; animation: shspin 1.2s linear infinite; }
+      @keyframes shspin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .imptile .ringw .arc.spin { animation: none; } }
+      .imptile .g { position: absolute; inset: 0; display: grid; place-items: center; font: 700 13px/1 var(--mono); color: var(--now); }
+      .imptile[data-phase="error"] .g, .imptile[data-phase="stuck"] .g { color: var(--warn); }
+      .imptile .n { position: absolute; right: -4px; bottom: -4px; height: 17px; padding: 0 5px; border-radius: 9px; background: #2b2b58; box-shadow: 0 0 0 2px var(--bg); font: 700 10px/17px var(--mono); color: var(--now); }
+      .imptile .pw { display: none; }
+      .capsule { display: flex; align-items: center; gap: 10px; height: 60px; padding: 0 6px 0 9px; border-radius: 20px;
+        background: linear-gradient(180deg,#24244c,#1b1b3a); box-shadow: 0 16px 36px -12px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.1); }
+      .capsule .okring { width: 42px; height: 42px; border-radius: 50%; flex: none; display: grid; place-items: center; background: rgba(74,222,128,.16); box-shadow: inset 0 0 0 2.5px var(--good); color: var(--good); }
+      .capsule .okring svg { width: 20px; height: 20px; stroke-width: 2.6; }
+      .capsule .ct { flex: 1; min-width: 0; }
+      .capsule .t { font: 650 14px/1.2 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .capsule .s { font: 600 11.5px/1.2 var(--mono); color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .capsule .s b { color: var(--good); font-weight: 600; }
+      .openbtn { height: 44px; padding: 0 18px; border-radius: 12px; background: var(--grad-primary); color: #fff; font: 700 14px/1 var(--font); box-shadow: var(--glow-primary); flex: none; }
+      .capsule .x { width: 44px; height: 44px; display: grid; place-items: center; color: var(--text-3); flex: none; }
+
+      /* --- overlays: scrim, sheets, popovers ------------------------------------------------------ */
+      .scrim { position: fixed; inset: 0; background: rgba(5,5,14,.55); z-index: 40; backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+      .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 45; display: flex; flex-direction: column; overflow: hidden;
+        background: linear-gradient(180deg, var(--sheet), var(--sheet-2)); border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+        box-shadow: var(--shadow-sheet), inset 0 1px 0 rgba(255,255,255,.08); padding-bottom: var(--sab); }
+      .grab { width: 40px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.2); margin: 8px auto 2px; flex: none; touch-action: none; }
+      .sheet-head { display: flex; align-items: center; gap: 10px; padding: 8px 16px 10px; flex: none; }
+      .sheet-head h2 { margin: 0; font: 800 24px/1 var(--display); letter-spacing: -.02em; }
+      .addbtn { height: 44px; padding: 0 15px 0 12px; border-radius: 12px; display: inline-flex; align-items: center; gap: 6px; background: var(--grad-primary); color: #fff; font: 700 14px/1 var(--font); box-shadow: var(--glow-primary); }
+      .addbtn svg { width: 17px; height: 17px; stroke-width: 2.4; }
+      .sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px 16px; -webkit-overflow-scrolling: touch; }
+      .sec { font: 700 12px/1 var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); margin: 14px 2px 8px; display: flex; align-items: center; justify-content: space-between; }
+      .sec span { text-transform: none; letter-spacing: 0; font-weight: 600; }
+      .rows { border-radius: 16px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+      .song { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 58px; padding: 9px 12px; position: relative; text-align: left; }
+      .song + .song { box-shadow: inset 0 1px 0 var(--line); }
+      .song .tile { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; position: relative; }
+      .song .tile svg.i { width: 19px; height: 19px; }
+      .song .tile > svg:not(.i) { position: absolute; inset: 0; width: 40px; height: 40px; }
+      .tile[data-src="pdf"] { background: rgba(255,79,159,.14); color: #ff8ec2; }
+      .tile[data-src="xml"] { background: rgba(79,124,255,.16); color: #9db4ff; }
+      .tile[data-src="sample"] { background: rgba(166,79,255,.16); color: var(--accent-hi); }
+      .tile[data-src="reading"] { background: rgba(255,230,160,.08); color: var(--now); }
+      .song .mid { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+      .song .t { font: 650 15px/1.2 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .song .s { font: 500 12px/1.2 var(--mono); color: var(--text-3); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .song .s b { color: var(--now); font-weight: 600; }
+      .song .chev { width: 18px; height: 18px; color: var(--text-3); }
+      .song[data-current]::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
+      .msg { margin: 0 16px 6px; font: 600 13px/1.35 var(--font); color: var(--text-2); }
+      .msg[data-kind="error"] { color: var(--error); }
+      .msg[data-kind="ok"] { color: var(--ok); }
+      .linkrow { display: flex; gap: 8px; margin: 0 16px 8px; flex: none; }
+      .linkrow input { flex: 1; min-width: 0; height: 44px; border-radius: 12px; border: 0; padding: 0 12px; background: var(--well); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text); font: 500 16px/1 var(--font); }
+      .linkrow input:focus { outline: none; box-shadow: inset 0 0 0 1.5px var(--accent); }
+      .linkrow button { height: 44px; padding: 0 16px; border-radius: 12px; background: var(--grad-primary); color: #fff; font: 700 14px/1 var(--font); }
+      .pop { position: absolute; z-index: 50; border-radius: 18px; padding: 6px; background: linear-gradient(180deg,#23234a,#191934); box-shadow: var(--shadow-pop); }
+      .addmenu { top: 64px; right: 14px; width: 260px; }
+      .prow { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 6px 10px; border-radius: 12px; text-align: left; }
+      .prow + .prow { box-shadow: inset 0 1px 0 rgba(255,255,255,.06); }
+      .prow .pl { flex: 1; min-width: 0; font: 600 15px/1.2 var(--font); }
+      .prow .pl small { display: block; font: 500 12px/1.2 var(--font); color: var(--text-3); margin-top: 2px; }
+      .prow .pv { font: 600 13px/1 var(--mono); color: var(--text-3); }
+      .prow .chev { width: 16px; height: 16px; color: var(--text-3); }
+      .prow .lead { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; flex: none; }
+      .prow .lead svg { width: 18px; height: 18px; }
+      .l-pdf { background: rgba(255,79,159,.14); color: #ff8ec2; }
+      .l-xml { background: rgba(79,124,255,.16); color: #9db4ff; }
+      .l-plain { background: var(--control); color: var(--text-2); }
+      .l-voice { background: rgba(166,79,255,.18); color: var(--accent-hi); }
+      .l-cloud { background: rgba(74,222,128,.15); color: var(--good); }
+      .l-spark { background: rgba(255,230,160,.12); color: var(--now); }
+      .switch { width: 50px; height: 30px; border-radius: 15px; background: rgba(255,255,255,.14); position: relative; flex: none; transition: background .2s; }
+      .switch::after { content: ""; position: absolute; left: 3px; top: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,.35); transition: left .2s; }
+      [aria-checked="true"] > .switch { background: var(--good); }
+      [aria-checked="true"] > .switch::after { left: 23px; }
+
+      /* the account menu */
+      .acct { padding-bottom: calc(var(--sab) + 4px); }
+      .acct-head { display: flex; align-items: center; gap: 14px; padding: 6px 18px 14px; }
+      .acct-head .face { width: 56px; height: 56px; border-radius: 50%; background: var(--grad-primary); display: grid; place-items: center; font: 800 24px/1 var(--display); color: #fff; box-shadow: 0 0 0 3px rgba(166,79,255,.3); flex: none; }
+      .acct-head .face.out { background: var(--control); box-shadow: inset 0 0 0 1.5px var(--line-2); color: var(--text-2); }
+      .acct-head .face.out svg { width: 26px; height: 26px; }
+      .acct-head .who-w { min-width: 0; flex: 1; }
+      .acct-head .who { font: 700 17px/1.2 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .acct-head .cl { font: 600 13px/1.2 var(--font); color: var(--text-3); margin-top: 5px; }
+      .signin { padding: 0 14px 14px; }
+      .primary { display: flex; align-items: center; justify-content: center; height: 50px; border-radius: 16px; background: var(--grad-primary); color: #fff; font: 700 16px/1 var(--display); box-shadow: var(--glow-primary); }
+      .group { margin: 0 14px 12px; border-radius: 16px; background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; padding: 0 4px; }
+      .group .prow { border-radius: 0; }
+      .foot { text-align: center; font: 600 11.5px/1 var(--mono); color: var(--text-3); padding: 4px 0 14px; }
+      .foot b { color: var(--accent-hi); }
+
+      /* the Reader tray (omr/reader.js draws inside; its own corner pill isn't used here) */
+      .tray { top: calc(var(--sat) + var(--top-h)); background: #17172f; padding: 0 0 var(--sab); }
+      #reader-host { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0; }
+      #reader-host .rd { /* (on .rd: the Reader sets its own defaults there) */
+        --rd-page-max-h: max(220px, calc(100dvh - var(--sat) - var(--sab) - var(--top-h) - 250px)); --rd-page-max-h-side: max(300px, calc(100dvh - var(--top-h) - 200px)); }
+      #reader-host .rd-pill { display: none !important; }
+      #reader-host .rd-card { border: 0; background: transparent; border-radius: 0; padding: 8px 12px 12px; }
+      .traybar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); flex: none; flex-wrap: wrap; }
+      .traybar #tray-msg { flex: 1 1 10rem; font: 600 13px/1.3 var(--font); color: var(--warn); }
+      .traybar .btns { display: flex; gap: 8px; }
+      .chip { height: 44px; padding: 0 14px; border-radius: 12px; background: var(--control); box-shadow: inset 0 0 0 1px var(--line-2); font: 650 13.5px/1 var(--font); color: var(--text); }
+      .toast { position: fixed; left: 50%; bottom: calc(var(--sab) + 120px); transform: translateX(-50%); z-index: 55; padding: 10px 14px; border-radius: 12px; background: #2b2b58; font: 600 13px/1 var(--font); box-shadow: var(--shadow-pop); }
+
+      /* --- phone: the import tile / done row in the dock --------------------------------------------- */
+      @media (max-width: 699px) {
+        .dock .capsule { width: 100%; }
+        .sheet.songs { height: calc((100dvh - var(--sat)) * .9); }
+        #scrim[data-light] { background: rgba(5,5,14,.55); }
+      }
+      /* a short phone window (Safari's toolbars, an SE): the tuner tightens instead of spilling */
+      @media (max-width: 699px) and (max-height: 720px) {
+        .note-text { font-size: 96px; }
+        .ribbon-wrap { margin-bottom: 6px; }
+        .scope { height: 52px; margin-top: 10px; }
+        .level { margin-top: 8px; }
+        .nextup { margin-top: 10px; }
+        .dock .row { min-height: 0; }
+        .round.main .b { width: 66px; height: 66px; }
+      }
+
+      /* --- tablet portrait ------------------------------------------------------------------------ */
+      @media (min-width: 700px) {
+        :root { --gutter: 20px; --top-h: 68px; }
+        .note-text { font-size: 190px; }
+        .ribbon-wrap, .gauge { width: min(100%, 520px); }
+        .level { width: min(100%, 420px); }
+        .scope { height: 170px; }
+        .nextup { width: 440px; margin-top: 22px; }
+        .round .b { width: 58px; height: 58px; }
+        .round.main .b { width: 84px; height: 84px; }
+        .dock { padding: 12px 24px calc(10px + var(--sab)); flex-direction: row; align-items: flex-end; }
+        .dock .row { flex: 1; min-height: 0; }
+        .dock .capsule { order: -1; position: absolute; right: 24px; bottom: calc(var(--sab) + 110px); width: 380px; }
+        #scrim[data-light] { background: rgba(5,5,14,.22); backdrop-filter: none; -webkit-backdrop-filter: none; }
+        .sheet.songs { left: auto; right: var(--gutter); bottom: calc(var(--sab) + 108px); width: 440px; height: min(760px, calc(100dvh - var(--sat) - var(--top-h) - 120px)); padding-bottom: 0; border-radius: 24px; box-shadow: var(--shadow-pop); }
+        .sheet.songs .grab, .sheet.acct .grab { display: none; }
+        .sheet.acct { left: auto; right: var(--gutter); top: calc(var(--sat) + var(--top-h) + 4px); bottom: auto; width: 380px; padding: 10px 0 0; border-radius: 22px; box-shadow: var(--shadow-pop); max-height: calc(100dvh - var(--sat) - var(--top-h) - 20px); overflow-y: auto; }
+        .tray { left: 50%; right: auto; transform: translateX(-50%); width: min(760px, calc(100vw - 2 * var(--gutter))); top: calc(var(--sat) + var(--top-h) + 4px); bottom: calc(var(--sab) + 108px); border-radius: 22px; box-shadow: var(--shadow-pop); padding-bottom: 0; }
+        #reader-host .rd { --rd-page-max-h: max(260px, calc(100dvh - var(--sat) - var(--sab) - var(--top-h) - 112px - 310px)); --rd-page-max-h-side: max(300px, calc(100dvh - var(--sat) - var(--sab) - var(--top-h) - 112px - 160px)); }
+      }
+      /* --- landscape tablet / desktop --------------------------------------------------------------- */
+      @media (min-width: 1024px) {
+        :root { --top-h: 64px; }
+        .note-text { font-size: 156px; }
+        .ribbon-wrap { margin-bottom: 8px; }
+        .scope { height: 96px; }
+        .nextup { margin-top: 14px; }
+        .tray { width: min(1040px, calc(100vw - 2 * var(--gutter))); }
+        .sheet.songs { height: min(620px, calc(100dvh - var(--sat) - var(--top-h) - 120px)); }
+        /* the folded import: a pill beside Songs */
+        .imptile { width: auto; max-width: 300px; height: 56px; padding: 0 14px 0 8px; gap: 10px; display: flex; border-radius: 18px; }
+        .imptile .n { display: none; }
+        .imptile .pw { display: flex; flex-direction: column; min-width: 0; }
+        .imptile .pt { font: 650 13.5px/1.2 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+        .imptile .ps { font: 600 11.5px/1.2 var(--mono); color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+      }
+      @media (min-width: 700px) and (max-height: 860px) {
+        .note-text { font-size: 140px; }
+        .scope { height: 80px; }
+        .ribbon-wrap { margin-bottom: 4px; }
+        .level { margin-top: 12px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app" id="app">
+      <header class="top">
+        <a class="brand" href="shell.html" aria-label="Resonate — home"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6f8dff"/><stop offset=".55" stop-color="#a64fff"/><stop offset="1" stop-color="#ff5fa8"/></linearGradient></defs><circle cx="12" cy="12" r="9.5" fill="none" stroke="url(#lg)" stroke-width="2.4"/><path d="M6.5 12.5c1.2 0 1.4-4 2.8-4s1.4 7 2.8 7 1.4-5 2.7-5 1 2 2.7 2" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg><span>Resonate</span></a>
+        <span class="spacer"></span>
+        <span id="version" class="ver mono">v83</span>
+        <button class="avatar" id="avatar" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Account"></button>
+      </header>
+      <main class="home">
+        <section class="tuner" id="tuner" aria-label="Tuner"></section>
+        <button class="nextup" id="nextup" type="button" hidden></button>
+      </main>
+      <footer class="dock">
+        <div class="capsule" id="imp-done" role="status" hidden>
+          <span class="okring"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+          <span class="ct"><span class="t" style="display:block"></span><span class="s" style="display:block"></span></span>
+          <button class="openbtn" type="button">Open</button>
+          <button class="x" type="button" aria-label="Dismiss"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </div>
+        <div class="row">
+          <a class="round rec" id="rec-btn" href="record.html"><span class="bw"><span class="b"></span></span><span class="l">Record</span></a>
+          <button class="round main" id="main-btn" type="button" data-mic="off"><span class="bw"><span class="b"></span></span><span class="l">Start</span></button>
+          <span class="corner">
+            <button class="imptile" id="imp-mini" type="button" hidden>
+              <span class="ringw"><svg viewBox="0 0 40 40" aria-hidden="true"><defs><linearGradient id="imp-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4f7cff"/><stop offset="1" stop-color="#ff5fa8"/></linearGradient></defs><circle cx="20" cy="20" r="17" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="3"/><circle class="arc" cx="20" cy="20" r="17" fill="none" stroke="url(#imp-g)" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 107"/></svg><span class="g">·</span></span>
+              <span class="n mono"></span>
+              <span class="pw"><span class="pt"></span><span class="ps"></span></span>
+            </button>
+            <button class="round songs" id="songs-btn" type="button" aria-haspopup="dialog" aria-expanded="false"><span class="bw"><span class="b"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h9M4 11h9M4 16h5"/><path d="M18 4.5v11"/><circle cx="15.6" cy="16.2" r="2.4"/><path d="M18 4.5c1.2.4 2.3 1.1 2.6 2.6"/></svg></span></span><span class="l">Songs</span></button>
+          </span>
+        </div>
+      </footer>
+    </div>
+
+    <div class="scrim" id="scrim" hidden></div>
+
+    <section class="sheet songs" id="songs" role="dialog" aria-label="Songs" hidden>
+      <div class="grab"></div>
+      <div class="sheet-head"><h2>Songs</h2><span class="spacer"></span>
+        <button class="addbtn" id="add-btn" type="button" aria-haspopup="menu" aria-expanded="false"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add</button></div>
+      <form class="linkrow" id="link-form" hidden>
+        <input id="link-url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="MusicXML link" aria-label="MusicXML link" />
+        <button type="submit">Open</button>
+      </form>
+      <div class="pop addmenu" id="add-menu" role="menu" aria-label="Add a song" hidden>
+        <button class="prow" id="add-pdf" type="button" role="menuitem"><span class="lead l-pdf"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V8z"/><path d="M14 3v5h5"/></svg></span><span class="pl">PDF<small>read in the background</small></span></button>
+        <button class="prow" id="add-xml" type="button" role="menuitem"><span class="lead l-xml"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V8z"/><path d="M14 3v5h5M10 12.5l-2 2.2 2 2.2M14 12.5l2 2.2-2 2.2"/></svg></span><span class="pl">MusicXML<small>.musicxml · .mxl</small></span></button>
+        <button class="prow" id="add-link" type="button" role="menuitem"><span class="lead l-plain"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></span><span class="pl">Link</span></button>
+      </div>
+      <p class="msg" id="songs-msg" role="status" hidden></p>
+      <div class="sheet-body" id="songs-body"></div>
+    </section>
+
+    <section class="sheet acct" id="acct" role="dialog" aria-label="Account" hidden></section>
+
+    <section class="sheet tray" id="tray" role="dialog" aria-label="Reading a PDF" hidden>
+      <div id="reader-host"></div>
+      <div class="traybar" id="tray-bar" hidden><span id="tray-msg"></span><span class="btns"></span></div>
+    </section>
+
+    <div class="toast" id="toast" role="status" hidden></div>
+    <input id="xml-input" type="file" hidden />
+    <input id="pdf-input" type="file" accept=".pdf,application/pdf" hidden />
+
+    <script type="module" src="nav.js?v=83"></script>
+    <script type="module" src="shell/boot.js?v=83"></script>
+  </body>
+</html>

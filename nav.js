@@ -1,8 +1,8 @@
 // Every page: the account link says "Account" when signed in, "Sign in" when not (read from the
 // saved session, so the sign-in library isn't loaded on every page); the space and the cloud
 // sync start here (space.js, sync.js).
-import { savedUser } from "./auth.js?v=82";
-import { ensureSpace, activeSpace, activeDb, park } from "./space.js?v=82";
+import { savedUser } from "./auth.js?v=83";
+import { ensureSpace, activeSpace, activeDb, park } from "./space.js?v=83";
 
 // An email link (confirm / reset) that landed on another page than the account page — Supabase
 // sends it to the project's Site URL (the site's root) when the page that asked isn't on its
@@ -24,7 +24,7 @@ for (const a of document.querySelectorAll("[data-account-link]")) {
 // Cloud sync, for a signed-in account whose data is the one on this device (the library loads
 // only then: signed-out pages stay as light as before).
 if (!handing && user && activeSpace() === user.id) {
-  import("./sync.js?v=82").then((m) => { if (!m.syncOff()) m.start(); }).catch((err) => console.warn("sync", err));
+  import("./sync.js?v=83").then((m) => { if (!m.syncOff()) m.start(); }).catch((err) => console.warn("sync", err));
 }
 
 // Another tab switched whose data this device shows (signed in, out, …): this page still shows
@@ -57,7 +57,7 @@ const ENGINE_LOCK = "resonate-omr-engine";
 let pillGen = 0;
 async function importPill() {
   const gen = ++pillGen;
-  if (/pdf-import\.html$/.test(location.pathname)) return;
+  if (/(pdf-import|shell)\.html$/.test(location.pathname)) return; // (both draw the import themselves)
   let f = null;
   try { f = JSON.parse(localStorage.getItem(IMPORT_FLAG) || "null"); } catch {}
   const here = f && (f.db ? f.db === activeDb() : f.space === activeSpace());
