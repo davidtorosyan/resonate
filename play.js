@@ -11,16 +11,16 @@
 // ▶ plays the view (playtime.js: the song's written timeline, Sing's performance order): a
 // stretch dragged on the page — once or round after round — or from the page's first bar to the
 // end, its notes lit as they sound and the page turning with the music.
-import { spaceChanged } from "./nav.js?v=86";
-import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=86";
-import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=86";
-import { decorate, fullName, labelOf } from "./playnames.js?v=86";
-import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=86";
-import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=86";
-import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=86";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=86";
-import { mountKeyboard } from "./keyboard.js?v=86";
-import { chordMoments } from "./chords.js?v=86";
+import { spaceChanged } from "./nav.js?v=87";
+import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=87";
+import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=87";
+import { decorate, fullName, labelOf } from "./playnames.js?v=87";
+import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=87";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=87";
+import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=87";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=87";
+import { mountKeyboard } from "./keyboard.js?v=87";
+import { chordMoments } from "./chords.js?v=87";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
@@ -2887,7 +2887,7 @@ window.addEventListener("resonate:remote", async (e) => {
 engine().catch(() => {});
 setNames(S.names);
 chordsBtn.setAttribute("aria-pressed", String(S.chords));
-{ const k = recall(K.keys); setKeys(k === "on" ? true : k === "off" ? false : keysDefault()); }
+{ const k = recall(K.keys), sk = window.resonatePlay?.keysOn; setKeys(sk != null ? !!sk : k === "on" ? true : k === "off" ? false : keysDefault()); } // (the shell: its Piano toggle, never 🎹's own setting)
 (async () => {
   const listed = await fillSongs();
   const saved = recall(K.song);
@@ -2905,6 +2905,8 @@ window.resonatePlay = Object.assign(window.resonatePlay || {}, {
   state: () => ({ song: S.song, title: S.title, ready: S.ready, busy: PB.state !== "idle" || PB.starting, held: peeks.some((pk) => pk.held && !pk.dead),
     page: S.page, pages: S.pages, at: S.at, lgen: S.lgen, W: S.W, H: S.H, sp: S.sp, mode: S.mode }),
   resize: () => { clearTimeout(resizeTimer); sized(); },
+  // (the shell's Piano toggle drives the keyboard — its 🎹 is hidden there; kept as 🎹 keeps it)
+  keys: (on) => { if (on != null && !!on !== KB.on) setKeys(!!on); return KB.on; }, // (play.html's 🎹 setting left alone)
 });
 
 // Every head of every page of the current layout, counted from the SVG (tests).

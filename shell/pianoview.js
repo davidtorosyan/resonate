@@ -1,0 +1,224 @@
+// The Piano module on its own (no Score shown): keyboard.js's keyboard docked above the dock, to be
+// played — each finger its own key, held until it lifts. The range is the open song's melody in
+// whole octaves (C3–B5 at least), else C3–B5. With the Score shown the shell drives the Score's own
+// keyboard instead (one keyboard, never two).
+// Sound as Play's presses (play.js): a context of the shell's own (ownContext: asleep when the page
+// is hidden), the piano decoded on it once the keyboard first shows (warm), the first tap anywhere
+// resumes it (the session left alone), a press sets "playback" and strikes in its own pointerdown
+// when the context runs and the piano is in — else as soon as it can (iOS: at the lift, which
+// resumes it; a context replaced after an interruption re-arms the first-tap resume), for
+// LIFT_PLAY, or not at all LATE ms after the lift. Before anything sounds the tuner parks (iOS plays
+// quietly while a page has the mic open) and Sing stops — its 🎤 Pitch mic closed until the keys
+// are quiet (one sound at a time); a tuner that was
+// listening listens again REOPEN ms after the last key lifts. Silent during a Sing take (quiet()).
+// Hidden (the module, the page): every note cut, the context asleep.
+import { mountKeyboard } from "../keyboard.js?v=87";
+import { loadPiano, pianoNow, holdPiano, primeHold, pianoBus, keepAlive, ownContext, sleepAudio } from "../piano.js?v=87";
+import { SHARPS } from "../music.js?v=87";
+
+const MIN_PRESS = 0.25; // s: a quick tap still sounds this long
+const LIFT_PLAY = 0.8; // s: a press that could only sound at the lift
+const LATE = 1500;     // ms
+const MAX_HOLD = 60000;
+const REOPEN = 300;    // ms after the last lift: the tuner listens again (if it was)
+const AWAKE = 120000;  // ms: the output kept awake after the last key (as Play: WebKit's flips)
+const BUS = 0.8, LEVEL = 1.4 / BUS;
+const RESTRIKE = 0.015, SLEEP_TC = 0.002;
+const HAND = { rh: "#a64fff", lh: "#4f7cff" };
+const sleep = (t) => new Promise((r) => setTimeout(r, t));
+const setSession = (type) => { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {} };
+
+// tuner: { state, park(), start() }; beforeSound(): Sing stops (the tuner is parked here);
+// quiet(): true while Sing records; busy(): a module sounds (the tuner isn't reopened then).
+export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => false, busy = () => false }) {
+  const kbEl = el.querySelector(".kb");
+  let ac = null, gate = null, shown = false, range = [48, 83];
+  const held = new Set(); // the keys down: { midi, h (holdPiano), a, t0, end, lift, dead, cap, ts }
+  const sounding = new Set(); // every press whose note may still sound or start (a lifted one waiting for the context too)
+  const log = [];
+  let reopenAt = 0, reopenT = 0, resume = false;
+  const awake = { src: null, timer: 0 };
+
+  const kb = mountKeyboard(kbEl, {
+    range,
+    onPress: (midi, e) => press(midi, e),
+    onRelease: (k, e, cancelled) => lift(k, !!e && !cancelled),
+  });
+
+  // --- the context ----------------------------------------------------------------------------
+  function fresh() {
+    if (!ac || ac.state === "closed" || ac.state === "interrupted") {
+      if (ac && ac.state !== "closed") ac.close().catch(() => {});
+      ac = ownContext(new (window.AudioContext || window.webkitAudioContext)());
+      gate = null;
+      try { pianoBus(ac, BUS); primeHold(ac); } catch {}
+      arm(); // (a new context: the next tap anywhere resumes it too)
+    }
+    return ac;
+  }
+  function warm() { // (the session untouched: making a context and decoding on it changes nothing)
+    try { loadPiano(fresh()).catch(() => {}); } catch (err) { console.info("piano: audio", err?.message); }
+  }
+  const UNLOCK = ["pointerup", "click", "keydown"];
+  function unlock(e) {
+    if (!e.isTrusted || document.visibilityState === "hidden" || (!ac && !shown)) return; // (never shown: no context made for it)
+    for (const t of UNLOCK) document.removeEventListener(t, unlock, true);
+    const a = fresh();
+    if (a.state !== "running") a.resume().catch(() => {});
+    loadPiano(a).catch(() => {});
+  }
+  function arm() { for (const t of UNLOCK) document.addEventListener(t, unlock, true); }
+  arm();
+  // (strikes reach the bus through a gate, cut off at sleep: a damping tail mustn't ring on at the resume)
+  function gateOf(a) {
+    if (gate?.context !== a) { gate = a.createGain(); gate.connect(pianoBus(a, BUS)); }
+    return gate;
+  }
+  function keepAwake(a) {
+    if (!awake.src) { const nodes = []; try { keepAlive(a, nodes); } catch {} awake.src = nodes[0] || null; }
+    clearTimeout(awake.timer);
+    awake.timer = setTimeout(quietDown, AWAKE);
+  }
+  function quietDown() {
+    if (held.size) { awake.timer = setTimeout(quietDown, AWAKE); return; }
+    try { awake.src?.stop(); } catch {}
+    awake.src = null;
+  }
+
+  // --- keys --------------------------------------------------------------------------------------
+  function press(midi, e) {
+    if (quiet()) return null; // (Sing records: silent, not lit)
+    if (!held.size && !reopenT) resume = tuner.state === "listening" || tuner.state === "starting";
+    clearTimeout(reopenT); reopenT = 0;
+    tuner.park(); // (synchronously, before anything sounds: no live mic track)
+    beforeSound();
+    try { if (navigator.audioSession && navigator.audioSession.type !== "playback") setSession("playback"); } catch {}
+    const a = fresh();
+    if (a.state !== "running") a.resume().catch(() => {});
+    const k = { midi, h: null, a: null, t0: 0, end: Infinity, lift: 0, dead: false, cap: 0, ts: e.timeStamp };
+    const piano = a.state === "running" ? pianoNow(a) : null;
+    if (piano) strike(k, a, piano);
+    else { loadPiano(a).catch(() => {}); later(k); }
+    held.add(k);
+    sounding.add(k);
+    k.cap = setTimeout(() => lift(k), MAX_HOLD);
+    lightSoon();
+    return k;
+  }
+  function strike(k, a, piano) {
+    k.a = a;
+    k.t0 = a.currentTime;
+    for (const o of sounding) if (o !== k && o.midi === k.midi && o.h && o.a === a && o.end > k.t0) { o.h.release(k.t0, RESTRIKE); o.end = k.t0; } // (struck again)
+    k.h = holdPiano(a, piano, k.t0, k.midi, LEVEL, { sustain: !k.lift, dest: gateOf(a) });
+    log.push({ midi: k.midi, how: k.lift ? "lift" : "hold", lag: Math.round((performance.now() - k.ts) * 10) / 10 });
+    if (log.length > 40) log.shift();
+    keepAwake(a);
+    if (k.lift) { k.h.release(k.t0 + LIFT_PLAY); k.end = k.t0 + LIFT_PLAY; setTimeout(() => sounding.delete(k), (LIFT_PLAY + 1) * 1000); }
+  }
+  // (couldn't sound at the press: as soon as the context runs with the piano in)
+  async function later(k) {
+    const late = () => k.lift && performance.now() - k.lift > LATE;
+    for (;;) {
+      if (k.dead || late()) { sounding.delete(k); return; }
+      const a = ac;
+      if (a && a.state === "running") {
+        let piano = pianoNow(a);
+        if (!piano) {
+          try { piano = await loadPiano(a); } catch (err) { console.warn("piano", err); sounding.delete(k); return; }
+          if (k.dead || late()) { sounding.delete(k); return; }
+          if (a !== ac || a.state !== "running") continue;
+        }
+        strike(k, a, piano);
+        return;
+      }
+      await sleep(30);
+    }
+  }
+  // (tap: a finger's or the mouse's own up — iOS starts audio only there, so a context a press
+  // couldn't start, a new one after an interruption, is resumed now and the press sounds at the lift)
+  function lift(k, tap = false) {
+    if (!k || k.dead || k.lift) return;
+    if (tap && (!ac || ac.state !== "running")) fresh().resume().catch(() => {});
+    clearTimeout(k.cap);
+    k.lift = performance.now();
+    if (k.h) { const at = Math.max(k.a.currentTime, k.t0 + MIN_PRESS); k.h.release(at); k.end = at; k.dead = true; setTimeout(() => sounding.delete(k), 1500); }
+    held.delete(k);
+    lightSoon();
+    if (held.size) return;
+    if (resume) {
+      reopenT = setTimeout(() => {
+        reopenT = 0;
+        const go = resume;
+        resume = false;
+        if (go && !held.size && !document.hidden && shown && !busy() && !quiet() && tuner.state === "off") { reopenAt = performance.now(); tuner.start(); }
+      }, REOPEN);
+    }
+  }
+  // Every note cut now (hidden, stopped): τ tc.
+  function cutAll(tc = 0.04) {
+    for (const k of sounding) {
+      clearTimeout(k.cap);
+      k.dead = true;
+      if (k.h && k.end > k.a.currentTime - 0.5) { try { k.h.release(k.a.currentTime, tc); } catch {} }
+    }
+    held.clear();
+    sounding.clear();
+    clearTimeout(reopenT); reopenT = 0; resume = false;
+    light();
+  }
+  let litKeys = [], lightRaf = 0;
+  // (drawn on the next frame: the sound first, and the key under the finger isn't replaced mid-press)
+  function lightSoon() { if (!lightRaf) lightRaf = requestAnimationFrame(() => { lightRaf = 0; light(); }); }
+  function light() {
+    const lit = new Map();
+    for (const k of held) {
+      const n = SHARPS[((k.midi % 12) + 12) % 12], hand = k.midi >= 60 ? "rh" : "lh";
+      lit.set(k.midi, { hand, fill: HAND[hand], letter: n[0], acc: n.slice(1) });
+    }
+    kb.setLit(lit);
+    litKeys = [...lit.keys()];
+  }
+
+  // --- asleep: the page hidden or left ------------------------------------------------------------
+  function sleepNow() {
+    cutAll(SLEEP_TC);
+    if (gate) { try { gate.gain.setValueAtTime(0, gate.context.currentTime); gate.disconnect(); } catch {} gate = null; }
+    clearTimeout(awake.timer);
+    try { awake.src?.stop(); } catch {}
+    awake.src = null;
+    sleepAudio(); // (every context the page owns suspended, the session "auto")
+    arm();        // (back: the first tap resumes)
+  }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") sleepNow(); });
+  addEventListener("pagehide", () => {
+    sleepNow();
+    if (ac) ac.close().catch(() => {});
+    ac = null;
+  });
+
+  return {
+    el,
+    show(on) {
+      if (on === shown) return;
+      shown = on;
+      el.hidden = !on;
+      if (on) { kb.remeasure(); kb.forget(); kb.update({ range }); warm(); }
+      else cutAll();
+    },
+    get shown() { return shown; },
+    setRange(rg) { range = rg; if (shown) kb.setRange(rg); },
+    stopAll: () => cutAll(),
+    held: () => held.size,
+    debug: () => ({ shown, range: [...range], held: [...held].map((k) => k.midi), lit: litKeys.slice(), fingers: kb.held(), log: log.slice(), ctx: ac?.state || null,
+      awake: !!awake.src, reopenAt, draws: kb.draws, rect: shown ? (({ left, top, width, height }) => ({ left, top, width, height }))(el.getBoundingClientRect()) : null }),
+  };
+}
+
+// The keyboard's range for a song's notes (midis): whole octaves C…B, C3–B5 at least.
+export function rangeOf(midis) {
+  let lo = Infinity, hi = -Infinity;
+  for (const m of midis) if (Number.isFinite(m)) { lo = Math.min(lo, m); hi = Math.max(hi, m); }
+  lo = Math.min(48, Number.isFinite(lo) ? 12 * Math.floor(lo / 12) : 48);
+  hi = Math.max(83, Number.isFinite(hi) ? 12 * Math.floor(hi / 12) + 11 : 83);
+  return [Math.max(0, lo), Math.min(127, hi)];
+}

@@ -76,7 +76,7 @@ async function run(job) {
   milestone('fetch');
   watchNet(true);
   // OCR engine first: its download/initialization overlaps Java's startup.
-  importScripts(`${job.base}ocr-engine.js?v=86`);
+  importScripts(`${job.base}ocr-engine.js?v=87`);
   self.OmrOcr.configure({ coreDir: `${job.base}tesseract`, tessdataPath: `${job.base}tessdata` });
   const ocrReady = self.OmrOcr.warmup('eng');
 

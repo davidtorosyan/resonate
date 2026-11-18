@@ -6,8 +6,7 @@
 // first time the Score is shown, never before. Another song goes through play.js's own open
 // (resonatePlay.open). play.js lays the music out to its stage's box; the shell tells it when the
 // region changed size (resize), and play.js's own ResizeObserver catches the rest (a rotation).
-import { scopeCss } from "./scopecss.js?v=86";
-import { ic } from "./chrome.js?v=86";
+import { scopeCss } from "./scopecss.js?v=87";
 
 const $ = (id) => document.getElementById(id);
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
@@ -28,8 +27,7 @@ const OVERRIDES = `
 .score-root #bar #names[data-level="all"] { background: #a64fff; border-color: #a64fff; }
 .score-root #bar #names[data-level="some"], .score-root #bar #names[data-level="off"] { background: transparent; }
 .score-root #bar #keys[aria-pressed="true"], .score-root #bar #pdf[aria-pressed="true"] { background: rgba(166,79,255,0.28); border-color: #a64fff; }
-.score-root #bar #to-sing { display: none; gap: 6px; align-items: center; padding: 0 10px; }
-.score-root #bar #to-sing svg { width: 19px; height: 19px; }
+.score-root #bar #keys { display: none !important; } /* (the dock's Piano toggle drives the keyboard) */
 .score-root #stage { border-radius: 0; }
 /* (the tuner's chip and Songs in the bar: not play.html's bar buttons) */
 .score-root #bar .tuner .tmic { padding: 0; border: 0; background: none; min-width: 44px; min-height: 44px; border-radius: 50%; }
@@ -44,9 +42,9 @@ const OVERRIDES = `
 
 // hooks: { beforeSound() — the tuner parks and Sing stops, before a press or ▶ sounds; quiet() —
 // true while Sing records (a press stays silent, ▶ doesn't start); turnKeys() — false when the
-// page-turn keys aren't the Score's (it isn't shown, a sheet is open) }; toSing(): the phone's Sing
-// button in the Score's bar
-export function mountScore({ version, hooks, toSing, onLoad = () => {} }) {
+// page-turn keys aren't the Score's (it isn't shown, a sheet is open) }; keys(): whether the
+// keyboard is on (the dock's Piano toggle) — play.js reads it as its 🎹 setting when it loads
+export function mountScore({ version, hooks, keys = () => null, onLoad = () => {} }) {
   const region = $("score-region");
   let mounting = null, loading = null, P = null, playDebug = null;
   const el = {};
@@ -64,16 +62,8 @@ export function mountScore({ version, hooks, toSing, onLoad = () => {} }) {
       const bar = doc.getElementById("bar");
       for (const n of bar.querySelectorAll(".nav, #version, .brk")) n.remove(); // (the page header's: the shell has its own)
       region.append(document.importNode(bar, true), document.importNode(doc.getElementById("stage"), true), document.importNode(doc.getElementById("dock"), true));
-      const sing = document.createElement("button"); // (a phone: back to Sing alone)
-      sing.id = "to-sing";
-      sing.type = "button";
-      sing.title = "Sing";
-      sing.setAttribute("aria-label", "Sing");
-      sing.innerHTML = `${ic("voice")}`;
-      sing.addEventListener("click", () => toSing());
-      $("bar").querySelector(".ctl").prepend(sing);
       Object.assign(el, { bar: $("bar"), ctl: $("bar").querySelector(".ctl"), pager: $("bar").querySelector(".pager"), play: $("bar").querySelector("#play"),
-        hands: $("hands"), names: $("names"), dock: $("dock"), stage: $("stage"), sing });
+        hands: $("hands"), names: $("names"), dock: $("dock"), stage: $("stage") });
     })().catch((err) => { mounting = null; throw err; }));
   }
   // --- play.js, the first time the Score is shown -----------------------------------------------------
@@ -81,7 +71,8 @@ export function mountScore({ version, hooks, toSing, onLoad = () => {} }) {
     return (loading ||= (async () => {
       await mount();
       window.resonatePlay = Object.assign(window.resonatePlay || {}, hooks, { region: true, playBtn: el.play });
-      await import("../play.js?v=86");
+      window.resonatePlay.keysOn = !!keys(); // (play.js starts with the Piano toggle's keyboard, so it lays out once — play.html's own 🎹 setting untouched)
+      await import("../play.js?v=87");
       P = window.resonatePlay;
       playDebug = window.resonateDebug;
       P.debug = playDebug; // (tests: Play's own resonateDebug, as on play.html)
@@ -104,6 +95,8 @@ export function mountScore({ version, hooks, toSing, onLoad = () => {} }) {
     stopSound: () => { if (P) P.stopAll(); },
     state: () => P?.state() || null,
     resize: () => P?.resize(),
+    // The keyboard on / off (the Piano toggle); before play.js runs, load() hands it keys().
+    setKeys: (on) => { if (P?.keys) P.keys(on); },
     debug: () => (P ? playDebug() : null),
   };
 }

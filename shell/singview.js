@@ -6,12 +6,11 @@
 // The song page around it (songview.js) opens and closes it; a touch that can start sound or a mic
 // in Sing parks the tuner and stops the Score first (beforeSound), synchronously, so Sing's handler
 // finds no live track and sets its own audio session.
-import { ic, device } from "./chrome.js?v=86";
-import { scopeCss } from "./scopecss.js?v=86";
+import { scopeCss } from "./scopecss.js?v=87";
 
 const $ = (id) => document.getElementById(id);
 // Controls in Sing that can't start sound or a mic: a touch there leaves the tuner listening.
-const SILENT = "select, #options-btn, #op-close, #co-more, #mo-close, #rv-close, #rv-save, #tt-close, #ta-close, #save-song, #remove-song, #score-btn, #review-btn, #map, #remote-btn, #tt-pad, #ta-pad, #ta-undo, #ta-prevline, #ta-nextline";
+const SILENT = "select, #options-btn, #op-close, #co-more, #mo-close, #rv-close, #rv-save, #tt-close, #ta-close, #save-song, #remove-song, #review-btn, #map, #remote-btn, #tt-pad, #ta-pad, #ta-undo, #ta-prevline, #ta-nextline";
 
 // The shell's own look for Sing's insides (after the scoped sing.html CSS: same specificity, later wins).
 const OVERRIDES = `
@@ -27,9 +26,6 @@ const OVERRIDES = `
 .sing-root #status:empty { display: none; }
 .sing-root .controls .tool-btn { width: 44px; padding: 0; flex: none; }
 @media (max-width: 699px) { .sing-root .controls select { font-size: 13px; padding: 0 2px 0 6px; } }
-.sing-root #score-btn { gap: 6px; display: inline-flex; align-items: center; justify-content: center; padding: 0 10px; color: var(--text-2); }
-.sing-root #score-btn svg { width: 19px; height: 19px; }
-.sing-root #score-btn .sl { display: none; }
 .sing-root #lane { min-height: 150px; border-radius: 16px; }
 .sing-root #coach { border-radius: 16px; }
 .sing-root .co-link, .sing-root .co-chip, .sing-root #co-btns button, .sing-root #play, .sing-root .seg button,
@@ -38,12 +34,11 @@ const OVERRIDES = `
 .sing-top { display: inline-flex; align-items: center; gap: 6px; }
 .sing-top .remote-btn { min-height: 44px; min-width: 44px; border-radius: 12px; font-size: 14px; }
 @media (max-height: 860px) { .sing-root #chips { max-height: 92px; } }
-@media (min-width: 700px) { .sing-root #score-btn { width: auto; padding: 0 12px; } .sing-root #score-btn .sl { display: inline; } }
 `;
 
 // beforeSound(): the tuner parks and the Score stops (a touch or a start that can sound);
-// onSong(id, title): sing.js opened a song; toScore(): the phone's Score button (Sing's head).
-export function mountSing({ version, beforeSound, onSong, toScore, onLoad = () => {} }) {
+// onSong(id, title): sing.js opened a song.
+export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
   const region = $("sing-region"), top = $("sing-top");
   let loading = null;  // the load's promise (markup + CSS + sing.js)
   let S = null;        // window.resonateSing once sing.js runs
@@ -55,7 +50,7 @@ export function mountSing({ version, beforeSound, onSong, toScore, onLoad = () =
     return (loading ||= (async () => {
       if (!mounted) await mount();
       mounted = true;
-      await import("../sing.js?v=86");
+      await import("../sing.js?v=87");
       S = window.resonateSing;
       singDebug = window.resonateDebug;
       singBusy = window.resonateBusy;
@@ -81,15 +76,6 @@ export function mountSing({ version, beforeSound, onSong, toScore, onLoad = () =
     const rows = main.querySelectorAll(".controls");
     const head = rows[1];
     head.append($("save-song"), $("remove-song"));
-    const score = document.createElement("button");
-    score.id = "score-btn";
-    score.className = "tool-btn";
-    score.type = "button";
-    score.title = "Score";
-    score.setAttribute("aria-label", "Score");
-    score.innerHTML = `${ic("score")}<span class="sl">Score</span>`;
-    score.hidden = device() !== "phone"; // (a tablet / desktop: the top bar's Sing · Score)
-    head.append(score);
     head.append(take("#status"));
     // 📡 and the assistant's chip: the top bar.
     top.append(take("#assistant-chip"), take("#remote-btn"));
@@ -113,9 +99,8 @@ export function mountSing({ version, beforeSound, onSong, toScore, onLoad = () =
     layer.className = "sing-scope";
     layer.id = "sing-layer";
     for (const id of ["drop", "getready", "options", "taptempo", "tapalong", "more", "review"]) layer.append(take(`#${id}`));
-    document.body.append(layer);
+    document.body.insertBefore(layer, $("places")); // (before Record / Voice / Assistants: sing.js finds its own ids first)
 
-    score.addEventListener("click", () => toScore()); // (a phone: the Score alone, and back from its bar)
     // A touch that can start sound or a mic parks the tuner and stops the Score first (capture:
     // before Sing's handlers).
     const park = (e) => {
@@ -151,13 +136,14 @@ export function mountSing({ version, beforeSound, onSong, toScore, onLoad = () =
     top.hidden = !on;
     if (lw) lw.hidden = !on;
     if (singBtn) singBtn.hidden = !on;
-    if (mounted) $("score-btn").hidden = device() !== "phone"; // (a tablet / desktop: the top bar's Sing · Score)
   }
 
   return {
     load, open, stopAll, closeSheet, sheetOpen, show,
     get loaded() { return !!S; },
     state: () => S?.state() || null,
+    // (another module sounds: Sing's 🎤 Pitch mic closes now, and listens again once it's quiet)
+    hush: (on) => { try { S?.hush?.(on); } catch {} },
     busy: () => !!singBusy?.(),
     debug: () => (S ? singDebug() : null),
   };

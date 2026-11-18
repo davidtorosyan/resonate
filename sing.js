@@ -2,23 +2,23 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=86";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=86";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=86";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=86";
-import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=86";
-import * as P from "./practice.js?v=86";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=86";
-import { startCapture, playVoice } from "./capture.js?v=86";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=86";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=86";
-import { listSongs, getSong, addSong, removeSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=86";
-import { SAMPLES, songXml } from "./catalog.js?v=86";
-import { activeProfile } from "./profiles.js?v=86";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=86";
-import { DATA_KEYS } from "./space.js?v=86";
-import { spaceChanged } from "./nav.js?v=86";
-import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=86";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=87";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=87";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=87";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=87";
+import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=87";
+import * as P from "./practice.js?v=87";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=87";
+import { startCapture, playVoice } from "./capture.js?v=87";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=87";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=87";
+import { listSongs, getSong, addSong, removeSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=87";
+import { SAMPLES, songXml } from "./catalog.js?v=87";
+import { activeProfile } from "./profiles.js?v=87";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=87";
+import { DATA_KEYS } from "./space.js?v=87";
+import { spaceChanged } from "./nav.js?v=87";
+import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=87";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -1581,6 +1581,7 @@ const YOU_WINDOW = 0.2;  // s of pitch frames the readout takes the median of
 const MIC = { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } };
 const setSession = (type) => { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {} };
 let mon = null;          // { micCtx, analyser, read, stream, source, opening, timer, raf, quietUntil }
+let hushed = false;      // the one-page shell: another module sounds (its Piano, the Score) — the mic stays closed as for a key (never set on sing.html)
 const youFrames = [];    // recent { t (s, performance clock), midi | null }
 
 function monitorOn() {
@@ -1591,7 +1592,7 @@ function monitorOn() {
   setSession("play-and-record");
   const micCtx = ownContext(new (window.AudioContext || window.webkitAudioContext)());
   micCtx.resume().catch(() => {});
-  if (keys.size || starting === "play" || (session && session.kind !== "sing")) setSession("playback");
+  if (keys.size || hushed || starting === "play" || (session && session.kind !== "sing")) setSession("playback");
   const analyser = micCtx.createAnalyser();
   analyser.fftSize = FFT_SIZE;
   analyser.smoothingTimeConstant = 0;
@@ -1625,7 +1626,7 @@ function monitorOff() {
   renderLane();
 }
 
-const monitorListens = () => mon && !session && !drill && !gblock && !starting && !keys.size && !document.hidden;
+const monitorListens = () => mon && !hushed && !session && !drill && !gblock && !starting && !keys.size && !document.hidden;
 
 // Open or close the monitor's mic to match what's going on; reopening can wait `delay` ms.
 function monitorSync(delay = 0) {
@@ -1723,7 +1724,7 @@ function renderYou() {
   const j = youTarget();
   const target = j >= 0 ? notes[j] : null;
   let state = "", big = "–", cents = "", vs = "";
-  if (!sing && keys.size) {
+  if (!sing && (keys.size || hushed)) {
     // A key sounds (the mic is closed meanwhile): show the note to match.
     state = "hear";
     big = target ? target.name : "♪";
@@ -3814,6 +3815,14 @@ window.resonateSing = Object.assign(window.resonateSing || {}, {
   open: async (id) => { await refreshLibrary(); return selectSong(id); },
   stopAll,
   state: () => ({ busy: busyNow() || !!getReady, take: session?.kind === "sing" || starting === "sing", song: scoreId, title: score?.title || "" }),
+  // (the shell, synchronously before its Piano or the Score sounds: on — the monitor's mic closes now;
+  // off once they're quiet — it listens again MON_RESUME later, as after Sing's own keys)
+  hush: (on) => {
+    on = !!on;
+    if (on === hushed) return;
+    hushed = on;
+    if (mon) monitorSync(on ? 0 : MON_RESUME);
+  },
 });
 
 // Debug hook for automated tests / devtools.

@@ -1,11 +1,11 @@
 // Songs (bottom right): My songs and the samples, + Add (PDF in the background, MusicXML, a link),
 // and home's Next-up card (the song open last). Choosing a song makes it the open song the way Sing
 // does (resonate.sing.song) and opens it in place with Sing (singview.js, set by boot.js).
-import { listSongs, addSong, listPdfIds } from "../library.js?v=86";
-import { SAMPLES } from "../catalog.js?v=86";
-import { readScoreFile, parseMusicXml } from "../musicxml.js?v=86";
-import { spaceChanged } from "../nav.js?v=86";
-import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=86";
+import { listSongs, addSong, listPdfIds } from "../library.js?v=87";
+import { SAMPLES } from "../catalog.js?v=87";
+import { readScoreFile, parseMusicXml } from "../musicxml.js?v=87";
+import { spaceChanged } from "../nav.js?v=87";
+import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=87";
 
 const SONG_KEY = "resonate.sing.song";
 const $ = (id) => document.getElementById(id);
@@ -18,7 +18,7 @@ function setOpenSong(id, { newSong = false } = {}) {
     if (newSong) localStorage.removeItem("resonate.sing.verse"); // (as Sing's import)
   } catch {}
 }
-let opener = null; // (boot.js: the song in place — Sing, the Score)
+let opener = null; // (boot.js: the song in place — Sing, the Score; opts { sing, score }: shown for it)
 export const setOpener = (fn) => { opener = fn; };
 export function openSong(id, opts = {}) {
   setOpenSong(id);
@@ -30,26 +30,8 @@ const age = (t) => {
   const d = (Date.now() - t) / 864e5;
   return d < 1 ? "new" : d < 7 ? `${Math.floor(d)}d` : d < 60 ? `${Math.floor(d / 7)}w` : `${Math.floor(d / 30)}mo`;
 };
-// A seeded little melody, drawn like a lane: the song's tile art (no score is read for it).
-function contour(seed) {
-  let r = 0;
-  for (const c of String(seed)) r = (r * 31 + c.charCodeAt(0)) % 2147483647;
-  r = r || 7;
-  const rnd = () => (r = (r * 16807) % 2147483647) / 2147483647;
-  let m = 6, t = 0, out = "";
-  while (t < 108) {
-    const d = [8, 8, 14, 14, 20][Math.floor(rnd() * 5)];
-    m = Math.max(1, Math.min(11, m + Math.round((rnd() - 0.5) * 5)));
-    out += `<rect x="${6 + t}" y="${4 + m * 4.4}" width="${d - 2}" height="4" rx="2"/>`;
-    t += d + (rnd() < 0.15 ? 6 : 0);
-  }
-  return `<svg viewBox="0 0 120 64" preserveAspectRatio="none" aria-hidden="true"><g fill="rgba(255,255,255,.88)">${out}</g></svg>`;
-}
-const GRADS = ["#2a1f63,#5b34a8 70%,#8c4fe8", "#45163b,#93306a 70%,#d84a8e", "#13285a,#2a50a8 70%,#4473e6", "#123c34,#1f7a66 70%,#2fb894"];
-const gradFor = (id) => { let h = 0; for (const c of String(id)) h = (h + c.charCodeAt(0)) % GRADS.length; return `linear-gradient(150deg,${GRADS[h]})`; };
-
 // A song's title without reading it: the library's index, or a sample's.
-async function titleOf(id) {
+export async function titleOf(id) {
   if (SAMPLES[id]) return SAMPLES[id].title;
   try { return (await listSongs()).find((s) => s.id === id)?.title || null; } catch { return null; }
 }
@@ -213,15 +195,16 @@ export function normalizeLink(url) {
   return u.toString();
 }
 
-// Home's Next-up card: the song open last, ▶ into Sing (it advertises a singing step).
+// Home's Next-up: a small chip just above Songs — "▶ Amazing Grace", the song open last; a tap opens
+// it with Sing (it advertises a singing step).
 export async function mountNextUp(el) {
   const id = openSongId();
   const title = id ? await titleOf(id) : null;
   el.hidden = !title;
   if (!title) return;
-  el.innerHTML = `<span class="thumb" style="background:${gradFor(id)}">${contour(id)}</span>
-    <span class="mid"><span class="t"></span><span class="s">Last song</span></span><span class="go">${fic("play")}</span>`;
+  el.innerHTML = `<span class="go">${fic("play")}</span><span class="t"></span>`;
   el.querySelector(".t").textContent = title;
+  el.title = title;
   el.setAttribute("aria-label", `${title} — sing`);
-  el.onclick = () => openSong(id, { sing: true }); // (it advertises a singing step: Sing shows)
+  el.onclick = () => openSong(id, { sing: true });
 }

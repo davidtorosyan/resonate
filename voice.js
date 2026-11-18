@@ -5,12 +5,14 @@
 // then does the same going up. The lowest and highest notes held are your limits; the
 // comfortable range starts a few notes inside them and can be adjusted by hand.
 
-import { openMic, createReader, FFT_SIZE } from "./pitch.js?v=86";
-import { loadPiano, holdPiano, ownContext, sleepAudio } from "./piano.js?v=86";
-import { noteName, median } from "./music.js?v=86";
-import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=86";
+import { openMic, createReader, FFT_SIZE } from "./pitch.js?v=87";
+import { loadPiano, holdPiano, ownContext, sleepAudio } from "./piano.js?v=87";
+import { noteName, median } from "./music.js?v=87";
+import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=87";
 
-const $ = (id) => document.getElementById(id);
+// (In the one-page shell this page is mounted in a sheet: its own elements first — the Score has a
+// #strip too. On voice.html resonateVoice isn't set: the document.)
+const $ = (id) => window.resonateVoice?.root?.querySelector(`#${id}`) || document.getElementById(id);
 const statusEl = $("status");
 const msgEl = $("msg");
 const testEl = $("test");
@@ -89,7 +91,7 @@ function renderRange(prof) {
   } else {
     const when = r.at ? `Tested ${new Date(r.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : "Preset";
     $("range-text").textContent = `${when} · tap a note to hear it`;
-    for (const el of document.querySelectorAll(".stepper")) renderStepper(el, r);
+    for (const el of (window.resonateVoice?.root || document).querySelectorAll(".stepper")) renderStepper(el, r);
   }
   renderStrip(r);
 }
@@ -280,7 +282,7 @@ async function startRun(kind) {
       return;
     }
     ownContext(mic.ac);
-    if (document.hidden) { statusEl.textContent = "idle"; return mic.close(); } // (hidden while it opened)
+    if (document.hidden || window.resonateVoice?.gone?.()) { statusEl.textContent = "idle"; return mic.close(); } // (hidden — or the shell's sheet closed — while it opened)
     run = { kind, mic, read: mic.read, raf: 0, lastT: 0, recent: [], phase: "", phaseT: performance.now() };
   } else {
     // Inside the tap: both contexts start now (playback first, then the microphone's).
@@ -616,4 +618,16 @@ if (!navigator.mediaDevices?.getUserMedia) statusEl.textContent = "mic API unava
 // Profiles changed by the cloud sync (sync.js): show them, unless a test is running.
 window.addEventListener("resonate:remote", (e) => { if (e.detail?.profiles && !run) render(); });
 render();
+// The one-page shell (shell.html) mounts this page in a sheet: closing it stops a test and a note
+// that sounds; opening it again shows the profiles as they are. (On voice.html nothing calls these.)
+window.resonateVoice = Object.assign(window.resonateVoice || {}, {
+  stopAll: async () => {
+    hearGen++;
+    if (heard && playCtx?.state === "running") heard.release(playCtx.currentTime, 0.002);
+    heard = null;
+    if (run) { await stopRun(); showMsg(""); }
+  },
+  render: () => { if (!run) render(); },
+  state: () => ({ run: run?.kind || null, phase: run?.phase || null }),
+});
 window.resonateDebug = () => ({ run: run && { kind: run.kind, phase: run.phase, target: run.target, dir: run.dir, best: run.best, anchor: run.anchor, mic: !!(run.stream || run.mic) }, profiles: loadProfiles() });

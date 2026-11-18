@@ -1,16 +1,17 @@
 // The Reader tray: PDF → Song in the background, never leaving the page. The importer
 // (omr/importer.js, its jobs in omr/jobs.js) runs the conversion in its worker; the Reader
 // (omr/reader.js) draws it — as a sheet on a phone, a panel above the dock on a tablet — and ⌄
-// folds it into a tile (a pill on a wide screen) beside Songs. Done: "✓ Title · ready  Open ✕".
+// folds it into a tile (a pill on a wide screen) beside Songs. Done: "✓ Title · ready  Open ✕", and
+// the Reader's own Sing it / Play it open the song in place with Sing / the Score shown.
 // As pdf-import.js: a reload continues an unfinished import of this space, the Reader's ✕ (two
 // taps) stops and forgets it, a stage that stopped twice offers Skip / Retry, the importer holds the
 // engine's Web Lock and the screen wake lock, and pagehide stops the engine.
-import { createImporter } from "../omr/importer.js?v=86";
-import { mount as mountReader } from "../omr/reader.js?v=86";
-import { readFlag } from "../omr/jobs.js?v=86";
-import { activeSpace, activeDb } from "../space.js?v=86";
-import { etaText } from "../omr/readerstate.js?v=86";
-import { ic, esc, openOverlay, closeOverlay, overlayOpen } from "./chrome.js?v=86";
+import { createImporter } from "../omr/importer.js?v=87";
+import { mount as mountReader } from "../omr/reader.js?v=87";
+import { readFlag } from "../omr/jobs.js?v=87";
+import { activeSpace, activeDb } from "../space.js?v=87";
+import { etaText } from "../omr/readerstate.js?v=87";
+import { ic, esc, openOverlay, closeOverlay, overlayOpen, pageOpen } from "./chrome.js?v=87";
 
 const $ = (id) => document.getElementById(id);
 const STAGE = { prep: "pages", boot: "engine", export: "MusicXML", save: "saving" };
@@ -100,6 +101,16 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     barMsg.textContent = text;
     bar.querySelector(".btns").innerHTML = btns.join("");
   }
+  // The Reader's Sing it / Play it: the new song in place, with Sing or the Score shown.
+  host.addEventListener("click", (e) => {
+    const a = e.target.closest?.(".rd-sing, .rd-play");
+    const id = result?.songId;
+    if (!a || !id || e.button || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    if (overlayOpen("tray")) closeOverlay({ keepHistory: !pageOpen() }); // (its history entry becomes the song's — openPage — unless a song has its own)
+    clear();
+    openSong(id, a.classList.contains("rd-play") ? { score: true } : { sing: true });
+  });
   bar.addEventListener("click", (e) => {
     const act = e.target.closest("[data-act]")?.dataset.act;
     if (act === "skip" || act === "retry") { running = false; continueJob({ id: jobId, name: jobName, size: 0 }, { [act]: true }); }

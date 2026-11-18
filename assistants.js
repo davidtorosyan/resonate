@@ -1,10 +1,12 @@
 // Assistants (v73): connect ChatGPT / Claude to the account (the MCP server's URL), see and
 // remove connected assistants (Supabase Auth OAuth grants), and the account's devices — which
 // one has 📡 Remote on (switched on only from that device's Sing page; off from here too).
-import { SUPABASE_URL } from "./auth.js?v=86";
-import { ready, device, renameDevice } from "./assist.js?v=86";
+import { SUPABASE_URL } from "./auth.js?v=87";
+import { ready, device, renameDevice } from "./assist.js?v=87";
 
-const $ = (id) => document.getElementById(id);
+// (In the one-page shell this page is mounted in a sheet: its own elements first — the Voice sheet has
+// a #msg too. On assistants.html resonateAssistants isn't set: the document.)
+const $ = (id) => window.resonateAssistants?.root?.querySelector(`#${id}`) || document.getElementById(id);
 const msg = $("msg");
 const say = (text = "", kind = "") => { msg.textContent = text; msg.dataset.kind = kind; };
 const MCP_URL = `${SUPABASE_URL}/functions/v1/mcp`;
@@ -115,4 +117,7 @@ if (!c) {
   showDevices();
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { showGrants(); showDevices(); } });
 }
+// The one-page shell (shell.html) mounts this page in a sheet: opening it again reads the lists again.
+// (On assistants.html nothing calls this.)
+window.resonateAssistants = Object.assign(window.resonateAssistants || {}, { refresh: () => { if (c) { showGrants(); showDevices(); } } });
 window.resonateDebug = () => ({ ready: !!c, url: MCP_URL, grants: $("grants").textContent, devices: $("devices").textContent });
