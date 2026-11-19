@@ -6,7 +6,7 @@
 //   barsText(doc, T, facts, { bars, keep, chords, number }) → text
 //   sliceMeasures(xml, from, to) → the MusicXML with only measures [from, to] (indices) of each part
 
-import { fullName } from "./playnames.js?v=87";
+import { fullName } from "./playnames.js?v=88";
 
 const kids = (el, name) => { const out = []; for (const c of el.children) if (c.nodeName === name) out.push(c); return out; };
 const kid = (el, name) => { for (const c of el.children) if (c.nodeName === name) return c; return null; };

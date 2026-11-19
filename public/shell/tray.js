@@ -8,12 +8,12 @@
 // engine's Web Lock and the screen wake lock, and pagehide stops the engine.
 // A song's stored PDF read again (the Score's 📄 → resonatePlay.reprocess): the same run in the tray;
 // its result replaces the song's MusicXML under its id, and an open song loads it again (onReplaced).
-import { createImporter } from "../omr/importer.js?v=87";
-import { mount as mountReader } from "../omr/reader.js?v=87";
-import { readFlag } from "../omr/jobs.js?v=87";
-import { activeSpace, activeDb } from "../space.js?v=87";
-import { etaText } from "../omr/readerstate.js?v=87";
-import { ic, esc, openOverlay, closeOverlay, overlayOpen, pageOpen } from "./chrome.js?v=87";
+import { createImporter } from "../omr/importer.js?v=88";
+import { mount as mountReader } from "../omr/reader.js?v=88";
+import { readFlag } from "../omr/jobs.js?v=88";
+import { activeSpace, activeDb } from "../space.js?v=88";
+import { etaText } from "../omr/readerstate.js?v=88";
+import { ic, esc, openOverlay, closeOverlay, overlayOpen, pageOpen } from "./chrome.js?v=88";
 
 const $ = (id) => document.getElementById(id);
 const STAGE = { prep: "pages", boot: "engine", export: "MusicXML", save: "saving" };

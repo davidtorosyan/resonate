@@ -3,16 +3,16 @@
 // Piano) sit beside it; a PDF is read in the background (the Reader tray); the avatar (top right)
 // opens the account menu. nav.js ran first (shell.html), so whose
 // data the device shows is settled before anything here reads it.
-import { spaceChanged } from "../nav.js?v=87";
-import { mountTuner, tunerHtml } from "./tuner.js?v=87";
-import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=87";
-import { mountSongView } from "./songview.js?v=87";
-import { mountTray } from "./tray.js?v=87";
-import { mountAccount } from "./account-menu.js?v=87";
-import { ic, fic, device, overlayOpen } from "./chrome.js?v=87";
-import { fadeIn } from "./motion.js?v=87";
-import { mountPlaces } from "./places.js?v=87";
-import { mountRemote } from "./remote.js?v=87";
+import { spaceChanged } from "../nav.js?v=88";
+import { mountTuner, tunerHtml } from "./tuner.js?v=88";
+import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=88";
+import { mountSongView } from "./songview.js?v=88";
+import { mountTray } from "./tray.js?v=88";
+import { mountAccount } from "./account-menu.js?v=88";
+import { ic, fic, device, overlayOpen } from "./chrome.js?v=88";
+import { fadeIn } from "./motion.js?v=88";
+import { mountPlaces } from "./places.js?v=88";
+import { mountRemote } from "./remote.js?v=88";
 
 const $ = (id) => document.getElementById(id);
 const version = $("version").textContent.trim();

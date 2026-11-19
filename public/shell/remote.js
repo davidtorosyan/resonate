@@ -10,8 +10,8 @@
 // place with the Score shown (score_open's song, else the song open, else the one Sing has) — for
 // that song only, the modules pref untouched — and run in play.js (resonatePlay.scoreRun); what the
 // Score shows goes with this device's state while it's shown.
-import { remote } from "../assist.js?v=87";
-import { songChoices } from "../catalog.js?v=87";
+import { remote } from "../assist.js?v=88";
+import { songChoices } from "../catalog.js?v=88";
 
 const $ = (id) => document.getElementById(id);
 const HOME = { page: "home", song: null, key: null, tempo: null, doing: "idle", line: null, lines: 0, has_take: false, sound: "none" };

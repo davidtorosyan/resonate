@@ -6,7 +6,7 @@
 // first time the Score is shown, never before. Another song goes through play.js's own open
 // (resonatePlay.open). play.js lays the music out to its stage's box; the shell tells it when the
 // region changed size (resize), and play.js's own ResizeObserver catches the rest (a rotation).
-import { scopeCss } from "./scopecss.js?v=87";
+import { scopeCss } from "./scopecss.js?v=88";
 
 const $ = (id) => document.getElementById(id);
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
@@ -73,7 +73,7 @@ export function mountScore({ version, hooks, keys = () => null, onLoad = () => {
       await mount();
       window.resonatePlay = Object.assign(window.resonatePlay || {}, hooks, { region: true, playBtn: el.play });
       window.resonatePlay.keysOn = !!keys(); // (play.js starts with the Piano toggle's keyboard, so it lays out once — play.html's own 🎹 setting untouched)
-      await import("../play.js?v=87");
+      await import("../play.js?v=88");
       P = window.resonatePlay;
       playDebug = window.resonateDebug;
       P.debug = playDebug; // (tests: Play's own resonateDebug, as on play.html)

@@ -6,10 +6,10 @@
 // and "docked" (a tablet / desktop with a song open) — one DOM, laid out by data-form; the small
 // forms carry their own mic button (.tmic) and a state word: "parked · tap to listen" while a song
 // is open and the mic is off, "take" / "paused" while the song holds the sound (setHold).
-import { openMic, createYin, MIN_RMS, MIN_CLARITY, MIN_FREQ, MAX_FREQ, FFT_SIZE } from "../pitch.js?v=87";
-import { SHARPS } from "../music.js?v=87";
-import { activeProfile } from "../profiles.js?v=87";
-import { ic } from "./chrome.js?v=87";
+import { openMic, createYin, MIN_RMS, MIN_CLARITY, MIN_FREQ, MAX_FREQ, FFT_SIZE } from "../pitch.js?v=88";
+import { SHARPS } from "../music.js?v=88";
+import { activeProfile } from "../profiles.js?v=88";
+import { ic } from "./chrome.js?v=88";
 
 const PITCH_WINDOW_MS = 1500; // long window: the cents number and needle
 const SWITCH_WINDOW_MS = 300; // short window: is the singer still on the shown note?

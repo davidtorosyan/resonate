@@ -13,14 +13,14 @@
 // Motion (motion.js): a song's modules slide up from the bottom once they're ready (no blank frame),
 // the tuner shrinks into its small form, the wordmark folds; closing reverses it. The avatar, Songs
 // and the toggles never move.
-import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=87";
-import { mountSing } from "./singview.js?v=87";
-import { mountScore } from "./scoreview.js?v=87";
-import { mountPiano, rangeOf } from "./pianoview.js?v=87";
-import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=87";
-import { loadSong } from "../catalog.js?v=87";
-import { parseMusicXml } from "../musicxml.js?v=87";
-import { titleOf } from "./songlist.js?v=87";
+import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=88";
+import { mountSing } from "./singview.js?v=88";
+import { mountScore } from "./scoreview.js?v=88";
+import { mountPiano, rangeOf } from "./pianoview.js?v=88";
+import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=88";
+import { loadSong } from "../catalog.js?v=88";
+import { parseMusicXml } from "../musicxml.js?v=88";
+import { titleOf } from "./songlist.js?v=88";
 
 const $ = (id) => document.getElementById(id);
 const PREF = "resonate.shell.modules"; // { phone | tablet | desktop: ["sing", "score", "piano"] } — this device's
