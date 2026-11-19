@@ -21,7 +21,7 @@
 
 import { supabase, savedUser } from "./auth.js?v=87";
 import { activeSpace, SYNC_META } from "./space.js?v=87";
-import { listSongs, getSong, putSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, countClips, listTakes, getTake, putTake, removeTake, persistent, dbGen } from "./library.js?v=87";
+import { listSongs, getSong, putSong, replaceSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, countClips, listTakes, getTake, putTake, removeTake, persistent, dbGen } from "./library.js?v=87";
 
 export const SONG_LIMIT = 10;
 const FILE_LIMIT = 10 * 1024 * 1024;
@@ -95,10 +95,12 @@ async function localItems(meta) {
   for (const s of songs) {
     if (!synced.has(s.id)) continue;
     let info = meta.info[s.id];
-    if (!info) {
+    // (a song whose MusicXML was replaced under its id — its PDF processed again — has a new rev:
+    // its content is read again, and the new sha sends it up)
+    if (!info || (info.rev ?? null) !== (s.rev ?? null)) {
       const full = await getSong(s.id);
       if (!full) { synced.delete(s.id); continue; }
-      info = meta.info[s.id] = { sha: await sha256(full.xml), source: full.source || null };
+      info = meta.info[s.id] = { ...(info || {}), sha: await sha256(full.xml), source: full.source || null, rev: s.rev ?? null };
     }
     put("song", s.id, { title: s.title, added: s.added, source: info.source, sha: info.sha, pdf: pdfs.has(s.id) });
   }
@@ -252,6 +254,7 @@ async function apply(sb, row, meta, changed, uid) {
     } else {
       const have = await getSong(id);
       const title = String(data.title ?? "").slice(0, 300) || "Song";
+      let keptSha = null;
       if (!have) {
         if (typeof data.xml?.path !== "string") throw permanent("no file");
         const blob = await sb.storage.from(BUCKET).download(data.xml.path);
@@ -265,7 +268,22 @@ async function apply(sb, row, meta, changed, uid) {
         const xml = await gunzipText(await blob.data.arrayBuffer());
         guard();
         await putSong({ id, title, xml, added: Number(data.added) || Date.now(), ...(data.source ? { source: String(data.source) } : {}) }, { quiet: true });
-      } else if (have.title !== title) { guard(); await putSong({ ...have, title }, { quiet: true }); }
+      } else {
+        // Here already: new content under the same id (its PDF processed again on another device)
+        // replaces ours — the song's settings stay; a title changed alone is just renamed.
+        const info = meta.info[id];
+        const ours = info?.sha && (info.rev ?? null) === (have.rev ?? null) ? info.sha : await sha256(have.xml);
+        let xml = null;
+        if (data.sha && ours !== data.sha && typeof data.xml?.path === "string") {
+          const blob = await sb.storage.from(BUCKET).download(data.xml.path);
+          if (blob.error && !notFound(blob.error)) throw blob.error;
+          if (!blob.error) xml = await gunzipText(await blob.data.arrayBuffer());
+        }
+        guard();
+        if (xml !== null) { await replaceSong(id, xml, { title, quiet: true }); (changed.replaced ||= new Set()).add(id); }
+        else if (have.title !== title) await putSong({ ...have, title }, { quiet: true });
+        if (xml === null && data.sha && ours !== data.sha) keptSha = ours; // (the cloud's file wasn't there: ours stays, known as ours)
+      }
       // Its original PDF (PDF → Song), when the cloud has it and this device doesn't — on a
       // best-effort basis: a PDF that can't be had (no room here…) never holds up the pull.
       if (typeof data.pdf?.path === "string" && !(await getPdf(id))) {
@@ -279,9 +297,9 @@ async function apply(sb, row, meta, changed, uid) {
         }
       }
       dropOrphans(meta, uid, id); // (its files are live)
-      meta.info[id] = { sha: String(data.sha ?? ""), source: data.source ?? null, pdf: !!data.pdf };
       // What this device now has, in its sync form (so nothing echoes back as a change).
       const stored = await getSong(id);
+      meta.info[id] = { sha: keptSha ?? String(data.sha ?? ""), source: data.source ?? null, pdf: !!data.pdf, rev: stored?.rev ?? null };
       h = fingerprint({ title: stored?.title ?? title, added: stored?.added ?? data.added, source: meta.info[id].source, sha: meta.info[id].sha, pdf: !!(await getPdf(id)) });
     }
     for (const [sid, why] of Object.entries(meta.held)) if (why === "full") delete meta.held[sid];

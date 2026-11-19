@@ -6,6 +6,8 @@
 // As pdf-import.js: a reload continues an unfinished import of this space, the Reader's ✕ (two
 // taps) stops and forgets it, a stage that stopped twice offers Skip / Retry, the importer holds the
 // engine's Web Lock and the screen wake lock, and pagehide stops the engine.
+// A song's stored PDF read again (the Score's 📄 → resonatePlay.reprocess): the same run in the tray;
+// its result replaces the song's MusicXML under its id, and an open song loads it again (onReplaced).
 import { createImporter } from "../omr/importer.js?v=87";
 import { mount as mountReader } from "../omr/reader.js?v=87";
 import { readFlag } from "../omr/jobs.js?v=87";
@@ -17,7 +19,7 @@ const $ = (id) => document.getElementById(id);
 const STAGE = { prep: "pages", boot: "engine", export: "MusicXML", save: "saving" };
 const RING = 2 * Math.PI * 17;
 
-export function mountTray({ version, spaceChanged, openSong, onChange = () => {} }) {
+export function mountTray({ version, spaceChanged, openSong, onChange = () => {}, onReplaced = () => {} }) {
   const sheet = $("tray"), host = $("reader-host"), bar = $("tray-bar"), barMsg = $("tray-msg");
   const mini = $("imp-mini"), doneRow = $("imp-done");
   let reader = null, running = false, unsaved = false, state = "idle", jobId = null, jobName = "";
@@ -146,6 +148,18 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     log.push(`Resonate ${version} · ${new Date().toISOString()}`, navigator.userAgent, `PDF ${((file.size || 0) / 1e6).toFixed(1)} MB · ${file.name}`);
     return drive({ name: file.name }, () => imp.start(file));
   }
+  // A song's PDF read again — one PDF at a time: while another is read, it says so and starts nothing.
+  async function reprocess(id) {
+    if (running || imp.busy()) { flash("Another PDF is being read — try again once it's done"); return false; }
+    // (an import waiting on Skip / Retry isn't running, but it's this space's job: finish or ✕ it first)
+    if (await imp.pending().catch(() => null)) { flash("Another PDF is waiting — finish or ✕ it first"); return false; }
+    if (running || imp.busy()) return false;
+    clear();
+    log.length = 0;
+    log.push(`Resonate ${version} · ${new Date().toISOString()}`, navigator.userAgent, `[reprocess] song ${id}`);
+    drive({ name: "" }, () => imp.reprocess(id));
+    return true;
+  }
   function continueJob(job, opts = {}, { minimized = false } = {}) {
     return drive(job, async () => {
       if (!events.length || events.every((e) => e.t === "job")) {
@@ -200,6 +214,7 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     title = res.title || title;
     renderBar();
     renderMini();
+    if (res.replaced && res.songId) { try { onReplaced(res.songId); } catch (err) { console.warn("replaced", err); } }
   }
   function fail(err) {
     console.warn(err);
@@ -225,7 +240,7 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     document.body.toggleAttribute("data-done", !!result); // (a green ring on Songs)
     if (result) {
       doneRow.querySelector(".t").textContent = result.title || title || "Song";
-      doneRow.querySelector(".s").innerHTML = result.songId ? `<b>ready</b> · ${result.pages.length} page${result.pages.length === 1 ? "" : "s"}` : "not saved — signed in or out elsewhere";
+      doneRow.querySelector(".s").innerHTML = result.songId ? `<b>${result.replaced ? "updated" : "ready"}</b> · ${result.pages.length} page${result.pages.length === 1 ? "" : "s"}` : "not saved — signed in or out elsewhere";
       doneRow.querySelector(".openbtn").hidden = !result.songId;
     }
     if (!folded || result) return;
@@ -262,11 +277,11 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
   // (Back from the back/forward cache — the engine stopped on pagehide: boot.js reloads the page.)
 
   return {
-    start, resumePending, expand, readingRow,
+    start, reprocess, resumePending, expand, readingRow,
     busy: () => running || unsaved,
     debug: () => ({
       state, running, mode: reader?.mode || null, events: events.length, result: result && { songId: result.songId, title: result.title },
-      error, stuck, reader: reader?.status() || null, mini: !mini.hidden, done: !doneRow.hidden, jobId,
+      error, stuck, reader: reader?.status() || null, mini: !mini.hidden, done: !doneRow.hidden, jobId, replaced: !!result?.replaced,
     }),
     eventList: events,
   };

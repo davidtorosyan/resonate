@@ -91,6 +91,25 @@
       #pg { min-width: 4.6rem; text-align: center; font-size: 0.85rem; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.75); white-space: nowrap; }
       #prev, #next { font-size: 1.3rem; line-height: 1; padding: 0; }
       #version { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; color: #a64fff; opacity: 0.9; }
+      /* 📡 (signed in, approved, sync on): an assistant may control this page — small, by the badge,
+         so the bar keeps its rows (on the pages' row under 1100 px) */
+      #bar #remote-btn { min-height: 0; min-width: 0; padding: 0.2rem 0.3rem; line-height: 1.2; border-radius: 999px; font-size: 0.75rem; opacity: 0.65; }
+      #bar #remote-btn[data-on="true"] { opacity: 1; background: #a64fff; border-color: #c48bff; }
+      @media (any-pointer: coarse) { #bar #remote-btn { padding: 0.3rem 0.35rem; } }
+      /* (the nav's links give 📡 its width — a little less padding and gap — where the pages or the
+         controls share their row: from 480 px; from 1100 px the bar's gaps a little closer too) */
+      @media (min-width: 480px) {
+        #bar:has(#remote-btn:not([hidden])) .nav { column-gap: 0.3rem; }
+        #bar:has(#remote-btn:not([hidden])) h1 { margin-right: 0; }
+        #bar:has(#remote-btn:not([hidden])) .nav-link { padding-left: 0.4rem; padding-right: 0.4rem; }
+      }
+      @media (min-width: 1100px) {
+        #bar:has(#remote-btn:not([hidden])) { column-gap: 0.5rem; }
+        #bar:has(#remote-btn:not([hidden])) .nav-link { padding-left: 0.35rem; padding-right: 0.35rem; }
+        #bar #remote-btn { padding-left: 0.25rem; padding-right: 0.25rem; }
+      }
+      /* (one row up to 1199 px with the fewer-names chip: its question gives way, as with 📄) */
+      @media (min-width: 1100px) and (max-width: 1199px) { #bar:has(#remote-btn:not([hidden])) #offer > span { display: none; } }
       .brk { display: none; }
       @media (any-pointer: coarse) {
         #bar select, #bar button { min-height: 44px; }
@@ -106,9 +125,16 @@
         #song { flex-basis: 7.5rem; }
         .nav { order: 0; }
         #version { order: 1; margin-left: auto; }
+        #remote-btn { order: 1; }
+        #bar #remote-btn:not([hidden]) { margin-left: auto; }
+        #bar:has(#remote-btn:not([hidden])) #version { margin-left: 0; }
         .brk { display: block; order: 2; flex-basis: 100%; height: 0; }
         .ctl { order: 3; }
         .pager { order: 4; }
+      }
+      /* (under 670 px the pages share the nav's row, pushed right: 📡 goes by them) */
+      @media (min-width: 480px) and (max-width: 669px) {
+        #bar #remote-btn:not([hidden]) { margin-left: 0; }
       }
       @media (max-width: 669px) {
         .pager { order: 1; }
@@ -334,7 +360,29 @@
       /* The original PDF over the (hidden, still laid out) sheet. (Its descendants too: Verovio
          writes visibility="visible" on some staves, which beats an inherited hidden.) */
       #stage[data-pdf] .page, #stage[data-pdf] .page * { visibility: hidden; }
-      #pdfview { position: absolute; top: 0; left: 50%; transform: translateX(-50%); z-index: 1; display: block; background: #fff; }
+      /* It zooms and pans (play.js): the view takes the gestures, the sheet inside it is moved and
+         scaled; the base canvas holds the fitted page(s), a sharper copy of what's on screen goes
+         over it once a zoom settles; the bars in focus get a red border, just outside them. */
+      #pdfwrap { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 1; overflow: hidden; touch-action: none; cursor: grab; }
+      #pdfwrap:active { cursor: grabbing; }
+      #pdfwrap .pdfsheet { position: absolute; left: 0; top: 0; transform-origin: 0 0; background: #fff; }
+      #pdfview { display: block; background: #fff; }
+      #pdfwrap .pdfdetail { position: absolute; display: block; }
+      #pdfwrap .pdffocus { position: absolute; pointer-events: none; box-sizing: border-box; border: 3px solid #e0302a; border-radius: 6px; }
+      /* Its own controls (− + ⌖ ⟳), at the stage's foot — the bar above keeps its height. */
+      #pdfbar {
+        position: absolute; z-index: 4; right: max(10px, env(safe-area-inset-right)); bottom: calc(10px + env(safe-area-inset-bottom));
+        display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 999px; background: #14142c;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.3); color: #e8e8f0; font: 600 0.9rem system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      #pdfbar[hidden], #pdfbar button[hidden] { display: none; }
+      #pdfbar button {
+        font: inherit; color: inherit; background: transparent; border: 0; border-radius: 999px;
+        min-width: 44px; height: 44px; padding: 0; cursor: pointer; touch-action: manipulation;
+      }
+      #pdfbar button svg { width: 22px; height: 22px; display: block; margin: auto; }
+      #pdfbar #pdf-again { display: flex; align-items: center; gap: 0.35rem; padding: 0 0.8rem 0 0.6rem; }
+      #pdfbar #pdf-again svg { margin: 0; }
     </style>
   </head>
   <body>
@@ -368,6 +416,7 @@
         <button id="next" type="button" aria-label="Next page" title="Next page">›</button>
       </span>
       <span class="brk"></span>
+      <button id="remote-btn" type="button" hidden aria-pressed="false" aria-label="Remote">📡</button>
       <span id="version" class="mono">v87</span>
     </header>
     <main id="stage" data-names="all">
@@ -380,6 +429,12 @@
           <option value="1">100%</option><option value="0.9">90%</option><option value="0.8">80%</option><option value="0.7">70%</option><option value="0.6">60%</option><option value="0.5">50%</option>
         </select>
         <button id="sel-clear" type="button" aria-label="Clear" title="Clear">✕</button>
+      </div>
+      <div id="pdfbar" hidden>
+        <button id="pdf-out" type="button" aria-label="Zoom out" title="Zoom out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg></button>
+        <button id="pdf-in" type="button" aria-label="Zoom in" title="Zoom in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg></button>
+        <button id="pdf-focus" type="button" aria-label="Back to the bars" title="Back to the bars" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><path d="M12 2.5v3.5M12 18v3.5M2.5 12H6M18 12h3.5"/></svg></button>
+        <button id="pdf-again" type="button" aria-label="Reprocess the PDF" title="Reprocess the PDF"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5V9H15"/></svg>Reprocess</button>
       </div>
     </main>
     <div id="dock" hidden>

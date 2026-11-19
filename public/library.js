@@ -1,7 +1,11 @@
 // Saved songs (MusicXML text) in IndexedDB — roomier than localStorage, which
 // caps out around 5 MB. Falls back to an in-memory list (songs then last only
 // until reload) if IndexedDB is unavailable, e.g. some private-browsing modes.
-//   song = { id, title, xml, added (ms), source?, clean?: { xml, ver } }
+//   song = { id, title, xml, added (ms), source?, clean?: { xml, ver }, pages?: [pdf page], rev? }
+//   pages: for a song made with PDF → Song, the PDF page (1-based) of each music sheet the engine read,
+//          in order (sheet 1 = pages[0]) — Play's 📄 lines the PDF up with the music; this device only.
+//   rev:   set when the song's MusicXML was replaced under the same id (a PDF processed again,
+//          replaceSong): the index carries it, so the sync sees the new content without reading it.
 //
 // The list of songs (id, title, added) is also kept as a small index in localStorage, so
 // showing My songs never reads the songs themselves: each is often 1–2 MB of MusicXML, and
@@ -117,7 +121,7 @@ function readIndex() {
 function writeIndex(list) {
   try { localStorage.setItem(INDEX_KEY, JSON.stringify(list)); } catch {}
 }
-const entry = ({ id, title, added }) => ({ id, title, added });
+const entry = ({ id, title, added, rev }) => (rev ? { id, title, added, rev } : { id, title, added });
 
 // Newest first, without the (possibly large) XML.
 export async function listSongs() {
@@ -147,17 +151,18 @@ export async function getSong(id) {
 const newId = () => `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 // Saving the same title + content again replaces the old copy. opts: { source ("file",
-// "link", "pdf"…), pdf (the original PDF: ArrayBuffer), pdfName }.
+// "link", "pdf"…), pdf (the original PDF: ArrayBuffer), pdfName, pages (PDF → Song: see above) }.
 export async function addSong(title, xml, opts = {}) {
   const existing = (await listSongs()).find((x) => x.title === title);
   if (existing) {
     const old = await getSong(existing.id);
     if (old && old.xml === xml) {
       if (opts.pdf && !(await getPdf(existing.id))) await putPdf(existing.id, opts.pdf, opts.pdfName);
+      if (Array.isArray(opts.pages) && !Array.isArray(old.pages)) await putSong({ ...old, pages: opts.pages }, { quiet: true });
       return existing.id;
     }
   }
-  const song = { id: newId(), title, xml, added: Date.now(), ...(opts.source ? { source: opts.source } : {}) };
+  const song = { id: newId(), title, xml, added: Date.now(), ...(opts.source ? { source: opts.source } : {}), ...(Array.isArray(opts.pages) ? { pages: opts.pages } : {}) };
   await putSong(song, { quiet: true });
   if (opts.pdf) await putPdf(song.id, opts.pdf, opts.pdfName, { quiet: true });
   changed("song", song.id);
@@ -172,11 +177,34 @@ export async function putSong(song, { quiet = false } = {}) {
   if (!quiet) changed("song", song.id);
 }
 
+// New MusicXML for a song under the same id (its PDF processed again; or another device's, through
+// the sync): its title, added time, source and PDF stay, so do its settings (keyed by the id); the
+// clean-up cache goes (the clean-ups run again on the new notes) and a new rev marks the change.
+// opts: { pages (the new sheet → PDF page map; none: the old one goes), title, quiet }.
+// Resolves with the song as stored, or null when there is no such song (deleted meanwhile).
+export async function replaceSong(id, xml, { pages = null, title = null, quiet = false } = {}) {
+  const old = await getSong(id);
+  if (!old) return null;
+  const { clean, pages: _old, ...keep } = old;
+  const song = { ...keep, xml, rev: `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, ...(title ? { title } : {}), ...(Array.isArray(pages) ? { pages } : {}) };
+  await putSong(song, { quiet: true });
+  if (!quiet) changed("song", id);
+  return song;
+}
+
+// The PDF page of each music sheet of a song made with PDF → Song ([pdf page, …], 1-based, sheet
+// order), or null (another kind of song, one converted before v88, one from another device).
+export async function getPages(id) {
+  const song = await getSong(id);
+  return Array.isArray(song?.pages) ? song.pages : null;
+}
+
 // Keep a cleaned-up copy of a song's MusicXML (tagged with the app version that made it),
 // next to the original, so loading it again doesn't redo the clean-ups.
-export async function saveClean(id, xml, ver) {
+export async function saveClean(id, xml, ver, from = null) {
   const song = await run("readonly", (s, mem) => (s ? s.get(id) : { result: mem.get(id) }));
   if (!song) return;
+  if (from != null && song.xml !== from) return; // (its MusicXML was replaced meanwhile: its PDF read again)
   song.clean = { xml, ver };
   await run("readwrite", (s, mem) => (s ? s.put(song) : (mem.set(id, song), {})));
 }

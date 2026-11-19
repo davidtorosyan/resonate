@@ -15,6 +15,8 @@
         const a = sp?.active || "anon";
         const db = !sp ? "resonate" : a !== "anon" ? sp.db?.[a] || `resonate-${a}` : sp.db?.anon || "resonate";
         if (f && f.id && (f.db ? f.db === db : f.space === a) && !/[?&]pdf=/.test(location.search)) document.documentElement.dataset.resume = "";
+        // (a song's PDF read again — ?reprocess=<song id>: the Reader at once too, never the picker)
+        if (/[?&]reprocess=/.test(location.search)) document.documentElement.dataset.resume = "";
       } catch {}
     </script>
     <style>
@@ -158,6 +160,7 @@
         <button id="job-skip" class="ghost" type="button" hidden>Skip page</button>
         <button id="job-retry" class="ghost" type="button" hidden>Retry</button>
       </section>
+      <p id="notice" class="card" hidden></p>
       <section id="reader-host" hidden></section>
 
 

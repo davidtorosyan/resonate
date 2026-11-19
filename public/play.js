@@ -12,15 +12,19 @@
 // stretch dragged on the page — once or round after round — or from the page's first bar to the
 // end, its notes lit as they sound and the page turning with the music.
 import { spaceChanged } from "./nav.js?v=87";
-import { SAMPLES, loadSong, songChoices } from "./catalog.js?v=87";
+import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=87";
 import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=87";
 import { decorate, fullName, labelOf } from "./playnames.js?v=87";
 import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=87";
 import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=87";
 import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=87";
 import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=87";
+import * as lib from "./library.js?v=87"; // (getSong; getPages where this library has it)
+import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=87";
 import { mountKeyboard } from "./keyboard.js?v=87";
 import { chordMoments } from "./chords.js?v=87";
+import { barsText, sliceMeasures, TEXT_LEGEND } from "./scoretext.js?v=87";
+import { remote, hasAssistant, shareFocus } from "./assist.js?v=87";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
@@ -30,6 +34,7 @@ const pdfBtn = $("pdf"), offerEl = $("offer"), stripEl = $("strip"), bubbleEl = 
 // (▶: the one-page shell hands its own over — Sing's page there has a #play of its own)
 const playBtn = window.resonatePlay?.playBtn || $("play"), selbar = $("selbar"), selPlayBtn = $("sel-play"), selLoopBtn = $("sel-loop"), speedSel = $("speed"), selClearBtn = $("sel-clear");
 const hearEl = $("hear"), chordsBtn = $("chords");
+const pdfBar = $("pdfbar"), pdfOutBtn = $("pdf-out"), pdfInBtn = $("pdf-in"), pdfFocusBtn = $("pdf-focus"), pdfAgainBtn = $("pdf-again");
 
 const K = {
   play: "resonate.play",        // { songId: { names, view, at, pdfPage, speed, hear, days } } — the account's (space.js DATA_KEYS)
@@ -143,7 +148,7 @@ const S = {
   gen: 0,           // bumped by every song open / hands switch: a newer one wins
   ready: false,     // a song is shown
   failed: null,     // "engine" | "song"
-  song: null, title: "",
+  song: null, title: "", rev: null, // (rev: the library's, of the MusicXML shown — a new one when it's replaced)
   P: null,          // prepare(): { doc, parts, views, facts }
   waiting: false,   // the view waits for the stage to get a size
   view: "both",
@@ -298,10 +303,12 @@ async function open(id) {
   if (pdf.on) pdfOff();
   pdf.has = false;
   pdfBtn.hidden = true;
+  pmap = null; // (where its bars are on its PDF: read again — the song may have been read again)
   S.ready = false;
   S.failed = null;
   S.song = id;
   S.title = "";
+  S.rev = null;
   S.P = null;
   S.v = null;
   S.built = new Map();
@@ -336,6 +343,7 @@ async function open(id) {
   }
   S.t.song = ms(t0);
   S.title = song.title;
+  S.rev = song.rev ?? null;
   S.xml = song.xml;
   pdfCheck(id, song.source);
   await paint();
@@ -704,6 +712,7 @@ function pager() {
   prevBtn.disabled = S.page <= 1;
   nextBtn.disabled = S.page >= lastPage();
   sizeButtons();
+  remote.changedSoon();
 }
 
 // The written measure index of the first bar on the shown page.
@@ -1002,10 +1011,12 @@ songSel.addEventListener("change", () => {
   if (!spaceChanged()) keep(K.song, id);
   open(id);
 });
-handsSel.addEventListener("change", async () => {
-  if (!S.P || !(handsSel.value in S.P.views)) return;
+handsSel.addEventListener("change", () => changeView(handsSel.value));
+async function changeView(v) {
+  if (!S.P || !(v in S.P.views)) return;
   const gen = ++S.gen;
-  S.view = handsSel.value;
+  handsSel.value = v;
+  S.view = v;
   clearPeek();
   stopPlay(); // (the stretch picked stays: it's a stretch of the song, drawn again in this view)
   S.ready = false;
@@ -1018,7 +1029,8 @@ handsSel.addEventListener("change", async () => {
   await loadView(gen);
   // (kept once drawn: a view that fails isn't the one the song reopens at)
   if (gen === S.gen && (S.ready || S.waiting)) { S.st.view = S.view; saveState(); }
-});
+  remote.changedSoon();
+}
 // A focused control keeps the pedal's keys (a select's arrows, a button's Space/Enter): let go.
 // (the bar's and the stretch's controls over the music)
 const bar = $("bar");
@@ -1107,7 +1119,7 @@ stage.addEventListener("pointerup", (e) => {
   if (!g) return;
   gests.delete(e.pointerId);
   if (g.drag) {
-    if (g.anchor) { cancelAnimationFrame(g.raf); g.fx = e.clientX; g.fy = e.clientY; pickSel(g); }
+    if (g.anchor) { cancelAnimationFrame(g.raf); g.fx = e.clientX; g.fy = e.clientY; pickSel(g); focusSoon(); }
   } else if (g.peek) peekEnd(g.peek);
   else if (g.primary && !g.hit && S.ready && !pdf.on && S.sel && PB.state === "idle" && !PB.starting) clearSel();
   afterPress(g);
@@ -2373,6 +2385,7 @@ function playButtons() {
   playBtn.disabled = !on && (!S.ready || pdf.on);
   setIcon(selPlayBtn, on ? "stop" : "play", on ? "Stop" : "Play");
   selLoopBtn.setAttribute("aria-pressed", String(PB.state === "looping"));
+  remote.changedSoon();
 }
 
 // The stretch's controls (▶ ⟳ speed ✕; ■ and speed while the page plays): over the music where
@@ -2570,15 +2583,34 @@ function hideOffer() {
 // ---------------------------------------------------------------------------
 // The original PDF (📄): for a song made with PDF → Song whose PDF is on this device. pdf.js
 // (shipped for the OMR) draws one page — two side by side when each is still ≥ 75% of print
-// size — into one reused canvas at the screen's pixel ratio; the same ‹ › and keys turn its
-// pages (a tap on it does nothing). The sheet stays laid out underneath (hidden), so going back is instant and
-// at its place. There's no mapping between the two.
+// size — fitted to the stage (the base canvas, #pdfview, at the screen's pixel ratio); the same
+// ‹ › and keys turn its pages (a tap on it does nothing). It zooms and pans: two fingers, a
+// trackpad pinch or ctrl / ⌘ / alt + wheel, − / + (and the + − 0 keys), a double tap (fit ⇄
+// zoomed); a drag or the wheel pans. A zoom is a transform while it moves; once it settles the
+// part on screen is drawn again sharp at that zoom (a second canvas the size of the view at most —
+// a whole page at 4× would be ~30 M pixels on an iPad). The sheet stays laid out underneath
+// (hidden), so going back is instant and at its place.
+// Where the music is (pdfmap.js, from the song's own MusicXML as Audiveris wrote it): the bars in
+// focus — the stretch picked, else the bars on the score's page(s) shown — get a red border on
+// the PDF, a rect a system, and the PDF opens on their page zoomed onto them (⌖ goes back there).
+// ⟳ reads the PDF again (PDF → Song, or the one-page shell's own reprocess).
 
 const PDFJS = new URL("./omr/pdfjs/", import.meta.url).href;
 const PRINT = 96 / 72; // CSS px per pt at print size
+const ZMAX = 8, ZSTEP = 1.5, ZTAP = 2.5, FOCUS_ZMAX = 4;
+const DETAIL_PX = 6e6; // the sharp canvas's pixels at most (an iPad's view at 2× is ~3.8 M)
+const SETTLE = 160;    // ms after the last zoom / pan move: the view drawn sharp again
 // (open: the opening under way — a newer one or pdfOff wins; gen: the drawing under way)
 // (W, H: the stage the last drawing was made for)
-const pdf = { has: false, on: false, open: 0, gen: 0, task: null, doc: null, pages: 0, page: 1, spread: false, canvas: null, sizes: [], busy: false, W: 0, H: 0 };
+// fit: the fitted sheet { bw, bh, x0 (its left at zoom 1), boxes [{ pg, p, s, x, w, h }] } (CSS px);
+// z, tx, ty: the zoom (1 = fitted) and where the sheet's top left is in the view;
+// want: what the next drawing places — "focus" (zoomed onto the focus), "keep" (same zoom, the
+// same point centred: a rotation), "turn" (same zoom and x, the page's top: ⌖ goes to the focus)
+const pdf = {
+  has: false, on: false, open: 0, gen: 0, task: null, doc: null, pages: 0, page: 1, spread: false, canvas: null, busy: false, W: 0, H: 0,
+  wrap: null, sheet: null, detail: null, dgen: 0, dtask: null, dz: 0, settle: 0, anim: 0, borders: [],
+  fit: null, z: 1, tx: 0, ty: 0, want: null, focus: null, center: null,
+};
 let pdfLib = null;
 let pdfTask = null; // the page drawing under way (pdf.js RenderTask)
 async function pdfjs() {
@@ -2603,9 +2635,12 @@ async function pdfCheck(id, source) {
 pdfBtn.addEventListener("click", () => { if (!pdf.on) return pdfOn(); pdfOff(); clearTimeout(resizeTimer); sized(); });
 
 function pdfControls() {
+  remote.changedSoon();
   pdfBtn.setAttribute("aria-pressed", String(pdf.on));
   if (pdf.on) stage.dataset.pdf = "";
   else delete stage.dataset.pdf;
+  pdfBar.hidden = !pdf.on;
+  pdfFocusBtn.hidden = !pdf.focus;
   dock(); // (the keyboard: hidden over the PDF — the page gets its height)
   renderHear();
   handsSel.disabled = pdf.on || !S.ready;
@@ -2628,6 +2663,17 @@ function pdfFailed() {
   setTimeout(() => { if (msgEl.textContent === "Couldn't open the PDF.") showMsg(""); }, 3000);
 }
 
+// A song's stored PDF, opened with pdf.js → its loading task (task.promise: the document).
+async function pdfLoad(id) {
+  const [lib, rec] = await Promise.all([pdfjs(), getPdf(id)]);
+  if (!rec?.pdf) throw new Error("no PDF stored");
+  const src = rec.pdf;
+  const data = src instanceof Blob ? new Uint8Array(await src.arrayBuffer())
+    : ArrayBuffer.isView(src) ? new Uint8Array(src.buffer.slice(src.byteOffset, src.byteOffset + src.byteLength))
+    : new Uint8Array(src.slice(0)); // (a copy: pdf.js hands the data to its worker)
+  return lib.getDocument({ data, wasmUrl: PDFJS + "wasm/", standardFontDataUrl: PDFJS + "standard_fonts/", iccUrl: PDFJS + "iccs/" });
+}
+
 async function pdfOn() {
   if (!pdf.has || pdf.on || !S.song) return;
   const id = S.song, g = ++pdf.open;
@@ -2635,25 +2681,27 @@ async function pdfOn() {
   stopPlay();
   pdf.on = true;
   pdf.busy = true;
+  pdf.focus = null;
   pdfControls();
   try {
-    const [lib, rec] = await Promise.all([pdfjs(), getPdf(id)]);
-    if (g !== pdf.open) return;
-    if (!rec?.pdf) throw new Error("no PDF stored");
-    const src = rec.pdf;
-    const data = src instanceof Blob ? new Uint8Array(await src.arrayBuffer())
-      : ArrayBuffer.isView(src) ? new Uint8Array(src.buffer.slice(src.byteOffset, src.byteOffset + src.byteLength))
-      : new Uint8Array(src.slice(0)); // (a copy: pdf.js hands the data to its worker)
-    if (g !== pdf.open) return;
-    const task = lib.getDocument({ data, wasmUrl: PDFJS + "wasm/", standardFontDataUrl: PDFJS + "standard_fonts/", iccUrl: PDFJS + "iccs/" });
+    const task = await pdfLoad(id);
+    if (g !== pdf.open) { pdfFree(task); return; }
     pdf.task = task;
     const doc = await task.promise;
     if (g !== pdf.open) { if (pdf.task === task) pdf.task = null; pdfFree(task); return; }
     pdf.doc = doc;
     pdf.pages = doc.numPages;
+    // (where the bars in focus are: their page, zoomed onto them; else the page shown last)
+    let focus = null;
+    try { focus = await pdfFocus(doc); } catch (err) { console.warn("pdf map", err); }
+    if (g !== pdf.open) return;
+    pdf.focus = focus?.rects.length ? focus : null;
     const p0 = Number(S.st.pdfPage);
-    pdf.page = Number.isInteger(p0) && p0 >= 1 && p0 <= pdf.pages ? p0 : 1;
+    pdf.page = pdf.focus ? pdf.focus.page : Number.isInteger(p0) && p0 >= 1 && p0 <= pdf.pages ? p0 : 1;
+    pdf.z = 1;
+    pdf.want = pdf.focus ? "focus" : null;
     pdf.busy = false;
+    pdfControls();
     if ((await pdfRender()) === "error") throw new Error("PDF page");
   } catch (err) {
     if (g !== pdf.open) return;
@@ -2665,14 +2713,26 @@ async function pdfOn() {
 function pdfOff() {
   pdf.open++;
   pdf.gen++;
+  pdf.dgen++;
   pdf.on = false;
   pdf.busy = false;
   pdf.W = pdf.H = 0;
+  pdf.fit = null;
+  pdf.focus = null;
+  pdf.want = null;
+  pdf.z = 1;
   pdfTask?.cancel();
-  if (pdf.canvas) {
-    pdf.canvas.width = pdf.canvas.height = 0; // (iOS caps the canvas memory of a page)
-    pdf.canvas.remove();
-  }
+  pdf.dtask?.cancel();
+  pdf.dtask = null;
+  clearTimeout(pdf.settle);
+  cancelAnimationFrame(pdf.anim);
+  pdfPtrs.clear();
+  for (const c of [pdf.canvas, pdf.detail]) if (c) c.width = c.height = 0; // (iOS caps the canvas memory of a page)
+  pdf.detail?.remove();
+  pdf.detail = null;
+  pdf.wrap?.remove();
+  for (const b of pdf.borders) b.remove();
+  pdf.borders = [];
   const task = pdf.task;
   pdf.task = null;
   pdf.doc = null;
@@ -2699,6 +2759,7 @@ function pdfTurn(d) {
   pdf.page = p;
   S.st.pdfPage = p;
   saveSoon();
+  pdf.want = "turn";
   pdfPager();
   pdfRender().then((r) => { if (r === "error") pdfFailed(); });
   return true;
@@ -2723,6 +2784,9 @@ async function pdfRender() {
 async function pdfDraw(doc, g) {
   const { W, H } = stageSize();
   if (W < 60 || H < 60) return false;
+  // (the point in the middle of the view, kept across a rotation)
+  if (pdf.fit && !pdf.want) pdf.want = "keep";
+  if (pdf.want === "keep" && pdf.fit) pdf.center = pdfCenter();
   pdf.W = W; // (the stage this drawing is for: sized() leaves it alone at this size)
   pdf.H = H;
   const t0 = performance.now();
@@ -2747,35 +2811,524 @@ async function pdfDraw(doc, g) {
     if (g !== pdf.gen) return false;
   }
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
-  const boxes = pages.map((pg) => {
+  let x = 0;
+  const boxes = pages.map((pg, i) => {
     const vp = pg.getViewport({ scale: 1 }), s = fit(each, vp);
-    return { pg, s, w: Math.floor(vp.width * s), h: Math.floor(vp.height * s) };
+    const b = { pg, p: list[i], s, x, w: Math.floor(vp.width * s), h: Math.floor(vp.height * s) };
+    x += b.w;
+    return b;
   });
-  const cw = boxes.reduce((a, b) => a + b.w, 0), ch = Math.max(...boxes.map((b) => b.h));
-  const canvas = (pdf.canvas ||= Object.assign(document.createElement("canvas"), { id: "pdfview" }));
-  if (!canvas.isConnected) stage.appendChild(canvas);
+  const cw = x, ch = Math.max(...boxes.map((b) => b.h));
+  pdfMount();
+  const canvas = pdf.canvas;
   canvas.width = Math.round(cw * dpr);
   canvas.height = Math.round(ch * dpr);
   canvas.style.width = cw + "px";
   canvas.style.height = ch + "px";
-  canvas.style.left = pdf.spread && list.length === 1 ? "25%" : ""; // (the last odd page in its half)
+  pdf.sheet.style.width = cw + "px";
+  pdf.sheet.style.height = ch + "px";
+  pdfDetailDrop(); // (another page or size: the sharp copy goes)
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("no canvas context"); // (iOS: the page's canvas memory is used up)
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // (the last odd page of a spread in its half)
+  const VW = pdf.wrap.clientWidth;
+  pdf.fit = { bw: cw, bh: ch, x0: pdf.spread && list.length === 1 ? Math.round(VW / 4 - cw / 2) : Math.round((VW - cw) / 2), boxes, list };
+  pdfPlace();
   pdfPager();
   // (one page after the other, each in its place: pdf.js fills the whole canvas with its
   // background before drawing, so it gets a transparent one and the canvas was made white)
-  let x = 0;
   for (const b of boxes) {
     if (g !== pdf.gen) return false;
     const vp = b.pg.getViewport({ scale: b.s * dpr });
-    const task = (pdfTask = b.pg.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, Math.round(x * dpr), 0], background: "rgba(0,0,0,0)" }));
+    const task = (pdfTask = b.pg.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, Math.round(b.x * dpr), 0], background: "rgba(0,0,0,0)" }));
     try { await task.promise; } finally { if (pdfTask === task) pdfTask = null; }
-    x += b.w;
   }
   S.t.pdf = ms(t0);
+  pdfSettle(0);
   return true;
+}
+
+// The view's elements: #pdfwrap (the view: takes the gestures) ⊃ the sheet (moved and scaled) ⊃ the
+// base canvas (#pdfview) and the sharp one; the focus borders over it (not scaled: 3 px at any zoom).
+function pdfMount() {
+  if (!pdf.wrap) {
+    pdf.wrap = Object.assign(document.createElement("div"), { id: "pdfwrap" });
+    pdf.sheet = Object.assign(document.createElement("div"), { className: "pdfsheet" });
+    pdf.canvas = Object.assign(document.createElement("canvas"), { id: "pdfview" });
+    pdf.sheet.appendChild(pdf.canvas);
+    pdf.wrap.appendChild(pdf.sheet);
+    pdfGestures(pdf.wrap);
+  }
+  if (!pdf.wrap.isConnected) stage.insertBefore(pdf.wrap, pdfBar);
+}
+
+// ---------------------------------------------------------------------------
+// The view: zoom z (1 = the fitted page(s)), the sheet's top left at (tx, ty) in the view (CSS px).
+
+const pdfView = () => ({ W: pdf.wrap?.clientWidth || 0, H: pdf.wrap?.clientHeight || 0 });
+// The view's middle as a point of the sheet (fractions).
+function pdfCenter() {
+  const { W, H } = pdfView(), f = pdf.fit;
+  return { x: (W / 2 - pdf.tx) / (f.bw * pdf.z), y: (H / 2 - pdf.ty) / (f.bh * pdf.z) };
+}
+// Keep the sheet on screen: centred while narrower than the view (the fitted x at zoom 1), top
+// aligned while shorter, else within its edges.
+function pdfClamp() {
+  const f = pdf.fit;
+  if (!f) return;
+  pdf.z = Math.max(1, Math.min(ZMAX, pdf.z));
+  const { W, H } = pdfView(), w = f.bw * pdf.z, h = f.bh * pdf.z;
+  if (w <= W + 0.5) pdf.tx = pdf.z <= 1.001 ? f.x0 : Math.round((W - w) / 2);
+  else pdf.tx = Math.min(0, Math.max(W - w, pdf.tx));
+  if (h <= H + 0.5) pdf.ty = 0;
+  else pdf.ty = Math.min(0, Math.max(H - h, pdf.ty));
+}
+// After a drawing: where the view goes (pdf.want).
+function pdfPlace() {
+  const want = pdf.want;
+  pdf.want = null;
+  const f = pdf.fit, { W, H } = pdfView();
+  const here = pdfFocusHere();
+  if (want === "focus") pdfZoomTo(pdfFocusView(here), false);
+  else if (want === "keep" && pdf.center) {
+    pdf.tx = W / 2 - pdf.center.x * f.bw * pdf.z;
+    pdf.ty = H / 2 - pdf.center.y * f.bh * pdf.z;
+    pdfApply();
+  } else if (want === "turn") { pdf.ty = 0; pdfApply(); } // (the same zoom and x: the new page from its top)
+  else { pdf.z = 1; pdfApply(); }
+  pdf.center = null;
+}
+function pdfApply() {
+  pdfClamp();
+  if (!pdf.sheet) return;
+  pdf.sheet.style.transform = `translate(${pdf.tx}px, ${pdf.ty}px) scale(${pdf.z})`;
+  pdfBorders();
+}
+// The focus rects on the pages shown, in sheet px at zoom 1.
+function pdfFocusHere() {
+  const f = pdf.fit;
+  if (!pdf.focus || !f) return [];
+  const out = [];
+  for (const r of pdf.focus.rects) {
+    const b = f.boxes.find((x) => x.p === r.page);
+    if (b) out.push({ x0: b.x + r.x0 * b.w, y0: r.y0 * b.h, x1: b.x + r.x1 * b.w, y1: r.y1 * b.h });
+  }
+  return out;
+}
+// The view that shows these rects whole, as large as fits with a margin: { z, tx, ty }.
+function pdfFocusView(rs) {
+  const { W, H } = pdfView();
+  if (!rs.length) return pdfFitView();
+  const x0 = Math.min(...rs.map((r) => r.x0)), x1 = Math.max(...rs.map((r) => r.x1));
+  const y0 = Math.min(...rs.map((r) => r.y0)), y1 = Math.max(...rs.map((r) => r.y1));
+  const m = 16; // (px: the border's room)
+  const z = Math.max(1, Math.min(FOCUS_ZMAX, (W - 2 * m) / (x1 - x0), (H - 2 * m) / (y1 - y0)));
+  return { z, tx: W / 2 - ((x0 + x1) / 2) * z, ty: H / 2 - ((y0 + y1) / 2) * z };
+}
+// The fitted view (zoom 1).
+const pdfFitView = () => ({ z: 1, tx: pdf.fit?.x0 ?? 0, ty: 0 });
+// Go to a view, animated (~200 ms) unless reduced motion; the sharp copy once there.
+function pdfZoomTo(v, animate = true) {
+  cancelAnimationFrame(pdf.anim);
+  if (!animate || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    Object.assign(pdf, { z: v.z, tx: v.tx, ty: v.ty });
+    pdfApply();
+    pdfSettle();
+    return;
+  }
+  const a = { z: pdf.z, tx: pdf.tx, ty: pdf.ty }, t0 = performance.now(), T = 200;
+  const step = () => {
+    const k = Math.min(1, (performance.now() - t0) / T), e = 1 - (1 - k) ** 3;
+    // (the zoom in log space: the motion looks even)
+    pdf.z = a.z * (v.z / a.z) ** e;
+    pdf.tx = a.tx + (v.tx - a.tx) * e;
+    pdf.ty = a.ty + (v.ty - a.ty) * e;
+    pdfApply();
+    if (k < 1) pdf.anim = requestAnimationFrame(step);
+    else pdfSettle();
+  };
+  pdf.anim = requestAnimationFrame(step);
+}
+// Zoom by k about a point of the view (client px).
+function pdfZoomAt(k, cx, cy, animate = false) {
+  if (!pdf.fit) return;
+  const r = pdf.wrap.getBoundingClientRect(), px = cx - r.left, py = cy - r.top;
+  const z = Math.max(1, Math.min(ZMAX, pdf.z * k));
+  const v = { z, tx: px - ((px - pdf.tx) / pdf.z) * z, ty: py - ((py - pdf.ty) / pdf.z) * z };
+  if (animate) pdfZoomTo(v);
+  else { Object.assign(pdf, v); pdfApply(); pdfSettle(); }
+}
+const pdfZoomStep = (dir) => {
+  if (!pdf.wrap) return;
+  const r = pdf.wrap.getBoundingClientRect();
+  pdfZoomAt(dir > 0 ? ZSTEP : 1 / ZSTEP, r.left + r.width / 2, r.top + r.height / 2, true);
+};
+function pdfToFocus() {
+  if (!pdf.focus || !pdf.doc) return;
+  const p = pdf.focus.page;
+  const shown = pdf.fit?.list || [];
+  if (shown.includes(p)) pdfZoomTo(pdfFocusView(pdfFocusHere()));
+  else {
+    pdf.page = p;
+    S.st.pdfPage = p;
+    saveSoon();
+    pdf.want = "focus";
+    pdfPager();
+    pdfRender().then((r) => { if (r === "error") pdfFailed(); });
+  }
+}
+
+// The red borders: one a focus rect on the pages shown, just outside its bars.
+function pdfBorders() {
+  const rs = pdfFocusHere();
+  while (pdf.borders.length > rs.length) pdf.borders.pop().remove();
+  while (pdf.borders.length < rs.length) {
+    const b = Object.assign(document.createElement("div"), { className: "pdffocus" });
+    pdf.wrap.appendChild(b);
+    pdf.borders.push(b);
+  }
+  const B = 3, G = 2; // (its width; a gap so the line doesn't touch the bars)
+  rs.forEach((r, i) => {
+    const s = pdf.borders[i].style;
+    s.left = pdf.tx + r.x0 * pdf.z - B - G + "px";
+    s.top = pdf.ty + r.y0 * pdf.z - B - G + "px";
+    s.width = (r.x1 - r.x0) * pdf.z + 2 * (B + G) + "px";
+    s.height = (r.y1 - r.y0) * pdf.z + 2 * (B + G) + "px";
+  });
+}
+
+// Drawn again sharp, for the part of the sheet on screen, once the view has settled.
+function pdfSettle(ms = SETTLE) {
+  clearTimeout(pdf.settle);
+  pdf.settle = setTimeout(() => { pdfDetail().catch((err) => { if (err?.name !== "RenderingCancelledException") console.warn("pdf detail", err); }); }, ms);
+}
+function pdfDetailDrop() {
+  pdf.dgen++;
+  pdf.dtask?.cancel();
+  pdf.dtask = null;
+  pdf.dz = 0;
+  if (pdf.detail) { pdf.detail.width = pdf.detail.height = 0; pdf.detail.remove(); pdf.detail = null; }
+}
+async function pdfDetail() {
+  const f = pdf.fit;
+  if (!pdf.on || !f || pdf.busy || pdfPtrs.size) return;
+  const g = ++pdf.dgen;
+  pdf.dtask?.cancel();
+  pdf.dtask = null;
+  const z = pdf.z;
+  if (z < 1.1) { // (the base canvas is sharp enough)
+    if (pdf.detail) { pdf.detail.width = pdf.detail.height = 0; pdf.detail.remove(); pdf.detail = null; pdf.dz = 0; }
+    return;
+  }
+  const { W, H } = pdfView();
+  const x0 = Math.max(0, -pdf.tx / z), y0 = Math.max(0, -pdf.ty / z);
+  const x1 = Math.min(f.bw, (W - pdf.tx) / z), y1 = Math.min(f.bh, (H - pdf.ty) / z);
+  if (x1 - x0 < 2 || y1 - y0 < 2) return;
+  let k = z * Math.min(window.devicePixelRatio || 1, 2);
+  const area = (x1 - x0) * (y1 - y0) * k * k;
+  if (area > DETAIL_PX) k *= Math.sqrt(DETAIL_PX / area);
+  const c = document.createElement("canvas");
+  c.className = "pdfdetail";
+  c.width = Math.max(1, Math.round((x1 - x0) * k));
+  c.height = Math.max(1, Math.round((y1 - y0) * k));
+  Object.assign(c.style, { left: x0 + "px", top: y0 + "px", width: x1 - x0 + "px", height: y1 - y0 + "px" });
+  const ctx = c.getContext("2d");
+  if (!ctx) return;
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, c.width, c.height);
+  const t0 = performance.now();
+  for (const b of f.boxes) {
+    if (b.x + b.w <= x0 || b.x >= x1) continue;
+    const vp = b.pg.getViewport({ scale: b.s * k });
+    const task = (pdf.dtask = b.pg.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, Math.round((b.x - x0) * k), Math.round(-y0 * k)], background: "rgba(0,0,0,0)" }));
+    try { await task.promise; } catch (err) { c.width = c.height = 0; throw err; } finally { if (pdf.dtask === task) pdf.dtask = null; }
+    if (g !== pdf.dgen || pdf.fit !== f) { c.width = c.height = 0; return; }
+  }
+  const old = pdf.detail;
+  pdf.detail = c;
+  pdf.dz = z;
+  pdf.dbox = { x0, y0, x1, y1, k };
+  pdf.sheet.appendChild(c);
+  if (old) { old.width = old.height = 0; old.remove(); }
+  S.t.pdfDetail = ms(t0);
+}
+
+// Gestures on the PDF: a finger or the mouse pans, two fingers pinch (about their middle), a double
+// tap toggles fitted ⇄ zoomed (×2.5 at the tap); ctrl / ⌘ / alt + wheel (a trackpad's pinch) zooms
+// at the pointer, the wheel pans; Safari's trackpad pinch (gesture events) zooms. Nothing sounds
+// or picks a stretch here.
+const pdfPtrs = new Map();
+let pdfG = null, pdfTap = null;
+function pdfGestures(el) {
+  const anchor = () => {
+    const ps = [...pdfPtrs.values()];
+    if (!ps.length) { pdfG = null; return; }
+    const mx = ps.reduce((a, p) => a + p.x, 0) / ps.length, my = ps.reduce((a, p) => a + p.y, 0) / ps.length;
+    const d = ps.length > 1 ? Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y) : 0;
+    pdfG = { mx, my, d, z: pdf.z, tx: pdf.tx, ty: pdf.ty, moved: pdfG?.moved || false, n: ps.length };
+  };
+  el.addEventListener("pointerdown", (e) => {
+    if (!pdf.on || !pdf.fit || (e.pointerType === "mouse" && e.button !== 0)) return;
+    cancelAnimationFrame(pdf.anim);
+    clearTimeout(pdf.settle);
+    try { el.setPointerCapture(e.pointerId); } catch {}
+    if (!pdfPtrs.size) pdfG = null;
+    pdfPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t: e.timeStamp });
+    anchor();
+    if (pdfPtrs.size > 1) pdfG.moved = true; // (a pinch is never a tap)
+  });
+  el.addEventListener("pointermove", (e) => {
+    const p = pdfPtrs.get(e.pointerId);
+    if (!p || !pdfG) return;
+    p.x = e.clientX; p.y = e.clientY;
+    if (Math.hypot(p.x - p.x0, p.y - p.y0) > 10) pdfG.moved = true;
+    const ps = [...pdfPtrs.values()];
+    const mx = ps.reduce((a, q) => a + q.x, 0) / ps.length, my = ps.reduce((a, q) => a + q.y, 0) / ps.length;
+    const r = el.getBoundingClientRect();
+    let z = pdfG.z;
+    if (ps.length > 1 && pdfG.d > 0) z = Math.max(1, Math.min(ZMAX, pdfG.z * (Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y) / pdfG.d)));
+    // (the sheet's point under the gesture's start stays under its middle now)
+    const sx = (pdfG.mx - r.left - pdfG.tx) / pdfG.z, sy = (pdfG.my - r.top - pdfG.ty) / pdfG.z;
+    pdf.z = z;
+    pdf.tx = mx - r.left - sx * z;
+    pdf.ty = my - r.top - sy * z;
+    pdfApply();
+  });
+  const up = (e) => {
+    const p = pdfPtrs.get(e.pointerId);
+    if (!p) return;
+    pdfPtrs.delete(e.pointerId);
+    const tap = e.type === "pointerup" && pdfG && !pdfG.moved && pdfG.n === 1 && e.timeStamp - p.t < 350;
+    anchor();
+    if (!pdfPtrs.size) pdfSettle();
+    if (!tap) { pdfTap = null; return; }
+    const last = pdfTap;
+    pdfTap = { t: e.timeStamp, x: e.clientX, y: e.clientY };
+    if (last && e.timeStamp - last.t < 350 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 30) {
+      pdfTap = null;
+      if (pdf.z > 1.02) pdfZoomTo(pdfFitView());
+      else pdfZoomAt(ZTAP, e.clientX, e.clientY, true);
+    }
+  };
+  el.addEventListener("pointerup", up);
+  el.addEventListener("pointercancel", up);
+  el.addEventListener("wheel", (e) => {
+    if (!pdf.on || !pdf.fit) return;
+    e.preventDefault();
+    cancelAnimationFrame(pdf.anim);
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY, dx = e.deltaMode === 1 ? e.deltaX * 16 : e.deltaX;
+    if (e.ctrlKey || e.metaKey || e.altKey) pdfZoomAt(Math.exp(-dy * 0.0025 * (e.ctrlKey && !e.metaKey && Math.abs(dy) < 50 ? 4 : 1)), e.clientX, e.clientY);
+    else { pdf.tx -= dx; pdf.ty -= dy; pdfApply(); pdfSettle(); }
+  }, { passive: false });
+  // (Safari on a Mac: a trackpad pinch; on an iPad the fingers are pointers — ignored here)
+  let gz = 1;
+  el.addEventListener("gesturestart", (e) => { e.preventDefault(); gz = pdf.z; });
+  el.addEventListener("gesturechange", (e) => {
+    e.preventDefault();
+    if (pdfPtrs.size || !pdf.fit) return;
+    pdfZoomAt((gz * e.scale) / pdf.z, e.clientX, e.clientY);
+  });
+  el.addEventListener("gestureend", (e) => e.preventDefault());
+}
+pdfOutBtn.addEventListener("click", () => pdfZoomStep(-1));
+pdfInBtn.addEventListener("click", () => pdfZoomStep(1));
+pdfFocusBtn.addEventListener("click", () => pdfToFocus());
+pdfAgainBtn.addEventListener("click", () => reprocess());
+// (a tapped control lets go of the focus: a pedal's Space / Enter turns the page, not presses it again)
+pdfBar.addEventListener("click", (e) => { if (e.detail) e.target.closest?.("button")?.blur(); });
+// (+ − 0: zoom in, out, fitted — the PDF view only)
+window.addEventListener("keydown", (e) => {
+  if (!pdf.on || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (window.resonatePlay?.turnKeys?.() === false) return; // (the one-page shell: the Score isn't shown, or a sheet is open)
+  const t = e.target instanceof Element ? e.target : null;
+  if (t && (t.closest("select, input, textarea") || t.isContentEditable)) return;
+  if (e.key === "+" || e.key === "=") pdfZoomStep(1);
+  else if (e.key === "-" || e.key === "_") pdfZoomStep(-1);
+  else if (e.key === "0") pdfZoomTo(pdfFitView());
+  else return;
+  e.preventDefault();
+});
+
+// ⟳: read the PDF again (fixes to the reading reach a song converted before them). The one-page
+// shell does it in place; here PDF → Song does, from the song's stored PDF.
+function reprocess() {
+  const id = S.song;
+  if (!id || !pdf.has) return;
+  if (!confirm("Reprocess the PDF? The song's notes are read again.")) return;
+  const own = window.resonatePlay?.reprocess;
+  if (typeof own === "function") { own(id); return; }
+  location.href = "pdf-import.html?reprocess=" + encodeURIComponent(id);
+}
+
+// ---------------------------------------------------------------------------
+// Where the bars are on the PDF (pdfmap.js): the song's layout as Audiveris wrote it (its stored
+// MusicXML — the clean-ups Play reads may have dropped a boxed fill's bars), the song's bars
+// matched to it by number, and each exported page's PDF page — the song's record of them (PDF →
+// Song), else the same page when the PDF has as many pages as the book had sheets, else the PDF's
+// pages with staves in order (found once, kept with the song's Play record: pdfMusic).
+let pmap = null; // { id, layout, idx, pages, how } — the song's
+async function songMap(doc) {
+  const id = S.song;
+  if (!id || !S.P) return null;
+  if (pmap?.id === id && (pmap.pages || !pmap.layout)) return pmap.layout ? pmap : null;
+  let layout = pmap?.id === id ? pmap.layout : undefined;
+  if (layout === undefined) {
+    let song = null;
+    try { song = id in SAMPLES ? null : await lib.getSong(id); } catch {}
+    layout = song?.xml ? readLayout(song.xml) : null;
+    if (S.song !== id) return null;
+    const first = [...S.P.doc.documentElement.children].find((c) => c.nodeName === "part");
+    const numbers = first ? [...first.children].filter((c) => c.nodeName === "measure").map((m) => m.getAttribute("number") || "") : [];
+    pmap = { id, layout, idx: layout ? matchMeasures(layout, numbers) : [], pages: null, how: null };
+  }
+  if (!layout || !doc) return null;
+  const m = pmap;
+  let rec = null;
+  if (typeof lib.getPages === "function") { try { rec = await lib.getPages(id); } catch {} }
+  const n = doc.numPages, last = Math.max(...layout.sheets);
+  let music = null, how;
+  if (Array.isArray(rec) && rec.length) how = "record";
+  else if (n === last) how = "same";
+  else {
+    how = "staves";
+    const kept = S.st.pdfMusic;
+    if (kept && kept.n === n && Array.isArray(kept.music) && kept.music.length >= last) music = kept.music;
+    else {
+      const { findStaves } = await import("./omr/pdfprep.js?v=87");
+      const t0 = performance.now();
+      music = await musicPages(doc, findStaves, { need: last });
+      S.t.pdfMusic = ms(t0);
+      if (S.song === id) { S.st.pdfMusic = { n, music }; saveSoon(); }
+    }
+  }
+  if (S.song !== id || pmap !== m) return null;
+  m.pages = sheetPages(layout, { pages: how === "record" ? rec : null, numPages: n, music });
+  m.how = how;
+  return m;
+}
+
+// The bars in focus: the stretch picked, else the bars on the score's page(s) shown (else the
+// place). → written bar indices, in order.
+function focusBars() {
+  if (S.sel && S.P) {
+    const T = songTime(), a = barAt(T, S.sel.q0), b = barAt(T, Math.max(S.sel.q0, S.sel.end - 1e-4));
+    return Array.from({ length: b - a + 1 }, (_, i) => a + i);
+  }
+  const seen = new Set();
+  for (const g of stage.querySelectorAll(".page g.measure")) {
+    const m = /^m(\d+)$/.exec(g.id);
+    if (m) seen.add(Number(m[1]));
+  }
+  return seen.size ? [...seen].sort((a, b) => a - b) : [S.at];
+}
+// → { page (the PDF page with most of them), rects } or null (no map).
+async function pdfFocus(doc) {
+  const m = await songMap(doc);
+  if (!m) return null;
+  const idx = focusBars().map((mi) => m.idx[mi]).filter((j) => j >= 0);
+  const rects = focusRects(m.layout, idx, m.pages, 1.5); // (1½ interlines over and under: ledger notes, stems)
+  if (!rects.length) return null;
+  const count = new Map();
+  for (const j of idx) { const p = m.pages[m.layout.measures[j].page]; if (p) count.set(p, (count.get(p) || 0) + 1); }
+  const page = [...count].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0] ?? rects[0].page;
+  return { page, rects };
+}
+
+// The song's PDF document for a moment (the open one, else loaded and freed after fn).
+async function withPdf(fn) {
+  if (pdf.doc && pdf.on) return fn(pdf.doc);
+  const task = await pdfLoad(S.song);
+  try { return await fn(await task.promise); } finally { pdfFree(task); }
+}
+
+// For an assistant (resonatePlay.focus): what's in focus — the song, the view, the bars (their
+// ids, as the page names them, and their numbers in the MusicXML), the stretch picked, and where
+// they are on the PDF.
+async function focusInfo() {
+  if (!S.song || !S.P) return null;
+  const bars = focusBars();
+  const first = [...S.P.doc.documentElement.children].find((c) => c.nodeName === "part");
+  const ms_ = first ? [...first.children].filter((c) => c.nodeName === "measure") : [];
+  let where = null;
+  if (pdf.has) {
+    try { where = pdf.on && pdf.doc ? await pdfFocus(pdf.doc) : await withPdf((doc) => pdfFocus(doc)); } catch (err) { console.warn("pdf map", err); }
+  }
+  return {
+    song: S.song, title: S.title, view: S.view,
+    measures: bars.map((mi) => "m" + mi), numbers: bars.map((mi) => ms_[mi]?.getAttribute("number") ?? null),
+    selection: S.sel ? { from: "m" + bars[0], to: "m" + bars[bars.length - 1], q0: S.sel.q0, q1: S.sel.end } : null,
+    pdf: where ? { page: where.page, rects: where.rects.map((r) => ({ ...r })) } : null,
+  };
+}
+
+// The focus on the PDF as a picture (PNG): each PDF page's part holding it — its rects with a
+// margin — drawn at most maxW px wide (and not past 300 dpi), stacked, with the red borders. Only
+// the first PIC_PAGES PDF pages of a long stretch, and the stack scaled down to PIC_PX pixels and
+// PIC_H tall at most (iOS refuses a canvas over 16.7 M px, and every canvas counts against the
+// page's canvas memory): `info` (optional) gets { pages: drawn, all: the stretch's PDF pages }.
+const PIC_PAGES = 2, PIC_PX = 8e6, PIC_H = 6000;
+async function pdfCrop({ maxW = 1200, info = null, focus = null } = {}) {
+  if (!S.song || !pdf.has) return null;
+  const f = focus || (await focusInfo());
+  if (!f?.pdf) return null;
+  return withPdf(async (doc) => {
+    const byPage = new Map();
+    for (const r of f.pdf.rects) { if (!byPage.has(r.page)) byPage.set(r.page, []); byPage.get(r.page).push(r); }
+    const all = [...byPage.keys()], use = all.slice(0, PIC_PAGES);
+    if (info) { info.pages = use; info.all = all; }
+    // each part's box and its size at the scale wanted, before any canvas is made
+    const m = 0.025, plan = [];
+    for (const p of use) {
+      const rs = byPage.get(p), pg = await doc.getPage(p), v1 = pg.getViewport({ scale: 1 });
+      const u = { x0: Math.max(0, Math.min(...rs.map((r) => r.x0)) - m), y0: Math.max(0, Math.min(...rs.map((r) => r.y0)) - m),
+        x1: Math.min(1, Math.max(...rs.map((r) => r.x1)) + m), y1: Math.min(1, Math.max(...rs.map((r) => r.y1)) + m) };
+      const s = Math.min(300 / 72, maxW / ((u.x1 - u.x0) * v1.width));
+      plan.push({ pg, rs, u, s, w: (u.x1 - u.x0) * v1.width * s, h: (u.y1 - u.y0) * v1.height * s });
+    }
+    const gap = 12;
+    const W0 = Math.max(...plan.map((q) => q.w)), H0 = plan.reduce((a, q) => a + q.h, 0) + gap * (plan.length - 1);
+    const k = Math.min(1, PIC_H / H0, Math.sqrt(PIC_PX / (W0 * H0)));
+    if (info) info.scale = +k.toFixed(3);
+    const parts = [];
+    let out = null;
+    try {
+      for (const q of plan) {
+        const vp = q.pg.getViewport({ scale: q.s * k });
+        const c = document.createElement("canvas");
+        parts.push(c);
+        c.width = Math.max(1, Math.round((q.u.x1 - q.u.x0) * vp.width));
+        c.height = Math.max(1, Math.round((q.u.y1 - q.u.y0) * vp.height));
+        const ctx = c.getContext("2d");
+        if (!ctx) throw new Error("no canvas for the PDF picture");
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, c.width, c.height);
+        await q.pg.render({ canvasContext: ctx, viewport: vp, transform: [1, 0, 0, 1, -Math.round(q.u.x0 * vp.width), -Math.round(q.u.y0 * vp.height)], background: "rgba(0,0,0,0)" }).promise;
+        ctx.strokeStyle = "#e0302a";
+        ctx.lineWidth = 3;
+        for (const r of q.rs) {
+          const x = (r.x0 - q.u.x0) * vp.width - 4, y = (r.y0 - q.u.y0) * vp.height - 4, w = (r.x1 - r.x0) * vp.width + 8, h = (r.y1 - r.y0) * vp.height + 8;
+          ctx.beginPath();
+          if (ctx.roundRect) ctx.roundRect(x, y, w, h, 6); else ctx.rect(x, y, w, h);
+          ctx.stroke();
+        }
+      }
+      const W = Math.max(...parts.map((c) => c.width)), H = parts.reduce((a, c) => a + c.height, 0) + gap * (parts.length - 1);
+      out = document.createElement("canvas");
+      out.width = W; out.height = H;
+      const ctx = out.getContext("2d");
+      if (!ctx) throw new Error("no canvas for the PDF picture");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, W, H);
+      let y = 0;
+      for (const c of parts) { ctx.drawImage(c, 0, y); y += c.height + gap; c.width = c.height = 0; }
+      return await new Promise((res) => out.toBlob(res, "image/png"));
+    } finally {
+      for (const c of parts) c.width = c.height = 0;
+      if (out) out.width = out.height = 0;
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2790,7 +3343,7 @@ function sized() {
   // (the PDF drawn again only for a stage of another size: opening it hides the keyboard, and the
   // stage's growth reached here after the opening had already drawn for it — a second drawing
   // blanked the page and drew it again)
-  if (pdf.on) {
+  if (pdf.on && !pdf.busy) { // (busy: the opening draws for the stage it finds — its map can take a moment)
     const { W, H } = stageSize();
     if (W !== pdf.W || H !== pdf.H) pdfRender().then((r) => { if (r === "error") pdfFailed(); });
   }
@@ -2872,13 +3425,31 @@ window.addEventListener("pageshow", (e) => {
   lastTick = performance.now();
   for (const t of UNLOCK) document.addEventListener(t, unlockPlay, true); // (the next tap starts the audio again)
   if (!ac && S.ready) idle(() => { if (!ac) warmAudio(); });
+  freshen(); // (Back from PDF → Song's ⟳ Reprocess: the song read again)
 });
 
-// The cloud sync changed My songs: list again; the open song may be gone.
+// The song's MusicXML replaced since it was opened here — its PDF read again (⟳ Reprocess, in this
+// tab before a Back from the back/forward cache, or another), or the sync bringing another device's
+// — opens it again (its notes, and where its bars are on the PDF; the place kept): once ▶ has
+// stopped, never under it. The library's index says the rev (no XML read).
+let freshening = false;
+async function freshen() {
+  const id = S.song;
+  if (!id || SAMPLES[id] || freshening) return;
+  freshening = true;
+  try {
+    for (let i = 0; i < 1200 && S.song === id && (PB.state !== "idle" || PB.starting); i++) await new Promise((r) => setTimeout(r, 500));
+    const rev = await songRev(id).catch(() => undefined);
+    if (S.song === id && rev !== undefined && rev !== S.rev && (S.ready || S.failed)) { saveState(); await open(id); }
+  } finally { freshening = false; }
+}
+
+// The cloud sync changed My songs: list again; the open song may be gone, or read again.
 window.addEventListener("resonate:remote", async (e) => {
   if (!e.detail?.songs) return;
   await fillSongs();
-  if (S.song && !known(S.song)) open(FIRST);
+  if (S.song && !known(S.song)) return open(FIRST);
+  if (S.song && e.detail.replaced?.has?.(S.song)) freshen();
 });
 
 // ---------------------------------------------------------------------------
@@ -2895,6 +3466,304 @@ chordsBtn.setAttribute("aria-pressed", String(S.chords));
   await open(known(saved) ? saved : FIRST);
 })();
 
+// ---------------------------------------------------------------------------
+// Assistants (v88; the Resonate MCP server through assist.js). What the Score shows goes with this
+// device's heartbeat (scoreState: the song, the view, the page and its bars, the stretch picked, ▶,
+// 📄); a stretch picked by a drag — a second after the lift, and only when an assistant has
+// connected to the account — is sent as the focus (sendFocus: the bars' notes as text, the view's
+// MusicXML for them, where they are on the PDF, a picture of the drawn bars with their names and one
+// of the PDF's with the red border), so the user can ask about what they highlighted; an assistant's
+// score_* commands run here (scoreRun) — on play.html through its own 📡 (started below), in the
+// one-page shell through shell/remote.js. Bars are named by their number in the MusicXML.
+
+const numsOf = new WeakMap(); // S.P → each written bar's number in the MusicXML
+function barNumbers() {
+  if (!S.P) return [];
+  let n = numsOf.get(S.P);
+  if (!n) {
+    const first = [...S.P.doc.documentElement.children].find((c) => c.nodeName === "part");
+    n = first ? [...first.children].filter((c) => c.nodeName === "measure").map((m, i) => m.getAttribute("number") || String(i + 1)) : [];
+    numsOf.set(S.P, n);
+  }
+  return n;
+}
+const numberOf = (mi) => barNumbers()[mi] ?? String(mi + 1);
+// A bar an assistant names: its number in the MusicXML (the first bar with it), else "m<index>".
+function barOf(x) {
+  const s = String(x ?? "").trim(), list = barNumbers();
+  let i = list.indexOf(s);
+  if (i < 0 && /^\d+$/.test(s)) i = list.indexOf(String(Number(s)));
+  if (i < 0 && /^m\d+$/.test(s)) i = Number(s.slice(1));
+  return i >= 0 && i < list.length ? i : null;
+}
+function shownBars() {
+  const seen = new Set();
+  for (const g of stage.querySelectorAll(".page g.measure")) { const m = /^m(\d+)$/.exec(g.id); if (m) seen.add(Number(m[1])); }
+  return [...seen].sort((a, b) => a - b);
+}
+const selBars = () => (S.sel && S.P ? focusBars() : null);
+function scoreState() {
+  if (!S.song) return null;
+  const shown = S.ready && !pdf.on ? shownBars() : [];
+  const sel = selBars();
+  return {
+    song: { id: S.song, title: S.title }, ready: S.ready, view: S.view, views: S.P ? Object.keys(S.P.views) : [],
+    page: S.page, pages: S.pages, measures: shown.length ? [numberOf(shown[0]), numberOf(shown[shown.length - 1])] : null,
+    bars: barNumbers().length || null, at: S.P ? numberOf(S.at) : null,
+    selection: sel ? { from: numberOf(sel[0]), to: numberOf(sel[sel.length - 1]) } : null,
+    playing: PB.state !== "idle" || PB.starting ? (PB.state === "looping" ? "loop" : PB.kind === "span" ? "selection" : "from the page") : null,
+    speed: Math.round(S.speed * 100),
+    pdf: pdf.has ? { on: pdf.on, page: pdf.on ? pdf.page : null, pages: pdf.pages || null } : null,
+  };
+}
+
+// --- the focus ---------------------------------------------------------------------------------
+let focusTimer = 0, focusGen = 0;
+const FOCUS_W = 1600;          // px: the pictures' width at most
+const PIC_BYTES = 450000;      // a picture over this goes as JPEG (smaller)
+const XML_MAX = 60000;         // chars of the view's MusicXML sent at most (get_score_xml's cap: one tool answer)
+function focusSoon() {
+  clearTimeout(focusTimer);
+  focusTimer = setTimeout(() => sendFocus().catch((err) => console.warn("focus", err)), 1000);
+}
+async function sendFocus() {
+  if (!S.sel || !S.ready || !S.P || spaceChanged()) return false;
+  if (!(await hasAssistant())) return false;
+  const g = ++focusGen, id = S.song;
+  const t0 = performance.now();
+  const f = await focusData();
+  if (g !== focusGen || S.song !== id || !f) return false;
+  const ok = await shareFocus(id, f.data, f.pics);
+  S.focusSent = { at: Date.now(), ok, ms: ms(t0), bars: f.data.measures, sizes: { score: f.pics.score?.length || 0, pdf: f.pics.pdf?.length || 0, text: f.data.text.length, xml: f.data.xml?.length || 0 } };
+  return ok;
+}
+// What's highlighted: the bars (numbers), their notes as text, the view's MusicXML for them, where
+// they are on the PDF, and the two pictures (data URLs).
+async function focusData() {
+  const bars = selBars();
+  if (!bars?.length) return null;
+  const view = S.view;
+  const text = barsText(S.P.doc, songTime(), S.P.facts, { bars, keep: viewKeep(), chords: chordList(), number: numberOf });
+  let xml = S.v?.xml ? sliceMeasures(S.v.xml, bars[0], bars[bars.length - 1]) : null;
+  const cut = xml && xml.length > XML_MAX;
+  if (cut) xml = null;
+  const where = await focusInfo().catch(() => null);
+  const pic = {};
+  const [score, pdfPic] = await Promise.all([
+    scoreCrop().then(dataUrl).catch((err) => { console.warn("focus: score picture", err); return null; }),
+    where?.pdf ? pdfCrop({ maxW: FOCUS_W, info: pic, focus: where }).then(dataUrl).catch((err) => { console.warn("focus: pdf picture", err); return null; }) : null,
+  ]);
+  const span = (ps) => (ps.length > 1 ? `${ps[0]}–${ps[ps.length - 1]}` : String(ps[0]));
+  const picture = pdfPic && pic.pages?.length ? { pages: pic.pages,
+    ...(pic.all.length > pic.pages.length ? { note: `The PDF picture shows page${pic.pages.length > 1 ? "s" : ""} ${span(pic.pages)} of the highlight's ${span(pic.all)} — get_score_pdf {page} for the others.` } : {}) } : null;
+  return {
+    data: {
+      v: 1, title: S.title, view, view_name: VIEW_LABELS[view] || view, measures: bars.map(numberOf), first: bars[0], last: bars[bars.length - 1],
+      text, legend: TEXT_LEGEND, xml, ...(cut ? { xml_note: "Too long to send here: ask get_score_xml for these bars." } : {}),
+      pdf: where?.pdf ? { page: where.pdf.page, rects: where.pdf.rects.map((r) => ({ page: r.page, x0: +r.x0.toFixed(4), y0: +r.y0.toFixed(4), x1: +r.x1.toFixed(4), y1: +r.y1.toFixed(4) })), ...(picture ? { picture } : {}) } : null,
+      app: $("version")?.textContent || "",
+    },
+    pics: { score, pdf: pdfPic },
+  };
+}
+// A picture → a data URL (PNG; JPEG when the PNG is large).
+async function dataUrl(blob) {
+  if (!blob) return null;
+  let b = blob;
+  if (b.size > PIC_BYTES) {
+    const bmp = await createImageBitmap(b);
+    const c = document.createElement("canvas");
+    c.width = bmp.width; c.height = bmp.height;
+    const x = c.getContext("2d");
+    x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height);
+    x.drawImage(bmp, 0, 0);
+    bmp.close?.();
+    for (const q of [0.85, 0.7, 0.55]) { b = await new Promise((r) => c.toBlob(r, "image/jpeg", q)); if (b.size <= PIC_BYTES) break; }
+    c.width = c.height = 0;
+  }
+  return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = () => reject(r.error); r.readAsDataURL(b); });
+}
+// The highlighted bars as drawn (names on the heads as shown, the band under them): each system's
+// band on the shown page(s) with a margin, stacked; no stretch: the shown page(s). A PNG ≤ maxW wide.
+const SVGNS = "http://www.w3.org/2000/svg";
+async function scoreCrop({ maxW = FOCUS_W } = {}) {
+  if (!S.ready) return null;
+  const pieces = [];
+  for (const pg of stage.querySelectorAll(".page")) {
+    const svg = pg.querySelector(":scope > svg");
+    const pr = pg.getBoundingClientRect();
+    if (!svg || !pr.width) continue;
+    const bands = [...pg.querySelectorAll(":scope > .sel")].map((b) => ({ x: b.offsetLeft, y: b.offsetTop, w: b.offsetWidth, h: b.offsetHeight }));
+    if (S.sel && !bands.length) continue;
+    const sp = S.sp || 8, W = pg.offsetWidth, H = pg.offsetHeight;
+    const boxes = bands.length
+      ? bands.map((b) => ({ x0: Math.max(0, b.x - 0.3 * sp), y0: Math.max(0, b.y - 3.5 * sp), x1: Math.min(W, b.x + b.w + 0.3 * sp), y1: Math.min(H, b.y + b.h + 5 * sp), band: b }))
+      : [{ x0: 0, y0: 0, x1: W, y1: H, band: null }];
+    // a copy as the page shows it: the names hidden at this level left out, the pills' strokes as
+    // the page's CSS draws them, no lit / peeked colours
+    const clone = svg.cloneNode(true);
+    const src = svg.querySelectorAll(".nn, .km"), dst = clone.querySelectorAll(".nn, .km");
+    src.forEach((el, i) => { if (getComputedStyle(el).display === "none") dst[i]?.remove(); });
+    for (const r of clone.querySelectorAll(".nn rect")) r.style.stroke = r.closest(".nb-h") ? "#5e2fb8" : "none";
+    for (const el of clone.querySelectorAll(".peek, .play")) el.classList.remove("peek", "play");
+    clone.setAttribute("x", "0"); clone.setAttribute("y", "0");
+    clone.setAttribute("width", String(W)); clone.setAttribute("height", String(H));
+    clone.style.color = "#111";
+    for (const b of boxes) pieces.push({ clone, ...b });
+  }
+  if (!pieces.length) return null;
+  const wide = Math.max(...pieces.map((p) => p.x1 - p.x0));
+  let k = Math.min(2.5, maxW / wide);
+  const gap = 12, tall = pieces.reduce((a, p) => a + (p.y1 - p.y0), 0);
+  k = Math.min(k, 6000 / tall);
+  const out = document.createElement("canvas");
+  out.width = Math.round(wide * k);
+  out.height = Math.round(tall * k + gap * (pieces.length - 1));
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, out.width, out.height);
+  let y = 0;
+  for (const p of pieces) {
+    const w = p.x1 - p.x0, h = p.y1 - p.y0;
+    const wrap = document.createElementNS(SVGNS, "svg");
+    wrap.setAttribute("xmlns", SVGNS);
+    wrap.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+    wrap.setAttribute("viewBox", `${p.x0} ${p.y0} ${w} ${h}`);
+    wrap.setAttribute("width", String(Math.round(w * k)));
+    wrap.setAttribute("height", String(Math.round(h * k)));
+    const bg = document.createElementNS(SVGNS, "rect");
+    Object.entries({ x: p.x0, y: p.y0, width: w, height: h, fill: "#fff" }).forEach(([a, v]) => bg.setAttribute(a, String(v)));
+    wrap.append(bg);
+    if (p.band) {
+      const r = document.createElementNS(SVGNS, "rect");
+      Object.entries({ x: p.band.x, y: p.band.y, width: p.band.w, height: p.band.h, rx: 3, fill: "#d4e2ff" }).forEach(([a, v]) => r.setAttribute(a, String(v)));
+      wrap.append(r);
+    }
+    wrap.append(p.clone);
+    const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(wrap)], { type: "image/svg+xml" }));
+    p.clone.remove();
+    try {
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error("score picture")); img.src = url; });
+      ctx.drawImage(img, 0, Math.round(y), Math.round(w * k), Math.round(h * k));
+    } finally { URL.revokeObjectURL(url); }
+    y += h * k + gap;
+  }
+  const blob = await new Promise((r) => out.toBlob(r, "image/png"));
+  out.width = out.height = 0;
+  return blob;
+}
+
+// --- an assistant's commands ------------------------------------------------------------------
+const nap = (t) => new Promise((r) => setTimeout(r, t));
+async function untilReady(ms = 20000) {
+  for (let t = 0; t < ms && !S.ready && !S.failed; t += 100) await nap(100);
+  return S.ready;
+}
+// Show the page holding written bar mi (the place kept there).
+function goBar(mi) {
+  if (!S.ready || !tk || !S.v) return false;
+  const p0 = tk.getPageWithElement("m" + S.v.firstMeasureAtOrAfter(mi)) || 1;
+  if (!shownPages().includes(p0)) {
+    clearPeek();
+    S.page = S.spread && p0 % 2 === 0 ? p0 - 1 : p0;
+    show();
+    activity("turn");
+  }
+  S.at = mi; S.st.at = mi; saveSoon();
+  return true;
+}
+// A stretch of whole bars [mi0, mi1] (the view's onsets in them).
+function selectBars(mi0, mi1) {
+  const T = songTime(), qs = viewOnsets();
+  const a = T.bars[mi0], b = T.bars[mi1];
+  const inside = qs.filter((q) => q >= a.q - EPS && q < b.q + b.len - EPS);
+  if (!inside.length) return false;
+  if (PB.kind === "span" && PB.state !== "idle") stopPlay();
+  setSel(inside[0], inside[inside.length - 1]);
+  return true;
+}
+// 📄 again after a change on the score, so it shows (and borders) what's in focus now.
+async function pdfAgain() {
+  if (!pdf.on) return;
+  pdfOff();
+  await pdfOn();
+}
+const SCORE_ACTIONS = ["score_open", "score_view", "score_go", "score_select", "score_play", "score_stop", "score_pdf", "score_state"];
+async function scoreRun(action, a = {}) {
+  const done = (extra = {}) => ({ ok: true, ...extra, score: scoreState() });
+  const no = (error, extra = {}) => ({ ok: false, error, ...extra, score: scoreState() });
+  if (spaceChanged()) return no("This page is out of date (signed in or out elsewhere) and is reloading.");
+  if (action === "stop" || action === "score_stop") { clearPeek(true); stopPlay(); return done(); }
+  if (!SCORE_ACTIONS.includes(action)) return no(`This device shows Resonate's Score (Play), not Sing — “${action}” is for the Sing page.`);
+  if (action === "score_open") {
+    const id = String(a.song ?? "");
+    if (!known(id)) return no(`That song isn't on this device.`, { songs: [...songSel.querySelectorAll("option")].map((o) => o.textContent.trim()) });
+    if (S.song !== id || !S.ready) { if (!spaceChanged()) keep(K.song, id); await open(id); }
+    if (!(await untilReady())) return no("The song didn't open on this device.");
+    if (a.view) return scoreRun("score_view", a);
+    return done();
+  }
+  if (!(await untilReady())) return no("The Score isn't ready on this device.");
+  const bar = (x, what) => { const mi = barOf(x); if (mi == null) throw new Error(`No bar “${x}” — ${what}: bars ${numberOf(0)}–${numberOf(barNumbers().length - 1)} (numbers as in the MusicXML).`); return mi; };
+  try {
+    switch (action) {
+      case "score_state": return done();
+      case "score_view": {
+        const v = String(a.view ?? "");
+        if (!(v in S.P.views)) return no(`No “${v}” view for this song.`, { views: Object.keys(S.P.views) });
+        if (v !== S.view) { if (pdf.on) pdfOff(); await changeView(v); }
+        return (await untilReady()) ? done() : no("That view didn't draw.");
+      }
+      case "score_go": {
+        const mi = bar(a.measure, "score_go");
+        const wasPdf = pdf.on;
+        if (wasPdf) pdfOff();
+        goBar(mi);
+        if (wasPdf) await pdfOn();
+        return done();
+      }
+      case "score_select": {
+        let m0 = bar(a.from_measure, "from_measure"), m1 = a.to_measure == null ? m0 : bar(a.to_measure, "to_measure");
+        if (m1 < m0) [m0, m1] = [m1, m0];
+        const wasPdf = pdf.on;
+        if (wasPdf) pdfOff();
+        goBar(m0);
+        if (!selectBars(m0, m1)) { if (wasPdf) await pdfOn(); return no("Nothing of this view is in those bars."); }
+        focusSoon(); // (what an assistant picked is the focus too)
+        if (wasPdf) await pdfOn();
+        return done();
+      }
+      case "score_play": {
+        if (document.hidden) return no("The page isn't in front on this device — bring it up and ask again.");
+        if (a.from_measure != null || a.to_measure != null) {
+          const r = await scoreRun("score_select", { from_measure: a.from_measure ?? a.to_measure, to_measure: a.to_measure ?? a.from_measure });
+          if (!r.ok) return r;
+        }
+        if (a.loop && !S.sel) return no("A loop plays a stretch: give from_measure and to_measure (or pick one on the page).");
+        if (a.speed != null) {
+          const want = Number(a.speed) > 1.5 ? Number(a.speed) / 100 : Number(a.speed);
+          setSpeed(SPEEDS.reduce((x, y) => (Math.abs(y - want) < Math.abs(x - want) ? y : x)));
+        }
+        if (pdf.on) { pdfOff(); clearTimeout(resizeTimer); sized(); } // (▶ is off on the PDF)
+        await playStart(S.sel ? "span" : "page", !!a.loop);
+        if (PB.state === "idle") return no("The sound didn't start on this device — someone needs to tap the page once.");
+        return done();
+      }
+      case "score_pdf": {
+        if (!pdf.has) return no("This song has no PDF on this device (only songs read from a PDF have one).");
+        if (a.on === false) { if (pdf.on) { pdfOff(); clearTimeout(resizeTimer); sized(); } return done(); }
+        if (!pdf.on) await pdfOn();
+        for (let t = 0; t < 15000 && pdf.on && pdf.busy; t += 100) await nap(100);
+        return pdf.on ? done({ focus_on_pdf: pdf.focus ? { page: pdf.focus.page, rects: pdf.focus.rects.length } : null }) : no("The PDF didn't open.");
+      }
+    }
+  } catch (err) { return no(err.message || String(err)); }
+  return no(`Unknown action “${action}”.`);
+}
+// The device's state on play.html (in the shell, shell/remote.js adds the Score's to its own).
+const playState = () => ({ page: "play", song: S.song ? { id: S.song, title: S.title } : null, doing: PB.state !== "idle" || PB.starting ? "score-play" : "idle", score: scoreState() });
+
 // The one-page shell (shell.html) mounts this page as its Score: it opens songs, stops everything
 // before it leaves the song or before Sing sounds, and lays the music out again when the Score's
 // region changes size (a module shown or hidden). It sets region / beforeSound / quiet / turnKeys
@@ -2907,7 +3776,35 @@ window.resonatePlay = Object.assign(window.resonatePlay || {}, {
   resize: () => { clearTimeout(resizeTimer); sized(); },
   // (the shell's Piano toggle drives the keyboard — its 🎹 is hidden there; kept as 🎹 keeps it)
   keys: (on) => { if (on != null && !!on !== KB.on) setKeys(!!on); return KB.on; }, // (play.html's 🎹 setting left alone)
+  // (for an assistant: what's in focus — the song, the view, the bars, the stretch picked, where
+  // they are on the PDF — and that place on the PDF as a PNG with its red borders)
+  focus: () => focusInfo(),
+  pdfCrop: (opts) => pdfCrop(opts),
+  // (an assistant: what the Score shows; its score_* commands; the focus sent now — tests)
+  scoreState: () => scoreState(),
+  scoreRun: (action, args) => scoreRun(action, args),
+  scoreCrop: (opts) => scoreCrop(opts),
+  focusData: () => focusData(),
+  sendFocus: () => sendFocus(),
 });
+
+// play.html's 📡: an assistant's commands for the Score reach this page (one device at a time, the
+// same switch as Sing's). Only for a signed-in, approved account with sync on (assist.js); hidden
+// otherwise. (The one-page shell has its own 📡 and routes the Score's commands itself.)
+if (!window.resonatePlay.region) {
+  const rb = $("remote-btn");
+  const showRemote = (on) => {
+    if (!rb) return;
+    rb.hidden = !remote.available;
+    rb.dataset.on = String(!!on);
+    rb.title = on ? "An assistant can control this page — tap to stop" : "Let an assistant control this page";
+    rb.setAttribute("aria-label", on ? "Remote on" : "Remote");
+    rb.setAttribute("aria-pressed", String(!!on));
+  };
+  rb?.addEventListener("click", () => { rb.disabled = true; remote.set(!remote.on).finally(() => { rb.disabled = false; }); });
+  // (Sing's commands go to a Sing page of this device first: `handles`)
+  remote.start({ run: scoreRun, state: playState, changed: showRemote, assistant: () => {}, handles: (a) => a === "stop" || SCORE_ACTIONS.includes(a) }).catch((err) => console.warn("remote", err));
+}
 
 // Every head of every page of the current layout, counted from the SVG (tests).
 function countAll() {
@@ -2979,7 +3876,7 @@ window.resonateDebug = () => {
   for (const n of S.counted.values()) rendered += n;
   return {
     play: {
-      ready: S.ready, failed: S.failed, song: S.song, title: S.title, view: S.view,
+      ready: S.ready, failed: S.failed, song: S.song, title: S.title, rev: S.rev, view: S.view,
       views: S.P ? Object.keys(S.P.views) : [], parts: S.P?.parts ?? [],
       keep: plan ? { ...plan, ids: S.v?.ids ?? [] } : null,
       pages: S.pages, page: S.page, shown: shownPages(), spread: S.spread, sp: S.sp, scale: S.scale, step: S.step, size: S.step ? S.sp : null,
@@ -3013,6 +3910,12 @@ window.resonateDebug = () => {
       pdf: {
         has: pdf.has, on: pdf.on, busy: pdf.busy, page: pdf.page, pages: pdf.pages, spread: pdf.spread,
         canvas: pdf.canvas?.isConnected ? [pdf.canvas.width, pdf.canvas.height] : null,
+        z: pdf.z, tx: pdf.tx, ty: pdf.ty, fit: pdf.fit ? { bw: pdf.fit.bw, bh: pdf.fit.bh, x0: pdf.fit.x0, list: pdf.fit.list.slice(), boxes: pdf.fit.boxes.map((b) => ({ p: b.p, x: b.x, w: b.w, h: b.h })) } : null,
+        focus: pdf.focus ? { page: pdf.focus.page, rects: pdf.focus.rects.map((r) => ({ ...r })) } : null,
+        borders: pdf.borders.map((b) => { const r = b.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }),
+        detail: pdf.detail?.isConnected ? { z: pdf.dz, w: pdf.detail.width, h: pdf.detail.height, ...pdf.dbox } : null,
+        map: pmap && pmap.id === S.song ? { how: pmap.how, pages: pmap.pages, sheets: pmap.layout?.sheets ?? null, bars: pmap.idx.length, matched: pmap.idx.filter((j) => j >= 0).length } : null,
+        bar: pdfBar.hidden ? null : { focus: !pdfFocusBtn.hidden, again: !pdfAgainBtn.hidden },
       },
       wake: { held: !!wake && !wake.released, requests: wakeRequests },
       playback: playDebug(),

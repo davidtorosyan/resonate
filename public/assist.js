@@ -96,6 +96,51 @@ export function takeEnded(takeId, { status, meta, review, lines }) {
   });
 }
 
+// The Score's focus (v88): the bars picked on this device's Score — their notes as text, the view's
+// MusicXML for them, where they are on the PDF, and two pictures (data URLs) — one row a device,
+// replaced by the next. Sent only when an assistant has connected to the account (assistant_activity
+// has a row: read once a page load).
+let assistantP = null, assistantAt = 0;
+export function hasAssistant() {
+  // (yes is kept for the page load; no is asked again after a minute — one may connect meanwhile)
+  if (assistantP && assistantP.no && Date.now() - assistantAt > 60000) assistantP = null;
+  if (!assistantP) {
+    assistantAt = Date.now();
+    const p = (async () => {
+      const c = await ready();
+      if (!c) return false;
+      const { data, error } = await c.sb.from("assistant_activity").select("client_id").limit(1);
+      return !error && !!data?.length;
+    })().catch(() => false);
+    p.then((yes) => { p.no = !yes; });
+    assistantP = p;
+  }
+  return assistantP;
+}
+// (not retried: a newer focus replaces it — the latest one sent wins) → true once stored
+let focusSeq = 0;
+const FOCUS_PIC_MAX = 2000000; // characters: score_focus's limit on a picture (data URL)
+export async function shareFocus(songId, data, { score = null, pdf = null } = {}) {
+  const n = ++focusSeq;
+  if (!songId || !data) return false;
+  const c = await ready();
+  if (!stillMine(c) || n !== focusSeq) return false;
+  // (a picture over the table's limit — 2,000,000 characters — would have the whole row refused)
+  const fits = (u) => (typeof u === "string" && u.length <= FOCUS_PIC_MAX ? u : null);
+  const row = { device_id: device().id, song_id: songId, data, score_img: fits(score), pdf_img: fits(pdf), updated_at: new Date().toISOString() };
+  const left = [score && !row.score_img ? "score" : null, pdf && !row.pdf_img ? "pdf" : null].filter(Boolean);
+  if (left.length) row.data = { ...data, pictures_left_out: left };
+  const put = (r) => c.sb.from("score_focus").upsert(r, { onConflict: "user_id,device_id" });
+  let { error } = await put(row);
+  // Refused with its pictures: the notes, the MusicXML and where they are still go, without them.
+  if (error && (row.score_img || row.pdf_img) && n === focusSeq && stillMine(c)) {
+    console.warn("assist: focus (again without the pictures)", error.message || error);
+    ({ error } = await put({ ...row, score_img: null, pdf_img: null, data: { ...data, pictures_left_out: ["score", "pdf"].filter((k) => (k === "score" ? score : pdf)) } }));
+  }
+  if (error) console.warn("assist: focus", error.message || error);
+  return !error;
+}
+
 // --- This device --------------------------------------------------------------------------
 function guessName() {
   const ua = navigator.userAgent || "";
@@ -122,7 +167,14 @@ export function renameDevice(name) {
 }
 
 // --- Remote control -----------------------------------------------------------------------
-// remote.start({ run(action, args) → { ok, … }, state() → {…}, changed(on) }) on the Sing page.
+// remote.start({ run(action, args) → { ok, … }, state() → {…}, changed(on), handles(action) → bool })
+// on the Sing page, Play and the one-page shell. Every tab of a browser is the same device (one id):
+// the page in front — the last one shown, focused or touched — is first to take a command and is
+// the one that says what the device shows; a page that can't run a command (`handles` false: Play
+// and Sing's actions, sing.html and the Score's) or is hidden lets another tab of this device take
+// it first, and answers it itself only when none has (v88).
+const FRONT_KEY = "resonate.remote.front"; // { tab, at } — the page in front (device-only)
+const FRONT_MS = 75000; // a front record older than this is a page gone (it beats every 30 s)
 export const remote = {
   available: false, // signed in, approved, sync on
   settings: { start_delay_s: 4, review_after_remote: false }, // the Assistants page's (assistant_settings)
@@ -145,16 +197,38 @@ export const remote = {
     // The assistant active lately (the page shows it by 📡).
     c.sb.from("assistant_activity").select("name,logo,last_at,last_tool").order("last_at", { ascending: false }).limit(1)
       .then(({ data: a }) => { if (a?.[0]) this.hooks?.assistant?.({ name: a[0].name, logo: a[0].logo, tool: a[0].last_tool, at: a[0].last_at }); }, () => {});
+    this.takeFront();
     await this.beat();
     await this.listen();
     // (old commands go: an hour is plenty to look back on)
     c.sb.from("device_commands").delete().lt("created_at", new Date(Date.now() - 3600000).toISOString()).then(() => {}, () => {});
-    setInterval(() => { if (!document.hidden) this.beat(); }, 30000);
-    document.addEventListener("visibilitychange", () => { this.beat(); if (!document.hidden) this.catchUp(); });
-    window.addEventListener("pagehide", () => this.beat(true));
+    setInterval(() => { if (!document.hidden && this.inFront()) { this.takeFront(); this.beat(); } }, 30000);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) { this.takeFront(); this.beat(); this.catchUp(); }
+      else if (this.inFront(true)) { this.beat(); this.dropFront(); } // (another tab shown takes over)
+    });
+    window.addEventListener("focus", () => this.takeFront());
+    window.addEventListener("pointerdown", () => this.takeFront(), { capture: true, passive: true });
+    // the page in front went away: a page still shown takes over (and says what the device shows)
+    window.addEventListener("storage", (e) => { if (e.key === FRONT_KEY && !e.newValue && !document.hidden) { this.takeFront(); this.beat(); } });
+    window.addEventListener("pagehide", () => { if (this.inFront(true)) { this.beat(true); this.dropFront(); } });
     this.hooks?.changed?.(this.on);
     return true;
   },
+  // Which of this device's pages is in front (tabs, Split View): its record in localStorage.
+  frontTab() {
+    try { const f = JSON.parse(localStorage.getItem(FRONT_KEY) || "null"); return f && Date.now() - f.at < FRONT_MS ? f.tab : null; } catch { return null; }
+  },
+  // this page is the one in front, or none is (hidden pages too with `any`)
+  inFront(any = false) { const f = this.frontTab(); return (any || !document.hidden) && (!f || f === this.tab); },
+  takeFront() {
+    if (document.hidden) return;
+    const was = this.frontTab();
+    try { localStorage.setItem(FRONT_KEY, JSON.stringify({ tab: this.tab, at: Date.now() })); } catch {}
+    // (in front now after another page: the device shows this one — said soon)
+    if (was && was !== this.tab && this.ctx) { clearTimeout(this.t); this.t = setTimeout(() => this.beat(), 800); }
+  },
+  dropFront() { try { if (this.frontTab() === this.tab) localStorage.removeItem(FRONT_KEY); } catch {} },
   // Switch it on here (and so off everywhere else), or off.
   async set(on) {
     const c = this.ctx;
@@ -181,7 +255,8 @@ export const remote = {
     const { data, error } = await c.sb.from("devices").upsert({ id: me.id, name: me.name, seen_at: new Date().toISOString(), state }, { onConflict: "user_id,id" }).select("remote").maybeSingle();
     if (!error && data && !!data.remote !== this.on) { this.on = !!data.remote; this.hooks?.changed?.(this.on); } // (switched on elsewhere)
   },
-  changedSoon() { clearTimeout(this.t); this.t = setTimeout(() => this.beat(), 800); },
+  // (a page not in front says what it shows only right after it ran a command: `ran`)
+  changedSoon(ran = false) { if (!ran && !this.inFront(true)) return; clearTimeout(this.t); this.t = setTimeout(() => this.beat(), 800); },
   seen: new Set(),
   async listen() {
     const c = this.ctx;
@@ -189,7 +264,7 @@ export const remote = {
     const since = Date.now() - 60000;
     this.channel = c.sb.channel(`user:${c.uid}`, { config: { private: true, broadcast: { replay: { since, limit: 25 } } } })
       .on("broadcast", { event: "command" }, (m) => this.handle(m.payload))
-      .on("broadcast", { event: "assistant" }, (m) => this.hooks?.assistant?.({ ...m.payload, received: Date.now() }))
+      .on("broadcast", { event: "assistant" }, (m) => { assistantP = Promise.resolve(true); this.hooks?.assistant?.({ ...m.payload, received: Date.now() }); })
       .subscribe((status) => { if (status === "SUBSCRIBED") this.catchUp(); });
   },
   // Commands that came while the page couldn't hear them (hidden, reconnecting).
@@ -207,26 +282,39 @@ export const remote = {
   handle(cmd) {
     if (!cmd?.id || this.seen.has(cmd.id) || cmd.device !== device().id) return;
     this.seen.add(cmd.id);
-    this.queue = this.queue.then(() => this.run1(cmd)).catch((err) => console.warn("assist: command", err));
+    // (claimed on its own clock — not behind the commands before it here, which another page of
+    // this device may be the one running — then run in order)
+    const claimed = this.claim(cmd).catch((err) => { console.warn("assist: claim", err); return false; });
+    this.queue = this.queue.then(async () => { if (await claimed) await this.run1(cmd); }).catch((err) => console.warn("assist: command", err));
+  },
+  // Claimed by one page (another tab of this device may have it too): the row's result is set only
+  // where it's still empty. Another page of this device first when this one can't run it (3 s) or
+  // isn't in front (shown: 0.7 s, hidden: 1.5 s) — the assistant waits 12 s for an answer.
+  async claim(cmd) {
+    const c = this.ctx;
+    if (!stillMine(c)) return false;
+    const can = this.hooks?.handles?.(cmd.action) !== false;
+    const lag = (can ? 0 : 3000) + (this.inFront() ? 0 : document.hidden ? 1500 : 700);
+    if (lag) await new Promise((r) => setTimeout(r, lag));
+    if (!stillMine(c)) return false;
+    const { data: claimed } = await c.sb.from("device_commands").update({ result: { claimed: this.tab } }).eq("id", cmd.id).eq("status", "sent").is("result", null).select("id");
+    return !!claimed?.length;
   },
   async run1(cmd) {
     const c = this.ctx;
     if (!stillMine(c)) return;
-    // Claimed by one page (another Sing tab of this device may have it too): the row's result is
-    // set only where it's still empty.
-    const { data: claimed } = await c.sb.from("device_commands").update({ result: { claimed: this.tab } }).eq("id", cmd.id).eq("status", "sent").is("result", null).select("id");
-    if (!claimed?.length) return;
     const answer = (status, result) => c.sb.from("device_commands").update({ status, result, updated_at: new Date().toISOString() }).eq("id", cmd.id);
     if (!this.on) return answer("failed", { error: "Remote control is off on this device." });
     // Something that starts sound or the mic is only done right away, never long after it was asked.
-    const starts = ["listen", "play_take", "sing", "loop_line"].includes(cmd.action);
+    const starts = ["listen", "play_take", "sing", "loop_line", "score_play"].includes(cmd.action);
     if (Date.now() - Date.parse(cmd.at) > (starts ? 15000 : 60000)) return answer("expired", { error: "It came too late — ask again." });
     if (document.hidden && ["sing", "loop_line"].includes(cmd.action)) return answer("failed", { error: "The page isn't in front on this device — bring it up and ask again." });
+    this.takeFront(); // (the page that ran it says what the device shows now)
     let r;
     try { r = (await this.hooks.run(cmd.action, cmd.args || {})) || { ok: true }; }
     catch (err) { r = { ok: false, error: err.message || String(err) }; }
     await answer(r.ok === false ? "failed" : "done", r);
-    this.changedSoon();
+    this.changedSoon(true);
   },
 };
 

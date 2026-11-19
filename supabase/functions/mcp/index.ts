@@ -1,4 +1,4 @@
-// Resonate's MCP server (v73–75): https://<project>.supabase.co/functions/v1/mcp
+// Resonate's MCP server (v73–75, v88: the sheet-music tools): https://<project>.supabase.co/functions/v1/mcp
 // Assistants (ChatGPT, Claude…) connect with OAuth through Supabase Auth's OAuth 2.1 server
 // (dynamic client registration; consent page public/oauth/consent.html). Stateless Streamable
 // HTTP (MCP SDK v2): a fresh server per request; tools in resonate.ts run as the user under RLS.
@@ -81,9 +81,31 @@ function build(sb: Parameters<typeof R.listSongs>[0]) {
     annotations: READ,
   }, () => gate(() => R.getVoiceProfile(sb), "get_voice_profile"));
 
+  // --- sheet music (v88): the Score, the user's highlight, the song's files ----------------------
+  const bar = z.union([z.number().int(), z.string()]);
+  server.registerTool("get_score_view", {
+    title: "The Score and the user's highlight",
+    description: "What Resonate's Score (sheet music: the Play page) shows on each device — song, view, page, bars on screen, the stretch picked, ▶, the PDF — and the bars the user highlighted last: their notes as text, the view's MusicXML for them, a picture of the drawn bars and one of the same bars on the original PDF (red border). Use it when the user asks about what they're looking at or highlighted, e.g. whether a bar was transcribed right: compare the PDF picture with the notes.",
+    annotations: READ,
+  }, () => gate(() => R.getScoreView(sb), "get_score_view"));
+
+  server.registerTool("get_score_xml", {
+    title: "A song's MusicXML",
+    description: "The song's MusicXML file as stored (for a PDF import: the OCR's reading of the PDF), optionally only measures from_measure–to_measure (numbers as written in the file) and one part (id or name). Long answers are cut; ask again from next_from_measure.",
+    inputSchema: z.object({ song, from_measure: bar.optional(), to_measure: bar.optional(), part: z.string().optional() }),
+    annotations: READ,
+  }, ({ song, from_measure, to_measure, part }) => gate(() => R.getScoreXml(sb, song, from_measure, to_measure, part), "get_score_xml"));
+
+  server.registerTool("get_score_pdf", {
+    title: "A page of the song's PDF",
+    description: "One page of the song's original PDF (songs read with PDF → Song) as a one-page PDF, with the page count. Without page: the page of the user's latest highlight, else page 1.",
+    inputSchema: z.object({ song, page: z.number().int().min(1).optional() }),
+    annotations: READ,
+  }, ({ song, page }) => gate(() => R.getScorePdf(sb, song, page), "get_score_pdf"));
+
   server.registerTool("control_resonate", {
     title: "Control Resonate",
-    description: "Act in Resonate's Sing page on the device whose 📡 Remote is on. action: sing = START A TAKE — the user sings while Resonate records and grades it; use it whenever the user asks to start, go, sing, perform, record or try (to_line N: a short performance that ends by itself after line N — use this instead of stopping it yourself; view: perform = lyrics only, practice = the lane). It starts after a 'Get ready' countdown, so say a word at most and then stay quiet until it ends. stop = end what's going on (take, loop, playback). listen {line?, only_line?} = play the melody. play_take {mode?: voice|melody|both, line?, only_line?} = play the last take back. loop_line {line} = practise one line round after round. open_song {song}, set_key {semitones -24…24 from the written key, or fit: true = Resonate's best fit for the voice profile}, set_tempo {percent: 50,60,70,80,90,100,110,125}, go_to_line {line}, review = open the take's review on screen. Returns what the page now shows, or why it couldn't.",
+    description: "Act in Resonate's Sing page on the device whose 📡 Remote is on. action: sing = START A TAKE — the user sings while Resonate records and grades it; use it whenever the user asks to start, go, sing, perform, record or try (to_line N: a short performance that ends by itself after line N — use this instead of stopping it yourself; view: perform = lyrics only, practice = the lane). It starts after a 'Get ready' countdown, so say a word at most and then stay quiet until it ends. stop = end what's going on (take, loop, playback). listen {line?, only_line?} = play the melody. play_take {mode?: voice|melody|both, line?, only_line?} = play the last take back. loop_line {line} = practise one line round after round. open_song {song}, set_key {semitones -24…24 from the written key, or fit: true = Resonate's best fit for the voice profile}, set_tempo {percent: 50,60,70,80,90,100,110,125}, go_to_line {line}, review = open the take's review on screen. The Score (sheet music, Play page — not for coaching): score_open {song, view?}, score_view {view: score|both|rh|lh|melody}, score_go {measure}, score_select {from_measure, to_measure} (highlights those bars: get_score_view then has their notes and pictures), score_play {from_measure?, to_measure?, loop?, speed: 50–100}, score_stop, score_pdf {on} (the original PDF, zoomed onto the bars in focus); measures are numbers as in the MusicXML. Returns what the page now shows, or why it couldn't.",
     inputSchema: z.object({
       action: z.enum(R.ACTIONS),
       song: z.string().optional(),
@@ -93,8 +115,14 @@ function build(sb: Parameters<typeof R.listSongs>[0]) {
       line: z.number().int().min(1).optional(),
       only_line: z.boolean().optional(),
       to_line: z.number().int().min(1).optional(),
-      view: z.enum(["perform", "practice"]).optional(),
+      view: z.enum(["perform", "practice", "score", "both", "rh", "lh", "melody"]).optional(),
       mode: z.enum(["voice", "melody", "both"]).optional(),
+      measure: bar.optional(),
+      from_measure: bar.optional(),
+      to_measure: bar.optional(),
+      loop: z.boolean().optional(),
+      speed: z.number().min(50).max(100).optional(),
+      on: z.boolean().optional(),
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, (args) => gate(() => R.control(sb, args, who), `control:${args.action}`));

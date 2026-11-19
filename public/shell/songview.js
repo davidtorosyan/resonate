@@ -54,7 +54,7 @@ function saveMods(dev, m) {
   } catch {}
 }
 
-export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () => {}, openSongs = () => {} }) {
+export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () => {}, openSongs = () => {}, reprocess = null }) {
   const app = $("app"), pill = $("song-pill"), brand = $("brand"), tEl = $("tuner"), home = document.querySelector(".home"), stack = $("stack");
   const singEl = $("sing-region"), scoreEl = $("score-region");
   const tog = { sing: $("mod-sing"), score: $("mod-score"), piano: $("mod-piano") };
@@ -75,6 +75,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
       beforeSound: () => { tuner.park(); sing.hush(true); if (sing.state()?.busy) sing.stopAll(); },
       quiet: () => !!sing.state()?.take,
       turnKeys: () => isOpen && mods.score && !overlayOpen() && !sing.sheetOpen(),
+      ...(reprocess ? { reprocess } : {}), // (the Score's 📄: the song's PDF read again, in the import tray)
     },
   });
   const piano = mountPiano($("piano-region"), {
@@ -313,6 +314,19 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     const res = await ensure();
     if (g === gen && !sing.loaded && !score.loaded && res.some((r) => r.status === "rejected")) closePage(); // (offline before either ever loaded: home again)
   }
+  // A song's MusicXML replaced (its PDF read again): Sing and the Score that hold it load it again,
+  // in place — once nothing sounds (a take is never cut for it).
+  async function reload(id) {
+    ranges.delete(id);
+    if (rangeFor === id) rangeFor = undefined;
+    for (let i = 0; i < 1200 && (sing.busy() || sing.state()?.busy || score.state()?.busy || switching || closing); i++) await sleep(500);
+    const S = window.resonateSing;
+    const jobs = [];
+    if (sing.loaded && S?.state?.().song === id) jobs.push(S.open(id));
+    if (score.loaded) jobs.push(score.reload(id));
+    for (const r of await Promise.allSettled(jobs)) if (r.status === "rejected") console.error(r.reason);
+    updateRange();
+  }
   // Back: Sing's own topmost sheet first (the page stays), then the song.
   function closeSheet() {
     if (overlayOpen()) return false;
@@ -388,7 +402,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
   updateRange();
 
   return {
-    open, leave, setMods, stopAll: stopSounds,
+    open, leave, setMods, reload, stopAll: stopSounds,
     get isOpen() { return isOpen; },
     get current() { return isOpen ? current : null; },
     get title() { return title; },

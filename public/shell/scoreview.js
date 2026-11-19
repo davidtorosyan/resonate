@@ -42,7 +42,8 @@ const OVERRIDES = `
 
 // hooks: { beforeSound() — the tuner parks and Sing stops, before a press or ▶ sounds; quiet() —
 // true while Sing records (a press stays silent, ▶ doesn't start); turnKeys() — false when the
-// page-turn keys aren't the Score's (it isn't shown, a sheet is open) }; keys(): whether the
+// page-turn keys aren't the Score's (it isn't shown, a sheet is open); reprocess(id) — the song's
+// stored PDF read again in place (the import tray), its MusicXML replaced }; keys(): whether the
 // keyboard is on (the dock's Piano toggle) — play.js reads it as its 🎹 setting when it loads
 export function mountScore({ version, hooks, keys = () => null, onLoad = () => {} }) {
   const region = $("score-region");
@@ -60,7 +61,7 @@ export function mountScore({ version, hooks, keys = () => null, onLoad = () => {
       style.textContent = scopeCss(doc.querySelector("style")?.textContent || "", { root: ".score-root", scope: ".play-scope" }) + OVERRIDES;
       document.head.append(style);
       const bar = doc.getElementById("bar");
-      for (const n of bar.querySelectorAll(".nav, #version, .brk")) n.remove(); // (the page header's: the shell has its own)
+      for (const n of bar.querySelectorAll(".nav, #version, .brk, #remote-btn")) n.remove(); // (the page header's: the shell has its own — 📡 too)
       region.append(document.importNode(bar, true), document.importNode(doc.getElementById("stage"), true), document.importNode(doc.getElementById("dock"), true));
       Object.assign(el, { bar: $("bar"), ctl: $("bar").querySelector(".ctl"), pager: $("bar").querySelector(".pager"), play: $("bar").querySelector("#play"),
         hands: $("hands"), names: $("names"), dock: $("dock"), stage: $("stage") });
@@ -85,11 +86,15 @@ export function mountScore({ version, hooks, keys = () => null, onLoad = () => {
     await load();
     if (P.state().song !== id) await P.open(id);
   }
+  // The song's MusicXML was replaced (its PDF read again): play.js loads it again, when it holds it.
+  async function reload(id) {
+    if (P && P.state().song === id) await P.open(id);
+  }
   const stopAll = async () => { try { await P?.stopAll(); } catch (err) { console.warn("score stop", err); } };
   function show(on) { region.hidden = !on; }
 
   return {
-    mount, load, open, stopAll, show, el,
+    mount, load, open, reload, stopAll, show, el,
     get loaded() { return !!P; },
     // (synchronous: Sing is about to sound)
     stopSound: () => { if (P) P.stopAll(); },

@@ -33,13 +33,14 @@ export function songXml(song) {
   if (!/<software>\s*Audiveris/.test(song.xml.slice(0, 4000))) return song.xml;
   if (APP_VERSION && song.clean?.ver === APP_VERSION) return song.clean.xml ?? song.xml;
   const xml = cleanXml(song.xml);
-  if (APP_VERSION) saveClean(song.id, xml === song.xml ? null : xml, APP_VERSION).catch(() => {});
+  if (APP_VERSION) saveClean(song.id, xml === song.xml ? null : xml, APP_VERSION, song.xml).catch(() => {});
   return xml;
 }
 
-// A song by id (a sample's key or a library id) → { id, title, xml, source } — xml as the pages
-// read it, source "sample" or the library's ("pdf", "file", "link"… or null) — or null when
-// there's no such song. Throws when it couldn't be read (a sample that didn't download).
+// A song by id (a sample's key or a library id) → { id, title, xml, source, rev } — xml as the
+// pages read it, source "sample" or the library's ("pdf", "file", "link"… or null), rev the
+// library's (a new one each time its MusicXML is replaced: its PDF read again) or null — or null
+// when there's no such song. Throws when it couldn't be read (a sample that didn't download).
 export async function loadSong(id) {
   if (!id) return null;
   if (SAMPLES[id]) {
@@ -49,7 +50,15 @@ export async function loadSong(id) {
   }
   const song = await getSong(id);
   if (!song) return null;
-  return { id, title: song.title, xml: songXml(song), source: song.source ?? null };
+  return { id, title: song.title, xml: songXml(song), source: song.source ?? null, rev: song.rev ?? null };
+}
+
+// A library song's rev as the index has it (no XML read): null for a sample, a song never replaced
+// or one that isn't there (undefined).
+export async function songRev(id) {
+  if (!id || SAMPLES[id]) return null;
+  const e = (await listSongs()).find((x) => x.id === id);
+  return e ? e.rev ?? null : undefined;
 }
 
 // What a song menu lists: { samples: [{ id, title }], mine: [{ id, title, added }] (newest first) }.

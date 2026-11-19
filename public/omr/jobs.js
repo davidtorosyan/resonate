@@ -11,7 +11,8 @@
 //   jobs  { id, db, space, name, size, lastModified, engine, app, created, updated, phase,
 //           music: [{ page, s, w, h }] | null, of (PDF pages), title, tempo, done: [s], failed: […],
 //           stage ('prep' | 'boot' | '<s>' | 'export' | 'save': the last one begun), starts / lefts
-//           { stage: n } (begun / left on purpose), fails { stage: n } (errors kept), runs, skip: [s] }
+//           { stage: n } (begun / left on purpose), fails { stage: n } (errors kept), runs, skip: [s],
+//           replace?: songId (a reprocess: the song's stored PDF read again; the result replaces its MusicXML) }
 //   data  key "<id>|pdf" → ArrayBuffer · "<id>|book" → { s, done: [s], bytes } (the latest checked .omr)
 //         "<id>|ev|pre" → [event] (job, pages, meta: before the engine) · "<id>|ev|<s>" → [event] (sheet s,
 //         once stored in the book) · "<id>|mxl" → [ArrayBuffer]

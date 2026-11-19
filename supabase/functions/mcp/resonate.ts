@@ -4,13 +4,15 @@
 // assistant reads only its own account's data and can't write anything but commands.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PLAYBOOK, REMINDER } from "./coaching.ts";
+import { PDFDocument } from "pdf-lib";
 
 type Sb = SupabaseClient;
 type Json = Record<string, unknown>;
 
 export const INSTRUCTIONS = `Resonate is the user's singing-practice app (karaoke against sheet music; it grades each note's pitch and timing from the microphone and writes its own coaching).
 When the user mentions Resonate, wants to practise singing, or asks for a vocal or singing coach, call start_vocal_coaching first: it gives you the coaching playbook to follow for the rest of the conversation, and what Resonate shows right now.
-The core rules, always: Resonate's data is the only judge of the singing — never judge it from what you hear; fetch it (get_take, get_live_lines) before saying anything about a take. Whenever the user wants to sing, call control_resonate with action "sing" — never just say "go ahead". Never read scores, percentages or cents out as grades.`;
+The core rules, always: Resonate's data is the only judge of the singing — never judge it from what you hear; fetch it (get_take, get_live_lines) before saying anything about a take. Whenever the user wants to sing, call control_resonate with action "sing" — never just say "go ahead". Never read scores, percentages or cents out as grades.
+Sheet music (separate from coaching; the singing rules don't apply): Resonate's Play page / Score shows a song as sheet music, often read by OCR from the user's PDF. get_score_view = what the Score shows and the bars the user highlighted (their notes as text, a picture of the drawn bars, the same bars on the original PDF with a red border); get_score_xml and get_score_pdf = the song's own files. Use them for questions about the music and its transcription ("is this bar read right?": compare the PDF picture with the notes, bar by bar, and say exactly what differs). control_resonate's score_* actions move, highlight and play the Score.`;
 
 // How takes an assistant starts go (Assistants page): the "Get ready" countdown before them.
 export async function settings(sb: Sb) {
@@ -30,6 +32,10 @@ const LIVE_MS = 120000;
 // itself, read once at the start, fades).
 export const ok = (obj: Json) => ({ content: [{ type: "text" as const, text: JSON.stringify({ ...obj, reminder: REMINDER }) }] });
 export const fail = (message: string, extra: Json = {}) => ({ content: [{ type: "text" as const, text: JSON.stringify({ error: message, ...extra, reminder: REMINDER }) }], isError: true });
+// The sheet-music tools' answers: no coaching reminder (they're about the music, not the singing).
+type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string } | { type: "resource"; resource: { uri: string; mimeType: string; blob: string } };
+export const okData = (obj: Json, more: Content[] = []) => ({ content: [{ type: "text" as const, text: JSON.stringify(obj) } as Content, ...more] });
+export const failData = (message: string, extra: Json = {}) => ({ content: [{ type: "text" as const, text: JSON.stringify({ error: message, ...extra }) }], isError: true });
 
 function ago(ts: string | number | null | undefined): string | null {
   if (!ts) return null;
@@ -211,7 +217,7 @@ async function statusData(sb: Sb) {
     devices,
     remote_device: remote ? remote.name : null,
     hint: remote ? (remote.online ? null : `${remote.name} has 📡 Remote on but isn't in front right now (closed, in the background or asleep) — commands wait until it is.`)
-      : "No device has 📡 Remote on — ask the user to tap 📡 on the Sing page of the device they're using.",
+      : "No device has 📡 Remote on — ask the user to tap 📡 on the Sing (or Play) page of the device they're using.",
     live_take: lt && takeStatus(lt) === "live" ? takeHead(lt) : null,
     ...st,
   };
@@ -238,11 +244,14 @@ export async function startCoaching(sb: Sb) {
   return ok({ playbook: PLAYBOOK, now: { ...st, song, voice_profiles: profiles, recent_takes: (takes.data || []).map((t) => ({ ...takeHead(t as Json), headline: (t as Json).headline ?? null })) } });
 }
 
-export const ACTIONS = ["open_song", "set_key", "set_tempo", "listen", "play_take", "sing", "loop_line", "go_to_line", "review", "stop"] as const;
+export const SCORE_ACTIONS = ["score_open", "score_view", "score_go", "score_select", "score_play", "score_stop", "score_pdf"] as const;
+export const ACTIONS = ["open_song", "set_key", "set_tempo", "listen", "play_take", "sing", "loop_line", "go_to_line", "review", "stop", ...SCORE_ACTIONS] as const;
 export async function control(sb: Sb, args: Json, by = "Assistant") {
   const { data: devs } = await sb.from("devices").select("id,name,remote,seen_at,state").eq("remote", true).limit(1);
   const d = devs?.[0] as Json | undefined;
-  if (!d) return fail("No device has 📡 Remote on. Ask the user to tap 📡 on the Sing page of the device they're using.");
+  const scoreAct = String(args.action).startsWith("score_");
+  const no = scoreAct ? failData : fail, yes = scoreAct ? okData : ok;
+  if (!d) return no("No device has 📡 Remote on. Ask the user to tap 📡 on the Sing (or Play) page of the device they're using.");
   const { action, ...rest } = args;
   const clean: Json = {};
   for (const [k, v] of Object.entries(rest)) if (v !== undefined && v !== null) clean[k] = v;
@@ -255,13 +264,14 @@ export async function control(sb: Sb, args: Json, by = "Assistant") {
     clean.prev_take = (lt?.[0]?.id as string) ?? null;
   }
   // The song resolved here, so the page gets an exact id (not its own guess at the title).
-  if (action === "open_song" && clean.song) {
+  if ((action === "open_song" || action === "score_open") && clean.song) {
     const s = await findSong(sb, String(clean.song));
-    if (!s) return fail(`No song like “${clean.song}”.`, { songs: (await songs(sb)).map((x) => x.title) });
+    if (!s) return no(`No song like “${clean.song}”.`, { songs: (await songs(sb)).map((x) => x.title) });
     clean.song = s.id;
   }
+  if (action === "score_open" && !clean.song) return no("Which song? score_open needs {song}.");
   const { data: cmd, error } = await sb.from("device_commands").insert({ device_id: d.id, action, args: clean }).select("id").single();
-  if (error || !cmd) return fail(`Couldn't send it: ${error?.message ?? "no answer"}`);
+  if (error || !cmd) return no(`Couldn't send it: ${error?.message ?? "no answer"}`);
   const until = Date.now() + 12000;
   while (Date.now() < until) {
     await new Promise((r) => setTimeout(r, 400));
@@ -269,10 +279,191 @@ export async function control(sb: Sb, args: Json, by = "Assistant") {
     if (row && row.status !== "sent") {
       const r = (row.result as Json) || {};
       const say = action === "sing" ? { now: `${st.start_delay_s ? `Starts in ${st.start_delay_s} s (a "Get ready" countdown, then the count-in)` : "Starts now with the count-in"}. Say a word at most — then stay quiet until the take ends.` } : {};
-      return row.status === "done" ? ok({ done: action, on: d.name, ...r, ...say }) : fail(String(r.error ?? row.status), { on: d.name, ...r });
+      return row.status === "done" ? yes({ done: action, on: d.name, ...r, ...say }) : no(String(r.error ?? row.status), { on: d.name, ...r });
     }
   }
-  const starts = ["listen", "play_take", "sing", "loop_line"].includes(String(action));
-  return ok({ sent: action, on: d.name, note: online(d) ? "No answer yet — it may still be loading."
+  const starts = ["listen", "play_take", "sing", "loop_line", "score_play"].includes(String(action));
+  return yes({ sent: action, on: d.name, note: online(d) ? "No answer yet — it may still be loading."
     : starts ? `${d.name} isn't in front right now — this won't start later; ask again once it is.` : `${d.name} isn't in front right now; it will do this when it is (within a minute).` });
+}
+
+// --- Sheet music: the Score on the user's devices, what they highlighted, the song's own files ------
+
+const XML_CAP = 60000; // chars of measures in one get_score_xml answer
+const PDF_CAP = 8 * 1024 * 1024;
+
+// The song's row in the synced library (its files' paths), or why there's none.
+async function songFiles(sb: Sb, q: string): Promise<{ s: SongRef; data: Json } | { error: string; extra?: Json }> {
+  const s = await findSong(sb, q);
+  if (!s) return { error: `No song like “${q}”.`, extra: { songs: (await songs(sb)).map((x) => x.title) } };
+  const { data } = await sb.from("sync_items").select("data").eq("kind", "song").eq("id", s.id).eq("deleted", false).maybeSingle();
+  if (!data?.data) {
+    return { error: LIB_ID.test(s.id)
+      ? `“${s.title}” isn't in the user's cloud (sync off on its device, the cloud full, or not uploaded yet) — its files can't be read from here.`
+      : `“${s.title}” is one of Resonate's bundled samples: it has no files in the user's cloud (get_song has its melody).` };
+  }
+  return { s, data: data.data as Json };
+}
+async function download(sb: Sb, path: string): Promise<Uint8Array<ArrayBuffer> | null> {
+  const { data, error } = await sb.storage.from("songs").download(path);
+  if (error || !data) return null;
+  return new Uint8Array(await data.arrayBuffer());
+}
+async function gunzip(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+  return await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+}
+function b64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+const PART_RE = /<part(?=[\s>])[^>]*>[\s\S]*?<\/part>/g;
+const MEASURE_RE = /<measure(?=[\s>])[^>]*>[\s\S]*?<\/measure>/g;
+// The divisions, key, time and clefs in effect after these measures (raw elements, one line).
+function inEffect(measures: string[]): string {
+  const last: Record<string, string> = {};
+  for (const ms of measures) {
+    for (const a of ms.match(/<attributes>[\s\S]*?<\/attributes>/g) || []) {
+      for (const tag of ["divisions", "key", "time", "transpose"]) {
+        const x = a.match(new RegExp(`<${tag}(?=[\\s>])[^>]*>[\\s\\S]*?</${tag}>`));
+        if (x) last[tag] = x[0];
+      }
+      for (const c of a.match(/<clef(?=[\s>])[^>]*>[\s\S]*?<\/clef>/g) || []) last["clef" + (/number="(\d+)"/.exec(c)?.[1] || "1")] = c;
+    }
+  }
+  return Object.values(last).join(" ").replace(/\s*\n\s*/g, " ").replace(/--/g, "- -");
+}
+
+export async function getScoreXml(sb: Sb, q: string, from?: number | string, to?: number | string, part?: string) {
+  const f = await songFiles(sb, q);
+  if ("error" in f) return failData(f.error, f.extra);
+  const path = (f.data.xml as Json)?.path;
+  const gz = typeof path === "string" ? await download(sb, path) : null;
+  if (!gz) return failData(`“${f.s.title}”'s MusicXML file isn't in the cloud.`);
+  const xml = await gunzip(gz);
+  const head = xml.slice(0, xml.search(/<part(?=[\s>])/));
+  const names = new Map<string, string>();
+  for (const m of head.matchAll(/<score-part[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/score-part>/g)) names.set(m[1], (/<part-name[^>]*>([^<]*)<\/part-name>/.exec(m[2])?.[1] || "").trim());
+  const parts = [...xml.matchAll(PART_RE)].map((m) => {
+    const open = /^<part(?=[\s>])[^>]*>/.exec(m[0])![0];
+    const id = /\bid="([^"]*)"/.exec(open)?.[1] || "";
+    return { id, name: names.get(id) || id, open, ms: m[0].match(MEASURE_RE) || [] };
+  });
+  if (!parts.length) return failData("That file has no parts (not MusicXML partwise?).");
+  const numbers = parts[0].ms.map((m, i) => /\bnumber="([^"]*)"/.exec(m)?.[1] ?? String(i + 1));
+  const find = (x: number | string | undefined, start = 0) => {
+    if (x === undefined || x === null || x === "") return null;
+    const s = String(x).trim();
+    let i = numbers.indexOf(s, start);
+    if (i < 0) i = numbers.indexOf(s);
+    return i >= 0 ? i : -1;
+  };
+  let a = find(from), b = find(to, Math.max(0, a ?? 0));
+  const range = `bars ${numbers[0]}–${numbers[numbers.length - 1]}`;
+  if (a === -1) return failData(`No measure numbered “${from}” (${range}).`);
+  if (b === -1) return failData(`No measure numbered “${to}” (${range}).`);
+  a ??= 0;
+  b ??= numbers.length - 1; // (from alone: to the end, cut at the cap)
+  if (b < a) [a, b] = [b, a];
+  let keep = parts;
+  if (part) {
+    const w = part.trim().toLowerCase();
+    keep = parts.filter((p) => p.id.toLowerCase() === w || p.name.toLowerCase().includes(w));
+    if (!keep.length) return failData(`No part like “${part}”.`, { parts: parts.map((p) => ({ id: p.id, name: p.name })) });
+  }
+  // measures until the cap (every part kept has the same bars)
+  let end = a, size = 0;
+  while (end <= b) {
+    const add = keep.reduce((n, p) => n + (p.ms[end]?.length || 0), 0);
+    if (end > a && size + add > XML_CAP) break;
+    size += add;
+    end++;
+  }
+  const cut = end <= b;
+  let body = "";
+  for (const p of keep) {
+    const carry = a > 0 ? inEffect(p.ms.slice(0, a)) : "";
+    body += `${p.open}\n${carry ? `<!-- in effect from earlier bars: ${carry} -->\n` : ""}${p.ms.slice(a, end).join("\n")}\n</part>\n`;
+  }
+  const tail = xml.slice(xml.lastIndexOf("</part>") + "</part>".length);
+  const out = head + body + tail.trimStart();
+  return okData({
+    song: f.s.id, title: f.s.title,
+    file: "The song's MusicXML as stored in Resonate (for a PDF import: Audiveris's reading of the PDF after Resonate's import clean-ups). The XML follows as the next content item.",
+    parts: parts.map((p) => ({ id: p.id, name: p.name, measures: p.ms.length })),
+    measures_in_file: `${numbers.length} (${range}; numbers as written in the file)`,
+    shown: { from: numbers[a], to: numbers[end - 1], part: part ? keep.map((p) => p.id) : "all" },
+    ...(cut ? { more: `Cut at ${XML_CAP} characters: ask again with from_measure ${numbers[end]} for the rest (or fewer bars, or one part).`, next_from_measure: numbers[end] } : {}),
+  }, [{ type: "text", text: out }]);
+}
+
+export async function getScorePdf(sb: Sb, q: string, page?: number) {
+  const f = await songFiles(sb, q);
+  if ("error" in f) return failData(f.error, f.extra);
+  const path = (f.data.pdf as Json)?.path;
+  if (typeof path !== "string") return failData(`“${f.s.title}” has no PDF in the cloud (only songs read from a PDF with PDF → Song keep one; a PDF that didn't go up stays on its device).`);
+  const bytes = await download(sb, path);
+  if (!bytes) return failData(`“${f.s.title}”'s PDF isn't in the cloud.`);
+  let src: PDFDocument;
+  try { src = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false }); } catch (err) { return failData(`The PDF couldn't be read: ${(err as Error).message}`); }
+  const pages = src.getPageCount();
+  // (no page asked: the one the user's highlight is on, else the first)
+  let p = page, why = "asked";
+  if (!p) {
+    const { data: fc } = await sb.from("score_focus").select("data").eq("song_id", f.s.id).order("updated_at", { ascending: false }).limit(1);
+    const fp = Number(((fc?.[0]?.data as Json)?.pdf as Json)?.page);
+    p = fp >= 1 && fp <= pages ? fp : 1;
+    why = fp >= 1 && fp <= pages ? "the page of the user's highlight" : "the first page";
+  }
+  if (!(p >= 1 && p <= pages)) return failData(`No page ${page}: the PDF has ${pages} page${pages > 1 ? "s" : ""}.`, { pages });
+  const out = await PDFDocument.create();
+  const [pg] = await out.copyPages(src, [p - 1]);
+  out.addPage(pg);
+  const one = await out.save({ useObjectStreams: false }); // (plain objects: any PDF reader takes it)
+  if (one.length > PDF_CAP) return failData(`Page ${p} alone is ${Math.round(one.length / 1e6)} MB — too large to send.`);
+  return okData({ song: f.s.id, title: f.s.title, pages, page: p, page_chosen: why, bytes: one.length,
+    note: `Page ${p} of ${pages} of the song's original PDF, as a one-page PDF (the next content item). Ask with page N for another.` },
+  [{ type: "resource", resource: { uri: `resonate://songs/${encodeURIComponent(f.s.id)}/pdf/page-${p}.pdf`, mimeType: "application/pdf", blob: b64(one) } }]);
+}
+
+const dataUrl = (u: unknown): { data: string; mimeType: string } | null => {
+  const m = typeof u === "string" ? /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/s.exec(u) : null;
+  return m ? { mimeType: m[1], data: m[2] } : null;
+};
+const HOW_TO_HIGHLIGHT = "To highlight bars the user drags across the notes on the Score (Play page, or the Score in the new Resonate); or call control_resonate score_select {from_measure, to_measure}.";
+export async function getScoreView(sb: Sb) {
+  const [dev, fc] = await Promise.all([
+    sb.from("devices").select("id,name,remote,seen_at,state").order("seen_at", { ascending: false }),
+    sb.from("score_focus").select("device_id,song_id,data,score_img,pdf_img,updated_at").order("updated_at", { ascending: false }).limit(1),
+  ]);
+  const devices = (dev.data || []).map((d) => ({ device: d.id, name: d.name, remote_on: d.remote, online: online(d as Json), seen: ago(d.seen_at), page: (d.state as Json)?.page ?? null, score: (d.state as Json)?.score ?? null }));
+  const shown = devices.filter((d) => d.online && d.score);
+  const f = fc.data?.[0] as Json | undefined;
+  const head: Json = {
+    devices,
+    score_open_on: shown.map((d) => d.name),
+    hint: shown.length ? null : "No device shows the Score right now (Resonate's Play page, or the Score in the new Resonate). control_resonate score_open {song} opens it on the 📡 device.",
+  };
+  if (!f) return okData({ ...head, highlight: null, how: HOW_TO_HIGHLIGHT });
+  const d = (f.data as Json) || {};
+  const on = devices.find((x) => x.device === f.device_id);
+  const sel = (on?.score as Json)?.selection as Json | undefined;
+  const ms = (d.measures as string[]) || [];
+  const still = !!(sel && (on?.score as Json)?.song && ((on!.score as Json).song as Json).id === f.song_id && sel.from === ms[0] && sel.to === ms[ms.length - 1]);
+  const imgs: Content[] = [];
+  const si = dataUrl(f.score_img), pi = dataUrl(f.pdf_img);
+  head.highlight = {
+    device: on?.name ?? f.device_id, song: f.song_id, title: d.title, view: d.view_name ?? d.view, measures: ms.length > 1 ? `${ms[0]}–${ms[ms.length - 1]}` : ms[0],
+    when: ago(String(f.updated_at)), still_highlighted: still,
+    pdf: d.pdf ?? null,
+    pictures: [si ? "1: the bars as Resonate draws them (note names on the heads as the user sees them; the highlight band in blue)" : null, pi ? `${si ? 2 : 1}: the same bars on the original PDF (page ${(d.pdf as Json)?.page ?? "?"}), red border` : null].filter(Boolean),
+    ...(d.xml_note ? { xml_note: d.xml_note } : {}),
+  };
+  head.how = still ? null : HOW_TO_HIGHLIGHT;
+  const more: Content[] = [{ type: "text", text: `The highlighted bars' notes (${String(d.legend ?? "")})\n\n${String(d.text ?? "")}` }];
+  if (typeof d.xml === "string" && d.xml) more.push({ type: "text", text: `The view's MusicXML for those bars (as Resonate drew them):\n${d.xml}` });
+  if (si) imgs.push({ type: "image", ...si });
+  if (pi) imgs.push({ type: "image", ...pi });
+  return okData(head, [...more, ...imgs]);
 }
