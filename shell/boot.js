@@ -3,16 +3,16 @@
 // Piano) sit beside it; a PDF is read in the background (the Reader tray); the avatar (top right)
 // opens the account menu. nav.js ran first (shell.html), so whose
 // data the device shows is settled before anything here reads it.
-import { spaceChanged } from "../nav.js?v=87";
-import { mountTuner, tunerHtml } from "./tuner.js?v=87";
-import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=87";
-import { mountSongView } from "./songview.js?v=87";
-import { mountTray } from "./tray.js?v=87";
-import { mountAccount } from "./account-menu.js?v=87";
-import { ic, fic, device, overlayOpen } from "./chrome.js?v=87";
-import { fadeIn } from "./motion.js?v=87";
-import { mountPlaces } from "./places.js?v=87";
-import { mountRemote } from "./remote.js?v=87";
+import { spaceChanged } from "../nav.js?v=88";
+import { mountTuner, tunerHtml } from "./tuner.js?v=88";
+import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=88";
+import { mountSongView } from "./songview.js?v=88";
+import { mountTray } from "./tray.js?v=88";
+import { mountAccount } from "./account-menu.js?v=88";
+import { ic, fic, device, overlayOpen } from "./chrome.js?v=88";
+import { fadeIn } from "./motion.js?v=88";
+import { mountPlaces } from "./places.js?v=88";
+import { mountRemote } from "./remote.js?v=88";
 
 const $ = (id) => document.getElementById(id);
 const version = $("version").textContent.trim();
@@ -35,7 +35,7 @@ main.addEventListener("click", () => tuner.toggle());
 $("rec-btn").querySelector(".b").innerHTML = fic("rec");
 
 // --- songs, the import tray, the account corner -------------------------------------------------
-const tray = mountTray({ version, spaceChanged, openSong: (id, opts) => openSong(id, opts), onChange: () => songs.render() });
+const tray = mountTray({ version, spaceChanged, openSong: (id, opts) => openSong(id, opts), onChange: () => songs.render(), onReplaced: (id) => song.reload(id) });
 const songs = mountSongs({ tray });
 const nextUp = $("nextup");
 let nextUpShown = 0;
@@ -51,7 +51,7 @@ mountAccount({ version });
 
 // --- a song opens in place; Sing, the Score and the Piano on or off beside Songs ----------------
 let places = null, remoteHome = null;
-const song = mountSongView({ tuner, version, onLoad: hooks, onLeave: showNextUp, openSongs: () => songs.open() });
+const song = mountSongView({ tuner, version, onLoad: hooks, onLeave: showNextUp, openSongs: () => songs.open(), reprocess: (id) => tray.reprocess(id) });
 setOpener((id, opts) => song.open(id, opts));
 function hooks() { // (sing.js, play.js, record.js… set their own when they load: the shell's go back on top, with theirs inside)
   window.resonateBusy = () => tray.busy() || song.busy(); // (nav.js: a reload for another tab's sign-in/out waits for it)

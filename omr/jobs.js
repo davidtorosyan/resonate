@@ -11,13 +11,14 @@
 //   jobs  { id, db, space, name, size, lastModified, engine, app, created, updated, phase,
 //           music: [{ page, s, w, h }] | null, of (PDF pages), title, tempo, done: [s], failed: […],
 //           stage ('prep' | 'boot' | '<s>' | 'export' | 'save': the last one begun), starts / lefts
-//           { stage: n } (begun / left on purpose), fails { stage: n } (errors kept), runs, skip: [s] }
+//           { stage: n } (begun / left on purpose), fails { stage: n } (errors kept), runs, skip: [s],
+//           replace?: songId (a reprocess: the song's stored PDF read again; the result replaces its MusicXML) }
 //   data  key "<id>|pdf" → ArrayBuffer · "<id>|book" → { s, done: [s], bytes } (the latest checked .omr)
 //         "<id>|ev|pre" → [event] (job, pages, meta: before the engine) · "<id>|ev|<s>" → [event] (sheet s,
 //         once stored in the book) · "<id>|mxl" → [ArrayBuffer]
 // Events are kept as the Reader got them; a preview Blob is stored as { blob: ArrayBuffer, type }.
 
-import { activeDb, activeSpace } from '../space.js?v=87';
+import { activeDb, activeSpace } from '../space.js?v=88';
 
 export const DB = 'resonate-imports';
 export const FLAG = 'resonate.import';           // { id, db, space, name, done, of, page, pages, at } — for nav.js's pill

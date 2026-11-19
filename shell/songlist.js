@@ -1,11 +1,11 @@
 // Songs (bottom right): My songs and the samples, + Add (PDF in the background, MusicXML, a link),
 // and home's Next-up card (the song open last). Choosing a song makes it the open song the way Sing
 // does (resonate.sing.song) and opens it in place with Sing (singview.js, set by boot.js).
-import { listSongs, addSong, listPdfIds } from "../library.js?v=87";
-import { SAMPLES } from "../catalog.js?v=87";
-import { readScoreFile, parseMusicXml } from "../musicxml.js?v=87";
-import { spaceChanged } from "../nav.js?v=87";
-import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=87";
+import { listSongs, addSong, listPdfIds } from "../library.js?v=88";
+import { SAMPLES } from "../catalog.js?v=88";
+import { readScoreFile, parseMusicXml } from "../musicxml.js?v=88";
+import { spaceChanged } from "../nav.js?v=88";
+import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=88";
 
 const SONG_KEY = "resonate.sing.song";
 const $ = (id) => document.getElementById(id);

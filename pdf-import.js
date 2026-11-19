@@ -4,12 +4,14 @@
 // The import is a job (omr/importer.js) kept on this device as it goes: a reload, a crash or
 // leaving the page and coming back continues it where it was (at most the page under way is read
 // again); the Reader (omr/reader.js) draws it.
+// ?reprocess=<song id>: that song's stored PDF read again (after an engine or clean-up fix) — a job like
+// any import; the result replaces the song's MusicXML under the same id (importer.js reprocess).
 
-import { spaceChanged } from "./nav.js?v=87";
-import { activeSpace, activeDb } from "./space.js?v=87";
-import { mount as mountReader } from "./omr/reader.js?v=87";
-import { createImporter } from "./omr/importer.js?v=87";
-import { readFlag } from "./omr/jobs.js?v=87";
+import { spaceChanged } from "./nav.js?v=88";
+import { activeSpace, activeDb } from "./space.js?v=88";
+import { mount as mountReader } from "./omr/reader.js?v=88";
+import { createImporter } from "./omr/importer.js?v=88";
+import { readFlag } from "./omr/jobs.js?v=88";
 
 const $ = (id) => document.getElementById(id);
 const chooseBtn = $("choose");
@@ -24,6 +26,10 @@ let reader = null;
 let importState = "idle";
 let jobId = null;
 const events = []; // every event of this run, as the Reader got them (what a resume would replay)
+const params = new URLSearchParams(location.search);
+const reprocessId = params.get("reprocess");
+// (the address loses ?reprocess once the job is kept: a reload continues that job, never starts another)
+const dropParam = () => { if (reprocessId && /[?&]reprocess=/.test(location.search)) try { history.replaceState(history.state, "", location.pathname); } catch {} };
 
 // The first lines (browser/device) are kept when the log is trimmed: they're what
 // makes a pasted failure report diagnosable.
@@ -39,6 +45,7 @@ function appendLog(line) {
 function push(ev) {
   const e = Number.isFinite(ev.at) ? ev : { ...ev, at: Date.now() };
   events.push(e);
+  if (e.t === "job") { if (e.name) baseName = e.name.replace(/\.pdf$/i, "") || baseName; if (e.id) dropParam(); }
   reader?.push(e);
 }
 
@@ -149,6 +156,15 @@ async function drive(job, go, fresh = false) {
   }
 }
 
+// A song's stored PDF, read again: its MusicXML is replaced (same id, title, PDF and settings).
+function reprocess(id) {
+  return drive({ name: "" }, () => {
+    writeLogHead("", 0);
+    appendLog(`[reprocess] song ${id}`);
+    return imp.reprocess(id).catch((err) => { if (err?.kind === "nopdf") dropParam(); throw err; }); // (Try again → the picker)
+  }, true);
+}
+
 function run(file) {
   return drive({ name: file.name }, () => {
     writeLogHead(file.name, file.size);
@@ -184,7 +200,7 @@ function showResult(res) {
   const read = res.pages.filter((p) => !res.failed.some((f) => f.page === p));
   $("result-detail").textContent =
     `${score.notes.length} notes · ${lyrics} with lyrics${score.verses.length > 1 ? ` · ${score.verses.length} verses` : ""} · ` +
-    `page${read.length === 1 ? "" : "s"} ${read.join(", ")} · ${unsaved ? "not saved (signed in or out in another tab) — download it" : "saved to My songs"}`;
+    `page${read.length === 1 ? "" : "s"} ${read.join(", ")} · ${unsaved ? "not saved (signed in or out in another tab) — download it" : res.replaced ? "song updated" : "saved to My songs"}`;
   // Pages the engine gave up on; bars of read pages the export couldn't write (their notes are missing).
   const missing = [];
   if (res.failed.length) {
@@ -251,9 +267,22 @@ $("job-skip")?.addEventListener("click", () => { running = false; continueJob({ 
 $("job-retry")?.addEventListener("click", () => { running = false; continueJob({ id: jobId, name: baseName, size: 0 }, { retry: true }); });
 
 // Test hook: start a conversion from a URL (?pdf=...) without the file picker.
-const testPdf = new URLSearchParams(location.search).get("pdf");
+const testPdf = params.get("pdf");
 if (testPdf) {
   fetch(testPdf).then((r) => r.blob()).then((b) => run(new File([b], testPdf.split("/").pop(), { type: "application/pdf" })));
+} else if (reprocessId) {
+  // A song's PDF read again — unless an import is under way here: that one goes on (a reload of this
+  // reprocess included: it's the same job), and another one says so.
+  showReader({ fresh: true });
+  imp.pending().catch(() => null).then((job) => {
+    if (!job) return reprocess(reprocessId);
+    dropParam();
+    if (job.replace !== reprocessId) {
+      $("notice").hidden = false;
+      $("notice").textContent = "Another PDF is being read — process this song again once it's done.";
+    }
+    return continueJob(job);
+  });
 } else {
   // An unfinished import of this space: the Reader at once (the flag names the job — no picker in
   // between; the head's script hid it already), its stored events as soon as the database answers.
@@ -272,7 +301,7 @@ if (testPdf) {
 window.resonateDebug = () => {
   const st = reader?.status();
   return {
-    running, hasResult: !!finalXml, events: events.length, reader: st || null, readerDebug: reader?.debug() || null,
+    running, hasResult: !!finalXml, events: events.length, reader: st || null, readerDebug: reader?.debug() || null, reprocess: reprocessId,
     import: { state: importState, job: imp.current, jobId, resumable: imp.resumable() },
     eventList: events, // (tests: the events as the Reader got them)
     // One line for test logs: "phase page/of label · eta".

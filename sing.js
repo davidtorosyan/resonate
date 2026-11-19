@@ -2,23 +2,23 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=87";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=87";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=87";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=87";
-import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=87";
-import * as P from "./practice.js?v=87";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=87";
-import { startCapture, playVoice } from "./capture.js?v=87";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=87";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=87";
-import { listSongs, getSong, addSong, removeSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=87";
-import { SAMPLES, songXml } from "./catalog.js?v=87";
-import { activeProfile } from "./profiles.js?v=87";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=87";
-import { DATA_KEYS } from "./space.js?v=87";
-import { spaceChanged } from "./nav.js?v=87";
-import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=87";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=88";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=88";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=88";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=88";
+import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=88";
+import * as P from "./practice.js?v=88";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=88";
+import { startCapture, playVoice } from "./capture.js?v=88";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=88";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=88";
+import { listSongs, getSong, addSong, removeSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=88";
+import { SAMPLES, songXml, songRev } from "./catalog.js?v=88";
+import { activeProfile } from "./profiles.js?v=88";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=88";
+import { DATA_KEYS } from "./space.js?v=88";
+import { spaceChanged } from "./nav.js?v=88";
+import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=88";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -451,6 +451,7 @@ function readKeys() {
 }
 
 let scoreId = null; // the song the loaded score is (songId changes as soon as another is chosen)
+let songRevNow = null; // the library's rev of the MusicXML loaded (a new one when it's replaced: its PDF read again)
 function setScore(sc, stored = null) {
   score = sc;
   scoreId = songId;
@@ -496,6 +497,7 @@ async function selectSong(id) {
   store(K.song, id);
   removeBtn.hidden = !!SAMPLES[id];
   const stored = getTake(id, { voice: true }).catch(() => null);
+  let rev = null;
   try {
     let sc;
     if (SAMPLES[id]) {
@@ -507,9 +509,11 @@ async function selectSong(id) {
       const song = await getSong(id);
       if (!song) throw new Error("that song is no longer saved");
       sc = parseMusicXml(songXml(song), song.title);
+      rev = song.rev ?? null;
     }
     const rec = await stored;
     if (gen !== songGen) return;
+    songRevNow = rev;
     return setScore(sc, rec);
   } catch (err) {
     console.error(err);
@@ -2843,10 +2847,14 @@ async function runRemote(action, a) {
       openReview();
       return done({ review: reviewEl.hidden ? null : $("rv-headline").textContent });
     default:
+      // (the Score's commands: Play's page, or the one-page shell's Score — v88)
+      if (String(action).startsWith("score_")) return { ok: false, error: "The Score isn't open on this device — open Play (or the Score in the new Resonate) there.", ...remoteState() };
       return { ok: false, error: `Unknown action “${action}”.` };
   }
 }
-remote.start({ run: runRemote, state: remoteState, changed: showRemote, assistant: showAssistant }).catch((err) => console.warn("remote", err));
+// (the Score's commands go to a Play page of this device first: `handles`; in the one-page shell
+// its own hooks take every command)
+remote.start({ run: runRemote, state: remoteState, changed: showRemote, assistant: showAssistant, handles: (a) => !String(a).startsWith("score_") }).catch((err) => console.warn("remote", err));
 
 function openReview() {
   if (!take || take.endT === null) return;
@@ -3710,7 +3718,11 @@ window.addEventListener("pagehide", () => {
 });
 // Back from the back/forward cache: the next tap starts the audio again.
 window.addEventListener("pageshow", (e) => {
-  if (e.persisted) for (const t of ["pointerup", "keydown"]) document.addEventListener(t, unlockPlay, true);
+  if (!e.persisted) return;
+  for (const t of ["pointerup", "keydown"]) document.addEventListener(t, unlockPlay, true);
+  // (Back from PDF → Song's ⟳ Reprocess: the song read again — loaded again; through the queue,
+  // so never under a take)
+  if (songId && !SAMPLES[songId]) { queueRemote({ replaced: [songId] }); flushRemote(); }
 });
 
 // ---------------------------------------------------------------------------
@@ -3719,13 +3731,14 @@ window.addEventListener("pageshow", (e) => {
 guideSelect.value = guide;
 // The cloud sync brought changes (sync.js): the song list, the open song's settings, its last
 // take. Nothing changes under a take, a loop or a playback: what arrives then waits for its end.
-let pendingRemote = null; // { songs, profiles, state: Set, takes: Set } — song ids
-function queueRemote({ songs = false, profiles = false, state = [], takes = [] }) {
-  const p = (pendingRemote ||= { songs: false, profiles: false, state: new Set(), takes: new Set() });
+let pendingRemote = null; // { songs, profiles, state: Set, takes: Set, replaced: Set } — song ids
+function queueRemote({ songs = false, profiles = false, state = [], takes = [], replaced = [] }) {
+  const p = (pendingRemote ||= { songs: false, profiles: false, state: new Set(), takes: new Set(), replaced: new Set() });
   p.songs ||= !!songs;
   p.profiles ||= !!profiles;
   for (const id of state) p.state.add(id);
   for (const id of takes) p.takes.add(id);
+  for (const id of replaced) p.replaced.add(id);
 }
 window.addEventListener("resonate:remote", (e) => { queueRemote(e.detail || {}); flushRemote(); });
 // (After another tab signed in or out, the reload also waits for an open review to close.)
@@ -3746,6 +3759,13 @@ function flushRemote() {
     }
     const sid = songId;
     if (!score || scoreId !== sid || busyNow()) return queueRemote({ ...p, songs: gone }); // (setScore flushes; a song gone meanwhile is closed later)
+    // The open song's MusicXML replaced (another device read its PDF again): loaded again — its
+    // settings, take and the rest come with it.
+    if (p.replaced.has(sid) && !SAMPLES[sid]) {
+      const rev = await songRev(sid).catch(() => undefined); // (the library's index: no XML read)
+      if (sid !== songId || busyNow()) return queueRemote({ ...p, songs: false });
+      if (rev !== undefined && rev !== songRevNow) return selectSong(sid);
+    }
     if (p.takes.has(sid)) {
       const t = reviveTake(await getTake(sid, { voice: true }).catch(() => null));
       if (sid !== songId || scoreId !== sid || busyNow()) return queueRemote({ takes: [sid], state: p.state, profiles: p.profiles });
