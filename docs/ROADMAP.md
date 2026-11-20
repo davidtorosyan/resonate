@@ -6,6 +6,19 @@ live in CLAUDE.md ("UI principles").
 
 ## Where things stand (2026-11-20)
 
+**Work queue (the owner, 2026-11-20 16:17 UTC — no push to main before 17:17 UTC; conversions running on the iPad). Kept up to date as items land, so a fresh session can resume:**
+- [ ] A1 Songs sheet on a phone can't be dismissed (the handle at the top doesn't drag down).
+- [ ] A2 The song list is reachable twice (the top-left song pill drops down the list, and Songs bottom right): one way only; the title still shown.
+- [ ] A3 Turning the Piano on with the Score shown re-lays the score out (the notes on screen are gone); Sing only makes it smaller. Piano must behave like Sing.
+- [ ] A4 Two ▶ when a stretch is picked (the big one and the stretch controls' small one).
+- [ ] A5 Piano then Score from home: the Score arrives "with its own piano". Piano and Score are linked but independent — one keyboard, the Piano module's.
+- [ ] A6 The assistant connector: new tools needed deleting and re-adding the ChatGPT plugin. Find a way (versioning / discovery / refresh) so it never has to happen again.
+- [ ] A7 Song rows: "engine 10" as the subtitle is confusing — show the engine (as a version, "v10") only when it matters (an older engine), not as the main fact.
+- [ ] A8 The converting tile changes width and pushes the ▶ beside it around.
+- [ ] B  Make the one-pager the site (the root is the shell; the old pages retired).
+- [ ] C  Tech debt: cleanup / re-architecture / dead code, after B.
+- [ ] D  Engine accuracy loop: compare every converted song with its PDF, bar by bar; reproduce discrepancies natively, patch, bump ENGINE_N, repeat until none.
+
 **Live:** v90 — the song library, PDF first (docs/LIBRARY.md): Songs → Add → PDF stores the PDF at once (usable in the Score's PDF view with the keyboard); ⋯ → Convert / Reconvert / Delete; Convert all / Reconvert all run one at a time in the background (resumable, the screen kept on); each song shows the engine that made it (engine 10 = patch 0010); 20 songs in the cloud (migration applied). v89's engine patch 0010 (shared rests) is live — songs converted before need Reconvert (Killing: `smwjzgji3o3zs`). v83–87's one-page redesign is a preview (Tools → New Resonate); nothing from v87–90 has been tried on a real iPhone or iPad yet.
 
 **Next:** whatever the owner highlights next (highlight in the Score → `get_score_view` in a Claude chat → fix the engine or a clean-up → Reconvert). Open from v90: the MCP server doesn't know PDF-only songs (`get_song` says "open it once"; needs a resonate.ts change + redeploy); songs converted before v90 read "engine ≤9" even when v89 made them; Killing's piano bars 31, 32, 62 still have a voice short of its bar.
