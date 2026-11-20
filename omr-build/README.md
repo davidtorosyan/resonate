@@ -262,6 +262,79 @@ stem (≈ ⅔ the width), around the C4/A3 ledgers: with the `smallHeads` switch
 normal heads are searched, and a template matched across the ledger between a normal and a cue head gives one note a
 step off (C4 for [B3 D4]); with `smallHeads` on, the chords stay single and 17 bars of rests and rhythms get worse.
 
+`0014` — **Ties lost over a page turn, into the wrong head of a chord, or beside another voice.** The same comparison
+found lost ties the most common error (~40 of 172 findings, with the accidentals a tie carries). What the engine saw —
+the trace's symbols per step, the stored `.omr`'s slurs and the heads they link, a debug build logging every tie
+decision — sorts them into five causes; this patch fixes the first three:
+- **Over a page turn: both halves found, then deleted.** A tie over a page turn is two halves, one at the end of the
+  page's last system, one at the start of the next page's first. `Page.connectOrphanSlurs` connects halves between the
+  systems of *one* page; a page-edge half had no extension and no tie flag (a tie needs both heads), so it was abnormal
+  and LINKS's `checkAbnormals` removed it (trace: `-id` at LINKS; Killing 13 halves on each side of its five page turns,
+  Stumblin' In 15 / 13) long before `Voices.refineScore` looks for orphans to connect across pages: upstream never kept a
+  tie over a page turn. Killing 9→10, 34→35, 61→62; Stumblin' In 20→21, 42→43, 66→67; Too Sweet 28→29, 73→74; Goodbye
+  Yellow Brick Road 62→63; Piano Man 92→93; Yellow Submarine 59→60.
+- **The wrong head at a curve end.** Ties into a chord end between its heads; `SlurLinker` takes, in the chord whose box
+  middle is nearest the end, the head nearest the end's target point — with two voices at one abscissa another voice's
+  chord, with a third the neighbouring head, and a void head found a second time 17 px left of itself at a system start
+  (Killing 35, 45) draws both halves. One end on the wrong head: not tie-compatible, a slur. Killing 28, 43→44, 44→45,
+  46, 64→65, 68→69 (a whole-note G♯3 tied to a B3 eighth); Stumblin' In 1→2, 11→12, 37→38, 41→42, 49→50, 74; Songbird
+  16→17 (so the continuation also lost its natural: B♭4), left hand 37→38; Wichita 3, 14, 20, 28.
+- **A chord of another voice struck with a tied head.** `isSpaceClear` refuses a tie when a chord takes more than 25% of
+  the tie's box — also the other voice's chord at the very abscissa of one of the tied heads (debug: invasion
+  0.46–0.57). Killing B3 10→11, A3 36→37 and 66→67; Songbird G3 37→38 and 58→59, A♭3 122→123.
+- *Never built as a curve* (not fixed): no slur or tie symbol there at any step. Killing right hand 24→25 (D♯4 through
+  the barline: the D♯4 continuation came out D), 28→29 ([G3 B3] at a system end); Goodbye Yellow Brick Road's left hand
+  15, 17→18, 23, 34 (a dotted half tied over the staff lines to an eighth), 32→33, the octaves 96, 133, 136→137 (one
+  curve of two, or none); 88→89 and 103→104 lost one half of each tie of an octave at a system break, and the two halves
+  left were paired (`canExtend` allows 4 interlines, a below half with an above half) into a slur D♭2 → D♭3, E1 → E2.
+- *A misread head* (not fixed): Stumblin' In 20 (the right hand's [A3 C4] read as B3: those halves now connect, as two
+  slurs B3 → A3, B3 → C4).
+
+Now (`SlurInter`, `Voices.refineScore`, `Page.checkPageCrossTies`):
+- `canStayAbnormal`: a page orphan (`isPageOrphan`: one head, at the start of its page's first system or the end of its
+  last, as `isBeginningOrphan` / `isEndingOrphan` say) survives LINKS. `refineScore` connects them across pages as
+  before (`checkCrossTie`: tie or slur), then discards those connected to nothing (the score's first and last page, next
+  to a missing sheet or part).
+- `tieAlternative` / `relink`: when the heads at a curve's ends aren't tie-compatible, the final checks — `checkStaffTie`
+  (LINKS) and a second pass after `checkCrossTie` (`retieCrossTie`, run once every connection at hand is checked, so the
+  halves tied by then keep their heads) — look on each side for another head of the staff right at the curve end (its
+  near edge at most 2 interlines beyond the end or 1 interline back over it; its centre on the concave side within 1.25
+  interlines, or 0.6 outside) that is tie-compatible with the far head and isn't already the end of another tie, or of a
+  same-pitch slur, on that side. Found: that end is relinked to it and the curve is a tie.
+- `isSpaceClear(…, alongsideOk)`: a chord with a head overlapping the left or the right head by half a head's width is
+  struck with it, not between — in `checkStaffTie` only. At SLURS (`ClumpPruner`) such a tie into a chord from two
+  chords made `ChordSplitter` split that chord, and its rhythm came out wrong (a first build: Killing bar 11 4½ beats).
+- `isEdgeClear`, for every cross-system tie (within a page too): no other head of the staff between each tied head and
+  its system edge, under the curve; a head touching the tied one (≤ 0.2 interline: a second, a duplicate) doesn't count.
+  A phrase slur from a note to a later one of the same pitch over the line was a tie (Killing's voice 67→69 —
+  B3 tied twice —, Too Sweet 44→45 over a page turn).
+
+A/B, native, the build with 0001–0013 vs with 0014 too (and before that 0001–0010 vs 0010 + 0014: the same bars changed,
+apart from the dots below), the owner's nine songs, every changed bar checked against the PDF:
+
+| song | tied notes (pairs) | bars changed | what |
+|---|---|---|---|
+| Killing Me Softly | 163 → 183 | 30 | over the page turns: voice D4 + piano [D4 B4] 9→10, voice D4 + piano [E3 G3 D4] 34→35, voice G4 + piano [A3 D4 G4] 61→62, voice slur A4 → F♯4 47→48 and G4 → F♯4 61→62; right heads: D4 28, D4 43→44, B3 44→45, E4 46, G3 64→65, G♯3 68→69 (a slur before); beside another voice: B3 10→11, A3 36→37, 66→67; voice 67→69 a phrase slur, not a second tie on B3 — all as printed |
+| Stumblin' In | 228 → 244 | 24 | over the page turns: voice + piano 20→21 (E4; the misread [A3 C4] now two slurs), 42→43 ([B3 D4 G4]), 66→67 ([D4 F♯4 B4]), voice slur G4 → A4 8→9; right heads: A4 1→2, 37→38, E4 11→12, F♯4 41→42, 49→50, E4 74 |
+| Hey, Little Songbird | 76 → 81 | 8 | beside another voice: G3 37→38, 58→59, A♭3 122→123; right heads: B♮4 16→17 (the continuation was B♭4), left hand D3 37→38 |
+| Wichita Lineman | 66 → 73 | 4 | right heads in the piano's tied 16th chords: [C5 D5] 3, 20, 28, E4 14 |
+| Too Sweet | 100 → 102 | 6 | C5 28→29, 73→74 over the page turns; 44→45 a slur over the page turn (B♭4 → the half note on beat 2), not a tie |
+| Goodbye Yellow Brick Road | 143 → 144 | 2 | A4 62→63 over the page turn |
+| Yellow Submarine | 44 → 45 (+ F♯2) | 4 | F♯4 and the left hand's F♯2 59→60 over the page turn |
+| Piano Man | 81 → 82 | 2 | D5 92→93 over the page turn |
+| The Longest Time | 2 → 2 | 0 | |
+
+Dots that come and go (durations only, no tie or slur; they differ between two runs of one build): Killing 20, Stumblin'
+In 55 and 59, Piano Man P3 48, 101 and 168, Songbird 32, Yellow Submarine 64 (the base with 0013 lost its dot, the build
+with 0014 kept it; on 0010 it was the other way round — the dot is made in sheet 4's SYMBOLS, before any of this code runs
+on that sheet, and a debug build of 0014 that only adds logging kept it).
+
+Of the comparison's tie findings named for this work: fixed Killing 9→10, 34→35, 43→44 / 44→45, 64→65, 68→69,
+Stumblin' In 42→43, 66→67, Songbird 37→38, 58→59, part of Stumblin' In 20→21 (voice and E4); not fixed Killing 24→25
+and Goodbye Yellow Brick Road's left hand and octaves (never built as curves), Stumblin' In 20's misread chord. Not done:
+a tie over a page turn doesn't carry an accidental (`HeadInter.getAlteration`'s TODO for the previous page: the second
+note takes the key's alteration; none of the nine songs has one).
+
 `build.sh` applies the patches with `git am --keep-cr`: the upstream sources are CRLF.
 
 ## StripVolatile (applied to every jar)
