@@ -131,7 +131,7 @@ const text = (p, sel) => p.textContent(sel).then((t) => (t || '').replace(/\s+/g
 const shot = (p, name) => (SHOTS ? p.screenshot({ path: path.join(SHOTS, `${name}.png`) }) : null);
 async function home(ctx) {
   const p = await ctx.newPage();
-  await p.goto(BASE + 'shell.html');
+  await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner, null, { timeout: 15000 });
   await p.waitForTimeout(300);
   return p;
@@ -291,7 +291,7 @@ async function add() {
     return { song: await L.getSong(id), pdf: await L.getPdf(id), open: localStorage.getItem('resonate.sing.song'), play: JSON.parse(localStorage.getItem('resonate.play') || '{}')[id] };
   }, newId);
   ok(!gone.song && !gone.pdf && gone.open === null && gone.play === undefined, `deleted: song, PDF, open pointer, Play's record (${JSON.stringify(gone)})`);
-  ok(/shell\.html$/.test(p.url()), 'still shell.html');
+  ok(/index\.html$/.test(p.url()), 'still index.html');
   await closeCtx(ctx, 'add');
 }
 

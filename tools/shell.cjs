@@ -1,4 +1,4 @@
-// The shell preview (shell.html: home = the full tuner, Songs, + Add, the Reader tray, the account
+// The shell preview (index.html: home = the full tuner, Songs, + Add, the Reader tray, the account
 // corner) at five sizes: iPhone 393×852, iPhone Safari 393×659, iPad 820×1180 / 1180×820, desktop
 // 1440×900. Chromium with a fake mic playing an A3 tone (fixtures/shell/a3.wav); the PDF import runs
 // on a scripted worker (as importfixes.cjs: trace blocks from fixtures/trace, the MusicXML), so a
@@ -120,7 +120,7 @@ async function closeCtx(ctx) {
   ok(!ctx.errors.length, `no console errors${ctx.errors.length ? ': ' + ctx.errors.slice(0, 4).join(' | ') : ''}`);
   await ctx.close();
 }
-async function home(sz, ctx, url = 'shell.html') {
+async function home(sz, ctx, url = 'index.html') {
   const p = await ctx.newPage();
   await p.goto(BASE + url);
   await p.waitForFunction(() => window.resonateDebug?.().tuner);
@@ -177,7 +177,7 @@ async function runSize(sz) {
   await p.click('#avatar');
   await p.goBack();
   await p.waitForTimeout(300);
-  ok(!(await shown(p, '#acct')) && /shell\.html/.test(p.url()), 'Back closes it (and stays home)');
+  ok(!(await shown(p, '#acct')) && /index\.html/.test(p.url()), 'Back closes it (and stays home)');
 
   // --- Songs: the list, choosing a sample --------------------------------------------------------
   await p.click('#songs-btn');
@@ -200,10 +200,10 @@ async function runSize(sz) {
   await p.click('#songs-body .song[data-id="amazing-grace"]');
   // (step 2: a song opens in place with Sing on every device — shellsing.cjs tests Sing there)
   d = await until(p, (x) => x.song?.open && x.song.state?.song === 'amazing-grace', 15000);
-  ok(!!d?.song?.open && /shell\.html$/.test(p.url()), `a sample opens Sing in place (${p.url().split('/').pop()}, ${d?.song?.state?.song})`);
+  ok(!!d?.song?.open && /index\.html$/.test(p.url()), `a sample opens Sing in place (${p.url().split('/').pop()}, ${d?.song?.state?.song})`);
   await p.goBack();
   d = await until(p, (x) => !x.song?.open, 8000);
-  ok(/shell\.html$/.test(p.url()) && !d?.song?.open && !(await shown(p, '#songs')), 'Back from the song comes home, the list closed');
+  ok(/index\.html$/.test(p.url()) && !d?.song?.open && !(await shown(p, '#songs')), 'Back from the song comes home, the list closed');
   await closeCtx(ctx);
 
   // --- MusicXML: saved, listed, opened -------------------------------------------------------------
@@ -217,7 +217,7 @@ async function runSize(sz) {
   await fc.setFiles(path.join(__dirname, '..', 'public', 'songs', 'amazing-grace.musicxml'));
   d = await until(p, (x) => x.song?.open && /^s/.test(x.song.state?.song || ''), 10000);
   const sid = await p.evaluate(() => localStorage.getItem('resonate.sing.song'));
-  ok(!!d?.song?.open && /shell\.html$/.test(p.url()) && /^s/.test(sid || '') && d.song.state.song === sid, `MusicXML saved and opened in place (${sid})`);
+  ok(!!d?.song?.open && /index\.html$/.test(p.url()) && /^s/.test(sid || '') && d.song.state.song === sid, `MusicXML saved and opened in place (${sid})`);
   await p.goBack();
   await p.waitForFunction(() => window.resonateDebug?.().tuner && !window.resonateDebug().song.open && !document.getElementById('nextup').hidden, null, { timeout: 8000 }).catch(() => {});
   await p.click('#songs-btn');
@@ -231,7 +231,7 @@ async function runSize(sz) {
   const [fc2] = await Promise.all([p.waitForEvent('filechooser'), p.click('#add-xml')]);
   await fc2.setFiles({ name: 'song.mscz', mimeType: 'application/octet-stream', buffer: Buffer.from('x') });
   await p.waitForTimeout(300);
-  ok(/MuseScore/.test(await p.textContent('#songs-msg')) && /shell\.html$/.test(p.url()), 'a .mscz: the export hint, stays home');
+  ok(/MuseScore/.test(await p.textContent('#songs-msg')) && /index\.html$/.test(p.url()), 'a .mscz: the export hint, stays home');
   await closeCtx(ctx);
 
   // --- signed in (a saved session, sync off on this device) -----------------------------------------
@@ -251,7 +251,7 @@ async function runSize(sz) {
   ok(await p.evaluate(() => localStorage.getItem('resonate.sync.off')) === '1', 'and off again (the pref set)');
   await p.click('#acct a[href="voice.html"]'); // (v87: in place — shellplaces.cjs checks the places themselves)
   await p.waitForSelector('#place-voice', { state: 'visible', timeout: 5000 }).catch(() => {});
-  ok(/shell\.html/.test(p.url()) && await p.isVisible('#place-voice'), 'Voice → in place (still shell.html)');
+  ok(/index\.html/.test(p.url()) && await p.isVisible('#place-voice'), 'Voice → in place (still index.html)');
   await closeCtx(ctx);
 
   // --- mic states and a link (one size) ---------------------------------------------------------
@@ -292,7 +292,7 @@ async function runSize(sz) {
     await p.press('#link-url', 'Enter');
     d = await until(p, (x) => x.song?.open && /^s/.test(x.song.state?.song || ''), 10000);
     const lid = await p.evaluate(() => localStorage.getItem('resonate.sing.song'));
-    ok(!!d?.song?.open && /shell\.html$/.test(p.url()) && /^s/.test(lid || ''), `a GitHub link: the raw file saved and opened in place (${lid})`);
+    ok(!!d?.song?.open && /index\.html$/.test(p.url()) && /^s/.test(lid || ''), `a GitHub link: the raw file saved and opened in place (${lid})`);
     await closeCtx(ctx);
   }
 
@@ -316,10 +316,10 @@ async function runSize(sz) {
     } else {
       d = await until(p, (x) => x.song?.open && x.song.pdfOnly, 8000);
       ids = [d?.song.state?.song];
-      ok(!!d && !d.import.song && !d.import.running && /shell\.html$/.test(p.url()) && d.song.set.score && !d.song.set.sing, `PDF → a song at once, open in place on its PDF (the Score only), nothing converting (${JSON.stringify(d?.song.set)})`);
+      ok(!!d && !d.import.song && !d.import.running && /index\.html$/.test(p.url()) && d.song.set.score && !d.song.set.sing, `PDF → a song at once, open in place on its PDF (the Score only), nothing converting (${JSON.stringify(d?.song.set)})`);
       await p.goBack();
       d = await until(p, (x) => !x.song?.open, 8000);
-      ok(!!d && /shell\.html$/.test(p.url()), 'Back: home');
+      ok(!!d && /index\.html$/.test(p.url()), 'Back: home');
     }
     await p.click('#main-btn'); // (the tuner keeps working while a PDF is converted)
     await until(p, (x) => x.tuner.note === 57, 6000);
@@ -331,7 +331,7 @@ async function runSize(sz) {
     else { await p.click(`#songs-body .songrow[data-id="${ids[0]}"] .more`); await p.click('#row-menu [data-act="convert"]'); }
     d = await until(p, (x) => !!x.import.song, 8000);
     ok(!!d && d.import.mode === 'min' && !(await shown(p, '#tray')) && (await shown(p, '#songs')), `${batch ? 'Convert all' : '⋯ → Convert'}: in the background, folded (${d?.import.mode}), the list stays`);
-    ok(/shell\.html$/.test(p.url()), 'no navigation');
+    ok(/index\.html$/.test(p.url()), 'no navigation');
     const fact1 = await p.textContent(`#songs-body .song[data-id="${d?.import.song?.id}"] .s`).catch(() => '');
     ok(/^converting/.test(fact1), `the song's row: "${fact1}"`);
     await p.keyboard.press('Escape');
@@ -373,7 +373,7 @@ async function runSize(sz) {
     if (!batch) {
       await p.click('#imp-done .openbtn');
       const d2 = await until(p, (x) => x.song?.open && x.song.state?.song === ids[0] && !x.song.pdfOnly, 10000);
-      ok(!!d2 && /shell\.html$/.test(p.url()) && await p.evaluate(() => localStorage.getItem('resonate.sing.song')) === ids[0], `Open → the song in place, converted (${JSON.stringify(d2?.song.set)})`);
+      ok(!!d2 && /index\.html$/.test(p.url()) && await p.evaluate(() => localStorage.getItem('resonate.sing.song')) === ids[0], `Open → the song in place, converted (${JSON.stringify(d2?.song.set)})`);
     } else {
       await p.click('#imp-done .x');
       ok(!(await shown(p, '#imp-done')), '✕ closes the done row');
@@ -384,12 +384,12 @@ async function runSize(sz) {
   // --- a reload mid-run continues it ---------------------------------------------------------------------
   if (sz.n === 'iphone' || sz.n === 'ipad-l') {
     ctx = await context(sz, { scenario: 'hang' });
-    p = await home(sz, ctx, `shell.html?pdf=${encodeURIComponent('/imp/amazing-grace1.pdf')}`);
+    p = await home(sz, ctx, `index.html?pdf=${encodeURIComponent('/imp/amazing-grace1.pdf')}`);
     d = await until(p, (x) => x.import.events > 0 && (x.eventList || []).some((e) => e.t === 'sheet' && e.state === 'start'), 15000);
     ok(!!d, 'a run under way (sheet 1 started)');
     await p.waitForTimeout(800);
     ctx.sc = 'full';
-    await p.goto(BASE + 'shell.html');
+    await p.goto(BASE + 'index.html');
     d = await until(p, (x) => x.import.state === 'running' || x.import.result, 15000);
     const resumed = (d?.eventList || []).some((e) => e.t === 'job' && e.resumed);
     ok(d && resumed && d.import.mode === 'min', `reload → the import continues, folded (${d?.import.state}, resumed ${resumed}, ${d?.import.mode})`);

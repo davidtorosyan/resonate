@@ -42,7 +42,7 @@ for fx in greensleeves greensleeves3-real; do # (synthetic with clean-ups; the r
   echo "reader $fx exit=$code fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep -E 'passed' | tail -1) $(echo "$out" | grep -E '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ')"
 done
 if curl -s -m 2 http://127.0.0.1:4444/status >/dev/null 2>&1; then
-  for t in playwebkit playbackwk playpresswk playhearwk; do
+  for t in playwebkit playbackwk playpresswk playhearwk cutoverwk; do
     out=$(DISPLAY=:99 timeout 300 node $t.mjs 2>&1); code=$?
     echo "$t exit=$code fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep -E '^FAIL' | head -2 | tr '\n' ' ')"
   done
@@ -94,6 +94,15 @@ out=$(SHOTS=0 timeout 1500 node jankchrome.cjs 2>&1); echo "jankchrome exit=$? f
 # The Score and the Piano after the jank report (jank.cjs: the title opens nothing, the Piano keeps the bars on screen,
 # one ▶ for a stretch, one keyboard — the Piano module's — linked to the Score).
 out=$(SHOTS=0 timeout 1500 node -r ./harness/noshots.cjs jank.cjs 2>&1); echo "jank exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
+# The one-page shell — the site's root since v92 (docs/CUTOVER.md): cutover.cjs (the root is the shell, the shell.html
+# stub, every old page lands in the shell in its state, nothing runs on a page that is leaving, the shell's fetch of the
+# old pages stays inert, the escapes: ?page, email links, an automated browser), then the shell's own suites (shell.cjs
+# five sizes, shellmods.cjs the module sets, shellscore.cjs the Score in place, shellsing.cjs Sing in place,
+# shellplaces.cjs Record / Voice / Assistants in place).
+for t in cutover shell shellmods shellscore shellsing shellplaces; do
+  out=$(SHOTS=0 timeout 1500 node -r ./harness/noshots.cjs $t.cjs 2>&1); code=$?
+  echo "$t exit=$code fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
+done
 for t in playpdfonly singpdf; do
   out=$(timeout 600 node $t.cjs 2>&1); code=$?
   echo "$t exit=$code fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"

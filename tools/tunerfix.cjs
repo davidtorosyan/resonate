@@ -19,7 +19,7 @@ const { chromium } = require('playwright');
         osc.frequency.value = 220; osc.connect(d); osc.start(); return d.stream;
       };
     }, mode);
-    await p.goto('http://localhost:8097/resonate/index.html'); await p.waitForTimeout(500);
+    await p.goto('http://localhost:8097/resonate/tuner.html'); await p.waitForTimeout(500);
     return { p, errs };
   };
   const st = (p) => p.evaluate(() => ({ status: document.getElementById('status').textContent, rec: document.getElementById('toggle').dataset.recording, disabled: document.getElementById('toggle').disabled, session: window.__session, gum: window.__gum, note: document.getElementById('note')?.textContent }));

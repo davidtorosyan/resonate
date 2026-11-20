@@ -298,7 +298,7 @@ async function shellAgain(browser) {
   const label = "shell", errors = [];
   const ctx = await context(browser, errors);
   const page = await ctx.newPage();
-  await page.goto(BASE + "shell.html");
+  await page.goto(BASE + "index.html");
   await page.waitForFunction(() => window.resonateDebug?.().tuner, null, { timeout: 15000 });
   const buf = pdfmini(3);
   const [id] = await seed(page, [{ title: "Lost", pdf: buf, drop: true }]);

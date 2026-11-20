@@ -287,7 +287,7 @@ const pngSize = (b) => (b.slice(1, 4).toString() === "PNG" ? { w: b.readUInt32BE
   check(c.error && /Score isn't open on this device/.test(c.raw), `4 sing.html: ${c.raw.slice(0, 110)} (${Date.now() - t0} ms)`);
 
   // --- 5: the one-page shell: score_open opens the song in place with the Score ---
-  await dp.goto(LOCAL + "shell.html");
+  await dp.goto(LOCAL + "index.html");
   await dp.waitForFunction(() => window.resonateDebug?.().remote?.on, null, { timeout: 30000 }).catch(() => {});
   await sleep(1000);
   c = await tool(T, "control_resonate", { action: "score_open", song: TITLE });

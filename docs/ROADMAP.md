@@ -15,7 +15,7 @@ live in CLAUDE.md ("UI principles").
 - [x] A6 (deployed 17:2x UTC; the owner presses Refresh once — docs/CONNECTOR.md) The assistant connector: new tools needed deleting and re-adding the ChatGPT plugin. Find a way (versioning / discovery / refresh) so it never has to happen again.
 - [x] A7 Song rows: "engine 10" as the subtitle is confusing — show the engine (as a version, "v10") only when it matters (an older engine), not as the main fact.
 - [x] A8 The converting tile changes width and pushes the ▶ beside it around.
-- [ ] B  Make the one-pager the site (the root is the shell; the old pages retired).
+- [x] B  Make the one-pager the site (the root is the shell; the old pages retired). Built for v92 (docs/CUTOVER.md "As built"): `index.html` is the shell, `shell.html` a stub, the old Tuner `tuner.html`; sing / play / record / voice / assistants / pdf-import.html land in the shell in their state (`away.js`); account, consent, audio test, Tools stay real pages. The owner checks the Home Screen app after the deploy (swipe it away, reopen).
 - [ ] C  Tech debt: cleanup / re-architecture / dead code, after B.
 - [ ] D  Engine accuracy loop: compare every converted song with its PDF, bar by bar; reproduce discrepancies natively, patch, bump ENGINE_N, repeat until none.
 

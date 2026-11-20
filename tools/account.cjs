@@ -20,10 +20,12 @@ const SB = 'https://ltyadhjhnfxdlgsmrcds.supabase.co', KEY = 'sb_publishable_8FE
   const waitMsg = async (ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { const s = await state().catch(() => null); if (s && s.msg) return s; await p.waitForTimeout(150); } return state(); };
   const tokens = async (pw) => (await fetch(`${SB}/auth/v1/token?grant_type=password`, { method: 'POST', headers: { apikey: KEY, 'content-type': 'application/json' }, body: JSON.stringify({ email: EMAIL, password: pw }) })).json();
 
-  // Signed out: the Tuner doesn't load the library; its chip says Sign in.
+  // Signed out: the root (the shell, v92) doesn't load the library; its avatar is the signed-out one.
   await p.goto(URL0); await p.waitForTimeout(800);
-  check((await p.textContent('#account-chip')) === 'Sign in ›', 'Tuner: "Sign in ›" when signed out');
-  check(!reqs.some((u) => /vendor\/supabase/.test(u)), 'Tuner: sign-in library not loaded');
+  const avatar = () => p.evaluate(() => { const a = document.getElementById('avatar'); return a && { out: a.hasAttribute('data-out'), label: a.getAttribute('aria-label') }; });
+  let av = await avatar();
+  check(!!av && av.out && /Not signed in/.test(av.label), `the shell: the signed-out avatar (${JSON.stringify(av)})`);
+  check(!reqs.some((u) => /vendor\/supabase/.test(u)), 'the shell: sign-in library not loaded');
   await p.goto(URL0 + 'account.html');
   let s = await waitView('out');
   check(s.view === 'out' && !s.email, 'account page: signed-out form');
@@ -42,7 +44,8 @@ const SB = 'https://ltyadhjhnfxdlgsmrcds.supabase.co', KEY = 'sb_publishable_8FE
   await p.reload(); s = await waitView('in');
   check(s.view === 'in' && s.email === EMAIL, 'still signed in after a reload');
   await p.goto(URL0); await p.waitForTimeout(600);
-  check((await p.textContent('#account-chip')) === 'Account ›', 'Tuner: "Account ›" when signed in');
+  av = await avatar();
+  check(!!av && !av.out && av.label === `Account: ${EMAIL}`, `the shell: the avatar knows the account (${JSON.stringify(av)})`);
   await p.goto(URL0 + 'tools.html'); await p.waitForTimeout(600);
   check((await p.textContent('[data-account-link]')) === 'Account', 'Tools header: "Account"');
 
@@ -87,7 +90,7 @@ const SB = 'https://ltyadhjhnfxdlgsmrcds.supabase.co', KEY = 'sb_publishable_8FE
   await p.goto('about:blank'); await p.goto(URL0 + '#error=access_denied&error_code=otp_expired&error_description=x');
   await p.waitForURL(/account\.html/, { timeout: 10000 }).catch(() => {});
   s = await waitMsg();
-  check(/account\.html$/.test(new URL(p.url()).pathname) && /has expired/.test(s.msg), `link on the Tuner page → account page: "${s.msg}"`);
+  check(/account\.html$/.test(new URL(p.url()).pathname) && /has expired/.test(s.msg), `link at the root (the shell) → account page: "${s.msg}"`);
 
   // Sign up (answered by interception: no email is sent).
   await p.goto(URL0 + 'account.html'); await waitView('out');

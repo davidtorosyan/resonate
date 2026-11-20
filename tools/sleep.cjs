@@ -7,8 +7,8 @@
 // source running, no live mic track, the session "auto", nothing scheduled to sound later. Back in
 // front (visible) nothing sounds by itself; a tap → a note sounds again (a source started on a
 // running context) / the mic listens again.
-//   index.html Start · sing.html Listen, a chip key held, a take (kept, as Stop), 🎤 Pitch ·
-//   voice.html range test · record.html a take · shell.html the tuner, then Sing's Listen, then the
+//   tuner.html Start · sing.html Listen, a chip key held, a take (kept, as Stop), 🎤 Pitch ·
+//   voice.html range test · record.html a take · index.html the tuner, then Sing's Listen, then the
 //   Score (a press; back: its context suspended and the session "auto" until the next press)
 //   node sleep.cjs   (screenshots into SHOTS)
 const { chromium } = require('playwright');
@@ -162,9 +162,9 @@ const touch = (p, type, pts) => p.cdp.send('Input.dispatchTouchEvent', { type, t
 const center = (p, sel) => p.$eval(sel, (e) => { e.scrollIntoView({ block: 'nearest' }); const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
 
 async function tuner() {
-  console.log('\n=== index.html (the Tuner)');
+  console.log('\n=== tuner.html (the Tuner)');
   const p = await page();
-  await p.goto(BASE + 'index.html');
+  await p.goto(BASE + 'tuner.html');
   await p.waitForTimeout(500);
   await p.click('#toggle');
   ok(await until(p, () => document.getElementById('toggle').dataset.recording === 'true'), 'Start listens');
@@ -322,9 +322,9 @@ async function record() {
 }
 
 async function shell() {
-  console.log('\n=== shell.html');
+  console.log('\n=== index.html');
   const p = await page({ 'resonate.profiles': JSON.stringify(PROFILE), 'resonate.sing.song': 'amazing-grace', 'resonate.shell.modules': JSON.stringify({ phone: 'sing', tablet: 'sing', desktop: 'sing' }) });
-  await p.goto(BASE + 'shell.html');
+  await p.goto(BASE + 'index.html');
   await until(p, () => !!window.resonateDebug?.().tuner);
   await p.waitForTimeout(300);
   await p.click('#main-btn');

@@ -224,7 +224,7 @@ async function runSize(sz) {
   console.log(`\n=== ${sz.n} ${sz.w}×${sz.h}`);
   const ctx = await context(sz, { 'resonate.profiles': JSON.stringify(PROFILE), 'resonate.sing.song': 'amazing-grace' });
   const p = await ctx.newPage();
-  await p.goto(BASE + 'shell.html');
+  await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner);
   await p.waitForTimeout(500);
 
@@ -249,7 +249,7 @@ async function runSize(sz) {
   await p.click('#songs-body .song[data-id="amazing-grace"]');
   const samples = await sOpen;
   let d = await dbg(p);
-  ok(d.song.open && /shell\.html$/.test(p.url()), `the song opened in place (${p.url().split('/').pop()})`);
+  ok(d.song.open && /index\.html$/.test(p.url()), `the song opened in place (${p.url().split('/').pop()})`);
   steady(samples, R0, 'opening');
   ok(samples.some((x) => x.n > 0 && x.tf), `opening: transforms ran (${samples.filter((x) => x.tf).length} frames with a slide or morph)`);
   ok(samples.every((x) => x.content), `opening: no blank frame (${samples.filter((x) => !x.content).length} of ${samples.length} without content)`);
@@ -431,7 +431,7 @@ async function takeSilent() {
   console.log('\n=== take (phone)');
   const ctx = await context(sz, { 'resonate.sing.song': 'amazing-grace', 'resonate.sing.guided': 'off', 'resonate.shell.modules': JSON.stringify({ phone: ['sing', 'piano'] }) });
   const p = await ctx.newPage();
-  await p.goto(BASE + 'shell.html');
+  await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner);
   await p.click('#nextup');
   await waitFn(p, SETTLED, 20000);
@@ -465,7 +465,7 @@ async function reducedMotion() {
   console.log('\n=== reduced motion (phone)');
   const ctx = await context(sz, { 'resonate.sing.song': 'amazing-grace', 'resonate.shell.modules': JSON.stringify({ phone: ['sing', 'piano'] }) }, { reducedMotion: 'reduce' });
   const p = await ctx.newPage();
-  await p.goto(BASE + 'shell.html');
+  await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner);
   await p.waitForTimeout(400);
   const R0 = Object.values(await p.evaluate(() => window.__rects()));
@@ -492,7 +492,7 @@ async function raceOpen() {
   console.log('\n=== race (phone)');
   const ctx = await context(sz, { 'resonate.sing.song': 'amazing-grace', 'resonate.sing.guided': 'off', 'resonate.shell.modules': JSON.stringify({ phone: ['sing'] }) });
   const p = await ctx.newPage();
-  await p.goto(BASE + 'shell.html');
+  await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner);
   const id = await p.evaluate(async () => {
     const lib = await import(`./library.js?v=${document.getElementById('version').textContent.trim().replace(/^v/, '')}`);
@@ -535,7 +535,7 @@ async function pitchHush() {
   console.log('\n=== pitch (phone)');
   const ctx = await context(sz, { 'resonate.sing.song': 'amazing-grace', 'resonate.sing.guided': 'off', 'resonate.shell.modules': JSON.stringify({ phone: ['sing', 'piano'] }) });
   const p = await ctx.newPage();
-  await p.goto(BASE + 'shell.html');
+  await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner);
   await p.click('#nextup');
   await waitFn(p, SETTLED, 20000);
@@ -588,7 +588,7 @@ async function gateLift() {
   const ctx = await context(sz, { 'resonate.shell.modules': JSON.stringify({ phone: ['piano'] }) });
   await ctx.addInitScript(GATE);
   const p = await ctx.newPage();
-  await p.goto(BASE + 'shell.html');
+  await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().piano?.shown);
   await p.waitForTimeout(600);
   const last = () => p.evaluate(() => window.resonateDebug().piano.log.at(-1) || null);

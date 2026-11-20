@@ -1,20 +1,20 @@
 // Page headers with the Play pill: no horizontal overflow, the Play pill present and inside the
-// viewport, #version visible — on index, record, sing (📡 forced visible, and with the assistant
-// chip too), voice, tools and play at 375, 390, 744 and 820 px; account, assistants, pdf-import and
-// audiotest for overflow and the badge. Fails on a pageerror or a console error.
+// viewport, #version visible — on tuner (the old Tuner, v92), record, sing (📡 forced visible, and with
+// the assistant chip too), voice and play at 375, 390, 744 and 820 px; tools, account, assistants,
+// pdf-import and audiotest for overflow and the badge. Fails on a pageerror or a console error.
 // usage: node playheaders.cjs [--no-play-pill]   (BASE env, default the test server on 8097)
 const { chromium } = require('playwright');
 const BASE = process.env.BASE || 'http://localhost:8097/resonate/';
 const expectPill = !process.argv.includes('--no-play-pill');
 const WIDTHS = [375, 390, 744, 820];
 const PAGES = [
-  { name: 'index', url: 'index.html' },
+  { name: 'tuner', url: 'tuner.html' },
   { name: 'record', url: 'record.html' },
   { name: 'sing', url: 'sing.html' },
   { name: 'sing+📡', url: 'sing.html', remote: true },
   { name: 'sing+📡+chip', url: 'sing.html', remote: true, chip: true },
   { name: 'voice', url: 'voice.html' },
-  { name: 'tools', url: 'tools.html' },
+  { name: 'tools', url: 'tools.html', self: true }, // (v92: Resonate + the account link)
   { name: 'play', url: 'play.html', self: true },
   // (no Play pill: they link back to Tools)
   { name: 'account', url: 'account.html', self: true },

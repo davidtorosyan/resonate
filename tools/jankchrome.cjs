@@ -109,7 +109,7 @@ const shown = async (p, sel) => !!(await rect(p, sel))?.vis;
 const shot = (p, name) => (SHOTS ? p.screenshot({ path: path.join(SHOTS, `${name}.png`) }) : null);
 async function home(ctx) {
   const p = await ctx.newPage();
-  await p.goto(BASE + 'shell.html');
+  await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner, null, { timeout: 15000 });
   await p.waitForTimeout(300);
   return p;
@@ -210,7 +210,7 @@ async function drag() {
     await openSongs(p, cdp);
     await p.goBack();
     await p.waitForTimeout(300);
-    ok(!(await sheetState(p, 'songs')).open && /shell\.html/.test(p.url()), `${sz.n}: Back closes it (and stays home)`);
+    ok(!(await sheetState(p, 'songs')).open && /index\.html/.test(p.url()), `${sz.n}: Back closes it (and stays home)`);
     if (sz === IPHONE) {
       await openSongs(p, cdp);
       await shot(p, `drag-songs-${sz.n}`);

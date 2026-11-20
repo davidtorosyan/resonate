@@ -144,7 +144,7 @@ async function runSize(sz) {
   console.log(`\n=== ${sz.n} ${sz.w}×${sz.h}`);
   const ctx = await context(sz, { 'resonate.sing.song': 'amazing-grace' });
   const p = await ctx.newPage();
-  await p.goto(BASE + 'shell.html');
+  await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner);
   await p.waitForTimeout(400);
   ok(!ctx.vrv.length, `home: neither play.js nor Verovio loaded (${ctx.vrv.join(', ') || 'none'})`);

@@ -115,7 +115,7 @@ async function context(sz, seed = {}, { cloud = false } = {}) {
   ctx.errors = [];
   ctx.on('page', (p) => {
     p.navs = [];
-    p.on('framenavigated', (f) => { if (f === p.mainFrame() && !/\/shell\.html(\?|#|$)/.test(f.url())) p.navs.push(f.url()); }); // (pushState / Back within the shell: not a navigation)
+    p.on('framenavigated', (f) => { if (f === p.mainFrame() && !/\/index\.html(\?|#|$)/.test(f.url())) p.navs.push(f.url()); }); // (pushState / Back within the shell: not a navigation)
     p.on('load', () => { p.loads = (p.loads || 0) + 1; });
     p.on('pageerror', (e) => ctx.errors.push(`${p.url().split('/').pop()}: ${e.message}`));
     p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|supabase|Failed to fetch|sync|WebSocket/i.test(m.text())) ctx.errors.push(`${p.url().split('/').pop()}: ${m.text()}`); });
@@ -133,7 +133,7 @@ async function until(p, pred, ms = 15000) {
   while (Date.now() < end) { d = await dbg(p); try { if (d && pred(d)) return d; } catch {} await p.waitForTimeout(100); }
   return d;
 }
-async function home(ctx, url = 'shell.html') {
+async function home(ctx, url = 'index.html') {
   const p = await ctx.newPage();
   await p.goto(BASE + url);
   await p.waitForFunction(() => window.resonateDebug?.().tuner && window.resonateDebug().place);
@@ -167,7 +167,7 @@ async function record(sz) {
   ok(parkedInTap, `${sz.n}: Record's tap parks the tuner at once (no live track)`);
   await settled(p, 'record');
   let s = await sheet(p, 'record');
-  ok(!!s && s.cover && /shell\.html$/.test(s.url) && !p.navs.length, `${sz.n}: Record opens in place — a full-height sheet, no navigation (${JSON.stringify(s)}, navs ${p.navs.length})`);
+  ok(!!s && s.cover && /index\.html$/.test(s.url) && !p.navs.length, `${sz.n}: Record opens in place — a full-height sheet, no navigation (${JSON.stringify(s)}, navs ${p.navs.length})`);
   ok(s?.hist === h0 + 1, `${sz.n}: one history entry (${h0} → ${s?.hist})`);
   d = await dbg(p);
   ok(d?.place.open === 'record' && d.overlay === 'place-record' && d.tuner.state === 'off', `${sz.n}: debug: place ${d?.place.open}, overlay ${d?.overlay}, tuner ${d?.tuner.state}`);
@@ -182,7 +182,7 @@ async function record(sz) {
   await p.goBack();
   ok(await gone(p, 'record'), `${sz.n}: Back closes it`);
   d = await until(p, (x) => !x.place.record?.recording, 5000);
-  ok(!d?.place.record?.recording && d.place.record.duration > 1.5 && d.place.open === null && /shell\.html$/.test(p.url()) && !p.navs.length,
+  ok(!d?.place.record?.recording && d.place.record.duration > 1.5 && d.place.open === null && /index\.html$/.test(p.url()) && !p.navs.length,
     `${sz.n}: the take stopped (kept: ${d?.place.record?.duration?.toFixed(1)} s, ${d?.place.record?.segments} notes), still the shell`);
   ok(await p.evaluate(() => history.length) === h0 + 1 && await p.evaluate(() => !history.state?.shellSheet), `${sz.n}: back on the shell's entry`);
   // Opened again: the take is there (its playback bar), ✕ closes it.
@@ -196,7 +196,7 @@ async function record(sz) {
   await p.waitForTimeout(300);
   ok(await p.evaluate(() => !history.state?.shellSheet), `${sz.n}: ✕ takes its history entry back`);
   // The Reader's Sing it: the new song in place, Sing shown (the phone's saved set is the Score alone).
-  await p.goto(`${BASE}shell.html?pdf=${encodeURIComponent('/imp/amazing-grace1.pdf')}`);
+  await p.goto(`${BASE}index.html?pdf=${encodeURIComponent('/imp/amazing-grace1.pdf')}`);
   p.navs.length = 0;
   d = await until(p, (x) => x.import?.result?.songId, 30000);
   const id = d?.import?.result?.songId;
@@ -207,13 +207,13 @@ async function record(sz) {
     ok(await vis(p, '.rd-sing') && await vis(p, '.rd-play'), `${sz.n}: the Reader's Sing it / Play it`);
     await tap(p, sz, '.rd-sing');
     d = await until(p, (x) => x.song?.open && x.song.state?.song === id && x.song.set.sing && !x.song.moving && !x.song.switching, 15000);
-    ok(!!d && /shell\.html/.test(p.url()) && !p.navs.length, `${sz.n}: Sing it → the song in place (${d?.song?.state?.song}), no navigation`);
+    ok(!!d && /index\.html/.test(p.url()) && !p.navs.length, `${sz.n}: Sing it → the song in place (${d?.song?.state?.song}), no navigation`);
     ok(d?.song.set.sing && !d.song.set.score, `${sz.n}: … with Sing shown (the Score gives way on a phone): ${JSON.stringify(d?.song.set)}`);
     ok(await p.evaluate(() => JSON.parse(localStorage.getItem('resonate.shell.modules')).phone.join()) === 'score', `${sz.n}: the saved set is unchanged`);
     ok(await p.evaluate(() => history.state?.shellPage === 'song'), `${sz.n}: the song's history entry is the current one (the Reader's handed over)`);
     await p.goBack();
     d = await until(p, (x) => !x.song.open && !x.song.moving && !x.song.closing, 8000);
-    ok(!d?.song.open && /shell\.html/.test(p.url()) && !p.navs.length, `${sz.n}: Back closes the song, still the shell`);
+    ok(!d?.song.open && /index\.html/.test(p.url()) && !p.navs.length, `${sz.n}: Back closes the song, still the shell`);
   }
   await closeCtx(ctx);
 }
@@ -260,7 +260,7 @@ async function voice(sz) {
   const lbl1 = await p.textContent('#tuner .ribbon-wrap .lbl span');
   ok(lbl0 !== lbl1 && /F4/.test(lbl1), `${sz.n}: the tuner's range follows (${lbl0} → ${lbl1})`);
   // The Reader's Play it: the Score shown, with Sing (a tablet keeps both).
-  await p.goto(`${BASE}shell.html?pdf=${encodeURIComponent('/imp/amazing-grace1.pdf')}`);
+  await p.goto(`${BASE}index.html?pdf=${encodeURIComponent('/imp/amazing-grace1.pdf')}`);
   p.navs.length = 0;
   d = await until(p, (x) => x.import?.result?.songId, 30000);
   const id = d?.import?.result?.songId;

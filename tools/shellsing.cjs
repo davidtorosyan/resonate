@@ -1,4 +1,4 @@
-// The shell preview, step 2: Sing inside the page (shell.html + shell/singview.js) at five sizes —
+// The shell preview, step 2: Sing inside the page (index.html + shell/singview.js) at five sizes —
 // iPhone 393×852, iPhone Safari 393×659, iPad 820×1180 / 1180×820, desktop 1440×900. A simulated
 // singer (a sawtooth through a fake getUserMedia, as guided.cjs) sings the take's notes, and plays
 // an A3 between takes so the tuner has something to hear. Every 50 ms the page checks that the
@@ -125,7 +125,7 @@ async function runSize(sz) {
   // (Sing alone on every device: step 3's default on a tablet / desktop is the Score — shellscore.cjs)
   const ctx = await context(sz, { 'resonate.profiles': JSON.stringify(PROFILE), 'resonate.sing.song': 'amazing-grace', 'resonate.shell.modules': JSON.stringify({ phone: 'sing', tablet: 'sing', desktop: 'sing' }) });
   const p = await ctx.newPage();
-  await p.goto(BASE + 'shell.html');
+  await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner);
   await p.waitForTimeout(300);
   const homeEntries = await p.evaluate(() => history.length);
@@ -140,7 +140,7 @@ async function runSize(sz) {
   // (v87: the modules come up once Sing is ready — laid — and slide in: wait for the motion to end)
   d = await until(p, (x) => x.song.open && x.song.laid && !x.song.moving && x.sing?.title === 'Amazing Grace' && x.song.state?.song === 'amazing-grace', 15000);
   ok(!!d?.song.open && d.sing?.title === 'Amazing Grace', 'Songs → Amazing Grace opens Sing in place');
-  ok(/shell\.html$/.test(p.url()), `no navigation (${p.url().split('/').pop()})`);
+  ok(/index\.html$/.test(p.url()), `no navigation (${p.url().split('/').pop()})`);
   ok(d?.tuner.form === sz.form && d.song.form === sz.form, `the tuner is ${sz.form} (${d?.tuner.form})`);
   ok(d?.tuner.state === 'off' && !d.tuner.live && /parked/.test(d.tuner.word), `the tuner parked: "${d?.tuner.word}"`);
   ok(!(await shown(p, '#songs')) && (await p.textContent('#song-pill .t')) === 'Amazing Grace', 'the list closed; the song pill says Amazing Grace');
@@ -270,7 +270,7 @@ async function runSize(sz) {
   await fc.setFiles(`${FX}/trace/oh-susanna.mxl`);
   d = await until(p, (x) => x.song.open && /^s/.test(x.song.state?.song || '') && x.sing?.title && x.sing.title !== 'Amazing Grace', 10000);
   ok(!!d && /susanna/i.test(d.sing?.title || '') && /susanna/i.test(await p.textContent('#song-pill .t')), `a MusicXML added: Sing switches to it (${d?.song.state?.song} "${d?.sing?.title}")`);
-  ok(!(await shown(p, '#songs')) && /shell\.html$/.test(p.url()), 'the list closed, no navigation');
+  ok(!(await shown(p, '#songs')) && /index\.html$/.test(p.url()), 'the list closed, no navigation');
   await p.goBack();
   d = await until(p, (x) => !x.song.open && !x.song.moving && !x.song.closing, 5000);
   await p.waitForFunction(() => /susanna/i.test(document.querySelector('#nextup .t')?.textContent || ''), null, { timeout: 3000 }).catch(() => {});

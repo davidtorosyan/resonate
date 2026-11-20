@@ -66,3 +66,57 @@ Home Screen app's storage is separate from Safari's (ask the owner which one hol
 Move the mounted markup into the shell's own fragments, then delete the old pages, away.js, the webdriver escape and
 the old suites; tuner.html + app.js; `go("sing.html")`; nav.js's `shell\.html` check; the pill's pdf-import link;
 pdf-import once the tray has Copy log and the credit.
+
+## As built (v92, 2026-11-20)
+Done as planned (decisions 1–5, 7; order 1–2 up to the bump, which the integrator does with the push):
+- **Moves:** `public/index.html` → `tuner.html` (unchanged), `public/shell.html` → `index.html` (`<html lang="en" data-shell>`,
+  brand `href="./"`); `public/shell.html` is the stub (`location.replace("./" + location.search + location.hash)`, a plain
+  "Resonate ›" link, `#0d0d1c`; no badge, no script src — `grep -L 'v=<N>'` lists only it after a bump).
+- **`public/away.js`** (classic; `<script src="away.js?v=N" data-open="…">` right after `<title>` on sing (sing), play
+  (score), record, voice, assistants, pdf-import (import) — bump.mjs versions it like any `<script src>`): escapes `?page`,
+  the auth hash, `navigator.webdriver` without `resonate.redirect` = "1"; else `window.stop()` (the rest of the page is
+  never read: none of its modules start), `location.replace("./?open=<x>" + its own query)`, then `<html data-away>` and
+  the page hidden (after 3 s with no shell: shown again with a plain "Resonate ›" link to it).
+- **nav.js:** `export const handing`; `if (handing || data-away) await new Promise(() => {})` right after it; the
+  import pill returns on `<html data-shell>` (the `shell\.html` path test kept). **WebKit doesn't honour that wait
+  across scripts:** in WebKitGTK 2.52 (JSC) a module script whose import was *started by another `<script>`* runs even
+  while that import is still awaiting (sing.html: nav.js's own tag, then sing.js importing it — sing.js ran, and threw
+  on `spaceChanged` in its TDZ); within one graph it waits. Hence away.js's `window.stop()`, and boot.js checks
+  `handing` itself (`if (handing) await …` at its top) for an email link at the root.
+- **shell/boot.js:** `open` / `reprocess` / `pdf` read and removed at the top (`history.replaceState`, before any sheet or
+  song pushes an entry); `pdf` → `tray.start` as before; else `tray.resumePending({ minimized: open !== "import" })`, then
+  `reprocess` → `tray.reprocess(id)`, and `import` with no pending job (the `resonate.import` flag of this space, read
+  synchronously — resumePending's promise lasts the whole conversion) → Songs; `sing` / `score` → the last song
+  (`songInfo`) with that module for it only, else Songs; `record` / `voice` / `assistants` → `places.open`.
+- **Links:** account.html "Tuner" → "Resonate" (`./`), its Assistants link → `./?open=assistants`; tools.html header
+  "Resonate" + the account link (Record / Sing / Play gone), cards Tuner (old), PDF → Song (`?page`), Audio test, Device
+  check, and the PDF → Song credit; audiotest.html "Sing" → "Resonate" (`./`); oauth/consent.html "control Resonate while
+  📡 is on".
+- **Tests:** `shell.html` → `index.html` (URLs, regexes, reprocess.cjs's badge read) in shell, shellmods, shellplaces,
+  shellscore, shellsing, songlib, jank, jankchrome, playpdf, playpdfonly, sleep, mcp2, reprocess; the Tuner →
+  `tuner.html` in sleep, tunerfix, tunerprof, smoke (+ the shell), playheaders (tools now `self`: no Play pill);
+  account.cjs's root checks → the shell's avatar (signed out / the email) and "a link at the root"; regress.sh runs
+  cutover + the five shell suites. **tools/cutover.cjs** (iPhone 393×852, iPad 820×1180, touch; `PARTS=R,S,L,B,N,F,E`):
+  as listed in Tests above, plus nav.js's guard on its own — a page marked `data-away` that never leaves (its HTML
+  served with the marker instead of away.js): sing.js / play.js / pdf-import.js never run, no song, Verovio or worker
+  fetched in 3 s; and away.js itself with its navigation a no-op (the answer never coming). Chromium stops a page's
+  loading as its navigation starts, so the held-answer check (the shell's response held 2.5 s) passes even without the
+  guard; the marker-only check fails without it (3 of 3). **tools/cutoverwk.mjs** (WebKitGTK, `webkit2gtk-driver`):
+  the root, sing / play / voice.html land in their state, the stub, an email link at the root, and the three pages on
+  their way out with the answer never coming run nothing; the marker alone is reported (it doesn't hold them back
+  there).
+
+Deviations:
+- **The credit is copied, not moved:** pdf-import.html keeps its Audiveris / CheerpJ credit (it still runs the engine,
+  behind Tools' `?page`, and its markup stays as it was this release); tools.html has it too. Drop it there with the page
+  in cleanup C — the tray still has no credit of its own (the shell reaches it through Tools).
+- **Decision 6 (MCP wording) left as it is:** coaching.ts already says "Tap 📡 at the top of Resonate" (A6's redeploy);
+  resonate.ts's two "tap 📡 on the Sing (or Play) page" answers remain — deployed code (mcp1 checks the deployed text),
+  so they change with the next redeploy of the function, not in this release.
+- `?open=import` with `?reprocess=` shows Songs (the song's row "converting", the tray folded) rather than the Reader
+  open: it is queued like the Score's ⟳, not an import of its own.
+- away.js also hides the leaving page (`visibility: hidden`, the shell's background) so the old page never flashes,
+  and stops its loading (`window.stop()`, WebKit above) — not in the plan.
+
+After the deploy (the integrator): curl the root (`shell/boot.js?v=N`), tuner.html, shell.html (the stub); account.cjs
+live (it needs `TEST_EMAIL` / `TEST_PW` — not run here) and mcp2; the owner checks the Home Screen app.

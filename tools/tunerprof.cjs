@@ -3,7 +3,7 @@ const SP = '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a9323
 (async () => {
   const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 390, height: 844 } });
   const errs = []; p.on('pageerror', (e) => errs.push(e.message));
-  await p.goto('http://localhost:8097/resonate/index.html');
+  await p.goto('http://localhost:8097/resonate/tuner.html');
   const st = () => p.evaluate(() => ({ chip: document.getElementById('profile-chip').textContent, cal: document.getElementById('volume-row').dataset.calibrated, lo: document.getElementById('vol-db-lo').textContent, hi: document.getElementById('vol-db-hi').textContent }));
   await p.evaluate(() => { localStorage.clear(); localStorage.setItem('resonate.volCal', JSON.stringify({ floor: -50, ceiling: -10 })); });
   await p.reload(); await p.waitForTimeout(300);

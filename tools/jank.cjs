@@ -69,7 +69,7 @@ async function a3(sz) {
   console.log(`\n=== A3 ${sz.n} ${sz.w}×${sz.h}`);
   const ctx = await context(sz, { 'resonate.shell.modules': JSON.stringify({ [sz.dev]: ['score'] }) });
   const p = await ctx.newPage();
-  await p.goto(BASE + 'shell.html');
+  await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner);
   const id = await p.evaluate(async (xml) => (await import(`./library.js?v=${document.getElementById('version').textContent.trim().replace(/^v/, '')}`)).addSong('PVG', xml), XML);
   await p.evaluate((id) => import(`./shell/songlist.js?v=${document.getElementById('version').textContent.trim().replace(/^v/, '')}`).then((m) => m.openSong(id)), id);
@@ -150,7 +150,7 @@ async function onePlay(sz) {
   console.log(`\n=== A2 · A4 ${sz.n} ${sz.w}×${sz.h}`);
   const ctx = await context(sz, { 'resonate.sing.song': 'amazing-grace', 'resonate.shell.modules': JSON.stringify({ [sz.dev]: ['score', 'piano'] }) });
   const p = await ctx.newPage();
-  await p.goto(BASE + 'shell.html');
+  await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner);
   await p.click('#songs-btn');
   await p.waitForSelector('#songs-body .song[data-id="amazing-grace"]', { timeout: 5000 });

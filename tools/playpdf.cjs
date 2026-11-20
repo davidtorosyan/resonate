@@ -21,7 +21,7 @@
 //      resonatePlay.reprocess set → called with the id, after the same question
 //   F  resonatePlay.focus() → { song, view, measures, numbers, selection, pdf: { page, rects } };
 //      pdfCrop() → a PNG with the red border (without the PDF view open, too)
-//   S  the one-page shell (shell.html, iPad): the Score's 📄 opens the same view, zoomed, borders
+//   S  the one-page shell (index.html, iPad): the Score's 📄 opens the same view, zoomed, borders
 //   K  the owner's Killing Me Softly: screenshots of the border on a stretch and a page (looked at)
 //
 // usage: node playpdf.cjs   (BASE=http://localhost:8097/resonate/, ONLY=M,O,…, SHOTS=<dir>)
@@ -438,7 +438,7 @@ const register = (page) => page.evaluate(() => {
     await page.goto(BASE + "play.html");
     await ready(page);
     const id = (await seed(page, [{ name: "GS3", xml: GS3_XML, pdf: GS3_PDF }])).GS3;
-    await page.goto(BASE + "shell.html");
+    await page.goto(BASE + "index.html");
     await page.waitForFunction(() => window.resonateDebug?.().tuner, null, { timeout: 30000 });
     await page.click("#songs-btn");
     await page.waitForSelector(`#songs-body .song[data-id="${id}"]`, { timeout: 8000 });

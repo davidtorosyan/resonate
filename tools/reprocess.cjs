@@ -13,7 +13,7 @@ const BASE = process.env.BASE || 'http://localhost:8097';
 const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
 const want = (k) => !ONLY || ONLY.has(k);
 const FX = '/home/user/tools/fixtures';
-const V = (require('fs').readFileSync('/home/user/resonate/public/shell.html', 'utf8').match(/id="version"[^>]*>v(\d+)</) || [])[1] || '88'; // (the page's own modules: the badge's version)
+const V = (require('fs').readFileSync('/home/user/resonate/public/index.html', 'utf8').match(/id="version"[^>]*>v(\d+)</) || [])[1] || '88'; // (the page's own modules: the badge's version)
 let passes = 0, fails = 0;
 const ok = (c, msg) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${msg}`); if (c) passes++; else fails++; return c; };
 
@@ -255,7 +255,7 @@ async function until(p, pred, ms = 30000, f = dbg) {
     p.on('framenavigated', (f) => { if (f === p.mainFrame()) navs.push(f.url()); }); // (pushState too: the shell's own history entries)
     await p.goto(`${BASE}/resonate/tools.html`);
     const { id } = await seedSong(p, { pdf: '/imp/amazing-grace1.pdf', xml: GS_XML, stale: false }); // (a stale cache of this version would open as it is)
-    await p.goto(`${BASE}/resonate/shell.html`);
+    await p.goto(`${BASE}/resonate/index.html`);
     await p.waitForFunction(() => window.resonateDebug?.().tuner, null, { timeout: 15000 });
     await p.evaluate(async ({ id, V }) => (await import(`/resonate/shell/songlist.js?v=${V}`)).openSong(id), { id, V });
     const look = () => p.evaluate(() => {
@@ -275,7 +275,7 @@ async function until(p, pred, ms = 30000, f = dbg) {
     const s1 = await until(p, (x) => x.imp?.result && x.pitched !== s0.pitched && x.singNotes !== s0.singNotes, 40000, look);
     const a = await songInfo(p, id);
     ok(s1.imp?.result?.songId === id && s1.imp.replaced, `the tray: done, the same song replaced (${JSON.stringify(s1.imp?.result)})`);
-    ok(s1.mark === 1 && navs.slice(navs0).every((u) => /shell\.html/.test(u)) && /shell\.html/.test(p.url()), `no navigation (the page's own state kept; ${navs.length - navs0} same-page history entries, ${p.url().split('/').pop()})`);
+    ok(s1.mark === 1 && navs.slice(navs0).every((u) => /index\.html/.test(u)) && /index\.html/.test(p.url()), `no navigation (the page's own state kept; ${navs.length - navs0} same-page history entries, ${p.url().split('/').pop()})`);
     ok(s1.open && s1.song === id && s1.scoreSong === id && s1.singSong === id, `the song still open, in place`);
     ok(s1.pitched !== s0.pitched && s1.singNotes !== s0.singNotes, `Sing and the Score show the new notes (Score ${s0.pitched} → ${s1.pitched} pitched, Sing ${s0.singNotes} → ${s1.singNotes} notes)`);
     ok(a.title === 'My Grace' && !a.cleanOld && JSON.stringify(a.pages) === '[1]' && a.key === 2, `stored: title kept, no clean-up of the old notes (${a.clean ? 'a new one, made on reload' : 'none'}), pages ${JSON.stringify(a.pages)}, key kept (${a.key})`);

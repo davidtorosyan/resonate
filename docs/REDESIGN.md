@@ -781,6 +781,8 @@ export const VERSION = 81;    // written by bump.mjs; the shell compares it afte
 | `account.html`, `oauth/consent.html`, `audiotest.html` | real pages | real pages (supabase-js, OAuth frame-busting, every context closed) |
 | `tools.html` | today's | a neutral harness page for tests; the user-facing Tools is a panel |
 
+**As built (v92, docs/CUTOVER.md):** the root is the shell and `shell.html` a stub that `location.replace`s to it (search and hash kept), but the old pages *do* redirect — a classic `away.js` in their `<head>` sends sing / play / record / voice / assistants / pdf-import.html to `./?open=sing|score|record|voice|assistants|import` (+ their own `?reprocess=` / `?pdf=`), which the shell reads and drops from the address. The tests' `goto` still works because an automated browser (`navigator.webdriver`) stays on the old page unless localStorage `resonate.redirect` is "1"; `?page` keeps a person on one (Tools' PDF → Song). The shell keeps fetching their markup (DOMParser runs no script). The old Tuner is `tuner.html`; Tools stays a page (with the PDF → Song credit); "the desk", the Take module and the account sheet's panels are still the old pages mounted in place. Their own fragments, and deleting the old pages, are cleanup C.
+
 ### 19.7 Ids, tests and what keeps them meaningful (r2: an honest port)
 
 - **Until P6 the old suites test the old pages, unchanged**: today's pages aren't touched (D26). The shell's tests run against `shell.html?entry=…`.
