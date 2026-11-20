@@ -219,7 +219,7 @@ async function statusData(sb: Sb) {
     devices,
     remote_device: remote ? remote.name : null,
     hint: remote ? (remote.online ? null : `${remote.name} has 📡 Remote on but isn't in front right now (closed, in the background or asleep) — commands wait until it is.`)
-      : "No device has 📡 Remote on — ask the user to tap 📡 on the Sing (or Play) page of the device they're using.",
+      : "No device has 📡 Remote on — ask the user to tap 📡 at the top of Resonate on the device they're using.",
     live_take: lt && takeStatus(lt) === "live" ? takeHead(lt) : null,
     ...st,
     capabilities: capabilitiesBrief(),
@@ -262,7 +262,7 @@ export async function control(sb: Sb, input: Json, by = "Assistant") {
   const ignored = checked.ignored.length ? { ignored_params: checked.ignored } : {};
   const { data: devs } = await sb.from("devices").select("id,name,remote,seen_at,state").eq("remote", true).limit(1);
   const d = devs?.[0] as Json | undefined;
-  if (!d) return no("No device has 📡 Remote on. Ask the user to tap 📡 on the Sing (or Play) page of the device they're using.");
+  if (!d) return no("No device has 📡 Remote on. Ask the user to tap 📡 at the top of Resonate on the device they're using.");
   const clean: Json = { ...checked.args, by };
   const st = await settings(sb);
   if (action === "sing") {
