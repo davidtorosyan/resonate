@@ -1,0 +1,21 @@
+<!doctype html><meta charset="utf-8"><title>collect</title>
+<iframe id="f" style="width:400px;height:800px"></iframe>
+<script>
+const name = new URLSearchParams(location.search).get('name') || 'run';
+const f = document.getElementById('f');
+f.src = '/resonate/pdf-import.html?pdf=' + (new URLSearchParams(location.search).get('pdf') || '/killing.pdf');
+const t0 = Date.now();
+async function send(final) {
+  try {
+    const d = f.contentDocument; if (!d || !d.getElementById('stage')) return;
+    const g = (id) => d.getElementById(id);
+    const st = { t: Math.round((Date.now() - t0) / 1000), stage: g('stage').textContent, detail: g('detail').textContent,
+      done: !g('result').hidden, err: g('error').hidden ? '' : g('error-msg').textContent, result: g('result-detail').textContent };
+    await fetch('/collect/' + name + '-state', { method: 'POST', body: JSON.stringify(st) });
+    await fetch('/collect/' + name + '-log', { method: 'POST', body: g('log').textContent });
+    if (st.done || st.err) { await fetch('/collect/' + name + '-END', { method: 'POST', body: JSON.stringify(st) }); clearInterval(iv); }
+  } catch (e) { fetch('/collect/' + name + '-collecterr', { method: 'POST', body: String(e) }); }
+}
+const iv = setInterval(send, 10000);
+window.addEventListener('error', (e) => fetch('/collect/' + name + '-pageerr', { method: 'POST', body: String(e.message) }));
+</script>

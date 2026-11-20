@@ -4,6 +4,20 @@ The direction the user set on 2026-11-07, in their order. Keep this file current
 off, add decisions and open questions as they're settled. The standing principles also
 live in CLAUDE.md ("UI principles").
 
+## Where things stand (2026-11-20)
+
+**Live:** v88 (zoomable PDF view lined up with the score, ⟳ Reprocess, assistants read the score and the highlight and drive the Score). v83–87's one-page redesign is a preview (Tools → New Resonate); nothing from v87–88 has been tried on a real iPhone or iPad yet.
+
+**Next — the owner's score question:** a stretch of Killing Me Softly the owner thinks is transcribed wrong (or misread). Two copies in the account: `smw293jmjobxo` (the one sung) and `smwjzgji3o3zs` (never sung — probably the newer conversion). The loop: highlight the bars in the Score → ask in a Claude chat with the Resonate connector (`get_score_view` gives the notes, the bars' MusicXML and both pictures; `get_score_xml` / `get_score_pdf` the files) → fix the engine (omr-build) or a clean-up (omr/fixscore.js) → ⟳ Reprocess the song. A connector's new tools show only in a chat started after they were deployed.
+
+**Waiting on the owner (choices made, easy to change):**
+- v86: to fit the chord button, the Score's song menu is ~82 px wide on an iPad mini in portrait (was 133); the alternative is narrower ‹ › buttons.
+- v87: (1) iPad / desktop show the Piano at home by default (their default set is Score + Piano); (2) Sing + Score together on a phone get half the screen each, Sing scrolling in its half; (3) on an iPhone with a song and Sing, the main button shrinks to ~80 px; (4) Record / Voice / Assistants fill the screen on iPad and desktop too; (5) opening Voice parks the tuner and closing it doesn't restart it; (6) a song opened from Next-up, an import or an assistant turns Sing / the Score on for that song only.
+- v88: (1) with no stretch picked, 📄 frames the whole score page (~20–30 bars — near fit); the alternative is the page's first system; (2) a page turn in the PDF keeps the zoom rather than going back to the focus; (3) ⟳ has a "Reprocess" label; (4) a highlight is uploaded whenever an assistant has ever connected to the account (even one removed since); `score_focus` keeps one row a device, never pruned; (5) the PDF-page map of a song (`pages`) isn't synced — another device finds the pages by looking for staves (~0.5 s once).
+- Deferred until the owner has tried v87: make Sing and the Score speak and behave the same way.
+
+**Known gaps:** Sing's "Fit my range…" in the shell still goes to voice.html instead of Voice in place; cue-size staves are mapped onto the PDF as normal size (a page's last system can sit up to an interline low); tools/shellsing.cjs's Next-up check flakes now and then; a renderer crash at a resumed import's export (cause unknown, §PDF → Song in CLAUDE.md); sound over CarPlay (§10); the optional `20261108200000_sync_fixes.sql` isn't applied; the Assistants open items (CLAUDE.md "Review (v73)"); a leftover `v88-wip` branch on GitHub (the session's proxy couldn't delete it — safe to delete).
+
 ## Standing principles
 
 1. **Feedback is coaching, not a game.** Resonate is for learning to sing; this isn't

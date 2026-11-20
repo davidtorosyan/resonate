@@ -1,0 +1,27 @@
+<!doctype html><meta charset="utf-8"><title>import test</title>
+<body style="background:#111;color:#ddd;font:12px monospace">
+<div id="st"></div><pre id="log" style="max-height:40vh;overflow:auto"></pre>
+<script type="module">
+// Test harness for omr/importer.js (outside the repo): ?pdf=URL starts a job; ?resume=1 resumes the
+// pending one on load; window.__ev (events), __log, __state, __res, __imp.
+const { createImporter } = await import('/resonate/omr/importer.js?v=80');
+window.__ev = []; window.__log = []; window.__state = []; window.__res = null; window.__err = null;
+const q = new URLSearchParams(location.search);
+const imp = window.__imp = createImporter({
+  app: 'test',
+  onEvent: (ev) => { __ev.push(ev); },
+  onLog: (l) => { __log.push(l); },
+  onState: (s) => { __state.push({ state: s.state, job: s.job, at: Date.now(), why: s.why }); document.getElementById('st').textContent = JSON.stringify(s.job || s.state); },
+});
+const go = (p) => p.then((r) => { window.__res = r ? { songId: r.songId, title: r.title, pages: r.pages, failed: r.failed, notes: r.score?.notes?.length, xml: r.xml } : null; })
+  .catch((e) => { window.__err = e.message || String(e); });
+window.__pending = await imp.pending();
+if (q.get('pdf')) {
+  const b = await (await fetch(q.get('pdf'))).blob();
+  go(imp.start(new File([b], q.get('name') || q.get('pdf').split('/').pop(), { type: 'application/pdf' })));
+} else if (q.get('resume') && window.__pending) {
+  window.__stored = (await imp.storedEvents(window.__pending.id)).length;
+  go(imp.resume(window.__pending.id, { skip: q.get('skip') === '1', retry: q.get('retry') === '1' }));
+}
+window.__ready = true;
+</script>

@@ -1,0 +1,35 @@
+// "Type a tempo…": typed ♩ per minute becomes this song's tempo; bad input is refused; other songs keep theirs.
+const { chromium } = require('playwright');
+(async () => {
+  const b = await chromium.launch();
+  const p = await b.newPage({ viewport: { width: 390, height: 844 } });
+  const errs = []; p.on('pageerror', (e) => errs.push(e.message));
+  let answer = '174';
+  p.on('dialog', (d) => (d.type() === 'prompt' ? d.accept(answer) : d.accept()));
+  await p.goto('http://localhost:8097/resonate/sing.html'); await p.waitForTimeout(1500);
+  await p.evaluate(() => { localStorage.removeItem('resonate.sing.timing'); localStorage.setItem('resonate.sing.rate', '1'); });
+  await p.reload(); await p.waitForTimeout(1500);
+  const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+  const state = () => p.evaluate(() => ({ label: document.getElementById('tempo-select').selectedOptions[0].textContent, sum: document.getElementById('summary').textContent, msg: document.getElementById('song-msg').textContent, d1: window.resonateDebug().notes[1].t - window.resonateDebug().notes[0].t, q1: window.resonateDebug().notes[1].q - window.resonateDebug().notes[0].q }));
+  const before = await state();
+  await p.selectOption('#tempo-select', 'type'); await p.waitForTimeout(300);
+  let s = await state();
+  console.log(JSON.stringify(s));
+  ok(s.label === '♩=174 (yours)' && /♩=174/.test(s.sum) && Math.abs(s.d1 - s.q1 * 60 / 174) < 1e-6, 'typed 174 → ♩=174, notes timed at 174');
+  answer = 'fast';
+  await p.selectOption('#tempo-select', 'type'); await p.waitForTimeout(300);
+  s = await state();
+  ok(s.label === '♩=174 (yours)' && /didn't look right/.test(s.msg), 'nonsense is refused, tempo unchanged');
+  answer = '96.4';
+  await p.selectOption('#tempo-select', 'type'); await p.waitForTimeout(300);
+  s = await state();
+  ok(s.label === '♩=96 (yours)', 'decimals round: ' + s.label);
+  await p.reload(); await p.waitForTimeout(1500);
+  s = await state();
+  ok(s.label === '♩=96 (yours)', 'remembered for this song after reload');
+  await p.selectOption('#tempo-select', 'r:1'); await p.waitForTimeout(300);
+  s = await state();
+  ok(s.label === '♩=80' && !(await p.evaluate(() => [...document.querySelectorAll('#tempo-select option')].some((o) => /yours/.test(o.textContent)))), 'picking a listed tempo goes back to it');
+  console.log('errors:', errs);
+  await b.close();
+})();

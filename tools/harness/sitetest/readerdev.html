@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reader dev</title>
+<script>window.__err=[];addEventListener("error",(e)=>__err.push("error "+e.message+" @"+e.filename+":"+e.lineno));addEventListener("unhandledrejection",(e)=>__err.push("rejection "+(e.reason&&(e.reason.stack||e.reason.message)||e.reason)));const __ce=console.error,__cw=console.warn;console.error=(...a)=>{__err.push("console.error "+a.map(String).join(" "));__ce.apply(console,a)};console.warn=(...a)=>{__err.push("console.warn "+a.map(String).join(" "));__cw.apply(console,a)};</script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: radial-gradient(ellipse at top, #1a1a3e, #0f0f1e 70%) fixed; color: #e8e8f0; min-height: 100vh; padding-top: env(safe-area-inset-top); }
+  header { padding: .9rem 1.25rem .5rem; display: flex; gap: .75rem; align-items: baseline; }
+  h1 { font-size: 1.25rem; margin: 0; font-weight: 600; }
+  main { max-width: 1120px; margin: 0 auto; padding: .5rem 1rem 2rem; display: flex; flex-direction: column; gap: 1rem; }
+  #ctl { display: flex; gap: .4rem; flex-wrap: wrap; font: 12px ui-monospace, monospace; opacity: .8; }
+  #ctl button, #ctl select { font: inherit; color: inherit; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.2); border-radius: 6px; padding: .3rem .5rem; }
+  .hide-ctl #ctl { display: none; }
+</style>
+</head>
+<body>
+<header><h1>PDF → Song</h1><span id="info" style="font:12px ui-monospace,monospace;opacity:.6"></span></header>
+<main>
+  <div id="ctl">
+    <select id="fx"><option>greensleeves</option><option>killing</option><option>amazing-grace</option></select>
+    <select id="speed"><option value="1">1×</option><option value="10" selected>10×</option><option value="40">40×</option></select>
+    <button id="restart">restart</button><button id="pause">pause</button><button id="min">min/expand</button>
+  </div>
+  <section id="host"></section>
+</main>
+<script type="module">
+import { mount } from '/resonate/omr/reader.js';
+const q = new URLSearchParams(location.search);
+const fxName = q.get('fx') || 'greensleeves';
+const speed = Number(q.get('speed') || 10);
+if (q.has('bare')) document.body.classList.add('hide-ctl');
+document.getElementById('fx').value = fxName;
+document.getElementById('speed').value = String(speed);
+const H = window.__harness = { idx: 0, total: 0, done: false, paused: false, started: false };
+const fx = await (await fetch(`/readerfix/${fxName}/events.json`)).json();
+// Previews: the fixture names a file; the contract carries a Blob.
+const blobs = {};
+for (const { ev } of fx.events) if (ev.t === 'page' && typeof ev.preview === 'string') blobs[ev.preview] = await (await fetch(`/readerfix/${fxName}/${ev.preview}`)).blob();
+const events = fx.events.map(({ at, ev }) => ({ at, ev: ev.t === 'page' && ev.preview ? { ...ev, preview: blobs[ev.preview] } : ev }));
+H.total = events.length;
+const reader = window.__rd = mount(document.getElementById('host'), {
+  onMinimize: () => (H.minimized = true), onExpand: () => (H.minimized = false), minimized: q.has('min'),
+});
+const stopAt = q.has('stop') ? Number(q.get('stop')) : Infinity;
+let t0 = 0, timer = null;
+function next() {
+  timer = null;
+  if (H.paused) return;
+  if (H.idx >= events.length || H.idx >= stopAt) { H.done = H.idx >= events.length; H.stopped = true; return; }
+  const { at, ev } = events[H.idx];
+  const due = t0 + at / speed;
+  const wait = due - performance.now();
+  if (wait > 2) { timer = setTimeout(next, wait); return; }
+  reader.push(ev); // no `at`: the Reader stamps the real time
+  H.idx++;
+  next();
+}
+function start() {
+  const skip = Number(q.get('load') || 0);
+  if (skip) { reader.load(events.slice(0, skip).map(({ at, ev }) => ({ ...ev, at: Date.now() - (events[skip - 1].at - at) / speed }))); H.idx = skip; }
+  t0 = performance.now() - (skip ? events[skip - 1].at / speed : 0);
+  H.started = true;
+  next();
+}
+document.getElementById('restart').onclick = () => location.reload();
+document.getElementById('pause').onclick = () => { H.paused = !H.paused; if (!H.paused) { t0 = performance.now() - events[Math.max(0, H.idx - 1)].at / speed; next(); } };
+document.getElementById('min').onclick = () => (reader.mode === 'min' ? reader.expand() : reader.minimize());
+document.getElementById('fx').onchange = (e) => { q.set('fx', e.target.value); location.search = q; };
+document.getElementById('speed').onchange = (e) => { q.set('speed', e.target.value); location.search = q; };
+setInterval(() => { document.getElementById('info').textContent = `${H.idx}/${H.total}`; }, 500);
+if (!q.has('hold')) start(); else H.start = start;
+</script>
+</body>
+</html>
