@@ -1,0 +1,671 @@
+From 0b153d655a7bd53318838cf1fd7ff1c68c78dc54 Mon Sep 17 00:00:00 2001
+From: build <build@localhost>
+Date: Fri, 20 Nov 2026 22:03:02 +0000
+Subject: [PATCH] Keep ties over page turns; tie into the right head of a
+ chord; let a chord of another voice stand beside a tie
+
+Ties came out lost or as slurs in three ways (piano-vocal scores, 9 songs):
+
+1. Over a page turn. A tie (or slur) over a page turn is two halves: one at
+   the end of the page's last system, one at the start of the next page's
+   first system. Page.connectOrphanSlurs only connects halves between systems
+   of one page, so these stayed with no extension, not ties (a tie needs both
+   heads), hence abnormal, and LINKS step's checkAbnormals removed them all,
+   before Voices.refineScore could connect them across pages. Now
+   SlurInter.canStayAbnormal keeps such a page orphan (isPageOrphan: one head,
+   beginning orphan of the page's first system or ending orphan of its last
+   system); refineScore connects them as before (checkCrossTie: tie or slur)
+   and then discards the page orphans that connected to nothing (start and end
+   of the score, next to a missing sheet or part).
+
+2. The wrong head at a curve end. Ties into the heads of a chord end between
+   those heads, and two voices may share an abscissa; the head (or the chord)
+   nearest the curve end is not always the tied one, so one curve of a tied
+   chord got the lower head on one end and the upper head on the other, a
+   slur. When the heads at the two ends are not tie-compatible, checkStaffTie
+   (LINKS), and a second pass after checkCrossTie (Page.checkPageCrossTies,
+   refineScore), look on each side for another head of the same staff right
+   at the curve end (small abscissa gap, on the concave side within 1.25
+   interline) that is tie-compatible with the far head and not already the
+   end of another tie on that side; found, the curve is relinked to it and
+   made a tie.
+
+3. A chord of another voice struck with the tied head. isSpaceClear refused a
+   tie when a chord intersected the tie's box, including a chord of another
+   voice at the very abscissa of the left or right head. The final tie check
+   in LINKS (checkStaffTie) now ignores chords struck along with either head;
+   the early check at SLURS step (ClumpPruner) is unchanged: there, a tie into
+   a chord from two chords makes ChordSplitter split that chord, whose rhythm
+   then came out wrong.
+
+Also, a cross-system connection is a tie only when no other head of the staff
+lies between each head and its system edge (isEdgeClear; a head touching or
+overlapping the tied head, e.g. a second, doesn't count): a phrase slur from a
+note to a later note of the same pitch over the line break was read as a tie.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ETLv1P36qBemBoAsvF94d2
+---
+ .../java/org/audiveris/omr/score/Page.java    |  13 +
+ .../audiveris/omr/sheet/rhythm/Voices.java    |  37 ++
+ .../audiveris/omr/sig/inter/SlurInter.java    | 428 +++++++++++++++++-
+ 3 files changed, 465 insertions(+), 13 deletions(-)
+
+diff --git a/app/src/main/java/org/audiveris/omr/score/Page.java b/app/src/main/java/org/audiveris/omr/score/Page.java
+index fdb0b15f..788229c4 100644
+--- a/app/src/main/java/org/audiveris/omr/score/Page.java
++++ b/app/src/main/java/org/audiveris/omr/score/Page.java
+@@ -156,6 +156,19 @@ public class Page
+                 }
+             }
+         }
++
++        // Then, the connections left as slurs may be ties into a head alongside the linked one
++        for (SystemInfo system : systems.subList(1, systems.size())) {
++            for (Part part : system.getParts()) {
++                for (SlurInter slur : part.getSlurs(SlurInter.isBeginningExtended)) {
++                    final SlurInter prevSlur = slur.getExtension(LEFT);
++
++                    if (!prevSlur.isRemoved()) {
++                        slur.retieCrossTie(prevSlur);
++                    }
++                }
++            }
++        }
+     }
+ 
+     //------------------------//
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/rhythm/Voices.java b/app/src/main/java/org/audiveris/omr/sheet/rhythm/Voices.java
+index 0431b5da..d4ae17b7 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/rhythm/Voices.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/rhythm/Voices.java
+@@ -51,9 +51,12 @@ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+ 
+ import java.awt.Color;
++import java.util.ArrayList;
+ import java.util.Comparator;
++import java.util.HashSet;
+ import java.util.List;
+ import java.util.Map;
++import java.util.Set;
+ 
+ /**
+  * Class <code>Voices</code> connects voices and harmonizes their IDs (and thus colors)
+@@ -365,6 +368,8 @@ public abstract class Voices
+         int modifs = 0;
+         SystemInfo prevSystem = null; // Last system of preceding page, if any
+         int prevNumber = 0; // Sheet number of preceding page, if any
++        final Set<SlurInter> connected = new HashSet<>(); // Orphans connected across pages
++        final List<Page> donePages = new ArrayList<>();
+ 
+         for (Page page : score.getPages()) {
+             final SheetStub stub = page.getSheet().getStub();
+@@ -373,6 +378,8 @@ public abstract class Voices
+                 continue;
+             }
+ 
++            donePages.add(page);
++
+             if ((prevSystem != null) && isSheetDiscarded(score.getBook(), prevNumber, stub)) {
+                 prevSystem = null; // No connection across a sheet missing in score
+             }
+@@ -405,7 +412,13 @@ public abstract class Voices
+                             slur.checkCrossTie(prevSlur);
+                         }
+ 
++                        for (Map.Entry<SlurInter, SlurInter> entry : links.entrySet()) {
++                            entry.getKey().retieCrossTie(entry.getValue());
++                        }
++
+                         // Purge orphans across pages
++                        connected.addAll(links.keySet());
++                        connected.addAll(links.values());
+                         orphans.removeAll(links.keySet());
+                         precOrphans.removeAll(links.values());
+                         SlurInter.discardOrphans(precOrphans, RIGHT);
+@@ -431,6 +444,30 @@ public abstract class Voices
+             prevNumber = stub.getNumber();
+         }
+ 
++        // Page orphans (kept through LINKS step for this connection) that connected to nothing:
++        // at the start of the score, at its end, next to a missing sheet or a missing part.
++        for (Page page : donePages) {
++            final List<SlurInter> lefts = new ArrayList<>();
++            final List<SlurInter> rights = new ArrayList<>();
++
++            for (Part part : page.getFirstSystem().getParts()) {
++                lefts.addAll(part.getSlurs(SlurInter.isBeginningOrphan));
++            }
++
++            for (Part part : page.getLastSystem().getParts()) {
++                rights.addAll(part.getSlurs(SlurInter.isEndingOrphan));
++            }
++
++            lefts.removeAll(connected);
++            rights.removeAll(connected);
++
++            if (!lefts.isEmpty() || !rights.isEmpty()) {
++                SlurInter.discardOrphans(lefts, LEFT);
++                SlurInter.discardOrphans(rights, RIGHT);
++                page.getSheet().getStub().setModified(true);
++            }
++        }
++
+         return modifs;
+     }
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/SlurInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/SlurInter.java
+index c908857f..ba9b4d7d 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/SlurInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/SlurInter.java
+@@ -28,6 +28,7 @@ import org.audiveris.omr.glyph.Shape;
+ import org.audiveris.omr.math.CubicUtil;
+ import org.audiveris.omr.math.GeoOrder;
+ import org.audiveris.omr.math.PointUtil;
++import org.audiveris.omr.score.Page;
+ import org.audiveris.omr.sheet.Part;
+ import org.audiveris.omr.sheet.Scale;
+ import org.audiveris.omr.sheet.Sheet;
+@@ -300,6 +301,64 @@ public class SlurInter
+         setAbnormal(true); // No head linked yet
+     }
+ 
++    //-----------------//
++    // canStayAbnormal //
++    //-----------------//
++    /**
++     * An orphan at the start of its page's first system, or at the end of its page's last
++     * system, may be one half of a slur or tie going over a page turn.
++     * It can only be connected at score level, once all pages are known
++     * ({@link org.audiveris.omr.sheet.rhythm.Voices#refineScore}), which keeps it or discards it.
++     * Until then, it must survive the removal of abnormal inters in LINKS step.
++     *
++     * @return true for such a page orphan
++     */
++    @Override
++    public boolean canStayAbnormal ()
++    {
++        return isPageOrphan();
++    }
++
++    //--------------//
++    // isPageOrphan //
++    //--------------//
++    /**
++     * Report whether this slur is an orphan at the start of its page's first system or at the
++     * end of its page's last system, linked to a head on its other side.
++     *
++     * @return true if so
++     */
++    public boolean isPageOrphan ()
++    {
++        try {
++            if ((sig == null) || (sig.getSystem() == null)) {
++                return false;
++            }
++
++            final SystemInfo system = sig.getSystem();
++            final Page page = system.getPage();
++
++            if (page == null) {
++                return false;
++            }
++
++            final HeadInter left = getHead(LEFT);
++            final HeadInter right = getHead(RIGHT);
++
++            if ((left == null) && (right != null)) {
++                return (system == page.getFirstSystem()) && isBeginningOrphan.test(this);
++            }
++
++            if ((right == null) && (left != null)) {
++                return (system == page.getLastSystem()) && isEndingOrphan.test(this);
++            }
++        } catch (Exception ex) {
++            logger.debug("isPageOrphan {} {}", this, ex.toString());
++        }
++
++        return false;
++    }
++
+     //-----------//
+     // canExtend //
+     //-----------//
+@@ -391,7 +450,9 @@ public class SlurInter
+     // checkCrossTie //
+     //---------------//
+     /**
+-     * Check whether the cross-system slur connection is a tie.
++     * Check whether the cross-system slur connection is a tie: tie-compatible heads, same staff
++     * index, and no other head between each head and its system edge (a phrase slur from a note
++     * to a later note of the same pitch, over the line break, is no tie).
+      * <p>
+      * This method assumes that 'this' and 'prevSlur' belong to the same logical part but in two
+      * systems in sequence:
+@@ -403,26 +464,83 @@ public class SlurInter
+      * @param prevSlur slur at the end of previous system (perhaps in previous sheet)
+      */
+     public void checkCrossTie (SlurInter prevSlur)
++    {
++        final boolean result = isCrossTie(prevSlur, prevSlur.getHead(LEFT), this.getHead(RIGHT));
++
++        prevSlur.setTie(result);
++        this.setTie(result);
++
++        if (isVip() || prevSlur.isVip()) {
++            logger.info("VIP {} connection {} -> {}", result ? "Tie" : "Slur", prevSlur, this);
++        }
++    }
++
++    //---------------//
++    // retieCrossTie //
++    //---------------//
++    /**
++     * For a cross-system connection that {@link #checkCrossTie} found to be no tie, because its
++     * outer heads differ, check whether a head alongside one of them would make it a tie, and
++     * if so relink that side and make both halves a tie.
++     * <p>
++     * To be called once checkCrossTie has been run on all connections at hand, so that the heads
++     * already tied by those are not taken.
++     *
++     * @param prevSlur slur at the end of previous system (perhaps in previous sheet)
++     */
++    public void retieCrossTie (SlurInter prevSlur)
+     {
+         final HeadInter h1 = prevSlur.getHead(LEFT);
+         final HeadInter h2 = this.getHead(RIGHT);
+-        final boolean result;
+ 
+-        if (!areTieCompatible(h1, h2)) {
+-            result = false;
++        if (isTie() || (h1 == null) || (h2 == null) || areTieCompatible(h1, h2) || isManual()
++                || prevSlur.isManual()) {
++            return;
++        }
++
++        // The linked head on either side may not be the tied one, which may lie alongside
++        final HeadInter alt2 = this.tieAlternative(RIGHT, h1);
++
++        if ((alt2 != null) && isCrossTie(prevSlur, h1, alt2)) {
++            this.relink(RIGHT, alt2);
+         } else {
+-            // Check staff continuity (we are within the same logical part)
+-            Staff s1 = h1.getStaff();
+-            Staff s2 = h2.getStaff();
+-            result = s1.getIndexInPart() == s2.getIndexInPart();
++            final HeadInter alt1 = prevSlur.tieAlternative(LEFT, h2);
++
++            if ((alt1 != null) && isCrossTie(prevSlur, alt1, h2)) {
++                prevSlur.relink(LEFT, alt1);
++            } else {
++                return;
++            }
+         }
+ 
+-        prevSlur.setTie(result);
+-        this.setTie(result);
++        prevSlur.setTie(true);
++        this.setTie(true);
++    }
+ 
+-        if (isVip() || prevSlur.isVip()) {
+-            logger.info("VIP {} connection {} -> {}", result ? "Tie" : "Slur", prevSlur, this);
++    //------------//
++    // isCrossTie //
++    //------------//
++    /**
++     * Check whether the provided heads, at the outer ends of prevSlur (end of previous system)
++     * and this slur (start of next system), make a tie: tie-compatible heads, same staff index
++     * in part, and no other head of the staff between each head and its system edge.
++     *
++     * @param prevSlur the slur half at the end of previous system
++     * @param h1       head on left side of prevSlur
++     * @param h2       head on right side of this slur
++     * @return true if so
++     */
++    private boolean isCrossTie (SlurInter prevSlur,
++                                HeadInter h1,
++                                HeadInter h2)
++    {
++        if (!areTieCompatible(h1, h2)) {
++            return false;
+         }
++
++        // Check staff continuity (we are within the same logical part)
++        return (h1.getStaff().getIndexInPart() == h2.getStaff().getIndexInPart())
++                && prevSlur.isEdgeClear(LEFT, h1) && this.isEdgeClear(RIGHT, h2);
+     }
+ 
+     //---------------//
+@@ -443,7 +561,26 @@ public class SlurInter
+         HeadInter h1 = getHead(LEFT);
+         HeadInter h2 = getHead(RIGHT);
+         boolean result = (h1 != null) && (h2 != null) && (h1.getStaff() == h2.getStaff())
+-                && areTieCompatible(h1, h2) && isSpaceClear(h1, h2, systemHeadChords);
++                && areTieCompatible(h1, h2) && isSpaceClear(h1, h2, systemHeadChords, true);
++
++        if (!result && (h1 != null) && (h2 != null) && (h1.getStaff() == h2.getStaff())
++                && !areTieCompatible(h1, h2) && !isManual()) {
++            // The linked head on either side may not be the tied one, which may lie alongside
++            final HeadInter alt2 = tieAlternative(RIGHT, h1);
++
++            if ((alt2 != null) && isSpaceClear(h1, alt2, systemHeadChords, true)) {
++                relink(RIGHT, alt2);
++                result = true;
++            } else {
++                final HeadInter alt1 = tieAlternative(LEFT, h2);
++
++                if ((alt1 != null) && isSpaceClear(alt1, h2, systemHeadChords, true)) {
++                    relink(LEFT, alt1);
++                    result = true;
++                }
++            }
++        }
++
+         setTie(result);
+ 
+         if (isVip()) {
+@@ -728,6 +865,30 @@ public class SlurInter
+     public boolean isSpaceClear (HeadInter leftHead,
+                                  HeadInter rightHead,
+                                  List<Inter> systemHeadChords)
++    {
++        return isSpaceClear(leftHead, rightHead, systemHeadChords, false);
++    }
++
++    /**
++     * Check if the space between leftHead and rightHead is clear of other heads or too
++     * many measures.
++     * <p>
++     * With <code>alongsideOk</code>, a chord of another voice struck along with the left or
++     * the right head (same abscissa) doesn't count: it is not between them.
++     * This is used for the final tie check in LINKS step only: at SLURS step, a tie into a chord
++     * from two different chords makes {@link org.audiveris.omr.sheet.curve.ChordSplitter} split
++     * that chord, and the rhythm of such split chords comes out wrong.
++     *
++     * @param leftHead         left side head
++     * @param rightHead        right side head
++     * @param systemHeadChords the set of head chords in system
++     * @param alongsideOk      true to ignore chords struck along with left or right head
++     * @return true if clear
++     */
++    private boolean isSpaceClear (HeadInter leftHead,
++                                  HeadInter rightHead,
++                                  List<Inter> systemHeadChords,
++                                  boolean alongsideOk)
+     {
+         if ((leftHead == null) || (rightHead == null)) {
+             return false;
+@@ -778,6 +939,11 @@ public class SlurInter
+         for (Iterator it = found.iterator(); it.hasNext();) {
+             AbstractChordInter chord = (AbstractChordInter) it.next();
+ 
++            // A chord of another voice struck along with the left or right head is not in between
++            if (alongsideOk && (isAlongside(chord, leftHead) || isAlongside(chord, rightHead))) {
++                continue;
++            }
++
+             // This intersected chord cannot be in the same beam group as left or right chords
+             final BeamGroupInter group = chord.getBeamGroup();
+ 
+@@ -950,6 +1116,194 @@ public class SlurInter
+         return searchObsoletelinks(links, SlurHeadRelation.class);
+     }
+ 
++    //--------//
++    // relink //
++    //--------//
++    /**
++     * Link the provided side of this slur to another head.
++     *
++     * @param side the slur side
++     * @param head the new head on this side
++     */
++    private void relink (HorizontalSide side,
++                         HeadInter head)
++    {
++        final SlurHeadRelation rel = getHeadRelation(side);
++        logger.debug("{} {} head {} -> {} for a tie", this, side, getHead(side), head);
++
++        if (rel != null) {
++            sig.removeEdge(rel);
++        }
++
++        sig.addEdge(this, head, new SlurHeadRelation(side));
++        sig.getSystem().getSheet().getStub().setModified(true);
++    }
++
++    //----------------//
++    // tieAlternative //
++    //----------------//
++    /**
++     * On the provided side of this slur, look for another head than the linked one, that would
++     * make a tie with the provided far head.
++     * <p>
++     * Ties into the heads of a chord end between those heads, and two voices may share an
++     * abscissa: the head (or the chord) closest to the curve end is not always the tied one,
++     * for instance the lower of two ties into a third gets the lower head on both ends but the
++     * upper one gets the lower head on one end, the upper head on the other (a slur then).
++     * <p>
++     * The head must sit right at the curve end, on the same staff as the linked head: a small
++     * abscissa gap to the curve end, its center on the concave side of the curve close to the end
++     * (or slightly beyond it); it must be tie-compatible with the far head and not already be the
++     * end of another tie on that side.
++     *
++     * @param side the side of this slur to look at
++     * @param far  the head on the other side (perhaps in another system)
++     * @return the closest suitable head, or null
++     */
++    private HeadInter tieAlternative (HorizontalSide side,
++                                      HeadInter far)
++    {
++        final HeadInter head = getHead(side);
++
++        if ((head == null) || (far == null) || (sig == null)) {
++            return null;
++        }
++
++        final Staff staff = head.getStaff();
++        final double il = staff.getSpecificInterline();
++        final Point2D end = (side == LEFT) ? curve.getP1() : curve.getP2();
++        HeadInter best = null;
++        double bestDy = Double.MAX_VALUE;
++
++        for (Inter inter : sig.inters(HeadInter.class)) {
++            final HeadInter alt = (HeadInter) inter;
++
++            if ((alt == head) || (alt.getStaff() != staff)) {
++                continue;
++            }
++
++            // Abscissa: the head lies just beyond the curve end
++            final Rectangle box = alt.getBounds();
++            final double dx = (side == RIGHT) ? box.x - end.getX()
++                    : end.getX() - (box.x + box.width);
++
++            if ((dx < -constants.maxTieAltOverlap.getValue() * il)
++                    || (dx > constants.maxTieAltDx.getValue() * il)) {
++                continue;
++            }
++
++            // Ordinate: on the concave side of the curve, close to the curve end
++            final Point2D center = alt.getCenter2D();
++            final double dy = above ? (center.getY() - end.getY()) : (end.getY() - center.getY());
++
++            if ((dy < -constants.maxTieAltBeyond.getValue() * il)
++                    || (dy > constants.maxTieAltDy.getValue() * il)) {
++                continue;
++            }
++
++            final boolean compatible = (side == LEFT) ? areTieCompatible(alt, far)
++                    : areTieCompatible(far, alt);
++
++            if (!compatible || isTieEnd(alt, side)) {
++                continue;
++            }
++
++            if (Math.abs(dy) < bestDy) {
++                bestDy = Math.abs(dy);
++                best = alt;
++            }
++        }
++
++        return best;
++    }
++
++    //-------------//
++    // isEdgeClear //
++    //-------------//
++    /**
++     * For a slur half at a system edge, with a head on the provided side, check that no
++     * other head of that staff lies between the head and the system edge, under the curve
++     * (chords struck along with the head excepted): only then can the half be part of a tie.
++     *
++     * @param side the side of the head
++     * @param head the head (linked on that side, or to be)
++     * @return true if clear
++     */
++    private boolean isEdgeClear (HorizontalSide side,
++                                 HeadInter head)
++    {
++        if ((head == null) || (sig == null)) {
++            return false;
++        }
++
++        final Rectangle hb = head.getBounds();
++        final double edge = (side == RIGHT) ? curve.getX1() : curve.getX2();
++        final double touch = -constants.maxEdgeGap.getValue() * head.getStaff()
++                .getSpecificInterline();
++
++        for (Inter inter : sig.inters(HeadInter.class)) {
++            if ((inter == head) || (((HeadInter) inter).getStaff() != head.getStaff())) {
++                continue;
++            }
++
++            // A head overlapping or touching this one (a second, a head misplaced next to it)
++            final Rectangle nb = inter.getBounds();
++            final int overlap = Math.min(nb.x + nb.width, hb.x + hb.width) - Math.max(nb.x, hb.x);
++
++            if (overlap >= touch) {
++                continue;
++            }
++
++            final double x = nb.getCenterX();
++            final boolean between = (side == RIGHT) ? ((x > edge) && (x < hb.x))
++                    : ((x > (hb.x + hb.width)) && (x < edge));
++
++            if (between) {
++                logger.debug("{} {} not at system edge: {}", this, head, inter);
++
++                return false;
++            }
++        }
++
++        return true;
++    }
++
++    //----------//
++    // isTieEnd //
++    //----------//
++    /**
++     * Report whether another slur, a tie or one linking same-pitch heads, already ends at the
++     * provided head on the provided side.
++     *
++     * @param head the head to check
++     * @param side the slur side the head would be on
++     * @return true if so
++     */
++    private boolean isTieEnd (HeadInter head,
++                              HorizontalSide side)
++    {
++        for (Relation rel : sig.getRelations(head, SlurHeadRelation.class)) {
++            final SlurInter other = (SlurInter) sig.getOppositeInter(head, rel);
++
++            if ((other == this) || (other.getHead(side) != head)) {
++                continue;
++            }
++
++            if (other.isTie()) {
++                return true;
++            }
++
++            final HeadInter opposite = other.getHead(side.opposite());
++
++            if ((opposite != null) && (opposite.getStaff() == head.getStaff())
++                    && (opposite.getIntegerPitch() == head.getIntegerPitch())) {
++                return true;
++            }
++        }
++
++        return false;
++    }
++
+     //--------------//
+     // setExtension //
+     //--------------//
+@@ -1044,6 +1398,34 @@ public class SlurInter
+ 
+     //~ Static Methods -----------------------------------------------------------------------------
+ 
++    //-------------//
++    // isAlongside //
++    //-------------//
++    /**
++     * Report whether the provided chord has a head at the same abscissa as the provided head
++     * (overlapping it horizontally by at least half a head width): it is struck along with it.
++     *
++     * @param chord the chord to check
++     * @param head  the reference head
++     * @return true if so
++     */
++    private static boolean isAlongside (AbstractChordInter chord,
++                                        HeadInter head)
++    {
++        final Rectangle hb = head.getBounds();
++
++        for (Inter note : chord.getNotes()) {
++            final Rectangle nb = note.getBounds();
++            final int overlap = Math.min(nb.x + nb.width, hb.x + hb.width) - Math.max(nb.x, hb.x);
++
++            if ((2 * overlap) >= Math.min(nb.width, hb.width)) {
++                return true;
++            }
++        }
++
++        return false;
++    }
++
+     //------------------//
+     // areTieCompatible //
+     //------------------//
+@@ -1135,6 +1517,26 @@ public class SlurInter
+                 0.25,
+                 "Maximum intersection for a chord invading a tie");
+ 
++        private final Constant.Ratio maxTieAltDx = new Constant.Ratio(
++                2.0,
++                "Maximum abscissa gap in interlines between a slur end and another head for a tie");
++
++        private final Constant.Ratio maxTieAltOverlap = new Constant.Ratio(
++                1.0,
++                "Maximum abscissa overlap in interlines between a slur end and another head for a tie");
++
++        private final Constant.Ratio maxTieAltDy = new Constant.Ratio(
++                1.25,
++                "Maximum ordinate in interlines of another head for a tie, inside slur end");
++
++        private final Constant.Ratio maxTieAltBeyond = new Constant.Ratio(
++                0.6,
++                "Maximum ordinate in interlines of another head for a tie, outside slur end");
++
++        private final Constant.Ratio maxEdgeGap = new Constant.Ratio(
++                0.2,
++                "Maximum abscissa gap in interlines for a head beside the head of a tie half");
++
+         private final Constant.Double maxPointingDy = new Constant.Double(
+                 "pixels",
+                 2,
+-- 
+2.43.0
+
