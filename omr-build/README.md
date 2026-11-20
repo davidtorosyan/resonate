@@ -335,6 +335,70 @@ and Goodbye Yellow Brick Road's left hand and octaves (never built as curves), S
 a tie over a page turn doesn't carry an accidental (`HeadInter.getAlteration`'s TODO for the previous page: the second
 note takes the key's alteration; none of the nine songs has one).
 
+`0015` — **A phantom hollow head beside a hollow head, on the far side of its stem.** The comparison's largest
+pattern (97 findings in 5 songs, 76 of them audible): a hollow head with a second one beside it, about an interline
+away, at the same pitch or a step off — on the augmentation dot of a dotted half with an up stem (the dot lost: a half
+note plus a duplicate; every dotted-half octave of Piano Man's left hand), on the end of a tie arriving at a hollow head
+with a down stem (Killing's system starts: the tie went to the phantom and the real chord was struck again), or on an
+accidental (the accidental lost: Songbird's B♮3 read B♭3, Goodbye Yellow Brick Road's D♭5 read D5 beside a C5). The
+triage's suspect, `evalBlackAsVoid` (a black match relabelled void when its hole is white enough), isn't it: a debug
+build logging every head candidate in a watched box (Piano Man bar 28's left hand) shows the phantom matched by the
+**void template itself** (`NOTEHEAD_VOID`, distance 0.363, grade 0.22, against the real head's 0.63), so neither
+`minHoleWhiteRatio` nor the head templates' font would change it. Why such a match exists: template matching ignores
+the pixels of staff lines, ledgers and stem seeds (`DistancesBuilder` neutralizes them), so a void template set in a
+staff space beside a stem has one side on the stem and its top and bottom on the staff lines, all ignored, and the dot,
+the end of the tie arc or a stroke of the accidental on the other side gives it the rest. Then nothing removes it:
+- HEADS: its box overlaps the real head's by 5 px of 23 (a second's heads overlap by the stem width), not enough for
+  `HeadInter.overlaps` (more than 0.2 of the width, more than 0.25 of the area), so no exclusion;
+- STEMS: it is linked to the stem it shares with the real head, which supports it (`HeadHeadRelation`, same duration on
+  one stem): contextual grade 0.67;
+- REDUCTION: `checkHeadSide` lets a head stay on the wrong side of its stem whenever another head lies on the other side
+  at pitch −1, the same pitch or +1 — the layout of a second (or an altered unison) — whatever that other head is like.
+
+Logged for every head that `checkHeadSide` keeps that way, on the nine songs (and checked against the export: did it
+reach the MusicXML), the phantom's grade over its partner's is 0.26–0.47 a step away (Piano Man 195, 210, 213, 222,
+Goodbye Yellow Brick Road 86, 97, Yellow Submarine 44, Songbird 17, 37, The Longest Time 60) and 0.23–0.60 at the same
+pitch (all the rest; 0.60 is Goodbye Yellow Brick Road 75, whose flat's bowl makes a good left side), the displaced head
+of every real second 0.73 or more (void and black). Now `checkHeadSide` takes the other head as a partner only if the head
+on the wrong side has at least 0.6 of its grade (a step away, `minSecondGradeRatio`) or 0.8 (same pitch,
+`minUnisonGradeRatio`: only an altered unison is real there, two heads matched alike); otherwise the relation goes as
+for a head with no partner, and the head with it (no stem). `lookupHead` gives the best head at that pitch (a weaker
+duplicate of the real head no longer stands in for it). Once the phantom is gone, SYMBOLS and LINKS give the dot, the
+tie or the accidental to the real head.
+
+A/B, native, 0001–0013 vs 0001–0013 + 0015, the owner's nine songs, the base run twice (three times for Stumblin' In)
+and the new build twice on Stumblin' In and Piano Man; every changed bar checked against the PDF:
+
+| song | bars changed | what |
+|---|---|---|
+| Piano Man | 56 (60 bar-parts) | dotted halves back, phantom gone: the left hand's octaves (28, 30, 39, 50, 52, 58, 62, 67, 71, 95, 122, 149, 153, 157, 165, 174, 178, 189, 197, 209, 210, 213, 215, 219, 221, 222, 224, 225, 235, 237 — 210, 213, 222 had the phantom a step above, [G1 G2 A2]), right-hand chords (96, 200, 223, 224), the accordion's chords (51, 83, 91, 97, 99, 101, 137, 140, 145, 152, 183, 185–187, 199, 201, 202, 215, 217, 219–221, 223); ties: 83 and 153 on the real head, 101→102 C5 tied (as printed); 195 [E5 F5] → F♯5 (its sharp back); 163→164: the D4 tie, which began on the phantom, is a slur B3 → D4 (with 0014 too it is the tie again — checked); 58 and 101 weren't in the triage. All as printed |
+| Killing Me Softly | 5 | the phantom gone at the system starts 35, 45, 65; the ties 44→45 and 64→65 into the real chords [G3 B3], [E3 G3] (both notes, as printed; the real ones were struck again); 35's two ties over the page turn stay lost here (0014 brings them; with both patches: E3 and G3 tied) |
+| Hey, Little Songbird | 8 | 16→17 B♮4 tied into a dotted half (was A♭4 + B♭4 half); left hand 18 and 31 phantom C3 gone ([C2 C3] tied as printed); 37→38 D3 tied (was a phantom E♭3 and no tie); 55 B♮3 (was B♭3 twice); 66 D♭4 (was D4 twice) |
+| Yellow Submarine | 6 | dotted halves back: left hand 1, 49, 57 (with their ties on the real heads, as printed), 17 (its upper tie missing in both builds), right hand 44, 72 |
+| Goodbye Yellow Brick Road | 4 | accidentals back: 75, 76 E♭3 (and on beat 3 by the bar's rule), 86 C♯4, 97 the voice's D♭5 (was C5 + D5) |
+| The Longest Time | 1 | 60: the cue-size verse-2 D5 beside the tune's D5 had been read as an E♭5 on the half note's stem; gone (the cue note itself isn't read: small heads aren't looked for) |
+| Stumblin' In, Too Sweet, Wichita Lineman | 0 | (Stumblin' In 17, 55, 59: dots that come and go in either build — base runs 2 and 3 differ there too) |
+
+Pattern 1 before → after: 1a (dot) 74 → 0, 1b (tie end) 10 → 0 (Killing 35's ties still need 0014), 1c (accidental)
+13 → 0; plus the triage's Piano Man 195 (accidental) and two phantoms it hadn't listed. Other noise seen: Killing 20,
+Piano Man P3 48 and 168, Songbird 32 (dots, between base runs).
+
+Not fixed — **pattern 4** (49 findings, Stumblin' In 20, 32–35, 73–78; Too Sweet 48–55, 96–111): the second voice is
+printed in cue-size heads on the main voice's stem, a third away, and small heads aren't looked for. The same debug
+build on Too Sweet bar 49: a void candidate across the normal G5 and the cue B♭5 (A5, its ring half of each, its hole
+the white between; grade 0.28 by the void template, 0.24 relabelled by `evalBlackAsVoid` — so again not that) overlaps
+the G5 (0.79): only an exclusion. In STEMS the stem is built from the void head, the only head at the stem's end (the
+cue head isn't a candidate); the G5, with the same stem seed above and below it, is "not an end" (`HeadLinker.linkSides`
+leaves it undefined, waiting for a link from an end head that never comes), crosses a stem it isn't linked to and goes.
+Tried and dropped: (1) removing a void head that overlaps a black head a step away matched twice as well, in HEADS —
+the chord then has no end head at all, nothing is linked, and whole bars came out empty (Too Sweet's 24 bars, Stumblin'
+In 32–35 and 74–75): worse; (2) that, plus linking a head left undefined along the longer part of its seed (upstream's
+commented-out TODO in `StemsRetriever.checkNeededStems`): the stem is built, but it spans the seed through the cue head,
+so `computeDirection` finds no head at either end and REDUCTION deletes it. It needs the cue heads themselves (small
+heads as members of a normal chord on its stem). Piano Man 42 and 44 (pattern 7's systems 9–10) show the same void
+across a black head and a ledger head. Also left from pattern 7: Songbird 51, 139 (dotted-half chords with seconds —
+every head candidate deleted in REDUCTION) and Piano Man's left hand in 40–49 (a treble 8va clef read there).
+
 `build.sh` applies the patches with `git am --keep-cr`: the upstream sources are CRLF.
 
 ## StripVolatile (applied to every jar)

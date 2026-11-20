@@ -1,0 +1,170 @@
+From 79bccc5d1eae0e3e6691ab98868c78d9fc36065d Mon Sep 17 00:00:00 2001
+From: build <build@localhost>
+Date: Fri, 20 Nov 2026 22:36:00 +0000
+Subject: [PATCH] Refuse a head on the wrong side of a stem when it is much
+ weaker than its partner
+
+A dotted half note with an up stem, a hollow head with a tie arriving at
+the stem side, or with an accidental beside the stem, often came out with
+a second hollow head beside the real one, on the far side of the stem, at
+the same pitch or a step away. The dot, the tie or the accidental was
+lost to it (Piano Man's dotted-half octaves all became half notes plus a
+duplicate; Killing Me Softly's ties at system starts landed on it;
+Songbird's B natural came out B flat).
+
+Template matching ignores staff lines, ledgers and stem seeds. A void
+head template placed in a staff space beside a stem has its left or
+right side on the stem and its top and bottom on the staff lines, all
+ignored; the augmentation dot, the end of a tie arc or a stroke of an
+accidental on the other side is enough for a weak match (grade 0.16 to
+0.39 where the real head has 0.56 to 0.72). Nothing removes it then:
+- in HEADS the two boxes overlap by a few pixels only, as the heads of
+  a second do, so no exclusion is made;
+- in STEMS it is linked to the stem it shares with the real head, and
+  the two support each other (same duration on one stem);
+- in REDUCTION checkHeadSide accepts a head on the wrong side of its
+  stem whenever another head lies on the other side at pitch-1, pitch
+  or pitch+1, whatever its quality.
+
+Now that other head must be a partner: the head on the wrong side must
+have at least 0.6 of its grade (a step away: a second) or 0.8 (the same
+pitch: only an altered unison is real there). Otherwise the head-stem
+relation goes as for a head with no partner, and the head with it. On
+the owner's nine songs, the phantoms' ratios are 0.26 to 0.47 (second)
+and 0.23 to 0.60 (unison); the displaced heads of real seconds 0.73 to
+1.13. lookupHead now returns the best head at a pitch, not the first.
+---
+ .../org/audiveris/omr/sig/SigReducer.java     | 71 +++++++++++++++++--
+ 1 file changed, 67 insertions(+), 4 deletions(-)
+
+diff --git a/app/src/main/java/org/audiveris/omr/sig/SigReducer.java b/app/src/main/java/org/audiveris/omr/sig/SigReducer.java
+index 15983f7e..a5e6c99b 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/SigReducer.java
++++ b/app/src/main/java/org/audiveris/omr/sig/SigReducer.java
+@@ -780,6 +780,9 @@ public class SigReducer
+      * If head is on the wrong side of the stem, check if there is a head on the other
+      * side, located one or two step(s) further.
+      * <p>
++     * That other head must be a real partner: the head on the wrong side can't be much weaker
++     * than it (see {@link #isPartner}).
++     * <p>
+      * If the side is wrong and there is no head on the other side, simply remove this head-stem
+      * relation.
+      * TODO: If head and stem really overlap, insert exclusion between them.
+@@ -834,7 +837,9 @@ public class SigReducer
+             HorizontalSide targetSide = headSide.opposite();
+ 
+             for (int targetPitch = pitch - 1; targetPitch <= (pitch + 1); targetPitch++) {
+-                if (lookupHead(stem, targetSide, targetPitch, staff) != null) {
++                final Inter other = lookupHead(stem, targetSide, targetPitch, staff);
++
++                if ((other != null) && isPartner(head, other, targetPitch == pitch)) {
+                     continue RelsLoop; // OK
+                 }
+             }
+@@ -1751,6 +1756,50 @@ public class SigReducer
+         return false;
+     }
+ 
++    //-----------//
++    // isPartner //
++    //-----------//
++    /**
++     * Tell whether the provided head, found on the other side of the stem, can justify the
++     * provided head lying on the wrong side of the stem, as the displaced head of a second
++     * (or of an altered unison).
++     * <p>
++     * Two heads of a chord on either side of its stem are matched alike: the displaced one is
++     * not much weaker than its partner.
++     * A void head can be matched where the template ring is made of the stem and the staff
++     * lines (both ignored by template matching) and of any small symbol beside the stem: the
++     * augmentation dot of a hollow head with an up stem, the end of a tie arriving at a hollow
++     * head with a down stem, an accidental.
++     * Such a head lies on the far side of the stem from the real head, at the same pitch or a
++     * step away, with a fraction of its grade (on the test scores 0.26 to 0.47 of it a step
++     * away, 0.23 to 0.60 at the same pitch, against 0.73 or more for the displaced heads of
++     * real seconds), and it took the dot, the tie or the accidental of the real head.
++     * A head at the same pitch on the other side is only real for an altered unison, so it must
++     * be matched about as well as its twin.
++     *
++     * @param head   the head on the wrong side of the stem
++     * @param other  a head on the other side of the stem, a step away or at the same pitch
++     * @param unison true if both heads have the same pitch
++     * @return true if other can justify head on the wrong side
++     */
++    private boolean isPartner (Inter head,
++                               Inter other,
++                               boolean unison)
++    {
++        final double minRatio = unison ? constants.minUnisonGradeRatio.getValue()
++                : constants.minSecondGradeRatio.getValue();
++
++        if (head.getGrade() >= minRatio * other.getGrade()) {
++            return true;
++        }
++
++        if (head.isVip() || other.isVip()) {
++            logger.info("VIP {} too weak to be displaced beside {}", head, other);
++        }
++
++        return false;
++    }
++
+     //------------//
+     // lookupHead //
+     //------------//
+@@ -1765,7 +1814,7 @@ public class SigReducer
+      * @param side  desired head side
+      * @param pitch desired pitch position
+      * @param staff staff the pitch is related to
+-     * @return the head instance if found, null otherwise
++     * @return the head instance if found (the best one if several), null otherwise
+      */
+     private Inter lookupHead (StemInter stem,
+                               HorizontalSide side,
+@@ -1789,6 +1838,8 @@ public class SigReducer
+             }
+         }
+ 
++        HeadInter best = null;
++
+         for (Relation rel : sig.getRelations(stem, HeadStemRelation.class)) {
+             HeadStemRelation hsRel = (HeadStemRelation) rel;
+ 
+@@ -1798,12 +1849,14 @@ public class SigReducer
+                 HeadInter head = (HeadInter) sig.getEdgeSource(rel);
+ 
+                 if ((head.getStaff() == staff) && (head.getIntegerPitch() == pitch)) {
+-                    return head;
++                    if ((best == null) || (head.getGrade() > best.getGrade())) {
++                        best = head;
++                    }
+                 }
+             }
+         }
+ 
+-        return null;
++        return best;
+     }
+ 
+     //----------------//
+@@ -2387,6 +2440,16 @@ public class SigReducer
+         private final Constant.Ratio ledgerVerticalMarginRatio = new Constant.Ratio(
+                 0.33,
+                 "Ratio of staff interline to fix shared ledgers");
++
++        private final Constant.Ratio minSecondGradeRatio = new Constant.Ratio(
++                0.6,
++                "Minimum grade ratio of a head on the wrong side of its stem to the head a step"
++                        + " away on the other side");
++
++        private final Constant.Ratio minUnisonGradeRatio = new Constant.Ratio(
++                0.8,
++                "Minimum grade ratio of a head on the wrong side of its stem to the head at the"
++                        + " same pitch on the other side");
+     }
+ 
+     //------------------//
+-- 
+2.43.0
+
