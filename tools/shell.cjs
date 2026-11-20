@@ -366,8 +366,9 @@ async function runSize(sz) {
     await shot(p, sz, 'import-done');
     await p.click('#songs-btn');
     await p.waitForTimeout(300);
-    const facts = await Promise.all(ids.map((id) => p.textContent(`#songs-body .song[data-id="${id}"] .s`).catch(() => '')));
-    ok(facts.every((f) => /^engine \d+ · new$/.test(f)), `converted: ${JSON.stringify(facts)}`);
+    // (A7: converted from a PDF — "PDF · new"; by this engine: no "v9 → v10" badge)
+    const facts = await Promise.all(ids.map((id) => p.$eval(`#songs-body .song[data-id="${id}"]`, (b) => (b.querySelector('.s')?.textContent || '') + (b.querySelector('.eng') ? ' +' + b.querySelector('.eng').textContent : '')).catch(() => '')));
+    ok(facts.every((f) => f === 'PDF · new'), `converted: ${JSON.stringify(facts)}`);
     await p.keyboard.press('Escape');
     if (!batch) {
       await p.click('#imp-done .openbtn');

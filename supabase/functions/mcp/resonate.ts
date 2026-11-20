@@ -4,6 +4,7 @@
 // assistant reads only its own account's data and can't write anything but commands.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PLAYBOOK, REMINDER } from "./coaching.ts";
+import { action as findAction, capabilitiesBrief, capabilitiesData, checkParams, gather, query as findQuery, ACTIONS, QUERIES, type QueryName } from "./catalog.ts";
 import { PDFDocument } from "pdf-lib";
 
 type Sb = SupabaseClient;
@@ -12,14 +13,15 @@ type Json = Record<string, unknown>;
 export const INSTRUCTIONS = `Resonate is the user's singing-practice app (karaoke against sheet music; it grades each note's pitch and timing from the microphone and writes its own coaching).
 When the user mentions Resonate, wants to practise singing, or asks for a vocal or singing coach, call start_vocal_coaching first: it gives you the coaching playbook to follow for the rest of the conversation, and what Resonate shows right now.
 The core rules, always: Resonate's data is the only judge of the singing — never judge it from what you hear; fetch it (get_take, get_live_lines) before saying anything about a take. Whenever the user wants to sing, call control_resonate with action "sing" — never just say "go ahead". Never read scores, percentages or cents out as grades.
-Sheet music (separate from coaching; the singing rules don't apply): Resonate's Play page / Score shows a song as sheet music, often read by OCR from the user's PDF. get_score_view = what the Score shows and the bars the user highlighted (their notes as text, a picture of the drawn bars, the same bars on the original PDF with a red border); get_score_xml and get_score_pdf = the song's own files. Use them for questions about the music and its transcription ("is this bar read right?": compare the PDF picture with the notes, bar by bar, and say exactly what differs). control_resonate's score_* actions move, highlight and play the Score.`;
+Sheet music (separate from coaching; the singing rules don't apply): Resonate's Score shows a song as sheet music, often read by OCR from the user's PDF. get_score_view = what the Score shows and the bars the user highlighted (their notes as text, a picture of the drawn bars, the same bars on the original PDF with a red border); get_score_xml and get_score_pdf = the song's own files. Use them for questions about the music and its transcription ("is this bar read right?": compare the PDF picture with the notes, bar by bar, and say exactly what differs). control_resonate's score_* actions move, highlight and play the Score.
+Resonate gains abilities without new tools: get_capabilities lists every control_resonate action and read_resonate query it has now, with their parameters. Call it when the user asks for something no tool here obviously covers, or when an action is refused as unknown.`;
 
 // How takes an assistant starts go (Assistants page): the "Get ready" countdown before them.
 export async function settings(sb: Sb) {
   const { data } = await sb.from("assistant_settings").select("start_delay_s").maybeSingle();
   return { start_delay_s: data?.start_delay_s ?? 4 };
 }
-// Records the call (the Sing page shows which assistant is active) → the assistant's name.
+// Records the call (Resonate shows which assistant is active) → the assistant's name.
 export async function seen(sb: Sb, tool: string): Promise<string> {
   try { const { data } = await sb.rpc("assistant_seen", { tool }); return String((data as Json)?.name || "Assistant"); } catch { return "Assistant"; }
 }
@@ -220,6 +222,7 @@ async function statusData(sb: Sb) {
       : "No device has 📡 Remote on — ask the user to tap 📡 on the Sing (or Play) page of the device they're using.",
     live_take: lt && takeStatus(lt) === "live" ? takeHead(lt) : null,
     ...st,
+    capabilities: capabilitiesBrief(),
   };
 }
 export async function getStatus(sb: Sb) {
@@ -244,18 +247,23 @@ export async function startCoaching(sb: Sb) {
   return ok({ playbook: PLAYBOOK, now: { ...st, song, voice_profiles: profiles, recent_takes: (takes.data || []).map((t) => ({ ...takeHead(t as Json), headline: (t as Json).headline ?? null })) } });
 }
 
-export const SCORE_ACTIONS = ["score_open", "score_view", "score_go", "score_select", "score_play", "score_stop", "score_pdf"] as const;
-export const ACTIONS = ["open_song", "set_key", "set_tempo", "listen", "play_take", "sing", "loop_line", "go_to_line", "review", "stop", ...SCORE_ACTIONS] as const;
-export async function control(sb: Sb, args: Json, by = "Assistant") {
+// An action of the catalogue (catalog.ts), sent to the device with 📡 Remote on. The input is the
+// tool call's fields plus its args object; only the parameters the action takes go to the page.
+export async function control(sb: Sb, input: Json, by = "Assistant") {
+  const found = findAction(input.action);
+  const scoreAct = found ? !!found.entry.score : String(input.action ?? "").startsWith("score_");
+  const no = scoreAct ? failData : fail, yes = scoreAct ? okData : ok;
+  if (!found) {
+    return no(`No action “${String(input.action ?? "")}”.`, { actions: Object.keys(ACTIONS), details: "get_capabilities describes each action and its parameters." });
+  }
+  const { name: action, entry } = found;
+  const checked = checkParams(action, entry, gather(input, ["action"]));
+  if ("error" in checked) return no(checked.error, { details: "get_capabilities lists each action's parameters." });
+  const ignored = checked.ignored.length ? { ignored_params: checked.ignored } : {};
   const { data: devs } = await sb.from("devices").select("id,name,remote,seen_at,state").eq("remote", true).limit(1);
   const d = devs?.[0] as Json | undefined;
-  const scoreAct = String(args.action).startsWith("score_");
-  const no = scoreAct ? failData : fail, yes = scoreAct ? okData : ok;
   if (!d) return no("No device has 📡 Remote on. Ask the user to tap 📡 on the Sing (or Play) page of the device they're using.");
-  const { action, ...rest } = args;
-  const clean: Json = {};
-  for (const [k, v] of Object.entries(rest)) if (v !== undefined && v !== null) clean[k] = v;
-  clean.by = by;
+  const clean: Json = { ...checked.args, by };
   const st = await settings(sb);
   if (action === "sing") {
     clean.delay = st.start_delay_s;
@@ -269,7 +277,6 @@ export async function control(sb: Sb, args: Json, by = "Assistant") {
     if (!s) return no(`No song like “${clean.song}”.`, { songs: (await songs(sb)).map((x) => x.title) });
     clean.song = s.id;
   }
-  if (action === "score_open" && !clean.song) return no("Which song? score_open needs {song}.");
   const { data: cmd, error } = await sb.from("device_commands").insert({ device_id: d.id, action, args: clean }).select("id").single();
   if (error || !cmd) return no(`Couldn't send it: ${error?.message ?? "no answer"}`);
   const until = Date.now() + 12000;
@@ -279,12 +286,44 @@ export async function control(sb: Sb, args: Json, by = "Assistant") {
     if (row && row.status !== "sent") {
       const r = (row.result as Json) || {};
       const say = action === "sing" ? { now: `${st.start_delay_s ? `Starts in ${st.start_delay_s} s (a "Get ready" countdown, then the count-in)` : "Starts now with the count-in"}. Say a word at most — then stay quiet until the take ends.` } : {};
-      return row.status === "done" ? yes({ done: action, on: d.name, ...r, ...say }) : no(String(r.error ?? row.status), { on: d.name, ...r });
+      return row.status === "done" ? yes({ done: action, on: d.name, ...r, ...say, ...ignored }) : no(String(r.error ?? row.status), { on: d.name, ...r, ...ignored });
     }
   }
-  const starts = ["listen", "play_take", "sing", "loop_line", "score_play"].includes(String(action));
-  return yes({ sent: action, on: d.name, note: online(d) ? "No answer yet — it may still be loading."
-    : starts ? `${d.name} isn't in front right now — this won't start later; ask again once it is.` : `${d.name} isn't in front right now; it will do this when it is (within a minute).` });
+  return yes({ sent: action, on: d.name, ...ignored, note: online(d) ? "No answer yet — it may still be loading."
+    : entry.starts ? `${d.name} isn't in front right now — this won't start later; ask again once it is.` : `${d.name} isn't in front right now; it will do this when it is (within a minute).` });
+}
+
+// What get_capabilities answers: every action and query, live (the tool list itself never changes).
+export function capabilities() {
+  return okData(capabilitiesData());
+}
+
+// read_resonate: a query of the catalogue, by name ("status") or by its tool's name ("get_status").
+const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v));
+const READERS = {
+  status: (sb) => getStatus(sb),
+  coaching: (sb) => startCoaching(sb),
+  songs: (sb) => listSongs(sb),
+  song: (sb, a) => getSong(sb, String(a.song)),
+  takes: (sb, a) => listTakes(sb, str(a.song), Number(a.limit ?? 10)),
+  take: (sb, a) => getTake(sb, str(a.take), str(a.song)),
+  live_lines: (sb, a) => getLiveLines(sb, Number(a.after_line ?? 0), Number(a.wait_seconds ?? 15), str(a.take)),
+  progress: (sb, a) => getProgress(sb, String(a.song)),
+  voice_profile: (sb) => getVoiceProfile(sb),
+  score_view: (sb) => getScoreView(sb),
+  score_xml: (sb, a) => getScoreXml(sb, String(a.song), a.from_measure as number | string | undefined, a.to_measure as number | string | undefined, str(a.part)),
+  score_pdf: (sb, a) => getScorePdf(sb, String(a.song), a.page as number | undefined),
+  capabilities: () => Promise.resolve(capabilities()),
+} satisfies Record<QueryName, (sb: Sb, a: Json) => Promise<unknown>>;
+export function queryName(what: unknown): string {
+  return findQuery(what)?.name ?? String(what ?? "");
+}
+export async function read(sb: Sb, input: Json) {
+  const found = findQuery(input.what);
+  if (!found) return failData(`Nothing called “${String(input.what ?? "")}” to read.`, { what: Object.keys(QUERIES), details: "get_capabilities describes each and its parameters." });
+  const checked = checkParams(`read_resonate “${found.name}”`, found.entry, gather(input, ["what"]));
+  if ("error" in checked) return (found.entry.score ? failData : fail)(checked.error, { details: "get_capabilities lists each query's parameters." });
+  return await READERS[found.name](sb, checked.args);
 }
 
 // --- Sheet music: the Score on the user's devices, what they highlighted, the song's own files ------
@@ -431,7 +470,7 @@ const dataUrl = (u: unknown): { data: string; mimeType: string } | null => {
   const m = typeof u === "string" ? /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/s.exec(u) : null;
   return m ? { mimeType: m[1], data: m[2] } : null;
 };
-const HOW_TO_HIGHLIGHT = "To highlight bars the user drags across the notes on the Score (Play page, or the Score in the new Resonate); or call control_resonate score_select {from_measure, to_measure}.";
+const HOW_TO_HIGHLIGHT = "To highlight bars the user drags across the notes on the Score; or call control_resonate score_select {from_measure, to_measure}.";
 export async function getScoreView(sb: Sb) {
   const [dev, fc] = await Promise.all([
     sb.from("devices").select("id,name,remote,seen_at,state").order("seen_at", { ascending: false }),
@@ -443,7 +482,7 @@ export async function getScoreView(sb: Sb) {
   const head: Json = {
     devices,
     score_open_on: shown.map((d) => d.name),
-    hint: shown.length ? null : "No device shows the Score right now (Resonate's Play page, or the Score in the new Resonate). control_resonate score_open {song} opens it on the 📡 device.",
+    hint: shown.length ? null : "No device shows the Score right now (Resonate's Score). control_resonate score_open {song} opens it on the 📡 device.",
   };
   if (!f) return okData({ ...head, highlight: null, how: HOW_TO_HIGHLIGHT });
   const d = (f.data as Json) || {};

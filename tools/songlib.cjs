@@ -157,8 +157,10 @@ function seed(p, list) {
     return ids;
   }, { list, pdf: PDF_B64 });
 }
-const rows = (p) => p.$$eval('#songs-body .songrow', (rs) => rs.map((r) => ({ id: r.dataset.id, t: r.querySelector('.t')?.textContent, s: r.querySelector('.s')?.textContent || '', more: !!r.querySelector('.more'), tile: r.querySelector('.tile')?.dataset.src })));
+const rows = (p) => p.$$eval('#songs-body .songrow', (rs) => rs.map((r) => ({ id: r.dataset.id, t: r.querySelector('.t')?.textContent, s: r.querySelector('.s')?.textContent || '', eng: r.querySelector('.eng')?.textContent || '', more: !!r.querySelector('.more'), tile: r.querySelector('.tile')?.dataset.src })));
 const rowFact = (p, id) => text(p, `#songs-body .song[data-id="${id}"] .s`);
+// (an older engine's badge beside the fact — "v9 → v10"; '' when the engine doesn't matter)
+const rowEng = (p, id) => p.$eval(`#songs-body .song[data-id="${id}"]`, (b) => b.querySelector('.eng')?.textContent || '').catch(() => null);
 async function openMenu(p, id) {
   await p.waitForSelector(`#songs-body .songrow[data-id="${id}"] .more`, { timeout: 5000 });
   await p.click(`#songs-body .songrow[data-id="${id}"] .more`);
@@ -243,7 +245,7 @@ async function add() {
   ok(d?.import.result?.batch === 2, `batch result: ${JSON.stringify(d?.import.result)}`);
   await p.waitForTimeout(400);
   rs = await rows(p);
-  ok(rs.filter((r) => r.more && r.s === 'engine 10 · new' && r.tile === 'conv').length === 2, `rows: engine 10 (${rs.filter((r) => r.more).map((r) => r.s).join(', ')})`);
+  ok(rs.filter((r) => r.more && r.s === 'PDF · new' && !r.eng && r.tile === 'conv').length === 2, `rows: converted, this engine — no badge (${rs.filter((r) => r.more).map((r) => r.s + (r.eng ? ' ' + r.eng : '')).join(', ')})`);
   ok(!/Convert all|Reconvert all|Converting/.test(await text(p, '#songs-body .sec')), `header: nothing to convert (${await text(p, '#songs-body .sec')})`);
   ok(await p.evaluate(() => localStorage.getItem('resonate.convert')) === null, 'the queue key removed');
   const titles = await p.evaluate(async () => { const v = document.getElementById('version').textContent.trim().replace(/^v/, ''); return (await (await import(`./library.js?v=${v}`)).listSongs()).map((s) => [s.title, s.k, s.eng]); });
@@ -334,7 +336,7 @@ async function remote() {
   await p.click('#imp-done .x').catch(() => {});
   // Reconvert a song this engine read already: forced (not passed by)
   await openSongs(p);
-  ok(/^engine 10 · /.test(await rowFact(p, b)), `the engine-10 row: "${await rowFact(p, b)}"`);
+  ok(/^PDF · /.test(await rowFact(p, b)) && (await rowEng(p, b)) === '', `the engine-10 row: "${await rowFact(p, b)}", no badge`);
   ok(!/Reconvert all/.test(await text(p, '#songs-body .sec')), 'no Reconvert all (nothing older)');
   await openMenu(p, b);
   const items = await p.$$eval('#row-menu .prow', (x) => x.map((e) => e.textContent.trim()));
@@ -349,7 +351,7 @@ async function remote() {
   d = await until(p, (x) => !x.import.song && !x.import.running, 8000);
   ok(!!d && !d.import.queue.ids.length, `Stop: stopped (${JSON.stringify(d?.import.queue)})`);
   await p.waitForTimeout(500);
-  ok(/^engine 10/.test(await rowFact(p, b)), `its row as it was: "${await rowFact(p, b)}"`);
+  ok(/^PDF · /.test(await rowFact(p, b)) && (await rowEng(p, b)) === '', `its row as it was: "${await rowFact(p, b)}"`);
   ok(await p.evaluate(() => localStorage.getItem('resonate.import')) === null && await p.evaluate(() => localStorage.getItem('resonate.convert')) === null, 'no import flag, no queue');
   ok(!(await shown(p, '#imp-done')) && !(await shown(p, '#imp-mini')), 'no done row, no tile');
   await closeCtx(ctx, 'remote');
@@ -486,7 +488,7 @@ async function fail() {
   ok(d?.import.result?.batch === 1, `the queue went on: ${JSON.stringify(d?.import.result)}`);
   ok(!d?.import.error && !d?.import.stuck && !(await shown(p, '#tray-bar')), 'no bar left waiting');
   await p.waitForTimeout(300);
-  ok((await rowFact(p, bad)) === "PDF only · couldn't read" && /^engine 10 · /.test(await rowFact(p, good)), `rows: "${await rowFact(p, bad)}", "${await rowFact(p, good)}"`);
+  ok((await rowFact(p, bad)) === "PDF only · couldn't read" && /^PDF · /.test(await rowFact(p, good)) && (await rowEng(p, good)) === '', `rows: "${await rowFact(p, bad)}", "${await rowFact(p, good)}"`);
   const rec = await p.evaluate(async (id) => { const v = document.getElementById('version').textContent.trim().replace(/^v/, ''); const L = await import(`./library.js?v=${v}`); return { conv: (await L.getSong(id))?.conv?.kind, fail: (await L.listSongs()).find((x) => x.id === id)?.fail }; }, bad);
   ok(rec.conv === 'pdf' && rec.fail === 1, `marked: conv ${rec.conv}, index fail ${rec.fail}`);
   ok(!/Convert all/.test(await text(p, '#songs-body .sec')), `Convert all passes it by ("${await text(p, '#songs-body .sec')}")`);
@@ -506,29 +508,45 @@ async function look() {
     console.log(`\n=== look (${sz.n})`);
     const ctx = await context(sz, { scenario: 'slow' });
     const p = await home(ctx);
-    const [wl, scan, km, pm, gs] = await seed(p, [
+    const [wl, scan, km, pm, gs, sb] = await seed(p, [
       { pdf: true, name: 'Wichita_Lineman_-_F_Major_-_MN0305807.pdf', title: 'Wichita Lineman' },
       { pdf: true, name: 'Scan 2.pdf', title: 'Scan 2', fail: true },
       { xml: true, title: 'Killing Me Softly', source: 'pdf' },
       { xml: true, title: 'Piano Man', source: 'pdf', engine: 10 },
       { xml: true, title: 'Greensleeves', source: 'file' },
+      { xml: true, title: 'Songbird', source: 'pdf', engine: 9 },
     ]);
+    const EN = await p.evaluate(async (VER) => (await import(`./omr/engine.js?v=${eval(VER)}`)).ENGINE_N, VER);
     await openSongs(p);
     await p.waitForTimeout(300);
-    const facts = Object.fromEntries(await Promise.all([['wl', wl], ['scan', scan], ['km', km], ['pm', pm], ['gs', gs]].map(async ([k, id]) => [k, await rowFact(p, id)])));
-    ok(facts.wl === 'PDF only · new' && facts.scan === "PDF only · couldn't read" && facts.km === 'engine ≤9 · new' && facts.pm === 'engine 10 · new' && facts.gs === 'MusicXML · new', `${sz.n}: facts ${JSON.stringify(facts)}`);
-    const old = await p.$$eval('#songs-body .song[data-old]', (x) => x.map((e) => e.dataset.id));
-    ok(old.length === 1 && old[0] === km, `${sz.n}: the older engine marked (data-old)`);
+    // A7: the main fact is the song's kind and age; the engine only when it's older than this one, as a version
+    const ids = [['wl', wl], ['scan', scan], ['km', km], ['pm', pm], ['gs', gs], ['sb', sb]];
+    const facts = Object.fromEntries(await Promise.all(ids.map(async ([k, id]) => [k, await rowFact(p, id)])));
+    ok(facts.wl === 'PDF only · new' && facts.scan === "PDF only · couldn't read" && facts.km === 'PDF · new' && facts.pm === 'PDF · new' && facts.gs === 'MusicXML · new' && facts.sb === 'PDF · new', `${sz.n}: facts ${JSON.stringify(facts)}`);
+    const engs = Object.fromEntries(await Promise.all(ids.map(async ([k, id]) => [k, await rowEng(p, id)])));
+    ok(engs.km === `≤v9 → v${EN}` && engs.sb === `v9 → v${EN}` && !engs.pm && !engs.wl && !engs.scan && !engs.gs, `${sz.n}: the engine only for an older one, as a version: ${JSON.stringify(engs)}`);
+    ok(!/engine/i.test(await text(p, '#songs-body')), `${sz.n}: no row or header says "engine"`);
+    const old = await p.$$eval('#songs-body .song[data-old]', (x) => x.map((e) => e.dataset.id).sort());
+    ok(old.length === 2 && old.join() === [km, sb].sort().join(), `${sz.n}: the older engines marked (data-old)`);
+    // the badge on the fact's line, inside the row, quiet (smaller than the fact)
+    const bl = await p.$eval(`#songs-body .song[data-id="${km}"]`, (b) => {
+      const s = b.querySelector('.s').getBoundingClientRect(), e = b.querySelector('.eng').getBoundingClientRect(), r = b.getBoundingClientRect();
+      return { line: Math.abs((s.top + s.bottom) / 2 - (e.top + e.bottom) / 2) < 3, after: e.left >= s.right, inside: e.right <= r.right, small: parseFloat(getComputedStyle(b.querySelector('.eng')).fontSize) < parseFloat(getComputedStyle(b.querySelector('.s')).fontSize) };
+    });
+    ok(bl.line && bl.after && bl.inside && bl.small, `${sz.n}: the badge after the fact, on its line, inside the row, smaller (${JSON.stringify(bl)})`);
     const sec = await text(p, '#songs-body .sec');
-    ok(/Convert all · 1/.test(sec) && /Reconvert all · 1/.test(sec), `${sz.n}: header "${sec}" (the failed one left out)`);
+    ok(/Convert all · 1/.test(sec) && /Reconvert all · 2/.test(sec), `${sz.n}: header "${sec}" (the failed one left out)`);
     await shot(p, `look-list-${sz.n}`);
     await openMenu(p, km);
     await shot(p, `look-menu-${sz.n}`);
     await p.keyboard.press('Escape');
     await p.click('#songs-body [data-act="reconvert-all"]');
-    const d = await until(p, (x) => x.import.song?.id === km, 6000);
-    ok(!!d, `${sz.n}: Reconvert all → the older one runs`);
+    const d = await until(p, (x) => x.import.song?.id === km || x.import.song?.id === sb, 6000);
+    ok(!!d, `${sz.n}: Reconvert all → the older ones run`);
     await p.waitForTimeout(1200);
+    const runId = (await dbg(p))?.import.song?.id, other = runId === km ? sb : km;
+    ok(/^converting/.test(await rowFact(p, runId)) && (await rowEng(p, runId)) === '' && (await rowFact(p, other)) === 'PDF · queued' && /→/.test(await rowEng(p, other)),
+      `${sz.n}: running "${await rowFact(p, runId)}" (no badge), the next "${await rowFact(p, other)}" ${await rowEng(p, other)}`);
     await shot(p, `look-running-${sz.n}`);
     const small = await p.evaluate(() => [...document.querySelectorAll('#songs button')].filter((e) => e.getClientRects().length).map((e) => ({ e, r: e.getBoundingClientRect() })).filter(({ r }) => r.width < 43.5 || r.height < 43.5).map(({ e, r }) => `${e.className}:${Math.round(r.width)}x${Math.round(r.height)}`));
     ok(!sz.touch || !small.length, `${sz.n}: touch targets ≥ 44 px${small.length ? ': ' + small.join(', ') : ''}`);

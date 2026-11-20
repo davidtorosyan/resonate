@@ -335,12 +335,12 @@ function checkScene(tag, sc) {
     await page.tap("#next"); await until(page, () => window.resonateDebug().play.page === 2); await sleep(300);
     p = await PBD(page);
     const placed = p.selbar.rect;
-    await page.tap("#sel-play");
+    await page.tap("#play");
     let rects = await sampleSelbar(page, 9000);
     let targets = [...new Set(rects.map((s) => s.x.join()))];
     info(`S placed on page 2 at ${placed.map(Math.round)}; targets ${targets.join(" → ")}; pages ${[...new Set(rects.map((s) => s.page))]}`);
     ok(rects.some((s) => s.turns) && rects.length > 40 && targets.length === 1 && !(await selbarOnBands(page)), `S a stretch played from page 2: ${rects.length} samples, the music turned back, the controls not over its bands there — never moved (${targets.join(" → ")})`);
-    await page.tap("#sel-play").catch(() => {}); await sleep(200);
+    await page.tap("#play").catch(() => {}); await sleep(200);
     // the slide: the Full score's last lines reach the stage's foot — a stretch over page 1's last two
     // lines, page 2 by hand (the controls at its foot: nothing there), ▶: the turn back to page 1 would
     // leave them over the bands — they slide off, once
@@ -352,7 +352,7 @@ function checkScene(tag, sc) {
     await page.evaluate(() => window.__key("ArrowRight")); await until(page, () => window.resonateDebug().play.page === 2); await sleep(300);
     p = await PBD(page);
     const foot = p.selbar && p.selbar.at === "bottom";
-    await page.tap("#sel-play");
+    await page.tap("#play");
     rects = await sampleSelbar(page, 5000);
     targets = [...new Set(rects.map((s) => s.x.join()))];
     const at = rects.findIndex((s) => s.x.join() === targets[1]);
@@ -377,7 +377,7 @@ function checkScene(tag, sc) {
     }
     p = await PBD(page);
     ok(seen.size === 1 && [...seen][0].replace(",", "") === before && p.round >= 1, `S ⟳ ${p.round + 1} rounds with a press: the controls never moved (${[...seen].join(" | ")})`);
-    await page.tap("#sel-play"); await sleep(200);
+    await page.tap("#play"); await sleep(200);
     // the page played from its first bar, the keyboard off (the chips in the controls), one place throughout
     await page.tap("#sel-clear"); await sleep(200);
     await page.tap("#keys"); await sleep(500);

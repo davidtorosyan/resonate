@@ -14,20 +14,20 @@
 //
 // A PDF only (added, not converted yet: docs/LIBRARY.md) opens straight into its PDF (📄's view, no
 // Verovio): ‹ › and the pedals turn its pages, the keyboard stays under it, ⟳ reads Convert.
-import { spaceChanged } from "./nav.js?v=90";
-import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=90";
-import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=90";
-import { decorate, fullName, labelOf } from "./playnames.js?v=90";
-import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=90";
-import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=90";
-import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=90";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=90";
-import * as lib from "./library.js?v=90"; // (getSong; getPages where this library has it)
-import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=90";
-import { mountKeyboard } from "./keyboard.js?v=90";
-import { chordMoments } from "./chords.js?v=90";
-import { barsText, sliceMeasures, TEXT_LEGEND } from "./scoretext.js?v=90";
-import { remote, hasAssistant, shareFocus } from "./assist.js?v=90";
+import { spaceChanged } from "./nav.js?v=91";
+import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=91";
+import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=91";
+import { decorate, fullName, labelOf } from "./playnames.js?v=91";
+import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=91";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=91";
+import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=91";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=91";
+import * as lib from "./library.js?v=91"; // (getSong; getPages where this library has it)
+import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=91";
+import { mountKeyboard } from "./keyboard.js?v=91";
+import { chordMoments } from "./chords.js?v=91";
+import { barsText, sliceMeasures, TEXT_LEGEND } from "./scoretext.js?v=91";
+import { remote, hasAssistant, shareFocus } from "./assist.js?v=91";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
@@ -35,7 +35,7 @@ const songSel = $("song"), samplesEl = $("samples"), mineEl = $("mine"), handsSe
 const namesBtn = $("names"), smallerBtn = $("smaller"), biggerBtn = $("bigger"), prevBtn = $("prev"), nextBtn = $("next");
 const pdfBtn = $("pdf"), offerEl = $("offer"), stripEl = $("strip"), bubbleEl = $("bubble"), keysBtn = $("keys"), dockEl = $("dock");
 // (▶: the one-page shell hands its own over — Sing's page there has a #play of its own)
-const playBtn = window.resonatePlay?.playBtn || $("play"), selbar = $("selbar"), selPlayBtn = $("sel-play"), selLoopBtn = $("sel-loop"), speedSel = $("speed"), selClearBtn = $("sel-clear");
+const playBtn = window.resonatePlay?.playBtn || $("play"), selbar = $("selbar"), selLoopBtn = $("sel-loop"), speedSel = $("speed"), selClearBtn = $("sel-clear");
 const hearEl = $("hear"), chordsBtn = $("chords");
 const pdfBar = $("pdfbar"), pdfOutBtn = $("pdf-out"), pdfInBtn = $("pdf-in"), pdfFocusBtn = $("pdf-focus"), pdfAgainBtn = $("pdf-again");
 
@@ -168,7 +168,9 @@ const S = {
   cap: 0,           // the largest staff space the screen allows (≥ 40 across, a whole system a page)
   base: 0,          // the default's staff space before the two-systems fit (the printed density)
   auto: 0,          // the default's staff space (after its fit): what a step is taken from
-  mode: "",         // how sp was chosen: "set" (− / +; a phone's piano views), "fit" / "fitted" (the default), "one" (one system a page), "two" (a phone's score)
+  mode: "",         // how sp was chosen: "set" (− / +; a phone's piano views), "fit" / "fitted" (the default), "one" (one system a page), "two" (a phone's score), "held" (S.hold)
+  hold: null,       // the layout kept while the shell's keyboard comes or goes (holdLayout): { W, H (the stage it's drawn for), from (the stage and layout it was made at), L }
+  vrv: null,        // the Verovio page last set: { scale, pageWidth, pageHeight }
   pages: 0, page: 1,
   at: 0,            // written measure index the shown place is anchored to
   items: [],        // decorate() items of the shown pages (heads with their facts and boxes)
@@ -348,6 +350,7 @@ async function open(id) {
   S.xml = "";
   S.T = S.Tid = S.qs = S.sel = null;
   S.sing = undefined;
+  S.hold = null;
   renderHear();
   placeSelbar();
   S.st = readPlay()[id] || {};
@@ -443,6 +446,7 @@ async function loadView(gen) {
   }
   S.v = v;
   S.waiting = false;
+  S.hold = null; // (another view or song: laid out for the stage)
   useSize();
   setBusy(true);
   await paint();
@@ -525,6 +529,7 @@ function stageSize() {
 function measure(single = false) {
   const { W, H } = stageSize();
   if (W < 60 || H < 60 || !S.P) return null;
+  if (S.hold && Math.abs(W - S.hold.W) < 2 && Math.abs(H - S.hold.H) < 2) return S.hold.L; // (the stage it's held for)
   const plan = S.P.views[S.view];
   const cap = Math.min(W / 40, H / tallest(plan));
   const at = (sp, mode, more) => ({ W, H, spread: false, pw: W, cap, sp, scale: scaleOf(sp), mode, base: sp, ...more });
@@ -599,7 +604,7 @@ function fit(L) {
   const need = twoNeed(S.P.views[S.view]);
   if (L.H / L.sp >= 1.3 * need) return L;
   const t = performance.now();
-  const kb = dockEl.hidden ? 0 : dockEl.offsetHeight, room = L.H / (L.H + kb); // (the keyboard's share of the height)
+  const kb = dockEl.hidden ? shellKeys()?.height?.() || 0 : dockEl.offsetHeight, room = L.H / (L.H + kb); // (the keyboard's share of the height — the one-page shell's Piano there)
   const floor = room * (device() === "tablet" ? Math.min(L.base, FIT_FLOOR.tablet * Math.min(screen.width, screen.height) / PAPER) : FIT_FLOOR.desktop * L.base);
   let sp = Math.max(floor, Math.min(L.sp, L.H / need));
   for (let i = 0; i < 8; i++) {
@@ -659,8 +664,11 @@ function twoShare() {
   return judged.length ? judged.filter((n) => n >= 2).length / judged.length : 1;
 }
 function setPageSize(L) {
-  // (floored: the drawing never comes out a pixel larger than the stage)
-  tk.setOptions({ scale: L.scale, pageWidth: Math.floor((L.pw * 100) / L.scale), pageHeight: Math.floor((L.H * 100) / L.scale) });
+  // (floored: the drawing never comes out a pixel larger than the stage; a held layout keeps its
+  // Verovio page — the same systems on the same pages — drawn at a smaller scale)
+  const o = { scale: L.scale, pageWidth: L.vw ?? Math.floor((L.pw * 100) / L.scale), pageHeight: L.vh ?? Math.floor((L.H * 100) / L.scale) };
+  tk.setOptions(o);
+  S.vrv = o;
 }
 
 // After a layout: pages, the anchor's page (odd in a spread), show.
@@ -703,12 +711,33 @@ function relayout() {
   if (!S.ready || !tk || S.loaded !== S.v) return;
   const L = measure();
   if (!L) return;
+  if (!L.held) S.hold = null; // (laid out for the stage: a hold let go)
   clearPeek();
   setPageSize(L);
   const t = performance.now();
   tk.redoLayout();
   S.t.layout = ms(t);
   placed(settle(L));
+}
+// The keyboard coming or going under the music (the one-page shell's Piano — resonatePlay.resize
+// with keep): what's shown stays. Laid out again for the shorter stage, Verovio fills every page
+// from the first: in portrait the place's page began bars earlier, the bars after it gone off its
+// foot; in landscape, where a whole system's height sets the size, every system took more bars and
+// the place landed on another page (the owner: "the notes I was looking at are gone" — Sing, beside
+// the Score, narrows it: the size follows the width, the same bars stay). So the layout is kept as
+// it is — its Verovio page, the same systems on the same pages — drawn smaller to fit (S.hold);
+// back to the stage it was made at, it's laid out as it was. Only a shorter stage of the same width
+// is held (a taller one is laid out for: more room); a rotation, − / +, a view, a song, Sing coming
+// or going lay out for the stage and let go of it. L: measure()'s layout for the new stage.
+function holdLayout(L) {
+  const near = (a, b) => Math.abs(a - b) < 2;
+  const from = S.hold?.from || { W: S.W, H: S.H, vrv: S.vrv, sp: S.sp, base: S.base, auto: S.auto, spread: S.spread };
+  S.hold = null;
+  if (!from.vrv || !near(L.W, from.W) || L.H >= from.H - 1) return;
+  const scale = Math.max(5, Math.floor(from.vrv.scale * Math.min(L.W / from.W, L.H / from.H)));
+  const k = scale / from.vrv.scale;
+  S.hold = { W: L.W, H: L.H, from, L: { W: L.W, H: L.H, spread: from.spread, pw: Math.floor(L.W * k), cap: L.cap, sp: from.sp * k, scale, mode: "held",
+    base: from.base, auto: from.auto, stepped: true, held: true, vw: from.vrv.pageWidth, vh: from.vrv.pageHeight } };
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,6 +1088,7 @@ function resize(dir) {
   const z = S.sizes[sizeKind(S.view)];
   z.step = n;
   keep(z.key, n ? (n > 0 ? "+" : "") + n : null);
+  S.hold = null; // (a size of its own: laid out for the stage)
   relayout();
 }
 smallerBtn.addEventListener("click", () => resize(-1));
@@ -1598,6 +1628,9 @@ function drawPeeks() {
 // it (no presses, no ▶), and the PDF's page gets the height (a page in portrait is fitted by it) —
 // but under a PDF only it stays: the keys are all there is to play.
 //
+// (The one-page shell never shows it: its Piano module's keyboard is the one keyboard, under the
+// Score and staying when the Score goes — shellKeys below draws there what this one would show.)
+//
 // What it shows: the view's range in whole octaves (C3–B5 at least), a dot on middle C, and lit —
 // by hand, a letter on each — the keys of the strikes on screen (held, and HIDE_AFTER after the
 // lift) and of what ▶ sounds now. Idle: none. It's a flex row (#dock): what ▶ plays can be chosen
@@ -1664,13 +1697,23 @@ function keysLit() {
 // range at another width while a view did) — only what's lit may change: the next range is the new
 // view's (placed).
 function drawKeys() {
-  if (dockEl.hidden) { kb.forget(); return; }
+  const out = shellKeys();
+  if (dockEl.hidden && !out) { kb.forget(); return; }
   const lit = keysLit(), [lo, hi] = loading() && KB.range ? KB.range : stripRange(lit);
   KB.range = [lo, hi];
   const keys = new Map();
   for (const [m, L] of lit) keys.set(m, { hand: L.hand, fill: HAND[L.hand], letter: L.label.letter, acc: L.label.acc || "" });
+  if (out) out.draw(keys, [lo, hi]); // (the one-page shell's Piano: one keyboard, its own)
+  if (dockEl.hidden) { kb.forget(); return; }
   kb.update({ lit: keys, range: [lo, hi] });
 }
+// The one-page shell's keyboard (its Piano module, shell/pianoview.js), when it's the Score's: it
+// stays where it is whether the Score shows or not — the Score is laid out above it, as beside Sing
+// — and plays and lights what this page's keyboard would (resonatePlay.press / lift; its keys and
+// range drawn by `draw`), with what ▶ plays at its left end (`host`). Play's own dock never shows
+// there (play.html keeps it). → { draw(lit, range), host() → { row, box, strip } | null,
+// height() → px } or null (play.html, or the shell's Piano off).
+const shellKeys = () => window.resonatePlay?.shellKeys?.() || null;
 // A song or a view on its way (shown: placed()). (A PDF only has no range to wait for.)
 const loading = () => !!S.song && !S.ready && !S.failed && !pdf.on && !S.pdfOnly;
 
@@ -1806,30 +1849,37 @@ function renderHear() {
 // move can't undo itself.
 const KEY_MIN = 8;
 let hearFit = { key: "", fit: true };
+// (the keyboard the chips go beside: Play's dock, or the one-page shell's Piano — { row: the flex
+// row, box: where the chips go in it, strip: the keys })
+function keysRow() {
+  if (!dockEl.hidden) return { row: dockEl, box: dockEl, strip: stripEl };
+  return shellKeys()?.host?.() || null;
+}
 function placeHear() {
-  let home = selbar;
-  if (!dockEl.hidden && !hearEl.hidden) {
-    const cs = getComputedStyle(dockEl);
-    const inner = dockEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-    const rows = hearRowsFor(kb.size().h || stripEl.getBoundingClientRect().height);
+  let home = null;
+  const kr = hearEl.hidden ? null : keysRow();
+  const keysH = () => (kr.strip === stripEl && kb.size().h) || kr.strip.getBoundingClientRect().height;
+  const put = () => { if (hearEl.parentNode !== kr.box) kr.box === kr.row ? kr.row.insertBefore(hearEl, kr.strip) : kr.box.append(hearEl); };
+  if (kr) {
+    const cs = getComputedStyle(kr.row);
+    const inner = kr.row.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const rows = hearRowsFor(keysH());
     const [lo, hi] = stripRange(new Map());
-    const key = `${Math.round(inner)} ${rows} ${lo}-${hi} ${hearShape}`;
+    const key = `${kr.strip === stripEl ? "dock" : "shell"} ${Math.round(inner)} ${rows} ${lo}-${hi} ${hearShape}`;
     if (hearFit.key !== key) {
-      if (hearEl.parentNode !== dockEl) dockEl.insertBefore(hearEl, stripEl);
+      put();
       setRows(rows);
       let whites = 0;
       for (let m = lo; m <= hi; m++) if (WHITE.has(m % 12)) whites++;
       const keysW = inner - hearEl.getBoundingClientRect().width - (parseFloat(cs.columnGap) || 0);
       hearFit = { key, fit: keysW >= KEY_MIN * whites };
     }
-    if (hearFit.fit) home = dockEl;
+    if (hearFit.fit) home = kr.box;
   }
-  if (hearEl.parentNode !== home) {
-    if (home === dockEl) dockEl.insertBefore(hearEl, stripEl);
-    else selbar.insertBefore(hearEl, selClearBtn);
-  }
-  setRows(home === dockEl ? hearRowsFor(kb.size().h || stripEl.getBoundingClientRect().height) : 1);
-  if (home === selbar && !selbar.hidden) placeSelbar("keep");
+  if (home) put();
+  else if (hearEl.parentNode !== selbar) selbar.insertBefore(hearEl, selClearBtn);
+  setRows(home ? hearRowsFor(keysH()) : 1);
+  if (!home && !selbar.hidden) placeSelbar("keep");
 }
 // In the dock the chips fill the keys' height in rows of 44 px (two in portrait), then columns.
 const hearRowsFor = (h) => Math.max(1, Math.floor((h + 6) / 50));
@@ -1838,6 +1888,7 @@ function setRows(n) {
 }
 hearEl.addEventListener("click", (e) => {
   const b = e.target.closest?.("button[data-key]");
+  b?.blur(); // (the pedal's Space / Enter turn pages, not this chip again — in the shell's keyboard bar too)
   if (!S.ready) return; // (a song or a view loading: the chips shown are the last one's)
   if (b && !toggleHear(b.dataset.key)) {
     // (the one heard can't be muted: a shake says so, no words)
@@ -2445,12 +2496,12 @@ function playButtons() {
   const on = PB.state !== "idle" || PB.starting;
   setIcon(playBtn, on ? "stop" : "play", on ? "Stop" : "Play");
   playBtn.disabled = !on && (!S.ready || pdf.on);
-  setIcon(selPlayBtn, on ? "stop" : "play", on ? "Stop" : "Play");
   selLoopBtn.setAttribute("aria-pressed", String(PB.state === "looping"));
   remote.changedSoon();
 }
 
-// The stretch's controls (▶ ⟳ speed ✕; ■ and speed while the page plays): over the music where
+// The stretch's controls (⟳ speed ✕; speed while the page plays — ▶ / ■ is the main one, in the bar
+// or the shell's dock: a second ▶ there read as two different things to press): over the music where
 // they cover none of the stretch's bands and the peeked chord and its names — while ▶ plays, as
 // little of the page's ink as they can: at the stage's foot (just above the keyboard when it's on:
 // it's under the stage), else its head, else a corner, else in free paper between two lines; where
@@ -2538,7 +2589,6 @@ function pageInk(st) {
 }
 
 playBtn.addEventListener("click", () => (PB.state !== "idle" || PB.starting ? stopPlay() : playStart(S.sel ? "span" : "page")));
-selPlayBtn.addEventListener("click", () => (PB.state !== "idle" || PB.starting ? stopPlay() : playStart("span")));
 selLoopBtn.addEventListener("click", () => (PB.state === "looping" ? stopPlay() : playStart("span", true)));
 selClearBtn.addEventListener("click", () => { if (PB.kind === "span") stopPlay(); clearSel(); });
 speedSel.addEventListener("change", () => setSpeed(Number(speedSel.value)));
@@ -3307,7 +3357,7 @@ async function songMap(doc) {
     const kept = S.st.pdfMusic;
     if (kept && kept.n === n && Array.isArray(kept.music) && kept.music.length >= last) music = kept.music;
     else {
-      const { findStaves } = await import("./omr/pdfprep.js?v=90");
+      const { findStaves } = await import("./omr/pdfprep.js?v=91");
       const t0 = performance.now();
       music = await musicPages(doc, findStaves, { need: last });
       S.t.pdfMusic = ms(t0);
@@ -3450,7 +3500,7 @@ new ResizeObserver(() => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(sized, 150);
 }).observe(stage);
-function sized() {
+function sized(keep = false) {
   // (the PDF drawn again only for a stage of another size: opening it hides the keyboard, and the
   // stage's growth reached here after the opening had already drawn for it — a second drawing
   // blanked the page and drew it again)
@@ -3466,6 +3516,7 @@ function sized() {
   // back on the sheet it's the size it was, or laid out then)
   if (S.loaded !== S.v || pdf.on) return;
   if (Math.abs(L.W - S.W) < 2 && Math.abs(L.H - S.H) < 2) return;
+  if (keep && S.ready) holdLayout(L); // (the shell's keyboard came or went: what's shown stays)
   relayout();
 }
 
@@ -3916,9 +3967,18 @@ window.resonatePlay = Object.assign(window.resonatePlay || {}, {
   state: () => ({ song: S.song, title: S.title, ready: S.ready, busy: PB.state !== "idle" || PB.starting, held: peeks.some((pk) => pk.held && !pk.dead),
     page: S.page, pages: S.pages, at: S.at, lgen: S.lgen, W: S.W, H: S.H, sp: S.sp, mode: S.mode, pdfOnly: S.pdfOnly, shown: shownNow(),
     failed: S.failed }), // (the shell opens a failed song again: its PDF may have come, the engine may load now)
-  resize: () => { clearTimeout(resizeTimer); sized(); },
-  // (the shell's Piano toggle drives the keyboard — its 🎹 is hidden there; kept as 🎹 keeps it)
-  keys: (on) => { if (on != null && !!on !== KB.on) setKeys(!!on); return KB.on; }, // (play.html's 🎹 setting left alone)
+  // (keep: the shell's keyboard came or went — the layout held as it was, drawn to the new height)
+  resize: (o) => { clearTimeout(resizeTimer); sized(!!o?.keep); },
+  // (Play's own docked keyboard on / off — play.html's 🎹 setting left alone; the shell keeps it off:
+  // its Piano is the one keyboard, shellKeys)
+  keys: (on) => { if (on != null && !!on !== KB.on) setKeys(!!on); return KB.on; },
+  // (the shell's keyboard, the Score's: a key pressed there strikes as one pressed here — the same
+  // levels, bus, restrike, lit on the keys — and lets go at the lift; → the strike, or null: Sing
+  // records)
+  press: (midi, e) => keyPress(midi, e),
+  lift: (pk) => { if (pk) peekEnd(pk); },
+  // (the shell's keyboard shown, hidden or resized: its keys and the chips beside them again)
+  keysChanged: () => { renderHear(); drawKeys(); },
   // (for an assistant: what's in focus — the song, the view, the bars, the stretch picked, where
   // they are on the PDF — and that place on the PDF as a PNG with its red borders)
   focus: () => focusInfo(),
@@ -3996,7 +4056,7 @@ function playDebug() {
     hear: {
       groups: (S.P ? hearGroups() : []).map((g) => ({ key: g.key, label: g.label, hand: g.hand, heard: !mutedKeys().has(g.key) })),
       muted: S.P ? [...mutedKeys()] : [], saved: S.st.hear ? JSON.parse(JSON.stringify(S.st.hear)) : null,
-      home: hearEl.hidden ? null : hearEl.parentNode === dockEl ? "dock" : "selbar",
+      home: hearEl.hidden ? null : hearEl.parentNode === dockEl ? "dock" : hearEl.parentNode === selbar ? "selbar" : "keys",
       shown: !hearEl.hidden && !!hearEl.offsetParent,
       rect: hearEl.hidden || !hearEl.offsetParent ? null : (() => { const r = hearEl.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(),
       chips: [...hearEl.querySelectorAll("button")].map((b) => { const r = b.getBoundingClientRect(); return { key: b.dataset.key, label: b.textContent, hand: b.dataset.hand, pressed: b.getAttribute("aria-pressed") === "true", rect: [r.left, r.top, r.width, r.height] }; }),
@@ -4026,6 +4086,7 @@ window.resonateDebug = () => {
       keep: plan ? { ...plan, ids: S.v?.ids ?? [] } : null,
       pages: S.pages, page: S.page, shown: shownPages(), spread: S.spread, sp: S.sp, scale: S.scale, step: S.step, size: S.step ? S.sp : null,
       sizeAuto: !S.step, auto: S.auto, sizes: JSON.parse(JSON.stringify(S.sizes)), cap: S.cap, base: S.base, mode: S.mode, device: device(), fitLog: S.fitLog.map((x) => ({ ...x })),
+      hold: S.hold ? { at: [S.hold.W, S.hold.H], from: [S.hold.from.W, S.hold.from.H], scale: S.hold.L.scale, fromScale: S.hold.from.vrv.scale } : null, vrv: S.vrv && { ...S.vrv },
       W: S.W, H: S.H, names: S.names, at: S.at,
       counts: { rendered, pitched: S.v?.pitched ?? 0, pages: S.counted.size }, countAll,
       get facts() { return S.P ? Object.fromEntries(S.P.facts) : {}; },
@@ -4037,7 +4098,7 @@ window.resonateDebug = () => {
       } : null,
       // the keyboard (🎹): the setting, its pref, shown, its rect (client px), range and lit keys
       keys: {
-        on: KB.on, pref: recall(K.keys), dflt: keysDefault(), shown: !dockEl.hidden,
+        on: KB.on, pref: recall(K.keys), dflt: keysDefault(), shown: !dockEl.hidden, view: KB.range, shell: !!shellKeys(),
         rect: dockEl.hidden ? null : (() => { const r = dockEl.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(),
         range: dockEl.hidden ? null : (() => { const k = [...stripEl.querySelectorAll("rect.key")].map((r) => Number(r.dataset.midi)); return k.length ? [Math.min(...k), Math.max(...k)] : null; })(),
         lit: litKeys(), draws: kb.draws, held: kb.held(),

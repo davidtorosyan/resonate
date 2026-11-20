@@ -89,9 +89,17 @@ async function tool(token, name, args = {}) {
   check(init.status === 200 && init.msg?.result?.serverInfo?.name === 'resonate' && /singing coach/i.test(init.msg?.result?.instructions || ''), `initialize (${init.status} ${init.msg?.result?.serverInfo?.name})`);
   const tl = await mcp(T, 'tools/list');
   const names = (tl.msg?.result?.tools || []).map((t) => t.name).sort();
-  check(names.join(',') === 'control_resonate,get_live_lines,get_progress,get_score_pdf,get_score_view,get_score_xml,get_song,get_status,get_take,get_voice_profile,list_songs,list_takes,start_vocal_coaching', `tools: ${names.join(', ')}`); // (v88: + the score tools, mcp2.cjs)
+  // The frozen tool list (docs/CONNECTOR.md): these 15 names, forever — a new ability is a catalog.ts entry.
+  check(names.join(',') === 'control_resonate,get_capabilities,get_live_lines,get_progress,get_score_pdf,get_score_view,get_score_xml,get_song,get_status,get_take,get_voice_profile,list_songs,list_takes,read_resonate,start_vocal_coaching', `tools: ${names.join(', ')}`); // (v88: + the score tools, mcp2.cjs; 2026-11-20: + get_capabilities, read_resonate)
   const ctl = (tl.msg?.result?.tools || []).find((t) => t.name === 'control_resonate');
   check(ctl?.annotations?.readOnlyHint === false && (tl.msg?.result?.tools || []).filter((t) => t.name !== 'control_resonate').every((t) => t.annotations?.readOnlyHint === true), 'only control_resonate is marked as acting; the rest read-only');
+  // The live catalogue: the deployed version is the repo's, actions take any name it lists.
+  const catVer = fs.readFileSync('/home/user/resonate/supabase/functions/mcp/catalog.ts', 'utf8').match(/export const VERSION = "([^"]+)"/)[1];
+  const caps = await tool(T, 'get_capabilities');
+  check(init.msg?.result?.serverInfo?.version === catVer && init.msg?.result?.capabilities?.tools?.listChanged === false && caps.data?.version === catVer && !!caps.data?.control_resonate?.score_play && !!caps.data?.read_resonate?.score_xml && !ctl?.inputSchema?.properties?.action?.enum,
+    `capabilities ${caps.data?.version} = catalog.ts ${catVer} (serverInfo ${init.msg?.result?.serverInfo?.version}, listChanged ${init.msg?.result?.capabilities?.tools?.listChanged}; ${Object.keys(caps.data?.control_resonate || {}).length} actions, ${Object.keys(caps.data?.read_resonate || {}).length} reads)`);
+  const rd = await tool(T, 'read_resonate', { what: 'get_capabilities' }), bad = await tool(T, 'control_resonate', { action: 'no_such_action' });
+  check(rd.data?.version === catVer && bad.error && (bad.data?.actions || []).includes('sing'), `read_resonate by a tool's name; an unknown action names the list (${bad.data?.error})`);
 
   // The assistant's token can't write the app's data.
   const H = { apikey: KEY, Authorization: `Bearer ${T}`, 'content-type': 'application/json' };

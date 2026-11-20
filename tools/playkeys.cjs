@@ -304,7 +304,7 @@ const midisOf = (page, ids) => page.evaluate((ids) => [...new Set(ids.map((id) =
       await page.tap("#sel-loop").catch(() => {});
       await until(page, () => window.resonateDebug().play.playback.state === "looping" && window.resonateDebug().play.playback.lit.length > 0);
       await sleep(1500);
-      await page.tap("#sel-play").catch(() => {}); await sleep(200);
+      await page.tap("#play").catch(() => {}); await sleep(200);
       // − / +: the music laid out again above it
       await page.tap("#smaller"); await ready(page); await sleep(200);
       await page.tap("#bigger"); await ready(page); await sleep(200);

@@ -266,8 +266,9 @@ function GATE() {
     ok(!d.peek, "G2 no peek on screen");
     await page.screenshot({ path: path.join(SHOTS, "G2-drag.png") });
     // the controls: ≥ 44 px, clear of the bands
-    const sb = await page.evaluate(() => { const r = (id) => { const b = document.getElementById(id).getBoundingClientRect(); return [b.width, b.height]; }; const bar = document.getElementById("selbar").getBoundingClientRect(); const over = [...document.querySelectorAll(".page .sel")].some((s) => { const b = s.getBoundingClientRect(); return b.left < bar.right && b.right > bar.left && b.top < bar.bottom && b.bottom > bar.top; }); return { play: r("sel-play"), loop: r("sel-loop"), speed: r("speed"), clear: r("sel-clear"), over }; });
+    const sb = await page.evaluate(() => { const r = (id) => { const b = document.getElementById(id).getBoundingClientRect(); return [b.width, b.height]; }; const bar = document.getElementById("selbar").getBoundingClientRect(); const over = [...document.querySelectorAll(".page .sel")].some((s) => { const b = s.getBoundingClientRect(); return b.left < bar.right && b.right > bar.left && b.top < bar.bottom && b.bottom > bar.top; }); return { loop: r("sel-loop"), speed: r("speed"), clear: r("sel-clear"), over, second: !!document.querySelector("#selbar #sel-play") || [...document.querySelectorAll("#selbar button")].some((b) => /^(Play|Stop)$/.test(b.getAttribute("aria-label") || "")) }; });
     ok(Object.values(sb).filter(Array.isArray).every(([w, h]) => w >= 44 && h >= 44) && !sb.over, `G3 the stretch's controls ≥ 44 px, clear of the bands: ${JSON.stringify(sb)}`);
+    ok(!sb.second, "G3 one ▶: the stretch's controls are ⟳ · speed · ✕ (the bar's ▶ plays the stretch)");
     // backwards, from blank staff
     await touchPath(ctx, page, line(gapPt(s1, 4), gapPt(s0, 1), 10));
     p = await PBD(page);
@@ -300,7 +301,7 @@ function GATE() {
     ok(x.span && Math.abs(x.span.q0 - span1.q0) < 1e-6 && x.bands.length >= 1, `G8 Right hand: the stretch kept and drawn (${x.bands.length})`);
     await page.selectOption("#hands", "both"); await ready(page, null, "both");
     // the stretch while playing: a tap on paper keeps it
-    await page.tap("#sel-play");
+    await page.tap("#play");
     await until(page, () => window.resonateDebug().play.playback.state === "playing");
     g = await geo(page);
     await touchPath(ctx, page, [await blankPt(page)]);
@@ -356,7 +357,7 @@ function GATE() {
     await touchPath(ctx, page, line(colPt(sA, sA.cols.length - 4), colPt(sB, 5), 12));
     let p = await PBD(page);
     let ref = await reference(browser, AG, "both", p.span.q0, p.span.end);
-    await page.tap("#sel-play");
+    await page.tap("#play");
     await until(page, () => window.resonateDebug().play.playback.scheduled.length > 0 && !window.resonateDebug().play.playback.starting);
     await until(page, () => window.resonateDebug().play.playback.state === "idle", null, 30000);
     p = await PBD(page, true);
@@ -367,7 +368,7 @@ function GATE() {
     ok(p.state === "idle" && !!p.span, `P1 played once, then stops, the stretch kept (${p.state})`);
     // the same stretch at 50%: every gap doubled
     await page.selectOption("#speed", "0.5");
-    await page.tap("#sel-play");
+    await page.tap("#play");
     await until(page, () => window.resonateDebug().play.playback.scheduled.length > 0 && !window.resonateDebug().play.playback.starting);
     await until(page, () => window.resonateDebug().play.playback.state === "idle", null, 40000);
     const p50 = await PBD(page, true);
@@ -425,7 +426,7 @@ function GATE() {
       await touchPath(ctx, page, line(colPt(a, 1), colPt(b, b.cols.length - 2), 12));
       p = await PBD(page);
       ref = await reference(browser, read(OWNER("killing")), "score", p.span.q0, p.span.end);
-      await page.tap("#sel-play");
+      await page.tap("#play");
       await until(page, () => window.resonateDebug().play.playback.scheduled.length > 0 && !window.resonateDebug().play.playback.starting);
       await sleep(4500);
       p = await PBD(page, true);
@@ -576,8 +577,9 @@ function GATE() {
     await stopCheck(page, "S1 ■ in the bar", () => page.click("#play"));
     const g = await geo(page);
     await touchPath(ctx, page, line(colPt(g[0].systems[0], 2), colPt(g[0].systems[1], 4), 8));
-    await page.tap("#sel-play"); await until(page, () => window.resonateDebug().play.playback.scheduled.length > 3); await sleep(400);
-    await stopCheck(page, "S2 the stretch's ■", () => page.tap("#sel-play"));
+    await page.tap("#play"); await until(page, () => window.resonateDebug().play.playback.scheduled.length > 3); await sleep(400);
+    ok((await PBD(page)).kind === "span", "S2 with a stretch the bar's ▶ plays the stretch");
+    await stopCheck(page, "S2 ■ in the bar, a stretch playing", () => page.tap("#play"));
     await page.tap("#sel-loop"); await until(page, () => window.resonateDebug().play.playback.scheduled.length > 3); await sleep(400);
     await stopCheck(page, "S3 ⟳ again", () => page.tap("#sel-loop"));
     // a peek while playing: it sounds, the music plays on

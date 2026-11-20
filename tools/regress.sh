@@ -88,11 +88,19 @@ out=$(timeout 900 node importfixes.cjs 2>&1); echo "importfixes exit=$? $(echo "
 # cloud, offline: PDF-only rows, engine, the v2 rewind, pdf-large, SONG_LIMIT 20).
 out=$(timeout 300 node libcore.cjs 2>&1); echo "libcore exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
 out=$(SHOTS=0 timeout 1200 node songlib.cjs 2>&1); echo "songlib exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
+# The shell's chrome after the owner's jank report (jankchrome.cjs: a sheet's handle / head dragged down closes it,
+# the song's title plain words, the folded conversion's fixed footprint — the ▶ beside it sampled every frame).
+out=$(SHOTS=0 timeout 1500 node jankchrome.cjs 2>&1); echo "jankchrome exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
+# The Score and the Piano after the jank report (jank.cjs: the title opens nothing, the Piano keeps the bars on screen,
+# one ▶ for a stretch, one keyboard — the Piano module's — linked to the Score).
+out=$(SHOTS=0 timeout 1500 node -r ./harness/noshots.cjs jank.cjs 2>&1); echo "jank exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
 for t in playpdfonly singpdf; do
   out=$(timeout 600 node $t.cjs 2>&1); code=$?
   echo "$t exit=$code fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
 done
 out=$(timeout 120 node synclib.mjs 2>&1); echo "synclib exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
+# The MCP server's frozen tool list and its live catalogue (docs/CONNECTOR.md; no Deno, no network).
+out=$(timeout 60 node --experimental-strip-types --no-warnings mcpcatalog.mjs 2>&1); echo "mcpcatalog exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
 if [ -n "$IMPORT_E2E" ]; then
   for sc in full stub1 prep engine crash discard tabs again engineid; do
     out=$(timeout 3000 node importresume.cjs $sc 2>&1); code=$?

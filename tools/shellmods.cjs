@@ -5,6 +5,11 @@
 // back ~300 ms after the lift, silent during a take, cut when the page is hidden), one keyboard with
 // the Score on; the chrome (avatar, Songs, the toggles) never moves — sampled every frame while a song
 // opens and closes and while modules change; no blank frame; reduced motion = a crossfade only.
+// `linked` (A5, the owner: "Piano and Score are linked but independent"): one keyboard — the Piano's,
+// never Play's docked one — where it was whether the Score comes or goes (sampled every frame), the
+// Score above it; with the Score its range is the Score's view, a key pressed strikes through the
+// Score (Play's peekLog), lit there, ▶ lights what it plays, what ▶ plays has its chips at its left end;
+// the Score off: its own range and presses again, no chips.
 // The v87 review: `race` — a second song opened while the first still loads is laid out (it used to
 // leave the song open with nothing shown); `pitch` — a Piano press closes Sing's 🎤 Pitch mic first
 // (no live track at the press) and it listens again after the lift; `gate` — an iOS-like gate (the
@@ -55,7 +60,7 @@ function instrument() {
     window.__pressLive.push(!!window.resonateDebug?.().tuner.live);
     window.__pressMon.push({ mon: !!window.resonateSing?.debug?.()?.monitor?.listening, live: window.__tracks.filter((t) => t.readyState === 'live').length });
   });
-  const CHROME = ['#avatar', '#songs-btn', '#mod-piano', '#mod-sing', '#mod-score'];
+  const CHROME = ['#avatar', '#songs-btn', '#mod-piano', '#mod-sing', '#mod-score', '#piano-region', '.dock'];
   const rectOf = (s) => { const e = document.querySelector(s); if (!e || !e.getClientRects().length) return null; const r = e.getBoundingClientRect(); return [r.left, r.top, r.width, r.height].map((v) => Math.round(v * 10) / 10); };
   const seen = (e) => { if (!e.getClientRects().length) return false; const r = e.getBoundingClientRect(); if (r.bottom <= 60 || r.top >= innerHeight - 60 || r.height < 20) return false; let o = 1; for (let n = e; n && n.nodeType === 1; n = n.parentElement) o *= +getComputedStyle(n).opacity; return o > 0.05; };
   // Every frame until `done()` (or ms): the chrome's rects, how many animations run, any with a
@@ -131,11 +136,24 @@ const state = (p) => p.evaluate(() => {
 const same = (a, b) => !!a && !!b && a.every((v, i) => Math.abs(v - b[i]) <= 0.6);
 // Every sample's chrome rects equal the reference (null = not shown: skipped).
 function steady(samples, ref, label, keys = [0, 1, 2]) {
-  const names = ['avatar', 'Songs', 'Piano', 'Sing', 'Score'];
+  const names = ['avatar', 'Songs', 'Piano', 'Sing', 'Score', 'the keyboard'];
   for (const i of keys) {
     const bad = samples.find((s) => s.rects[i] && !same(s.rects[i], ref[i]));
     ok(!bad && samples.some((s) => s.rects[i]), `${label}: ${names[i]} never moved (${samples.length} frames${bad ? `; at ${bad.t} ms ${JSON.stringify(bad.rects[i])} ≠ ${JSON.stringify(ref[i])}` : ''})`);
   }
+}
+// The Piano on before and after a change (the Score or Sing came or went): the same keyboard — its
+// size never changes, it never jumps (≤ 12 px a frame: it glides with the dock under it, when Start
+// leaves the dock or comes back), and where the dock didn't change it never moved at all.
+function kbSteady(samples, r0, r1, label) {
+  const K = 5, D = 6, kb0 = r0['#piano-region'], kb1 = r1['#piano-region'];
+  const seen = samples.map((x) => x.rects[K]).filter(Boolean);
+  const sized = seen.every((r) => Math.abs(r[2] - kb0[2]) < 0.6 && Math.abs(r[3] - kb0[3]) < 0.6 && Math.abs(r[0] - kb0[0]) < 0.6);
+  let jump = 0;
+  for (let i = 1; i < seen.length; i++) jump = Math.max(jump, Math.abs(seen[i][1] - seen[i - 1][1]));
+  const dockSame = Math.abs(r0['.dock'][1] - r1['.dock'][1]) < 0.6;
+  ok(seen.length && sized && jump <= 12 && (!dockSame || seen.every((r) => Math.abs(r[1] - kb0[1]) < 0.6)) && Math.abs(r1['.dock'][1] - (kb1[1] + kb1[3])) < Math.abs(r0['.dock'][1] - (kb0[1] + kb0[3])) + 0.6,
+    `${label}: the keyboard stayed — its size kept, ${dockSame ? 'never moved' : `glided with the dock (≤ ${Math.round(jump)} px a frame)`} (${seen.length} frames)`);
 }
 // A press on the standalone keyboard's key (held ms): a finger, or the mouse.
 async function pressKey(p, sz, midi = 60, ms = 300, during = null) {
@@ -181,11 +199,10 @@ async function checkSet(p, sz, bits, label, { dflt = false } = {}) {
   const s = await state(p), d = await dbg(p);
   ok(s.pressed === bits, `${label}: toggles pressed ${s.pressed}`);
   ok(s.sing === want.sing && s.score === want.score, `${label}: Sing ${s.sing ? 'shown' : 'hidden'}, the Score ${s.score ? 'shown' : 'hidden'}`);
-  const keyboards = [s.piano, s.scoreKeys].filter(Boolean).length;
-  ok(keyboards === (want.piano ? 1 : 0) && s.piano === (want.piano && !want.score) && s.scoreKeys === (want.piano && want.score),
-    `${label}: one keyboard at most — on its own ${s.piano}, the Score's ${s.scoreKeys}`);
+  ok(s.piano === !!want.piano && !s.scoreKeys, `${label}: one keyboard at most, the Piano's — shown ${s.piano}, Play's docked one ${s.scoreKeys}`);
   ok(!s.keysBtn, `${label}: no 🎹 in the Score's bar`);
-  if (want.score) ok(s.scoreKb === !!want.piano && s.playKeys === null, `${label}: the Score's keyboard follows the Piano (${s.scoreKb}), play.html's 🎹 setting untouched (${s.playKeys})`);
+  if (want.score) ok(s.scoreKb === false && s.playKeys === null, `${label}: Play's own keyboard off (${s.scoreKb}), play.html's 🎹 setting untouched (${s.playKeys})`);
+  ok(d.piano.linked === !!(want.score && want.piano), `${label}: the keyboard ${d.piano.linked ? "the Score's" : 'its own'}`);
   if (!want.sing && !want.score) ok(d.song.form === 'full' && s.gauge && s.start && s.pill && d.song.open, `${label}: the full tuner, Start, the song's pill (${d.song.form})`);
   else ok(d.song.form !== 'full' && s.pill, `${label}: the tuner ${d.song.form} (${d.song.tin}), the pill`);
   if (want.sing && want.score) {
@@ -193,7 +210,8 @@ async function checkSet(p, sz, bits, label, { dflt = false } = {}) {
     else ok(s.rs.b <= s.rc.y + 0.5 && s.rs.h >= 200 && s.rc.h >= 220, `${label}: stacked — Sing ${Math.round(s.rs.h)} px above the Score ${Math.round(s.rc.h)} px`);
     if (sz.dev === 'phone') ok(s.singScroll === 'auto', `${label}: Sing scrolls in its own region (${s.singScroll})`);
   }
-  if (want.piano && !want.score) ok(s.rp && s.dock && s.rp.b <= s.dock.y + 0.5 && s.rp.h >= 56, `${label}: the keyboard above the dock (${s.rp && Math.round(s.rp.h)} px)`);
+  if (want.piano) ok(s.rp && s.dock && s.rp.b <= s.dock.y + 0.5 && s.rp.h >= 56, `${label}: the keyboard above the dock (${s.rp && Math.round(s.rp.h)} px)`);
+  if (want.piano && want.score) ok(s.rc && s.rc.b <= s.rp.y + 0.5, `${label}: the Score laid out above the keyboard (${s.rc && Math.round(s.rc.b)} ≤ ${Math.round(s.rp.y)})`);
   const pref = (s.pref[sz.dev] || []).slice().sort().join(',');
   if (dflt && !s.pref[sz.dev]) ok(true, `${label}: the default (nothing saved yet)`);
   else ok(pref === ['piano', 'score', 'sing'].filter((k) => want[k]).join(','), `${label}: kept for this device class (${pref || 'none'})`);
@@ -248,10 +266,13 @@ async function runSize(sz) {
   for (let i = 0; i < order.length; i++) {
     const bits = order[i];
     if (i) {
+      const both = order[i - 1][2] === '1' && bits[2] === '1';
+      const r0 = both ? await p.evaluate(() => window.__rects()) : null;
       const smp = p.evaluate((src) => window.__sample(8000, src), SETTLED);
       await toSet(p, bits);
       const sm = await smp;
       steady(sm, R1, `→ ${nameOf(bits)}`, [0, 1, 2, 3, 4]);
+      if (both) kbSteady(sm, r0, await p.evaluate(() => window.__rects()), `→ ${nameOf(bits)}`);
       ok(sm.every((x) => x.content), `→ ${nameOf(bits)}: no blank frame`);
     }
     await checkSet(p, sz, bits, nameOf(bits), { dflt: i === 0 });
@@ -261,6 +282,8 @@ async function runSize(sz) {
   }
   // (the last set: the one before the start — kept for the reload)
   const lastBits = order[order.length - 1];
+
+  await linked(p, sz);
 
   // --- the Piano on its own with the song: the song's range -----------------------------------------
   await toSet(p, '001');
@@ -352,6 +375,54 @@ async function runSize(sz) {
 
   ok(!ctx.errors.length, `no console errors${ctx.errors.length ? ': ' + ctx.errors.slice(0, 4).join(' | ') : ''}`);
   await ctx.close();
+}
+
+// The Piano and the Score linked (A5): one keyboard, the Piano's — where it was; the Score's keys on it.
+async function linked(p, sz) {
+  const pd = () => p.evaluate(() => { const d = window.resonateDebug(); return { piano: d.piano, play: d.score?.play && { keys: d.score.play.keys, peeks: d.score.play.peekLog.length, last: d.score.play.peekLog.at(-1) || null, hear: d.score.play.playback.hear, pb: d.score.play.playback.state } }; });
+  await toSet(p, '001');
+  await p.waitForTimeout(300);
+  const s0 = await state(p), alone = { ...s0.rp, dock: s0.dock.y }, own = (await pd()).piano.range;
+  await toSet(p, '011');
+  await waitFn(p, `() => window.resonatePlay?.state?.().ready`, 30000);
+  await p.waitForTimeout(500);
+  let s = await state(p), x = await pd();
+  ok(s.rp && alone && ['x', 'w', 'h'].every((k) => Math.abs(s.rp[k] - alone[k]) < 0.6) && Math.abs((s.dock.y - s.rp.b) - (alone.dock - alone.b)) < 0.6,
+    `linked: the same keyboard, on the dock as without the Score (${s.rp && Math.round(s.rp.y)} / ${alone && Math.round(alone.y)}: the dock's Start gone)`);
+  ok(x.piano.linked && !s.scoreKeys && x.play.keys.shell && !x.play.keys.shown, "linked: the Piano's keyboard is the Score's — Play's docked keyboard not shown");
+  ok(s.rc && Math.abs(s.rc.b - s.rp.y) < 1, `linked: the keyboard right under the paper (${s.rc && Math.round(s.rc.b)} / ${Math.round(s.rp.y)})`);
+  ok(JSON.stringify(x.piano.range) === JSON.stringify(x.play.keys.view), `linked: its range is the Score's view (${x.piano.range} = ${x.play.keys.view})`);
+  ok(x.piano.chips >= 2 && x.play.hear.home === 'keys', `linked: what ▶ plays — ${x.piano.chips} chips at its left end (${x.play.hear.home})`);
+  const chip = await p.evaluate(() => { const c = document.querySelector('#piano-region #hear button'), k = document.querySelector('#piano-region .kb'); if (!c) return null; const a = c.getBoundingClientRect(), b = k.getBoundingClientRect(); return { w: a.width, h: a.height, right: a.right, kb: b.left }; });
+  ok(chip && chip.h >= 44 && chip.right <= chip.kb + 0.5, `linked: the chips ≥ 44 px, left of the keys (${JSON.stringify(chip)})`);
+  // a key pressed: struck through the Score, lit on the keyboard while held
+  const n0 = x.play.peeks;
+  let mid = null;
+  await pressKey(p, sz, 60, 350, async () => { mid = await pd(); });
+  await p.waitForTimeout(300);
+  x = await pd();
+  ok(x.play.peeks > n0 && x.play.last?.midis?.join() === '60' && x.piano.log.length === (mid?.piano.log.length ?? -1), `linked: a key pressed strikes through the Score (${JSON.stringify(x.play.last?.midis)}, ${x.play.last?.how}), not the keyboard's own path`);
+  ok(mid && mid.piano.lit.includes(60) && mid.piano.litHands.some(([m, h]) => m === 60 && h === 'rh'), `linked: lit while held (${JSON.stringify(mid?.piano.litHands)})`);
+  ok(!x.piano.lit.length, `linked: and not after the lift (${JSON.stringify(x.piano.lit)})`);
+  // ▶ lights what it plays
+  await p.click('.dock .row #play');
+  const lit = await waitFn(p, `() => (window.resonateDebug().piano.lit || []).length > 0 && window.resonateDebug().score.play.playback.state === 'playing'`, 8000);
+  ok(lit, `linked: ▶ lights what it plays on the keyboard (${JSON.stringify((await pd()).piano.lit)})`);
+  if (sz.n === 'ipad') await shot(p, 'ipad-linked-playing');
+  await p.click('.dock .row #play');
+  await waitFn(p, `() => window.resonateDebug().score.play.playback.state === 'idle'`, 5000);
+  await p.waitForTimeout(300);
+  ok(!(await pd()).piano.lit.length, 'linked: ■ — nothing lit');
+  // the Score off: the keyboard its own again — where it was, the song's range, no chips
+  await toSet(p, '001');
+  await p.waitForTimeout(300);
+  s = await state(p); x = await pd();
+  ok(!x.piano.linked && x.piano.chips === 0 && JSON.stringify(x.piano.range) === JSON.stringify(own) && s.rp && ['x', 'y', 'w', 'h'].every((k) => Math.abs(s.rp[k] - alone[k]) < 0.6),
+    `the Score off: its own again — where it was, the song's range (${x.piano.range}), no chips (${x.piano.chips})`);
+  const n1 = x.piano.log.length;
+  await pressKey(p, sz, 62, 200);
+  await p.waitForTimeout(400);
+  ok((await pd()).piano.log.length > n1, "the Score off: a key sounds through the keyboard's own path");
 }
 
 // A Sing take: the Piano stays silent (a phone, guiding off).

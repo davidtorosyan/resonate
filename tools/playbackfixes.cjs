@@ -358,7 +358,7 @@ const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
           await sleep(60);
         }
         ok(bad === 0 && sides.size === 1, `R5 ${w}×${h} ${view}: a loop over two lines — the keyboard there all along, never over the stretch (${bad} of ${n}), one place (${[...sides]})`);
-        await page.tap("#sel-play"); await sleep(200);
+        await page.tap("#play"); await sleep(200);
       }
       await ctx.close();
     }
@@ -399,7 +399,7 @@ const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
     const gr = (l) => l.find((x) => x.midi === 71), c5 = (l) => l.find((x) => x.midi === 72);
     ok(gr(r0) && c5(r0) && Math.abs(c5(r0).when - gr(r0).when - 0.07) < 0.002, `A4 played: the grace 70 ms before its note (${gr(r0) && (c5(r0).when - gr(r0).when).toFixed(3)})`);
     ok(gr(r1) && c5(r1) && Math.abs(c5(r1).when - gr(r1).when - 0.07) < 0.002 && Math.abs(c5(r1).when - c5(r0).when - p.len) < 0.002, `A4 round 2: the grace at the end of round 1, its note one stretch after the first (${c5(r1) && (c5(r1).when - c5(r0).when).toFixed(3)} vs ${p.len})`);
-    await page.tap("#sel-play"); await sleep(200);
+    await page.tap("#play"); await sleep(200);
     await ctx.close();
   }
 
@@ -570,7 +570,7 @@ const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
       const at0 = (await D(page)).at;
       await touchPath(ctx, page, line(colPt(sy, Math.max(0, sy.cols.length - 8)), colPt(sy, sy.cols.length - 1), 10));
       const span = (await PBD(page)).span;
-      await page.tap("#sel-play");
+      await page.tap("#play");
       await until(page, () => window.resonateDebug().play.playback.state === "playing");
       await until(page, () => window.resonateDebug().play.playback.state === "idle", null, 30000);
       await sleep(300);

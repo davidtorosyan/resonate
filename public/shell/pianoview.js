@@ -1,7 +1,13 @@
-// The Piano module on its own (no Score shown): keyboard.js's keyboard docked above the dock, to be
-// played — each finger its own key, held until it lifts. The range is the open song's melody in
-// whole octaves (C3–B5 at least), else C3–B5. With the Score shown the shell drives the Score's own
-// keyboard instead (one keyboard, never two).
+// The Piano module: keyboard.js's keyboard docked above the dock, to be played — each finger its own
+// key, held until it lifts. One keyboard, wherever the Score is: it stays where it is when the Score
+// comes or goes (the Score is laid out above it, as Sing's region is — v87 handed the Piano over to
+// the Score's own docked keyboard, which came in with the Score: "the Score arrives with its own
+// piano"). On its own the range is the open song's melody in whole octaves (C3–B5 at least), else
+// C3–B5, and it sounds through its own path (below). Linked to the Score while the Score shows
+// (link): the Score's keyboard in all but place — its range is the Score's view, it lights what the
+// Score's presses and ▶ sound (play.js draws it: forScore), a key pressed sounds through the Score's
+// own path (resonatePlay.press / lift — Play's levels, bus and restrike, lit there too), and what ▶
+// plays has its chips at its left end, as on play.html's dock.
 // Sound as Play's presses (play.js): a context of the shell's own (ownContext: asleep when the page
 // is hidden), the piano decoded on it once the keyboard first shows (warm), the first tap anywhere
 // resumes it (the session left alone), a press sets "playback" and strikes in its own pointerdown
@@ -12,9 +18,9 @@
 // are quiet (one sound at a time); a tuner that was
 // listening listens again REOPEN ms after the last key lifts. Silent during a Sing take (quiet()).
 // Hidden (the module, the page): every note cut, the context asleep.
-import { mountKeyboard } from "../keyboard.js?v=90";
-import { loadPiano, pianoNow, holdPiano, primeHold, pianoBus, keepAlive, ownContext, sleepAudio } from "../piano.js?v=90";
-import { SHARPS } from "../music.js?v=90";
+import { mountKeyboard } from "../keyboard.js?v=91";
+import { loadPiano, pianoNow, holdPiano, primeHold, pianoBus, keepAlive, ownContext, sleepAudio } from "../piano.js?v=91";
+import { SHARPS } from "../music.js?v=91";
 
 const MIN_PRESS = 0.25; // s: a quick tap still sounds this long
 const LIFT_PLAY = 0.8; // s: a press that could only sound at the lift
@@ -29,10 +35,21 @@ const sleep = (t) => new Promise((r) => setTimeout(r, t));
 const setSession = (type) => { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {} };
 
 // tuner: { state, park(), start() }; beforeSound(): Sing stops (the tuner is parked here);
-// quiet(): true while Sing records; busy(): a module sounds (the tuner isn't reopened then).
-export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => false, busy = () => false }) {
+// quiet(): true while Sing records; busy(): a module sounds (the tuner isn't reopened then);
+// score: { press(midi, e) → a strike | null (Sing records) | undefined (play.js not loaded yet: this
+// keyboard's own path), lift(strike), changed() (its keys and chips drawn again) } — the Score's.
+export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => false, busy = () => false, score = null }) {
   const kbEl = el.querySelector(".kb");
+  // (what ▶ plays, beside the keys while linked: play.js puts its chips here — inside .play-scope, so
+  // the Score's own CSS draws them; display: contents, so they're the row's own flex item, as in
+  // play.html's dock, with its 8 px gap)
+  const hearBox = document.createElement("span");
+  hearBox.className = "play-scope";
+  hearBox.style.display = "none";
+  el.insertBefore(hearBox, kbEl);
+  el.style.columnGap = "8px";
   let ac = null, gate = null, shown = false, range = [48, 83];
+  let linked = false, scoreLit = new Map(), scoreRange = null, ownLit = new Map(); // (linked: the Score's keys; own: its own presses)
   const held = new Set(); // the keys down: { midi, h (holdPiano), a, t0, end, lift, dead, cap, ts }
   const sounding = new Set(); // every press whose note may still sound or start (a lifted one waiting for the context too)
   const log = [];
@@ -41,9 +58,21 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
 
   const kb = mountKeyboard(kbEl, {
     range,
-    onPress: (midi, e) => press(midi, e),
-    onRelease: (k, e, cancelled) => lift(k, !!e && !cancelled),
+    // (linked: the Score's path — a key pressed before play.js has loaded sounds through this one's)
+    onPress: (midi, e) => {
+      const pk = linked ? score?.press(midi, e) : undefined;
+      return pk !== undefined ? { score: pk } : press(midi, e);
+    },
+    onRelease: (k, e, cancelled) => (k && "score" in k ? score?.lift(k.score) : lift(k, !!e && !cancelled)),
+    // (its size: drawn to it — and, linked, the chips beside it placed again: still room for both?)
+    onResize: () => { draw(); if (linked && shown) score?.changed(); },
   });
+  // What it shows: the Score's keys and range while linked (once play.js has drawn them), else its own.
+  function draw() {
+    if (!shown) return;
+    if (linked && scoreRange) kb.update({ lit: scoreLit, range: scoreRange });
+    else kb.update({ lit: ownLit, range });
+  }
 
   // --- the context ----------------------------------------------------------------------------
   function fresh() {
@@ -61,7 +90,7 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
   }
   const UNLOCK = ["pointerup", "click", "keydown"];
   function unlock(e) {
-    if (!e.isTrusted || document.visibilityState === "hidden" || (!ac && !shown)) return; // (never shown: no context made for it)
+    if (!e.isTrusted || document.visibilityState === "hidden" || (!ac && (!shown || linked))) return; // (never shown, or the Score's: no context made for it)
     for (const t of UNLOCK) document.removeEventListener(t, unlock, true);
     const a = fresh();
     if (a.state !== "running") a.resume().catch(() => {});
@@ -175,8 +204,9 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
       const n = SHARPS[((k.midi % 12) + 12) % 12], hand = k.midi >= 60 ? "rh" : "lh";
       lit.set(k.midi, { hand, fill: HAND[hand], letter: n[0], acc: n.slice(1) });
     }
-    kb.setLit(lit);
+    ownLit = lit;
     litKeys = [...lit.keys()];
+    if (!linked || !scoreRange) draw();
   }
 
   // --- asleep: the page hidden or left ------------------------------------------------------------
@@ -202,14 +232,37 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
       if (on === shown) return;
       shown = on;
       el.hidden = !on;
-      if (on) { kb.remeasure(); kb.forget(); kb.update({ range }); warm(); }
+      if (on) { kb.remeasure(); kb.forget(); draw(); if (!linked) warm(); }
       else cutAll();
     },
     get shown() { return shown; },
-    setRange(rg) { range = rg; if (shown) kb.setRange(rg); },
+    // The Score shown (on) or not: the Score's keyboard, or its own again (its own presses' notes cut
+    // — the Score's ring on through the Score). → changed
+    link(on) {
+      on = !!on;
+      if (on === linked) return false;
+      linked = on;
+      hearBox.style.display = on ? "contents" : "none"; // (unlinked: play.js moves the chips back to the stretch's controls)
+      if (on) cutAll();
+      else { scoreLit = new Map(); scoreRange = null; if (shown) warm(); arm(); }
+      kb.forget();
+      draw();
+      return true;
+    },
+    get linked() { return linked; },
+    // For play.js (resonatePlay.shellKeys), while linked and shown: draw the Score's keys, where its
+    // chips go, how tall the keyboard is (the two-systems fit leaves it its share). → null otherwise
+    forScore: () => (linked && shown ? {
+      draw: (lit, rg) => { scoreLit = lit; scoreRange = rg; draw(); },
+      host: () => ({ row: el, box: hearBox, strip: kbEl }),
+      height: () => el.offsetHeight,
+    } : null),
+    setRange(rg) { range = rg; if (!linked || !scoreRange) draw(); },
     stopAll: () => cutAll(),
     held: () => held.size,
-    debug: () => ({ shown, range: [...range], held: [...held].map((k) => k.midi), lit: litKeys.slice(), fingers: kb.held(), log: log.slice(), ctx: ac?.state || null,
+    debug: () => ({ shown, linked, range: linked && scoreRange ? [...scoreRange] : [...range], own: [...range], held: [...held].map((k) => k.midi), lit: linked && scoreRange ? [...scoreLit.keys()] : litKeys.slice(),
+      litHands: linked && scoreRange ? [...scoreLit].map(([m, L]) => [m, L.hand]) : litKeys.map((m) => [m, m >= 60 ? "rh" : "lh"]), chips: hearBox.querySelectorAll("button[data-key]").length,
+      fingers: kb.held(), log: log.slice(), ctx: ac?.state || null,
       awake: !!awake.src, reopenAt, draws: kb.draws, rect: shown ? (({ left, top, width, height }) => ({ left, top, width, height }))(el.getBoundingClientRect()) : null }),
   };
 }

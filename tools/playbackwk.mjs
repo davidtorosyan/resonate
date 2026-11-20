@@ -56,8 +56,8 @@ try {
   x = await pb();
   console.log(JSON.stringify(x));
   ok(x.span && x.bands >= 1 && x.selbar, `a mouse drag: a stretch ${JSON.stringify(x.span)}, ${x.bands} band(s), its controls`);
-  await click("#sel-play");
-  ok(await waitFor("return window.resonateDebug().play.playback.state === 'playing'", 8000), "its ▶ plays");
+  await click("#play");
+  ok(await waitFor("return window.resonateDebug().play.playback.state === 'playing'", 8000), "the bar's ▶ plays it");
   ok(await waitFor("return window.resonateDebug().play.playback.state === 'idle'", 30000), "… once, then stops");
   x = await pb();
   ok(x.span && x.kind === null, `the stretch kept (${JSON.stringify(x.span)})`);

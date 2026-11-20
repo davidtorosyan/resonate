@@ -7,14 +7,14 @@ live in CLAUDE.md ("UI principles").
 ## Where things stand (2026-11-20)
 
 **Work queue (the owner, 2026-11-20 16:17 UTC — no push to main before 17:17 UTC; conversions running on the iPad). Kept up to date as items land, so a fresh session can resume:**
-- [ ] A1 Songs sheet on a phone can't be dismissed (the handle at the top doesn't drag down).
-- [ ] A2 The song list is reachable twice (the top-left song pill drops down the list, and Songs bottom right): one way only; the title still shown.
-- [ ] A3 Turning the Piano on with the Score shown re-lays the score out (the notes on screen are gone); Sing only makes it smaller. Piano must behave like Sing.
-- [ ] A4 Two ▶ when a stretch is picked (the big one and the stretch controls' small one).
-- [ ] A5 Piano then Score from home: the Score arrives "with its own piano". Piano and Score are linked but independent — one keyboard, the Piano module's.
-- [ ] A6 The assistant connector: new tools needed deleting and re-adding the ChatGPT plugin. Find a way (versioning / discovery / refresh) so it never has to happen again.
-- [ ] A7 Song rows: "engine 10" as the subtitle is confusing — show the engine (as a version, "v10") only when it matters (an older engine), not as the main fact.
-- [ ] A8 The converting tile changes width and pushes the ▶ beside it around.
+- [x] A1 Songs sheet on a phone can't be dismissed (the handle at the top doesn't drag down).
+- [x] A2 The song list is reachable twice (the top-left song pill drops down the list, and Songs bottom right): one way only; the title still shown.
+- [x] A3 Turning the Piano on with the Score shown re-lays the score out (the notes on screen are gone); Sing only makes it smaller. Piano must behave like Sing.
+- [x] A4 Two ▶ when a stretch is picked (the big one and the stretch controls' small one).
+- [x] A5 Piano then Score from home: the Score arrives "with its own piano". Piano and Score are linked but independent — one keyboard, the Piano module's.
+- [x] A6 (deployed 17:2x UTC; the owner presses Refresh once — docs/CONNECTOR.md) The assistant connector: new tools needed deleting and re-adding the ChatGPT plugin. Find a way (versioning / discovery / refresh) so it never has to happen again.
+- [x] A7 Song rows: "engine 10" as the subtitle is confusing — show the engine (as a version, "v10") only when it matters (an older engine), not as the main fact.
+- [x] A8 The converting tile changes width and pushes the ▶ beside it around.
 - [ ] B  Make the one-pager the site (the root is the shell; the old pages retired).
 - [ ] C  Tech debt: cleanup / re-architecture / dead code, after B.
 - [ ] D  Engine accuracy loop: compare every converted song with its PDF, bar by bar; reproduce discrepancies natively, patch, bump ENGINE_N, repeat until none.

@@ -4,16 +4,28 @@
 // HTTP (MCP SDK v2): a fresh server per request; tools in resonate.ts run as the user under RLS.
 // Deployed with verify_jwt = false (withSupabase verifies the token; the OAuth discovery must
 // get through without one).
+//
+// THE TOOL LIST IS FROZEN (docs/CONNECTOR.md): ChatGPT and Claude keep a copy of the tools (names,
+// descriptions, input schemas) and of the instructions from when the connector was added, and a
+// new tool reached ChatGPT only by deleting and re-adding the connector (v88). Never add, rename or
+// remove a tool here, nor change an input schema: a new ability is an entry in catalog.ts (an
+// action of control_resonate or a query of read_resonate), which get_capabilities lists live.
 import { pipeline } from "@supabase/middleware";
 import { withOAuthProtectedResource, withSupabase } from "@supabase/server";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import * as R from "./resonate.ts";
+import { VERSION } from "./catalog.ts";
 
 const READ = { readOnlyHint: true, openWorldHint: false } as const;
 
 function build(sb: Parameters<typeof R.listSongs>[0]) {
-  const server = new McpServer({ name: "resonate", title: "Resonate", version: "1.0.0" }, { instructions: R.INSTRUCTIONS });
+  // listChanged false: a stateless server (a fresh one per request) has no stream to send
+  // notifications/tools/list_changed on — and neither ChatGPT nor Claude acts on it (CONNECTOR.md).
+  const server = new McpServer({ name: "resonate", title: "Resonate", version: VERSION }, {
+    instructions: R.INSTRUCTIONS,
+    capabilities: { tools: { listChanged: false } },
+  });
   let who = "Assistant";
   const gate = async <T>(fn: () => Promise<T>, tool = "") => {
     if (!(await R.approved(sb))) return R.fail("This Resonate account isn't approved for the cloud yet.");
@@ -85,7 +97,7 @@ function build(sb: Parameters<typeof R.listSongs>[0]) {
   const bar = z.union([z.number().int(), z.string()]);
   server.registerTool("get_score_view", {
     title: "The Score and the user's highlight",
-    description: "What Resonate's Score (sheet music: the Play page) shows on each device — song, view, page, bars on screen, the stretch picked, ▶, the PDF — and the bars the user highlighted last: their notes as text, the view's MusicXML for them, a picture of the drawn bars and one of the same bars on the original PDF (red border). Use it when the user asks about what they're looking at or highlighted, e.g. whether a bar was transcribed right: compare the PDF picture with the notes.",
+    description: "What Resonate's Score (sheet music) shows on each device — song, view, page, bars on screen, the stretch picked, ▶, the PDF — and the bars the user highlighted last: their notes as text, the view's MusicXML for them, a picture of the drawn bars and one of the same bars on the original PDF (red border). Use it when the user asks about what they're looking at or highlighted, e.g. whether a bar was transcribed right: compare the PDF picture with the notes.",
     annotations: READ,
   }, () => gate(() => R.getScoreView(sb), "get_score_view"));
 
@@ -103,29 +115,51 @@ function build(sb: Parameters<typeof R.listSongs>[0]) {
     annotations: READ,
   }, ({ song, page }) => gate(() => R.getScorePdf(sb, song, page), "get_score_pdf"));
 
+  // --- what Resonate can do now, and any read by name (2026-11-20; the last tools ever added) -----
+  server.registerTool("get_capabilities", {
+    title: "What Resonate can do now",
+    description: "Every action control_resonate takes and everything read_resonate reads, with their parameters, as of now. Resonate adds abilities over time WITHOUT adding tools, so this list is newer than the tool descriptions you were given: call it when the user asks for something your other tools don't obviously cover, or when an action is refused as unknown.",
+    annotations: READ,
+  }, () => gate(async () => R.capabilities(), "get_capabilities"));
+
+  server.registerTool("read_resonate", {
+    title: "Read from Resonate",
+    description: "Read anything get_capabilities lists under read_resonate, by name (what), with its parameters as fields or inside args — including reads added after these tools were described to you. The tools named get_* / list_* do the same for their own reads.",
+    inputSchema: z.looseObject({
+      what: z.string().describe("What to read: a name get_capabilities lists under read_resonate (e.g. status, songs, take, score_view)"),
+      song: z.string().optional().describe("Song id or (part of) its title, for reads that take a song"),
+      args: z.record(z.string(), z.unknown()).optional().describe("Any other parameters of the read, e.g. {\"take\": \"latest\"}"),
+    }),
+    annotations: READ,
+  }, (input) => gate(() => R.read(sb, input), `read:${R.queryName(input.what)}`));
+
+  // The one tool that acts. Its input schema is open on purpose (an action is any name in
+  // catalog.ts, checked there; extra fields and args pass through) so a new action never needs a
+  // new schema in the assistants' copies.
   server.registerTool("control_resonate", {
     title: "Control Resonate",
-    description: "Act in Resonate's Sing page on the device whose 📡 Remote is on. action: sing = START A TAKE — the user sings while Resonate records and grades it; use it whenever the user asks to start, go, sing, perform, record or try (to_line N: a short performance that ends by itself after line N — use this instead of stopping it yourself; view: perform = lyrics only, practice = the lane). It starts after a 'Get ready' countdown, so say a word at most and then stay quiet until it ends. stop = end what's going on (take, loop, playback). listen {line?, only_line?} = play the melody. play_take {mode?: voice|melody|both, line?, only_line?} = play the last take back. loop_line {line} = practise one line round after round. open_song {song}, set_key {semitones -24…24 from the written key, or fit: true = Resonate's best fit for the voice profile}, set_tempo {percent: 50,60,70,80,90,100,110,125}, go_to_line {line}, review = open the take's review on screen. The Score (sheet music, Play page — not for coaching): score_open {song, view?}, score_view {view: score|both|rh|lh|melody}, score_go {measure}, score_select {from_measure, to_measure} (highlights those bars: get_score_view then has their notes and pictures), score_play {from_measure?, to_measure?, loop?, speed: 50–100}, score_stop, score_pdf {on} (the original PDF, zoomed onto the bars in focus); measures are numbers as in the MusicXML. Returns what the page now shows, or why it couldn't.",
-    inputSchema: z.object({
-      action: z.enum(R.ACTIONS),
+    description: "Act in Resonate on the device whose 📡 Remote is on. action: sing = START A TAKE — the user sings while Resonate records and grades it; use it whenever the user asks to start, go, sing, perform, record or try (to_line N: a short performance that ends by itself after line N — use this instead of stopping it yourself; view: perform = lyrics only, practice = the lane). It starts after a 'Get ready' countdown, so say a word at most and then stay quiet until it ends. stop = end what's going on (take, loop, playback). listen {line?, only_line?} = play the melody. play_take {mode?: voice|melody|both, line?, only_line?} = play the last take back. loop_line {line} = practise one line round after round. open_song {song}, set_key {semitones -24…24 from the written key, or fit: true = Resonate's best fit for the voice profile}, set_tempo {percent: 50,60,70,80,90,100,110,125}, go_to_line {line}, review = open the take's review on screen. The Score (sheet music — not for coaching): score_open {song, view?}, score_view {view: score|both|rh|lh|melody}, score_go {measure}, score_select {from_measure, to_measure} (highlights those bars: get_score_view then has their notes and pictures), score_play {from_measure?, to_measure?, loop?, speed: 50–100}, score_stop, score_pdf {on} (the original PDF, zoomed onto the bars in focus); measures are numbers as in the MusicXML. More actions are added over time: get_capabilities lists every one with its parameters (give a parameter as a field here or inside args). Returns what the page now shows, or why it couldn't.",
+    inputSchema: z.looseObject({
+      action: z.string().describe("sing, stop, listen, play_take, loop_line, go_to_line, open_song, set_key, set_tempo, review, score_open, score_view, score_go, score_select, score_play, score_stop, score_pdf — or any other action get_capabilities lists"),
       song: z.string().optional(),
-      semitones: z.number().int().min(-24).max(24).optional(),
+      semitones: z.number().optional(),
       fit: z.boolean().optional(),
       percent: z.number().optional(),
-      line: z.number().int().min(1).optional(),
+      line: z.number().optional(),
       only_line: z.boolean().optional(),
-      to_line: z.number().int().min(1).optional(),
-      view: z.enum(["perform", "practice", "score", "both", "rh", "lh", "melody"]).optional(),
-      mode: z.enum(["voice", "melody", "both"]).optional(),
+      to_line: z.number().optional(),
+      view: z.string().optional().describe("sing: perform | practice; the Score: score | both | rh | lh | melody"),
+      mode: z.string().optional().describe("play_take: voice | melody | both"),
       measure: bar.optional(),
       from_measure: bar.optional(),
       to_measure: bar.optional(),
       loop: z.boolean().optional(),
-      speed: z.number().min(50).max(100).optional(),
+      speed: z.number().optional(),
       on: z.boolean().optional(),
+      args: z.record(z.string(), z.unknown()).optional().describe("Parameters of an action that has no field of its own here (get_capabilities lists them)"),
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  }, (args) => gate(() => R.control(sb, args, who), `control:${args.action}`));
+  }, (input) => gate(() => R.control(sb, input, who), `control:${String(input.action ?? "")}`));
 
   return server;
 }
@@ -145,6 +179,27 @@ async function sessionAlive(req: Request): Promise<boolean> {
   return (await ask("user")) || (await ask("oauth/userinfo"));
 }
 
+// One log line per JSON-RPC message (the function's logs): which assistant asked for what, so a
+// re-fetch of the tool list (initialize / server/discover / tools/list) can be seen. Of a tool
+// call only the tool and its action / what — never the arguments. Best effort: it reads a copy
+// of the (small) body and never throws.
+type Rec = Record<string, unknown>;
+async function logRpc(req: Request, client: string) {
+  try {
+    if (req.method !== "POST") return void console.log(`mcp ${req.method} client=${client}`);
+    const body = await req.clone().json();
+    for (const m of Array.isArray(body) ? body : [body]) {
+      if (!m || typeof m !== "object" || typeof m.method !== "string") continue;
+      const p = (m.params || {}) as Rec, meta = (p._meta || {}) as Rec, a = (p.arguments || {}) as Rec;
+      const info = (p.clientInfo || meta["io.modelcontextprotocol/clientInfo"]) as { name?: string; version?: string } | undefined;
+      const proto = p.protocolVersion || meta["io.modelcontextprotocol/protocolVersion"];
+      const extra = m.method === "tools/call" ? ` ${String(p.name)}${a.action || a.what ? `:${String(a.action || a.what).slice(0, 40)}` : ""}`
+        : `${info ? ` ${info.name ?? "?"}/${info.version ?? "?"}` : ""}${proto ? ` ${String(proto)}` : ""}`;
+      console.log(`mcp ${m.method}${extra} client=${client} v=${VERSION}`);
+    }
+  } catch { /* not JSON: the handler answers it */ }
+}
+
 const handler = pipeline(
   [withOAuthProtectedResource(), withSupabase({ auth: "user" })],
   async (req, ctx) => {
@@ -153,6 +208,7 @@ const handler = pipeline(
     // A connection removed in Resonate (Assistants → Remove) ends its session at once — its
     // token's signature alone would still pass until it expires.
     if (!(await sessionAlive(req))) return Response.json({ error: "This connection was removed — connect again." }, { status: 401 });
+    await logRpc(req, String(ctx.jwtClaims?.client_id));
     const mcp = createMcpHandler(() => build(ctx.supabase), { onerror: (e) => console.error("MCP request failed", e) });
     return mcp.fetch(req);
   },

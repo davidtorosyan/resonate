@@ -314,8 +314,8 @@
       /* A stretch picked by dragging: a band a system, like a text selection (multiplied: the ink
          stays black, the names readable). */
       #stage .sel { position: absolute; pointer-events: none; background: #d4e2ff; mix-blend-mode: multiply; border-radius: 3px; }
-      /* Its controls (▶ ⟳ speed ✕), over the music where they cover neither it nor the line
-         playing (play.js placeSelbar). */
+      /* Its controls (⟳ speed ✕ — the bar's ▶ plays it), over the music where they cover neither it
+         nor the line playing (play.js placeSelbar). */
       #selbar {
         position: absolute; left: 0; top: 0; z-index: 4; display: flex; align-items: center; gap: 4px;
         padding: 4px; border-radius: 999px; background: #14142c; box-shadow: 0 2px 12px rgba(0,0,0,0.3);
@@ -329,7 +329,6 @@
       #selbar button[hidden] { display: none; }
       #selbar button svg { width: 22px; height: 22px; display: block; margin: auto; }
       #selbar button[aria-pressed="true"] { background: rgba(166,79,255,0.45); }
-      #selbar #sel-play[data-icon="stop"] { background: rgba(216,107,0,0.4); }
       #selbar select { padding: 0 0.6rem; background: rgba(255,255,255,0.08); -webkit-appearance: none; appearance: none; text-align: center; font-variant-numeric: tabular-nums; }
       #selbar #sel-clear { font-size: 1rem; color: rgba(255,255,255,0.7); }
       /* (a narrow screen: the controls take two rows rather than run off it — the chips for ▶ are
@@ -424,13 +423,12 @@
       </span>
       <span class="brk"></span>
       <button id="remote-btn" type="button" hidden aria-pressed="false" aria-label="Remote">📡</button>
-      <span id="version" class="mono">v90</span>
+      <span id="version" class="mono">v91</span>
     </header>
     <main id="stage" data-names="all">
       <p id="msg" hidden></p>
       <div id="bubble"></div>
       <div id="selbar" hidden>
-        <button id="sel-play" type="button" aria-label="Play" title="Play"></button>
         <button id="sel-loop" type="button" aria-label="Loop" title="Loop" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 0 1 13-5.1L19.5 9M19.5 4.5V9H15M19.5 12a7.5 7.5 0 0 1-13 5.1L4.5 15M4.5 19.5V15H9"/></svg></button>
         <select id="speed" aria-label="Speed" title="Speed">
           <option value="1">100%</option><option value="0.9">90%</option><option value="0.8">80%</option><option value="0.7">70%</option><option value="0.6">60%</option><option value="0.5">50%</option>
@@ -448,7 +446,7 @@
       <div id="hear" class="hear" role="group" aria-label="Hear" hidden></div>
       <div id="strip" aria-hidden="true"></div>
     </div>
-    <script type="module" src="nav.js?v=90"></script>
-    <script type="module" src="play.js?v=90"></script>
+    <script type="module" src="nav.js?v=91"></script>
+    <script type="module" src="play.js?v=91"></script>
   </body>
 </html>

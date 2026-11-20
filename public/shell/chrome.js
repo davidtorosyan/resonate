@@ -99,6 +99,88 @@ export function closePage() {
 export const pageOpen = () => page?.name || null;
 
 scrim.addEventListener("click", () => closeOverlay());
+
+// --- a sheet with a handle: drag it down to close ----------------------------------------------
+// A bottom sheet that shows its handle (.grab: Songs and the account menu on a phone; a tablet's
+// popovers hide it) follows a finger on the handle or the sheet's head down and closes past a
+// threshold or on a flick, else springs back. Closed the usual way (closeOverlay: the history entry
+// goes, as with Back). Reduced motion: the sheet stays put while dragging; the release decides.
+// (Delegated: the account menu draws its own markup. The head's buttons — + Add — still take a tap;
+// a drag that moved swallows the click that would follow.)
+const DRAG_FROM = ".grab, .sheet-head, .acct-head";
+const SLOP = 6; // px before a press is a drag
+const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+let drag = null; // { sheet, id, y0, dy, h, moved, still, owner, pts: [[t, y]…] }
+document.addEventListener("pointerdown", (e) => {
+  if (drag || !top || !e.isPrimary || e.button) return;
+  const from = e.target.closest?.(DRAG_FROM), sheet = from?.closest(".sheet");
+  if (!sheet || sheet.hidden || e.target.closest("input, textarea, select")) return;
+  const grab = sheet.querySelector(":scope > .grab");
+  if (!grab || !grab.getClientRects().length) return; // (no handle shown: a popover)
+  drag = { sheet, id: e.pointerId, y0: e.clientY, dy: 0, h: sheet.getBoundingClientRect().height, moved: false, still: reduced(), owner: top, pts: [[e.timeStamp, e.clientY]] };
+}, true);
+document.addEventListener("pointermove", (e) => {
+  if (!drag || e.pointerId !== drag.id) return;
+  const dy = Math.max(0, e.clientY - drag.y0);
+  drag.pts.push([e.timeStamp, e.clientY]);
+  if (drag.pts.length > 6) drag.pts.shift();
+  if (!drag.moved) {
+    if (Math.abs(e.clientY - drag.y0) < SLOP) return;
+    drag.moved = true;
+    drag.sheet.style.transition = "none";
+    try { drag.sheet.setPointerCapture(e.pointerId); } catch {} // (a mouse let go outside the window still ends it)
+  }
+  drag.dy = dy;
+  if (drag.still) return;
+  drag.sheet.style.transform = dy ? `translateY(${dy}px)` : "";
+  scrim.style.opacity = String(Math.max(0.15, 1 - dy / drag.h));
+});
+function dragEnd(e, cancelled) {
+  if (!drag || e.pointerId !== drag.id) return;
+  const d = drag;
+  drag = null;
+  if (!d.moved) return;
+  // the release: far enough, or a flick down (the last ~100 ms faster than 0.5 px/ms)
+  const [t1, y1] = d.pts[d.pts.length - 1], [t0, y0] = d.pts.find(([t]) => t1 - t <= 100) || d.pts[0];
+  const v = t1 > t0 ? (y1 - y0) / (t1 - t0) : 0;
+  const far = d.dy > Math.max(60, Math.min(140, d.h * 0.25)) || (v > 0.5 && d.dy > 24);
+  swallowClick(d.sheet);
+  if (!cancelled && far && top === d.owner) {
+    if (d.still) { settle(d.sheet); closeOverlay(); return; }
+    const a = d.sheet.animate([{ transform: `translateY(${d.dy}px)` }, { transform: `translateY(${d.h + 20}px)` }],
+      { duration: Math.max(90, Math.min(220, (d.h - d.dy) / Math.max(1.2, v))), easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" });
+    scrim.animate([{ opacity: scrim.style.opacity || 1 }, { opacity: 0 }], { duration: 180, fill: "forwards" });
+    a.onfinish = () => { if (top === d.owner) closeOverlay(); settle(d.sheet); a.cancel(); scrim.getAnimations().forEach((x) => x.cancel()); };
+    return;
+  }
+  // not far enough: back where it was
+  if (!d.still && d.dy) {
+    d.sheet.animate([{ transform: `translateY(${d.dy}px)` }, { transform: "none" }], { duration: 200, easing: "cubic-bezier(.22,.8,.24,1)" });
+    scrim.animate([{ opacity: scrim.style.opacity || 1 }, { opacity: 1 }], { duration: 200 });
+  }
+  settle(d.sheet);
+}
+function settle(sheet) {
+  sheet.style.transform = "";
+  sheet.style.transition = "";
+  scrim.style.opacity = "";
+}
+// (the click a drag's release can make on the head's button — a mouse's; a finger makes none past the
+// browser's own slop: only one in the sheet, right after the release, so a tap elsewhere still counts)
+function swallowClick(sheet) {
+  const stop = (ev) => {
+    if (!sheet.contains(ev.target)) return;
+    ev.stopPropagation();
+    ev.preventDefault();
+    done();
+  };
+  const done = () => document.removeEventListener("click", stop, true);
+  document.addEventListener("click", stop, true);
+  setTimeout(done, 250);
+}
+document.addEventListener("pointerup", (e) => dragEnd(e, false));
+document.addEventListener("pointercancel", (e) => dragEnd(e, true));
+
 addEventListener("popstate", () => {
   if (expectPop) { expectPop--; return; }
   if (top || pushed) { closeOverlay({ fromPop: true }); return; }

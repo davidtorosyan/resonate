@@ -81,7 +81,7 @@ const dbg = (p) => p.evaluate(() => {
   if (!d) return null;
   const pl = d.score?.play, s = window.resonateSing?.debug?.();
   return { song: d.song, tuner: d.tuner, overlay: d.overlay,
-    play: pl && { ready: pl.ready, page: pl.page, pages: pl.pages, at: pl.at, W: pl.W, H: pl.H, sp: pl.sp, keys: pl.keys.shown, peeks: pl.peekLog.length, last: pl.peekLog.at(-1) || null,
+    play: pl && { ready: pl.ready, page: pl.page, pages: pl.pages, at: pl.at, W: pl.W, H: pl.H, sp: pl.sp, keys: !!(d.piano?.shown && d.piano.linked) && !pl.keys.shown, peeks: pl.peekLog.length, last: pl.peekLog.at(-1) || null,
       pb: pl.playback.state, sched: pl.playback.scheduled.length, audio: pl.audio },
     lgen: d.song?.score?.lgen ?? null,
     sing: s && { session: s.session?.kind || null, title: s.score?.title } };
@@ -98,7 +98,7 @@ const shot = (p, sz, name) => sz.shots && p.screenshot({ path: `${SHOTS}/${name}
 // The paper: inside the window, above the keyboard and the dock; no page scroll; the bars' targets ≥ 44.
 const paper = (p) => p.evaluate(() => {
   const r = (e) => e && e.getClientRects().length ? e.getBoundingClientRect() : null;
-  const st = r(document.getElementById('stage')), kb = r(document.getElementById('dock')), row = r(document.querySelector('.dock .row')), top = r(document.querySelector('.top'));
+  const st = r(document.getElementById('stage')), kb = r(document.getElementById('piano-region')), row = r(document.querySelector('.dock .row')), top = r(document.querySelector('.top'));
   const se = document.scrollingElement;
   const small = [...document.querySelectorAll('.top button, .top a, .dock .row button, #score-region #bar button, #score-region #bar select, #score-region .corner button')]
     .filter((e) => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')
@@ -178,7 +178,7 @@ async function runSize(sz) {
   ok(await p.evaluate(() => !!document.querySelector('.dock .row #play') && !!document.querySelector('#score-region #bar .pager') && !!document.querySelector('.dock .row .corner #songs-btn')) && await shown(p, '#mod-piano'),
     "the dock: ▶ Play · the toggles · Songs (‹ › in the Score's bar)");
   if (sz.dev === 'phone') ok(!d.play.keys && !(await shown(p, '#listen')), 'no keyboard by default on a phone; no Listen');
-  else ok(d.play.keys && !(await shown(p, '#score-region #keys')) && await p.$eval('#mod-piano', (e) => e.getAttribute('aria-pressed') === 'true'), "the desk: the keyboard docked — the dock's Piano on, no 🎹 in the Score's bar");
+  else ok(d.play.keys && !(await shown(p, '#score-region #keys')) && await p.$eval('#mod-piano', (e) => e.getAttribute('aria-pressed') === 'true'), "the desk: the Piano's keyboard under the Score, the Score's — the dock's Piano on, no 🎹 in the Score's bar");
   await p.waitForTimeout(600);
   await checkPaper(p, 'the Score alone');
   await shot(p, sz, sz.dev === 'phone' ? 'phone-score' : 'desk');

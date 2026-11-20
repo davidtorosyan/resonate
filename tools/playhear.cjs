@@ -375,7 +375,7 @@ const near = (a, b) => Math.abs(a.sec - b.sec) < 0.002 && a.midi === b.midi;
     const v0 = r0.filter((e) => e.part === "P1"), vl = rLast;
     const k = vl[0]?.round;
     ok(v0.length === vl.length && v0.every((e, i) => Math.abs(vl[i].when - e.when - (k * L.len) / L.speed) < 1e-6), `D the rounds still one stretch-length apart (${v0.length} voice notes a round, round ${k})`);
-    await page.tap("#sel-play").catch(() => {}); await sleep(200);
+    await page.tap("#play").catch(() => {}); await sleep(200);
     await chip(page, "P2");
     await ctx.close();
   }

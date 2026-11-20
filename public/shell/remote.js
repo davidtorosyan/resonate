@@ -13,8 +13,8 @@
 // A PDF not converted yet (v90): open_song opens it with the Score on its PDF (Sing can't open it)
 // and says pdf_only; Sing's commands on one open here are refused; the Score's wait takes its PDF
 // shown for ready (play.js state(): pdfOnly, shown).
-import { remote } from "../assist.js?v=90";
-import { songChoices } from "../catalog.js?v=90";
+import { remote } from "../assist.js?v=91";
+import { songChoices } from "../catalog.js?v=91";
 
 const $ = (id) => document.getElementById(id);
 const HOME = { page: "home", song: null, key: null, tempo: null, doing: "idle", line: null, lines: 0, has_take: false, sound: "none" };

@@ -2,8 +2,11 @@
 // Piano (pianoview.js), each on or off with its toggle in the dock beside Songs — any combination,
 // none included (the full tuner, the song still open: its pill stays). Which are on is a device pref
 // per device class (resonate.shell.modules: a set; a phone opens Sing, a tablet / desktop the
-// Score with its keyboard); the Piano toggle shows the keyboard with or without a song: on its own
-// above the dock, or — the Score shown — the Score's own docked keyboard (one keyboard, never two).
+// Score with the Piano); the Piano toggle shows the keyboard with or without a song, above the dock:
+// one keyboard, where it is whether the Score comes or goes (the Score is laid out above it, as Sing
+// is) — linked to the Score while the Score shows (pianoview.js: the Score's keys, range and ▶),
+// its own otherwise. The Piano coming or going under the Score keeps what's shown (play.js holds the
+// layout, drawn smaller: the same bars on the same page — Sing's narrower column does the same).
 // Sing and the Score both: side by side from 1024 px, else Sing above. The tuner's form follows
 // (REDESIGN §5): no Sing or Score → full; Sing → strip (phone) or docked; both → a strip in the top
 // bar (a phone: above the modules); the Score alone → a mic chip in the Score's bar.
@@ -12,19 +15,19 @@
 // the Piano while Sing records stays silent. ◎, the pill's ✕, Back and another song stop all first.
 // Motion (motion.js): a song's modules slide up from the bottom once they're ready (no blank frame),
 // the tuner shrinks into its small form, the wordmark folds; closing reverses it. The avatar, Songs
-// and the toggles never move.
+// and the toggles never move; the keyboard moves only with the dock under it (gliding).
 // A PDF not converted yet (v90, docs/LIBRARY.md §4: catalog songInfo k "pdf") opens with the Score
 // alone, on its PDF — on every device, unsaved, whatever opened it (Next-up, the Reader's links, an
 // assistant): no Sing toggle, the Score's ▶ stays in its bar (hidden: nothing to play), the Piano as
-// saved (Play's own keyboard under the PDF). Converted (reload), the saved modules come back.
-import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=90";
-import { mountSing } from "./singview.js?v=90";
-import { mountScore } from "./scoreview.js?v=90";
-import { mountPiano, rangeOf } from "./pianoview.js?v=90";
-import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=90";
-import { loadSong, songInfo } from "../catalog.js?v=90";
-import { parseMusicXml } from "../musicxml.js?v=90";
-import { titleOf } from "./songlist.js?v=90";
+// saved (its keyboard under the PDF, the Score's). Converted (reload), the saved modules come back.
+import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=91";
+import { mountSing } from "./singview.js?v=91";
+import { mountScore } from "./scoreview.js?v=91";
+import { mountPiano, rangeOf } from "./pianoview.js?v=91";
+import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=91";
+import { loadSong, songInfo } from "../catalog.js?v=91";
+import { parseMusicXml } from "../musicxml.js?v=91";
+import { titleOf } from "./songlist.js?v=91";
 
 const $ = (id) => document.getElementById(id);
 const PREF = "resonate.shell.modules"; // { phone | tablet | desktop: ["sing", "score", "piano"] } — this device's
@@ -58,7 +61,7 @@ function saveMods(dev, m) {
   } catch {}
 }
 
-export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () => {}, openSongs = () => {}, reprocess = null }) {
+export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () => {}, reprocess = null }) {
   const app = $("app"), pill = $("song-pill"), brand = $("brand"), tEl = $("tuner"), home = document.querySelector(".home"), stack = $("stack");
   const singEl = $("sing-region"), scoreEl = $("score-region");
   const tog = { sing: $("mod-sing"), score: $("mod-score"), piano: $("mod-piano") };
@@ -75,12 +78,12 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
   });
   const score = mountScore({
     version, onLoad,
-    keys: () => mods.piano,
     hooks: {
       beforeSound: () => { tuner.park(); sing.hush(true); if (sing.state()?.busy) sing.stopAll(); },
       quiet: () => !!sing.state()?.take,
       turnKeys: () => isOpen && mods.score && !overlayOpen() && !sing.sheetOpen(),
       ...(reprocess ? { reprocess } : {}), // (the Score's 📄: the song's PDF read again, in the import tray)
+      shellKeys: () => piano.forScore(), // (the Piano's keyboard, the Score's while it shows)
     },
   });
   const piano = mountPiano($("piano-region"), {
@@ -88,14 +91,15 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     beforeSound: () => { sing.hush(true); if (sing.state()?.busy) sing.stopAll(); }, // (Sing's 🎤 Pitch mic too: iOS plays quietly while it's open)
     quiet: () => !!sing.state()?.take,
     busy: () => !!(sing.state()?.busy || score.state()?.busy),
+    score: { press: (m, e) => score.press(m, e), lift: (pk) => score.lift(pk), changed: () => score.keysChanged() },
   });
   const setTitle = (t, id = current) => { title = t || ""; titleId = title ? id : null; pill.querySelector(".t").textContent = title || "…"; };
 
   // --- what shows -------------------------------------------------------------------------------
-  // (sing / score: the regions; piano: the keyboard on its own; keys: the Score's own keyboard)
+  // (sing / score: the regions; piano: the keyboard — the Score's while the Score shows)
   const want = () => {
     const s = isOpen && mods.sing && !pdfOnly, c = isOpen && mods.score;
-    return { sing: s, score: c, piano: mods.piano && !c, keys: c && mods.piano };
+    return { sing: s, score: c, piano: mods.piano };
   };
   const formOf = (w) => (!w.sing && !w.score ? "full" : !w.sing ? (score.el.names ? "chip" : "strip") : w.score ? "strip" : dev === "phone" ? "strip" : "docked");
   const placeOf = (w, form) => (form === "chip" ? "bar" : w.sing && w.score && innerWidth >= 700 ? "top" : "home");
@@ -119,19 +123,19 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
   }
   // Everything for `w`, at once (no motion: render() wraps it).
   let laid = null; // (what apply() last laid out: an open overtaken before its render leaves it behind)
-  const laidOut = () => { const w = want(); return !!laid && laid.open === isOpen && ["sing", "score", "piano", "keys"].every((k) => laid[k] === w[k]); };
+  const laidOut = () => { const w = want(); return !!laid && laid.open === isOpen && ["sing", "score", "piano"].every((k) => laid[k] === w[k]); };
   function apply(w) {
     laid = { ...w, open: isOpen };
     dev = device();
     app.toggleAttribute("data-song", isOpen);
     app.toggleAttribute("data-sing", w.sing);
     app.toggleAttribute("data-score", w.score);
-    app.toggleAttribute("data-piano", w.piano || w.keys);
+    app.toggleAttribute("data-piano", w.piano);
     app.dataset.dev = dev;
     sing.show(w.sing);
     score.show(w.score);
-    if (w.score) score.setKeys(w.keys);
     piano.show(w.piano);
+    if (piano.link(w.score && w.piano)) score.keysChanged(); // (the Score's keys and its ▶ chips on the keyboard — or back in the stretch's controls)
     placeTuner(w);
     placePlay(w);
     pill.hidden = !isOpen;
@@ -156,7 +160,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     const anim = motion && !document.hidden;
     if (!anim) { apply(w); return; }
     const was = { sing: !singEl.hidden, score: !scoreEl.hidden, piano: !piano.el.hidden };
-    const form0 = app.dataset.form, place0 = app.dataset.tin, r0 = tEl.getBoundingClientRect();
+    const form0 = app.dataset.form, place0 = app.dataset.tin, r0 = tEl.getBoundingClientRect(), k0 = was.piano ? piano.el.getBoundingClientRect() : null;
     const formN = formOf(w), placeN = placeOf(w, formN);
     const tGhost = !dropped && (formN !== form0 || placeN !== place0) ? ghost(tEl, app) : null;
     const before = fades().map((el) => [el, shown(el), shown(el) ? ghost(el) : null]);
@@ -175,6 +179,9 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     if (!was.sing && w.sing) slideIn(singEl);
     if (!was.score && w.score) slideIn(scoreEl, { delay: !was.sing && w.sing ? 40 : 0 });
     if (!was.piano && w.piano) slideIn(piano.el);
+    // (the keyboard stays: it moves only with the dock under it — Start leaves the dock as a module
+    // comes, ▶ joins it — gliding there, never a jump)
+    else if (k0 && w.piano) glide(piano.el, k0);
     if (tGhost) morph(tGhost, tEl);
     else if (!dropped) glide(tEl, r0);
     for (const [el, vis0, gh] of before) {
@@ -224,9 +231,11 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
       pressed();
       if (isOpen) await ready({ sing: next.sing && !laid?.sing, score: next.score && !laid?.score }, current);
       if (g !== gen || mods !== next) return;
+      // (only the Piano came or went under the Score: what the Score shows stays — play.js holds its layout)
+      const keep = !!laid?.score && isOpen && !!next.score && !!laid.piano !== !!next.piano && !!laid.sing === !!(next.sing && !pdfOnly);
       render();
       await frame();
-      score.resize(); // (laid out once at the region's new size, not 150 ms later)
+      score.resize({ keep }); // (laid out once at the region's new size, not 150 ms later)
       updateRange();
       if (isOpen) await ensure();
     })().finally(() => {
@@ -408,7 +417,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     e.preventDefault();
     closePage();
   });
-  $("song-title").addEventListener("click", () => openSongs());
+  // (the title is a label: Songs, bottom right, is the one way to the list — the pill dropped it down too)
   $("song-close").addEventListener("click", () => closePage());
   // A rotation or a window crossing a size class: that class's modules, laid out again.
   addEventListener("resize", () => {
