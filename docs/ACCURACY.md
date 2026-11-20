@@ -23,11 +23,15 @@ patch the engine, bump the engine version — repeat until there are none.
    ship, and the owner reconverts ("Reconvert all").
 
 ## Round 1 (2026-11-20, engine v10)
-First 40% of the comparison: 172 findings — ties lost (≈ 40: an eighth on the "and" of 4 tied over the barline,
-often a system / page break; one head of a tied chord; a tie read as a slur; a dotted half tied to an eighth inside the
-bar), accidentals (≈ 25, many the held note of a lost tie: D♯ → D), missing notes (≈ 23: whole notes on a ledger line,
-an octave's upper note, a half-note chord on beat 1, a 16th after a double-dotted quarter), wrong key signatures
-(gybr: 1 flat missing for bars 1–10 and 19–26, a spurious change at 15), a spurious flat on a chord's C (gybr bars 35,
-50, 108, 112, 123), the voice's duet thirds read as single notes (stumblin), an 8-bar multi-measure rest dropped
-(killing, known).
-In progress: ties (engine, own clone) and keys + whole notes (+ voice thirds) (engine, own worktree), in parallel.
+The comparison is done: 489 findings (365 play wrong) in 35 patterns. Triage with every finding's list:
+scratchpad `acc/triage.md` (tools in scratchpad `triage/`). It is not in the repo: it names bars of the owner's songs.
+Its P1 patterns and where each stands:
+- 1 + 4, phantom / merged hollow heads (HEADS, `evalBlackAsVoid`?), 146 findings: an engine agent, own worktree
+  `audiveris-heads` (branch heads-void, from keys-heads-ledgers).
+- 2 + 3, ties lost across breaks and barlines, 70 findings: an engine agent, `audiveris` (branch tie-0014).
+- 5 + 6 + 16 + 17, restoreTies / markUnmarkedTuplets / playprep, 30 findings: a web agent, in the repo.
+- 7 + 9 (+ 10), whole notes, half-note chords on ledgers, gybr / Wichita keys: patches 0011–0013 (committed,
+  not built). The Stumblin' In duet (cue-size second voice) is not fixable without cue heads.
+Next, once those land: one engine release. Renumber the patches, run a combined A/B on all 9 songs, build.sh, bump `ENGINE` +
+`ENGINE_N`, run the browser e2e, one review, deploy. Then the owner runs Reconvert all, and round 2 (the triage's P2
+patterns: 8 small notes, 11 navigation marks, 12 dots, 13 flags, 14 melisma syllables) runs on the new conversions.
