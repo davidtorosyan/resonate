@@ -14,20 +14,20 @@
 //
 // A PDF only (added, not converted yet: docs/LIBRARY.md) opens straight into its PDF (📄's view, no
 // Verovio): ‹ › and the pedals turn its pages, the keyboard stays under it, ⟳ reads Convert.
-import { spaceChanged } from "./nav.js?v=89";
-import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=89";
-import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=89";
-import { decorate, fullName, labelOf } from "./playnames.js?v=89";
-import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=89";
-import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=89";
-import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=89";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=89";
-import * as lib from "./library.js?v=89"; // (getSong; getPages where this library has it)
-import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=89";
-import { mountKeyboard } from "./keyboard.js?v=89";
-import { chordMoments } from "./chords.js?v=89";
-import { barsText, sliceMeasures, TEXT_LEGEND } from "./scoretext.js?v=89";
-import { remote, hasAssistant, shareFocus } from "./assist.js?v=89";
+import { spaceChanged } from "./nav.js?v=90";
+import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=90";
+import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=90";
+import { decorate, fullName, labelOf } from "./playnames.js?v=90";
+import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=90";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=90";
+import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=90";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=90";
+import * as lib from "./library.js?v=90"; // (getSong; getPages where this library has it)
+import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=90";
+import { mountKeyboard } from "./keyboard.js?v=90";
+import { chordMoments } from "./chords.js?v=90";
+import { barsText, sliceMeasures, TEXT_LEGEND } from "./scoretext.js?v=90";
+import { remote, hasAssistant, shareFocus } from "./assist.js?v=90";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
@@ -2672,14 +2672,19 @@ const SETTLE = 160;    // ms after the last zoom / pan move: the view drawn shar
 // (shown: a page drawn since it opened)
 const pdf = {
   has: false, on: false, open: 0, gen: 0, task: null, doc: null, pages: 0, page: 1, spread: false, canvas: null, busy: false, shown: false, W: 0, H: 0,
+  drawn: 0, back: false, save: false, // the last page drawn; going back to it after a page failed; the page to keep once drawn
   wrap: null, sheet: null, detail: null, dgen: 0, dtask: null, dz: 0, settle: 0, anim: 0, borders: [],
   fit: null, z: 1, tx: 0, ty: 0, want: null, focus: null, center: null,
 };
-let pdfLib = null;
+let pdfLib = null, pdfLibFails = 0;
 let pdfTask = null; // the page drawing under way (pdf.js RenderTask)
 async function pdfjs() {
   if (!pdfLib) {
-    const lib = await import("./omr/pdfjs/pdf.min.mjs");
+    // (a browser may keep a failed module import for the page's life — offline before pdf.js was
+    // cached, every PDF only failed until a reload —, so a retry asks for a new address, as engine())
+    const q = pdfLibFails ? `?r=${pdfLibFails}` : "";
+    let lib;
+    try { lib = await import(`./omr/pdfjs/pdf.min.mjs${q}`); } catch (err) { pdfLibFails++; throw err; }
     lib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.mjs";
     pdfLib = lib;
   }
@@ -2721,7 +2726,27 @@ function pdfControls() {
 
 // (pdf.js 6: the document is freed — its worker ended — through its loading task)
 const pdfFree = (task) => { try { task?.destroy()?.catch?.(() => {}); } catch {} };
-function pdfFailed() {
+// page: a page that couldn't be drawn (one pdf.js can't read, iOS out of canvas memory), not the PDF.
+// A PDF only goes back to the last page that drew (or 1) and keeps its PDF and its bar (Convert):
+// it has no sheet to go back to, and failing would also have kept the failing page as the one to
+// open at — the song failed every time. That page failing too (or nothing else to go to) is the
+// end. → the drawing gone back to (pdfRender's answer), or nothing.
+function pdfFailed(page = false) {
+  if (S.pdfOnly && page && pdf.on && pdf.doc && !pdf.back) {
+    const bad = pdf.page;
+    const to = pdf.drawn && pdf.drawn !== bad ? pdf.drawn : bad !== 1 ? 1 : 0;
+    if (to) {
+      pdf.back = true; // (until a page draws)
+      pdf.page = to;
+      pdf.save = true; // (the page that draws is the one to open at: never the failing one again)
+      pdf.want = pdf.fit ? "turn" : null;
+      pdfPager();
+      const say = `Couldn't open page ${bad}.`;
+      showMsg(say);
+      setTimeout(() => { if (msgEl.textContent === say) showMsg(""); }, 3000);
+      return pdfRender().then((r) => (r === "error" ? pdfFailed(true) : r));
+    }
+  }
   pdfOff();
   // (a PDF only has no sheet under it to go back to: it stays failed, said — not an empty stage)
   if (S.pdfOnly) return fail("pdf");
@@ -2748,6 +2773,8 @@ async function pdfOn() {
   pdf.on = true;
   pdf.busy = true;
   pdf.focus = null;
+  pdf.drawn = 0;
+  pdf.back = pdf.save = false;
   pdfControls();
   try {
     const task = await pdfLoad(id);
@@ -2768,12 +2795,14 @@ async function pdfOn() {
     pdf.want = pdf.focus ? "focus" : null;
     pdf.busy = false;
     pdfControls();
-    if ((await pdfRender()) === "error") throw new Error("PDF page");
   } catch (err) {
+    // (the PDF itself didn't open — pdf.js, the stored file: a PDF only stays failed)
     if (g !== pdf.open) return;
     console.warn("pdf", err);
-    pdfFailed();
+    return pdfFailed();
   }
+  // (its first page not drawn: a page, not the PDF — a PDF only goes back to page 1)
+  if ((await pdfRender()) === "error" && g === pdf.open) await pdfFailed(true);
 }
 
 function pdfOff() {
@@ -2783,6 +2812,8 @@ function pdfOff() {
   pdf.on = false;
   pdf.busy = false;
   pdf.shown = false;
+  pdf.drawn = 0;
+  pdf.back = pdf.save = false;
   pdf.W = pdf.H = 0;
   pdf.fit = null;
   pdf.focus = null;
@@ -2824,11 +2855,11 @@ function pdfTurn(d) {
   const p = Math.max(1, Math.min(pdfLast(), pdf.page + d * (pdf.spread ? 2 : 1)));
   if (p === pdf.page) return false;
   pdf.page = p;
-  S.st.pdfPage = p;
-  saveSoon();
+  pdf.save = true; // (kept once it's drawn: a page that can't be drawn isn't the one to open at)
+  pdf.back = false;
   pdf.want = "turn";
   pdfPager();
-  pdfRender().then((r) => { if (r === "error") pdfFailed(); });
+  pdfRender().then((r) => { if (r === "error") pdfFailed(true); });
   return true;
 }
 
@@ -2914,6 +2945,9 @@ async function pdfDraw(doc, g) {
   }
   S.t.pdf = ms(t0);
   pdf.shown = true;
+  pdf.drawn = pdf.page;
+  pdf.back = false;
+  if (pdf.save) { pdf.save = false; S.st.pdfPage = pdf.page; saveSoon(); }
   pdfSettle(0);
   return true;
 }
@@ -3040,11 +3074,11 @@ function pdfToFocus() {
   if (shown.includes(p)) pdfZoomTo(pdfFocusView(pdfFocusHere()));
   else {
     pdf.page = p;
-    S.st.pdfPage = p;
-    saveSoon();
+    pdf.save = true;
+    pdf.back = false;
     pdf.want = "focus";
     pdfPager();
-    pdfRender().then((r) => { if (r === "error") pdfFailed(); });
+    pdfRender().then((r) => { if (r === "error") pdfFailed(true); });
   }
 }
 
@@ -3273,7 +3307,7 @@ async function songMap(doc) {
     const kept = S.st.pdfMusic;
     if (kept && kept.n === n && Array.isArray(kept.music) && kept.music.length >= last) music = kept.music;
     else {
-      const { findStaves } = await import("./omr/pdfprep.js?v=89");
+      const { findStaves } = await import("./omr/pdfprep.js?v=90");
       const t0 = performance.now();
       music = await musicPages(doc, findStaves, { need: last });
       S.t.pdfMusic = ms(t0);
@@ -3422,7 +3456,7 @@ function sized() {
   // blanked the page and drew it again)
   if (pdf.on && !pdf.busy) { // (busy: the opening draws for the stage it finds — its map can take a moment)
     const { W, H } = stageSize();
-    if (W !== pdf.W || H !== pdf.H) pdfRender().then((r) => { if (r === "error") pdfFailed(); });
+    if (W !== pdf.W || H !== pdf.H) pdfRender().then((r) => { if (r === "error") pdfFailed(true); });
   }
   if (!S.P || !tk || S.failed) return;
   const L = measure();
@@ -3880,7 +3914,8 @@ window.resonatePlay = Object.assign(window.resonatePlay || {}, {
   stopAll: async () => { clearPeek(true); stopPlay(); },
   // (pdfOnly: the song is a PDF only — shown once its PDF is drawn, never ready)
   state: () => ({ song: S.song, title: S.title, ready: S.ready, busy: PB.state !== "idle" || PB.starting, held: peeks.some((pk) => pk.held && !pk.dead),
-    page: S.page, pages: S.pages, at: S.at, lgen: S.lgen, W: S.W, H: S.H, sp: S.sp, mode: S.mode, pdfOnly: S.pdfOnly, shown: shownNow() }),
+    page: S.page, pages: S.pages, at: S.at, lgen: S.lgen, W: S.W, H: S.H, sp: S.sp, mode: S.mode, pdfOnly: S.pdfOnly, shown: shownNow(),
+    failed: S.failed }), // (the shell opens a failed song again: its PDF may have come, the engine may load now)
   resize: () => { clearTimeout(resizeTimer); sized(); },
   // (the shell's Piano toggle drives the keyboard — its 🎹 is hidden there; kept as 🎹 keeps it)
   keys: (on) => { if (on != null && !!on !== KB.on) setKeys(!!on); return KB.on; }, // (play.html's 🎹 setting left alone)
@@ -4018,7 +4053,7 @@ window.resonateDebug = () => {
       awake: { on: !!awake.src, same: !!awake.src && awake.a === ac, idle: awake.src ? Math.round(performance.now() - awake.at) : null, ms: AWAKE },
       offer: { shown: !offerEl.hidden, to: offerTo, days: S.st.days ? { ...S.st.days } : null },
       pdf: {
-        has: pdf.has, on: pdf.on, busy: pdf.busy, shown: pdf.shown, page: pdf.page, pages: pdf.pages, spread: pdf.spread,
+        has: pdf.has, on: pdf.on, busy: pdf.busy, shown: pdf.shown, page: pdf.page, pages: pdf.pages, spread: pdf.spread, drawn: pdf.drawn, lib: pdfLibFails,
         canvas: pdf.canvas?.isConnected ? [pdf.canvas.width, pdf.canvas.height] : null,
         z: pdf.z, tx: pdf.tx, ty: pdf.ty, fit: pdf.fit ? { bw: pdf.fit.bw, bh: pdf.fit.bh, x0: pdf.fit.x0, list: pdf.fit.list.slice(), boxes: pdf.fit.boxes.map((b) => ({ p: b.p, x: b.x, w: b.w, h: b.h })) } : null,
         focus: pdf.focus ? { page: pdf.focus.page, rects: pdf.focus.rects.map((r) => ({ ...r })) } : null,

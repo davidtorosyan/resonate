@@ -6,9 +6,9 @@ live in CLAUDE.md ("UI principles").
 
 ## Where things stand (2026-11-20)
 
-**Live:** v89 — engine patch 0010: a rest printed once for two voices of a staff is shared by both (Killing Me Softly bars 7 and 9: the piano's beat-4 eighths had come out on beat 3). The owner's score question was answered through the loop below: highlight in the Score → `get_score_view` in a Claude chat → patch → ⟳ Reprocess. **The owner needs to ⟳ Reprocess Killing** (`smwjzgji3o3zs`, and the sung copy `smw293jmjobxo` if its PDF is on the device) to get the fix. v88's zoomable PDF view, Reprocess and the Score for assistants are live; v83–87's one-page redesign is a preview (Tools → New Resonate); nothing from v87–89 has been tried on a real iPhone or iPad yet.
+**Live:** v90 — the song library, PDF first (docs/LIBRARY.md): Songs → Add → PDF stores the PDF at once (usable in the Score's PDF view with the keyboard); ⋯ → Convert / Reconvert / Delete; Convert all / Reconvert all run one at a time in the background (resumable, the screen kept on); each song shows the engine that made it (engine 10 = patch 0010); 20 songs in the cloud (migration applied). v89's engine patch 0010 (shared rests) is live — songs converted before need Reconvert (Killing: `smwjzgji3o3zs`). v83–87's one-page redesign is a preview (Tools → New Resonate); nothing from v87–90 has been tried on a real iPhone or iPad yet.
 
-**Next:** §12 — add a PDF without converting, convert / reconvert (all) in the background, engine version per song, delete from the song list (queued by the owner 2026-11-20). Also whatever the owner highlights next. The loop: highlight the bars in the Score → ask in a Claude chat with the Resonate connector (`get_score_view` gives the notes, the bars' MusicXML and both pictures; `get_score_xml` / `get_score_pdf` the files — `get_score_pdf` page by page also gives a session the whole PDF for a native run, outside the repo) → fix the engine (omr-build) or a clean-up (omr/fixscore.js) → ⟳ Reprocess the song. A connector's new tools show only in a chat started after they were deployed. Killing still has a few voices that end before their bar (the new engine's output: P2 bars 20, 31, 32 and an overfull 62 look worth a look); Piano Man, Wichita, Songbird and the others have no PDF in the cloud (only on a device), so they weren't in 0010's A/B.
+**Next:** whatever the owner highlights next (highlight in the Score → `get_score_view` in a Claude chat → fix the engine or a clean-up → Reconvert). Open from v90: the MCP server doesn't know PDF-only songs (`get_song` says "open it once"; needs a resonate.ts change + redeploy); songs converted before v90 read "engine ≤9" even when v89 made them; Killing's piano bars 31, 32, 62 still have a voice short of its bar.
 
 **Waiting on the owner (choices made, easy to change):**
 - v86: to fit the chord button, the Score's song menu is ~82 px wide on an iPad mini in portrait (was 133); the alternative is narrower ‹ › buttons.
@@ -180,25 +180,9 @@ The owner got a piano: the Play tab shows a song's piano part as sheet music on 
 - A later key change written for one staff only (`<key number>`) is drawn on both staves (v77 review, not fixed: needs an MEI round trip rewriting each staff's keySig, ~70 ms; no Audiveris export has one).
 - Never: octave numbers on the page, a separate row of names, colours by pitch, generated fingering, falling-note views, grades or streaks.
 
-## 12. Song library: add a PDF now, convert later, engine versions (queued 2026-11-20)
+## 12. Song library: add a PDF now, convert later, engine versions — built (v90)
 
-The owner's ask (after patch 0010 meant reprocessing songs by hand): engine fixes keep coming, and a long song list
-needs managing.
-- **Add without converting.** Adding a PDF to Songs stores it at once — no 5-minute wait. It's usable right away as a
-  PDF (the Score's 📄 view: pages, zoom, the keyboard), just not Sing / note names / ▶ until converted.
-- **Convert to MusicXML** — a button per song, and **Convert all**: runs in the background as imports do now (one at a
-  time — the engine lock —, resumable, the tray / pill), on the iPad for as long as it takes.
-- **Engine version per song**, separate from the site's version: each conversion records the engine it used (today's
-  `ENGINE` id: commit + jar hash + CheerpJ). A patch bumps it. The song list shows which engine each song came from and
-  offers **Reconvert** (one) / **Reconvert all** (every song from an older engine; ⟳ Reprocess, batched).
-- **Delete songs from the song list.** The shell's Songs (New Resonate) has no delete today (`library.js removeSong`
-  exists; the old Sing page's ✕ uses it).
-- Later (an optimization): tell which songs a patch would actually change, instead of reconverting everything.
-
-Pieces that exist: v88's Reprocess (`imp.reprocess(id)` → `replaceSong`, same id, settings kept), the resumable job store
-and crash-loop guard (`omr/importer.js`, `omr/jobs.js`), the PDF kept with each song (`pdfs` store, synced). To decide:
-a PDF-only song in sync (counts against the 10-song cloud limit? the limits may need raising), what Sing / Play show for
-a PDF-only song, and where the batch queue lives (one job at a time, the rest waiting in the job store).
+See docs/LIBRARY.md (the contract and as-built notes). Later: tell which songs a patch would actually change instead of reconverting everything; the MCP server's PDF-only wording.
 
 ## Plan for 4–8 (research, 2026-11-07)
 

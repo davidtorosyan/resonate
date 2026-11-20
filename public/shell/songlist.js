@@ -6,14 +6,14 @@
 // row's ⋯ converts it (or reads it again with the newest engine) and deletes it; the header converts
 // them all. The conversions run one after another in the tray (tray.js: its queue), each row says
 // where its song is: "PDF only", "queued", "converting 3/7", the engine that read it.
-import { listSongs, addSong, addPdfSong, listPdfIds } from "../library.js?v=89";
-import { SAMPLES, songInfo } from "../catalog.js?v=89";
-import { readScoreFile, parseMusicXml } from "../musicxml.js?v=89";
-import { spaceChanged } from "../nav.js?v=89";
-import { forgetSong } from "../forget.js?v=89";
-import { titleFromFileName } from "../omr/importer.js?v=89";
-import { ENGINE_N } from "../omr/engine.js?v=89";
-import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=89";
+import { listSongs, addSong, addPdfSong, listPdfIds } from "../library.js?v=90";
+import { SAMPLES, songInfo } from "../catalog.js?v=90";
+import { readScoreFile, parseMusicXml } from "../musicxml.js?v=90";
+import { spaceChanged } from "../nav.js?v=90";
+import { forgetSong } from "../forget.js?v=90";
+import { titleFromFileName } from "../omr/importer.js?v=90";
+import { ENGINE_N } from "../omr/engine.js?v=90";
+import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=90";
 
 const SONG_KEY = "resonate.sing.song";
 const $ = (id) => document.getElementById(id);
@@ -78,13 +78,18 @@ export function mountSongs({ tray, view = () => null, onDeleted = () => {} }) {
   let rendering = 0;
   let known = new Map(); // id → index entry (the list as drawn: the menu's choices)
   let pdfIds = new Set();
+  // A render asked for while a row's ⋯ menu is open (the tray at a song's start or end, the sync, a
+  // library write) waits until it closes: the menu stays where it is — an armed Delete too — and its
+  // row isn't redrawn under it (the confirming tap would land on the row below and open that song).
+  let stale = false;
   async function render() {
     const gen = ++rendering;
     let mine = [], pdfs = new Set();
     try { mine = await listSongs(); } catch (err) { console.warn("songs", err); }
     try { pdfs = new Set(await listPdfIds()); } catch {}
     if (gen !== rendering) return;
-    closeMenu();
+    if (!rowMenu.hidden) { stale = true; return; }
+    stale = false;
     known = new Map(mine.map((s) => [s.id, s]));
     pdfIds = pdfs;
     const cur = openSongId();
@@ -105,9 +110,12 @@ export function mountSongs({ tray, view = () => null, onDeleted = () => {} }) {
       ? `<span class="qstat mono">Converting${q.total > 1 ? ` ${Math.min(q.done + 1, q.total)}/${q.total}` : ""}</span><button class="secbtn" type="button" data-act="stop">Stop</button>`
       : (nConv ? `<button class="secbtn" type="button" data-act="convert-all">Convert all · ${nConv}</button>` : "") +
         (nRe ? `<button class="secbtn" type="button" data-act="reconvert-all">Reconvert all · ${nRe}</button>` : "");
+    // (a row's ⋯ focused — the menu closed with Escape — keeps the focus across the redraw)
+    const fa = document.activeElement, refocus = fa?.matches?.(".songrow .more") && body.contains(fa) ? fa.closest(".songrow").dataset.id : null;
     body.innerHTML =
       (reading || mine.length ? `<div class="sec"><span class="sh">My songs <span class="mono">${mine.length || ""}</span></span>${acts ? `<span class="sacts">${acts}</span>` : ""}</div><div class="rows">${reading}${mineHtml}</div>` : "") +
       `<div class="sec"><span class="sh">Samples</span></div><div class="rows">${Object.entries(SAMPLES).map(([id, s]) => row(id, s.title, { src: "sample", menu: false })).join("")}</div>`;
+    if (refocus) body.querySelector(`.songrow[data-id="${CSS.escape(refocus)}"] .more`)?.focus({ preventScroll: true });
   }
   // The song being converted: its row's words and ring every second (not the whole list).
   function tick() {
@@ -151,6 +159,7 @@ export function mountSongs({ tray, view = () => null, onDeleted = () => {} }) {
     armed = null;
     body.querySelector(`.more[aria-expanded="true"]`)?.setAttribute("aria-expanded", "false");
     delete rowMenu.dataset.id;
+    if (stale) render(); // (what changed while it was open)
   }
   function openMenu(id, btn) {
     const s = known.get(id);
@@ -255,8 +264,16 @@ export function mountSongs({ tray, view = () => null, onDeleted = () => {} }) {
   });
   sheet.addEventListener("click", (e) => {
     if (!addMenu.hidden && !e.target.closest("#add-menu, #add-btn")) closeAdd();
-    if (!rowMenu.hidden && !e.target.closest("#row-menu, [data-act=menu]")) closeMenu();
   });
+  // A tap outside an open ⋯ menu only closes it (LIBRARY.md: "closes on outside tap"): the row, the
+  // header's Convert all / Stop or + Add under the finger isn't acted on — a dismissing tap. Another
+  // row's ⋯ goes to that row's menu.
+  sheet.addEventListener("click", (e) => {
+    if (rowMenu.hidden || e.target.closest("#row-menu, [data-act=menu]")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeMenu();
+  }, true);
   // iOS opens a file picker only from a direct tap: each row is its own button.
   $("add-pdf").addEventListener("click", () => { closeAdd(); pdfInput.click(); });
   $("add-xml").addEventListener("click", () => { closeAdd(); xmlInput.click(); });

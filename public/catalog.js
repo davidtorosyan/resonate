@@ -1,7 +1,7 @@
 // The songs the Sing and Play pages offer: the bundled samples and My songs (library.js), and a
 // song's MusicXML as the pages read it — a converted (Audiveris) score with the OMR clean-ups.
-import { listSongs, getSong, saveClean } from "./library.js?v=89";
-import { fixOmrScore } from "./omr/fixscore.js?v=89";
+import { listSongs, getSong, saveClean, isMusicXml } from "./library.js?v=90";
+import { fixOmrScore } from "./omr/fixscore.js?v=90";
 
 // Bundled sample scores (songs/README.md). sing.html also lists them in its Samples optgroup.
 export const SAMPLES = { "amazing-grace": { title: "Amazing Grace", url: "songs/amazing-grace.musicxml" } };
@@ -28,9 +28,10 @@ const appVersion = () => (typeof document !== "undefined" && document.getElement
 // A saved song's MusicXML, cleaned up: the cleaned copy saved with it when this version of
 // the app made it (the clean-ups take a while on a big score on a phone), else cleaned now
 // and saved for next time. The original stays as it was imported. null for a PDF-only song
-// (not converted yet: docs/LIBRARY.md).
+// (not converted yet: docs/LIBRARY.md) — and for one holding text that isn't MusicXML (a v89
+// device's "null": library.js isMusicXml), which is a PDF only too.
 export function songXml(song) {
-  if (typeof song?.xml !== "string") return null;
+  if (!isMusicXml(song?.xml)) return null;
   const APP_VERSION = appVersion();
   if (!/<software>\s*Audiveris/.test(song.xml.slice(0, 4000))) return song.xml;
   if (APP_VERSION && song.clean?.ver === APP_VERSION) return song.clean.xml ?? song.xml;

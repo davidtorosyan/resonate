@@ -3,7 +3,8 @@
 // until reload) if IndexedDB is unavailable, e.g. some private-browsing modes.
 //   song = { id, title, xml: string | null, added (ms), source?, clean?: { xml, ver }, pages?: [pdf page], rev?,
 //            engine?, titleAuto?, conv? }   (docs/LIBRARY.md §1)
-//   xml:   null = a PDF only (v90: added, not converted yet) — its PDF is in `pdfs` under the same id.
+//   xml:   null = a PDF only (v90: added, not converted yet) — its PDF is in `pdfs` under the same id;
+//          so is any text that isn't MusicXML (isMusicXml: a v89 device's "null").
 //   pages: for a song made with PDF → Song, the PDF page (1-based) of each music sheet the engine read,
 //          in order (sheet 1 = pages[0]) — Play's 📄 lines the PDF up with the music; this device only.
 //   rev:   set when the song's MusicXML was replaced under the same id (a PDF processed again,
@@ -35,7 +36,7 @@
 // must not read as "every song deleted". Every change announces itself with a "resonate:data"
 // event so the sync, when it runs, can follow.
 
-import { dbName } from "./space.js?v=89";
+import { dbName } from "./space.js?v=90";
 
 const STORE = "songs";
 const INDEX_KEY = "resonate.songs.index"; // [{ id, title, added, rev?, k, eng?, fail? }]
@@ -130,9 +131,13 @@ function readIndex() {
 function writeIndex(list) {
   try { localStorage.setItem(INDEX_KEY, JSON.stringify(list)); } catch {}
 }
+// MusicXML text: its root element near the top. Anything else a song may hold — null (a PDF only),
+// or "null", which a v89 device stored for a PDF-only song it pulled from a v90 one — isn't music:
+// the song is a PDF only (catalog.js songXml, sync.js read it so too).
+export const isMusicXml = (text) => typeof text === "string" && /<score-(partwise|timewise)[\s>]/.test(text.slice(0, 65536));
 // What a song is, for lists (no XML kept): a PDF only, converted from a PDF (and by which engine), or
 // MusicXML (a file, a link, another device's song that came without its source).
-const kindOf = (song) => (typeof song.xml !== "string" ? "pdf" : song.source === "pdf" ? "conv" : "xml");
+const kindOf = (song) => (!isMusicXml(song.xml) ? "pdf" : song.source === "pdf" ? "conv" : "xml");
 function entry(song) {
   const { id, title, added, rev } = song;
   const k = kindOf(song);

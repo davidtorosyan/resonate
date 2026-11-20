@@ -13,8 +13,8 @@
 // A PDF not converted yet (v90): open_song opens it with the Score on its PDF (Sing can't open it)
 // and says pdf_only; Sing's commands on one open here are refused; the Score's wait takes its PDF
 // shown for ready (play.js state(): pdfOnly, shown).
-import { remote } from "../assist.js?v=89";
-import { songChoices } from "../catalog.js?v=89";
+import { remote } from "../assist.js?v=90";
+import { songChoices } from "../catalog.js?v=90";
 
 const $ = (id) => document.getElementById(id);
 const HOME = { page: "home", song: null, key: null, tempo: null, doing: "idle", line: null, lines: 0, has_take: false, sound: "none" };
@@ -57,7 +57,8 @@ export function mountRemote({ sing, song, places }) {
   // Ready for a command: the song's notes laid out — or, a PDF only, its PDF shown.
   const scoreReady = (id) => { const st = P()?.state?.(); return !!st && st.song === id && (st.ready || (st.pdfOnly && st.shown)); };
   async function waitScore(id, ms = 30000) {
-    for (let t = 0; t < ms && !(P()?.scoreRun && scoreReady(id)); t += 100) await new Promise((r) => setTimeout(r, 100));
+    // (a song Play couldn't open — no PDF here, a PDF that won't draw — won't become ready: stop waiting)
+    for (let t = 0; t < ms && !(P()?.scoreRun && scoreReady(id)) && !(P()?.state?.()?.song === id && P().state().failed); t += 100) await new Promise((r) => setTimeout(r, 100));
     return !!P()?.scoreRun && scoreReady(id);
   }
   // The song an open_song means, as Sing finds it (its id, then its title, then a title holding the
@@ -71,9 +72,18 @@ export function mountRemote({ sing, song, places }) {
     const hit = all.find((x) => x.id.toLowerCase() === w) || all.find((x) => (x.title || "").toLowerCase() === w) || all.find((x) => (x.title || "").toLowerCase().includes(w));
     return hit?.k === "pdf" ? hit : null;
   }
+  // Opened in the Score; answered once Play has its PDF shown — or with Play's own words when it
+  // doesn't (its PDF isn't on this device, or didn't open): an assistant mustn't say it's showing.
   async function openPdfOnly(hit) {
     await song.open(hit.id, { score: true });
-    await waitScore(hit.id, 15000);
+    const has = () => !!P()?.scoreRun && P().state?.()?.song === hit.id; // (Play loaded, on this song)
+    for (let t = 0; t < 15000 && !has(); t += 100) await new Promise((r) => setTimeout(r, 100));
+    let r = null;
+    try { if (has()) r = await P().scoreRun("score_state", {}); } // (Play's own wait: its PDF shown — or failed, and why)
+    catch (err) { r = { ok: false, error: err?.message || String(err) }; }
+    if (!r?.ok || !scoreReady(hit.id)) {
+      return { ok: false, pdf_only: true, error: r?.error || "Its PDF didn't open on this device.", ...hooks.state() };
+    }
     return { ok: true, pdf_only: true, note: "Only its PDF so far: shown in the Score. Convert it (Songs → ⋯ → Convert) to sing it.", ...hooks.state() };
   }
   async function runScore(action, a) {

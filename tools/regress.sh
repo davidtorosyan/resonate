@@ -77,6 +77,22 @@ out=$(timeout 60 node importcontract.mjs 2>&1); echo "importcontract exit=$? fai
 # the paused pill and its count, the facts row on an iPhone, reveals without SVG animations, the wake lock, the pill
 # under sheets, a PDF kept unstored, ✕ racing a book; no engine — a scripted worker; ~2 min).
 out=$(timeout 900 node importfixes.cjs 2>&1); echo "importfixes exit=$? $(echo "$out" | grep -E '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
+# The PDF-first song library (v90, docs/LIBRARY.md): libcore.cjs (library.js / catalog.js / omr/queue.js /
+# forget.js / jobs.deleteJobsFor / importer.titleFromFileName, holdWake / ENGINE_N in Chromium's IndexedDB),
+# songlib.cjs (the shell: + Add → PDF-only songs at once, the ⋯ menu, Convert / Convert all in list order, the
+# done row, the queue across a reload, deleting a queued / the running / the open song, Stop, Reconvert forced,
+# a PDF only opened on a phone / iPad / desktop, Play's Convert → the Score reloads with notes, the remote's
+# open_song / sing; a scripted worker, ~1 min, no screenshots here), playpdfonly.cjs (Play's PDF-only mode: no
+# Verovio, the keyboard, turns, Convert, scoreState / scoreRun, a broken / missing PDF), singpdf.cjs (Sing
+# refuses a PDF only, the menu, the remote, the boot, ✕ forgets), synclib.mjs (the real sync.js against a fake
+# cloud, offline: PDF-only rows, engine, the v2 rewind, pdf-large, SONG_LIMIT 20).
+out=$(timeout 300 node libcore.cjs 2>&1); echo "libcore exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
+out=$(SHOTS=0 timeout 1200 node songlib.cjs 2>&1); echo "songlib exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
+for t in playpdfonly singpdf; do
+  out=$(timeout 600 node $t.cjs 2>&1); code=$?
+  echo "$t exit=$code fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
+done
+out=$(timeout 120 node synclib.mjs 2>&1); echo "synclib exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
 if [ -n "$IMPORT_E2E" ]; then
   for sc in full stub1 prep engine crash discard tabs again engineid; do
     out=$(timeout 3000 node importresume.cjs $sc 2>&1); code=$?

@@ -569,7 +569,7 @@ const peekState = (page) => page.evaluate(() => ({
     await pdfReady(3);
     ok((await page.textContent("#pg")).trim() === "3 / 3", "spread turns by two");
     // a song whose sheet can't be drawn still shows its PDF
-    const bad = await page.evaluate(async (pdf) => { const L = await import("./library.js?v=76"); return L.addSong("Broken", "<not-music/>", { source: "pdf", pdf: new Uint8Array(pdf).buffer }); }, mini);
+    const bad = await page.evaluate(async (pdf) => { const L = await import("./library.js?v=76"); return L.addSong("Broken", "<score-partwise><broken", { source: "pdf", pdf: new Uint8Array(pdf).buffer }); }, mini);
     await page.evaluate(async () => { const m = await import("./catalog.js?v=76"); window.dispatchEvent(new CustomEvent("resonate:remote", { detail: { songs: true } })); });
     await page.waitForTimeout(300);
     await page.selectOption("#song", bad);

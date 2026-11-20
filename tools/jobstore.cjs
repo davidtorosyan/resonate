@@ -1,5 +1,6 @@
 // Unit test of public/omr/jobs.js (the import job store) in Chromium's real IndexedDB, plus the
-// ENGINE id against lib/audiveris.jar and the importer's crash-loop / pending logic without an engine.
+// ENGINE id against lib/audiveris.jar, ENGINE_N (omr/engine.js) against the newest omr-build patch, and
+// the importer's crash-loop / pending logic without an engine.
 //   node jobstore.cjs
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -63,6 +64,13 @@ const ok = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) fails
   const sha = crypto.createHash('sha256').update(fs.readFileSync('/home/user/resonate/public/omr/lib/audiveris.jar')).digest('hex');
   const cj = /cjrtnc\.leaningtech\.com\/([\d.]+)\//.exec(fs.readFileSync('/home/user/resonate/public/omr/omr-worker.js', 'utf8'))[1];
   ok(eng.split('-')[1] === sha.slice(0, 8) && eng.endsWith(`cj${cj}`), `ENGINE ${eng} matches lib/audiveris.jar (${sha.slice(0, 8)}) and CheerpJ ${cj} — change it with lib/`);
+  // ENGINE_N (omr/engine.js, v90: the engine number a song records) = the newest omr-build/patches/00NN.
+  const engN = Number((/export const ENGINE_N = (\d+);/.exec(fs.readFileSync('/home/user/resonate/public/omr/engine.js', 'utf8')) || [])[1]);
+  const patches = fs.readdirSync('/home/user/resonate/omr-build/patches').map((f) => /^(\d{4})-.*\.patch$/.exec(f)).filter(Boolean).map((m) => Number(m[1]));
+  const newest = Math.max(...patches);
+  ok(engN === newest, `ENGINE_N ${engN} = the newest engine patch ${String(newest).padStart(4, '0')} (${patches.length} patches) — bump it with every engine patch`);
+  const live = await p.evaluate(async () => (await import(`/resonate/omr/engine.js?v=${document.getElementById('version')?.textContent.trim().replace(/^v/, '') || 0}`)).ENGINE_N).catch(() => null);
+  ok(live === engN, `the served engine.js says ${live}`);
 
   // The importer without an engine: pending() of this space, the crash-loop guard, a page left on purpose.
   const g = await p.evaluate(async () => {

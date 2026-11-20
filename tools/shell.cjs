@@ -2,17 +2,22 @@
 // corner) at five sizes: iPhone 393×852, iPhone Safari 393×659, iPad 820×1180 / 1180×820, desktop
 // 1440×900. Chromium with a fake mic playing an A3 tone (fixtures/shell/a3.wav); the PDF import runs
 // on a scripted worker (as importfixes.cjs: trace blocks from fixtures/trace, the MusicXML), so a
-// conversion takes seconds.
+// conversion takes seconds. v90: + Add → PDF stores a PDF-only song at once (one file opens on its
+// PDF); converting it is ⋯ → Convert (or the header's Convert all), in the background, folded — the
+// done row "✓ Title · ready" / "✓ 2 converted" (songlib.cjs tests the library's flows in depth).
 //   node shell.cjs                    (http://localhost:8097/resonate/, screenshots into SHOTS)
 //   ONLY=iphone,ipad-p node shell.cjs
+//   SHOTS=0 node shell.cjs            (no screenshots; or node -r ./harness/noshots.cjs)
 const { chromium } = require('playwright');
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 const BASE = process.env.BASE || 'http://localhost:8097/resonate/';
-const SHOTS = process.env.SHOTS || '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/shell1';
-const FX = '/home/user/tools/fixtures';
+const SHOTS = process.env.SHOTS === '0' ? null : process.env.SHOTS || path.join(os.tmpdir(), 'resonate-shell');
+const FX = path.join(__dirname, 'fixtures');
 const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
-fs.mkdirSync(SHOTS, { recursive: true });
+if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 
 let passes = 0, fails = 0;
 const ok = (c, msg) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${msg}`); if (c) passes++; else fails++; return c; };
@@ -98,7 +103,7 @@ async function until(p, pred, ms = 15000) {
 }
 const rect = (p, sel) => p.$eval(sel, (e) => { const r = e.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, r: r.right, b: r.bottom, vis: !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' }; }).catch(() => null);
 const shown = async (p, sel) => !!(await rect(p, sel))?.vis;
-const shot = (p, sz, name) => sz.shots && p.screenshot({ path: `${SHOTS}/${name}-${sz.n}.png` });
+const shot = (p, sz, name) => sz.shots && SHOTS && p.screenshot({ path: `${SHOTS}/${name}-${sz.n}.png` });
 // Nothing scrolls the page, nothing pokes out sideways; every control in the bars ≥ 44 px.
 const layout = (p) => p.evaluate(() => {
   const se = document.scrollingElement;
@@ -209,7 +214,7 @@ async function runSize(sz) {
   await p.click('#add-btn');
   const [fc] = await Promise.all([p.waitForEvent('filechooser'), p.click('#add-xml')]);
   ok(!(await p.$eval('#xml-input', (e) => e.getAttribute('accept'))), 'MusicXML picker: no accept filter');
-  await fc.setFiles('/home/user/resonate/public/songs/amazing-grace.musicxml');
+  await fc.setFiles(path.join(__dirname, '..', 'public', 'songs', 'amazing-grace.musicxml'));
   d = await until(p, (x) => x.song?.open && /^s/.test(x.song.state?.song || ''), 10000);
   const sid = await p.evaluate(() => localStorage.getItem('resonate.sing.song'));
   ok(!!d?.song?.open && /shell\.html$/.test(p.url()) && /^s/.test(sid || '') && d.song.state.song === sid, `MusicXML saved and opened in place (${sid})`);
@@ -279,7 +284,7 @@ async function runSize(sz) {
     ok((await p.evaluate(() => window.__session)).at(-1) === 'auto', 'Stop: the session back to auto');
     // a GitHub page link → the raw file, saved and opened
     await ctx.route('https://raw.githubusercontent.com/**', (r) => r.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, contentType: 'application/xml',
-      body: fs.readFileSync('/home/user/resonate/public/songs/amazing-grace.musicxml', 'utf8') }));
+      body: fs.readFileSync(path.join(__dirname, '..', 'public', 'songs', 'amazing-grace.musicxml'), 'utf8') }));
     await p.click('#songs-btn');
     await p.click('#add-btn');
     await p.click('#add-link');
@@ -291,56 +296,87 @@ async function runSize(sz) {
     await closeCtx(ctx);
   }
 
-  // --- the PDF read in the background ------------------------------------------------------------------
+  // --- a PDF: a song at once (its PDF only), converted in the background (v90) ------------------------
+  // iPad landscape adds two and converts them all; the other touch sizes add one and convert it from its ⋯.
   if (sz.n !== 'desktop') {
+    const batch = sz.n === 'ipad-l';
     ctx = await context(sz, { scenario: 'slow' });
     p = await home(sz, ctx);
-    await p.click('#main-btn'); // (the tuner keeps working while a PDF is read)
     await p.click('#songs-btn');
     await p.click('#add-btn');
     const [fcp] = await Promise.all([p.waitForEvent('filechooser'), p.click('#add-pdf')]);
-    await fcp.setFiles(`${FX}/import/amazing-grace1.pdf`);
-    d = await until(p, (x) => x.import.mode === 'open' && x.import.events > 3, 10000);
-    ok(d?.import.mode === 'open' && await shown(p, '#tray') && !(await shown(p, '#songs')), `PDF → the tray expanded in place (${d?.import.events} events)`);
+    await fcp.setFiles(batch ? [`${FX}/import/amazing-grace1.pdf`, `${FX}/import/greensleeves3.pdf`] : `${FX}/import/amazing-grace1.pdf`);
+    let ids;
+    if (batch) {
+      await p.waitForFunction(() => document.querySelectorAll('#songs-body .songrow .more').length >= 2, null, { timeout: 8000 }).catch(() => {});
+      ids = await p.$$eval('#songs-body .songrow', (rs) => rs.filter((r) => r.querySelector('.more')).map((r) => r.dataset.id));
+      d = await dbg(p);
+      ok(ids.length === 2 && !d.song.open && !d.import.song && /✓ 2 added/.test(await p.textContent('#songs-msg')), `two PDFs: two songs at once, nothing opened or converting ("${await p.textContent('#songs-msg')}")`);
+      await p.keyboard.press('Escape');
+    } else {
+      d = await until(p, (x) => x.song?.open && x.song.pdfOnly, 8000);
+      ids = [d?.song.state?.song];
+      ok(!!d && !d.import.song && !d.import.running && /shell\.html$/.test(p.url()) && d.song.set.score && !d.song.set.sing, `PDF → a song at once, open in place on its PDF (the Score only), nothing converting (${JSON.stringify(d?.song.set)})`);
+      await p.goBack();
+      d = await until(p, (x) => !x.song?.open, 8000);
+      ok(!!d && /shell\.html$/.test(p.url()), 'Back: home');
+    }
+    await p.click('#main-btn'); // (the tuner keeps working while a PDF is converted)
+    await until(p, (x) => x.tuner.note === 57, 6000);
+    await p.click('#songs-btn');
+    await p.waitForSelector(`#songs-body .songrow[data-id="${ids[0]}"] .more`, { timeout: 5000 });
+    const fact0 = await p.textContent(`#songs-body .song[data-id="${ids[0]}"] .s`);
+    ok(/^PDF only · new$/.test(fact0), `its row: "${fact0}"`);
+    if (batch) await p.click('#songs-body [data-act="convert-all"]');
+    else { await p.click(`#songs-body .songrow[data-id="${ids[0]}"] .more`); await p.click('#row-menu [data-act="convert"]'); }
+    d = await until(p, (x) => !!x.import.song, 8000);
+    ok(!!d && d.import.mode === 'min' && !(await shown(p, '#tray')) && (await shown(p, '#songs')), `${batch ? 'Convert all' : '⋯ → Convert'}: in the background, folded (${d?.import.mode}), the list stays`);
     ok(/shell\.html$/.test(p.url()), 'no navigation');
+    const fact1 = await p.textContent(`#songs-body .song[data-id="${d?.import.song?.id}"] .s`).catch(() => '');
+    ok(/^converting/.test(fact1), `the song's row: "${fact1}"`);
+    await p.keyboard.press('Escape');
     d = await until(p, (x) => x.import.reader?.phase === 'read', 12000);
+    await p.waitForTimeout(400);
+    d = await dbg(p);
+    const tile = await rect(p, '#imp-mini'), sb = await rect(p, '#songs-btn'), mods = await rect(p, '#mods');
+    ok(d.import.mode === 'min' && !(await shown(p, '#tray')) && tile?.vis, 'the tile shown, the tray hidden');
+    // (v87: the module toggles sit between the tile and Songs)
+    ok(tile && sb && mods && tile.r <= mods.x + 1 && mods.x - tile.r < 24 && mods.r <= sb.x + 1 && Math.abs((tile.y + tile.h / 2) - (sb.y + sb.h / 2)) < 40, `the tile beside the toggles and Songs (${Math.round(tile?.x)}–${Math.round(tile?.r)} | toggles ${Math.round(mods?.x)} | Songs ${Math.round(sb?.x)})`);
+    ok(!(await shown(p, '#reader-host .rd-pill')), "the Reader's own corner pill isn't shown");
+    const ps = await p.textContent('#imp-mini .ps');
+    ok(batch ? /^song 1\/2 · /.test(ps) : !/song \d/.test(ps), `the tile's line: "${ps}"`);
+    ok((await dbg(p)).tuner.note === 57, 'the tuner still hears A3 while the PDF is converted');
+    await shot(p, sz, 'tray-mini');
+    await p.click('#imp-mini');
+    d = await until(p, (x) => x.import.mode === 'open', 3000);
+    ok(d?.import.mode === 'open' && await shown(p, '#tray'), 'the tile opens the Reader');
     await p.waitForTimeout(1200);
     await shot(p, sz, 'tray-expanded');
     L = await layout(p);
     ok(L.scrollH <= L.H && L.scrollW <= L.W, 'no page scroll with the tray open');
-    ok((await dbg(p)).tuner.note === 57, 'the tuner still hears A3 while the PDF is read');
-    await p.click('#reader-host .rd-min');
-    await p.waitForTimeout(400);
-    d = await dbg(p);
-    const tile = await rect(p, '#imp-mini'), sb = await rect(p, '#songs-btn'), mods = await rect(p, '#mods');
-    ok(d.import.mode === 'min' && !(await shown(p, '#tray')) && tile?.vis, '⌄ folds it: the tray hidden, the tile shown');
-    // (v87: the module toggles sit between the tile and Songs)
-    ok(tile && sb && mods && tile.r <= mods.x + 1 && mods.x - tile.r < 24 && mods.r <= sb.x + 1 && Math.abs((tile.y + tile.h / 2) - (sb.y + sb.h / 2)) < 40, `the tile beside the toggles and Songs (${Math.round(tile?.x)}–${Math.round(tile?.r)} | toggles ${Math.round(mods?.x)} | Songs ${Math.round(sb?.x)})`);
-    ok(!(await shown(p, '#reader-host .rd-pill')), "the Reader's own corner pill isn't shown");
-    await shot(p, sz, 'tray-mini');
-    await p.click('#songs-btn');
-    await p.waitForSelector('#songs-body .song.reading', { timeout: 3000 }).catch(() => {});
-    ok(await p.$eval('#songs-body .song', (e) => e.classList.contains('reading')).catch(() => false), 'the list: the reading row first');
-    await p.keyboard.press('Escape');
-    await p.click('#imp-mini');
-    d = await until(p, (x) => x.import.mode === 'open', 3000);
-    ok(d?.import.mode === 'open' && await shown(p, '#tray'), 'the tile opens it again');
     await p.keyboard.press('Escape');
     d = await until(p, (x) => x.import.mode === 'min', 3000);
     ok(d?.import.mode === 'min', 'Escape folds it');
-    d = await until(p, (x) => x.import.result, 25000);
+    d = await until(p, (x) => x.import.result, 40000);
     await p.waitForTimeout(300);
-    ok(!!d?.import.result?.songId && await shown(p, '#imp-done') && /ready/.test(await p.textContent('#imp-done')), `done: "✓ ${d?.import.result?.title} · ready" with Open (${d?.import.result?.songId})`);
+    const doneText = (await p.textContent('#imp-done').catch(() => '')).replace(/\s+/g, ' ').trim();
+    if (batch) ok(d?.import.result?.batch === 2 && await shown(p, '#imp-done') && /2 converted/.test(doneText) && !(await shown(p, '#imp-done .openbtn')), `done: "${doneText}" (no Open)`);
+    else ok(d?.import.result?.songId === ids[0] && await shown(p, '#imp-done') && /ready/.test(doneText) && (await shown(p, '#imp-done .openbtn')), `done: "${doneText}" with Open (${d?.import.result?.songId})`);
     ok(!(await shown(p, '#imp-mini')), 'the tile gives way to the done row');
     await shot(p, sz, 'import-done');
     await p.click('#songs-btn');
     await p.waitForTimeout(300);
-    ok(!!(await p.$(`#songs-body .song[data-id="${d?.import.result?.songId}"]`)), 'the new song in My songs');
+    const facts = await Promise.all(ids.map((id) => p.textContent(`#songs-body .song[data-id="${id}"] .s`).catch(() => '')));
+    ok(facts.every((f) => /^engine \d+ · new$/.test(f)), `converted: ${JSON.stringify(facts)}`);
     await p.keyboard.press('Escape');
-    const newId = d?.import.result?.songId;
-    await p.click('#imp-done .openbtn');
-    const d2 = await until(p, (x) => x.song?.open && x.song.state?.song === newId, 10000);
-    ok(!!d2 && /shell\.html$/.test(p.url()) && await p.evaluate(() => localStorage.getItem('resonate.sing.song')) === newId, 'Open → Sing in place with the new song');
+    if (!batch) {
+      await p.click('#imp-done .openbtn');
+      const d2 = await until(p, (x) => x.song?.open && x.song.state?.song === ids[0] && !x.song.pdfOnly, 10000);
+      ok(!!d2 && /shell\.html$/.test(p.url()) && await p.evaluate(() => localStorage.getItem('resonate.sing.song')) === ids[0], `Open → the song in place, converted (${JSON.stringify(d2?.song.set)})`);
+    } else {
+      await p.click('#imp-done .x');
+      ok(!(await shown(p, '#imp-done')), '✕ closes the done row');
+    }
     await closeCtx(ctx);
   }
 

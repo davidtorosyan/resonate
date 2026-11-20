@@ -3,7 +3,8 @@
 //   • songs: the MusicXML (and the original PDF from PDF → Song) — up to SONG_LIMIT: the ones
 //     already in the cloud stay, the newest others fill free places; the rest stay on the device;
 //     a PDF not converted yet (v90, library.js xml null) goes up as its PDF alone — that's the song
-//     then, so it goes up or the song waits; the engine that converted a song travels with it;
+//     then, so it goes up or the song waits; the engine that converted a song travels with its row
+//     (not in its fingerprint: a v89 tab sharing this browser's resonate.sync builds the same one);
 //   • each song's settings (key, tempo %, tapped timing / own tempo) and its take history — one
 //     row each (song_state "<song>|key", "|rate", "|timing", "|history"), so a change to one on a
 //     device doesn't undo another device's change to another; histories are merged, never replaced;
@@ -21,9 +22,11 @@
 // pages' "resonate:data" events (debounced), when the page becomes visible, and every 2 minutes
 // while it's open — one at a time across tabs (Web Locks).
 
-import { supabase, savedUser } from "./auth.js?v=89";
-import { activeSpace, SYNC_META } from "./space.js?v=89";
-import { listSongs, getSong, putSong, replaceSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, countClips, listTakes, getTake, putTake, removeTake, persistent, dbGen } from "./library.js?v=89";
+import { supabase, savedUser } from "./auth.js?v=90";
+import { activeSpace, SYNC_META } from "./space.js?v=90";
+import { listSongs, getSong, putSong, replaceSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, countClips, listTakes, getTake, putTake, removeTake, persistent, dbGen, isMusicXml } from "./library.js?v=90";
+import { dropFromQueue } from "./omr/queue.js?v=90";
+import { deleteJobsFor } from "./omr/jobs.js?v=90";
 
 export const SONG_LIMIT = 20; // (the server's: 20261120010000_sync_limits_20.sql — applied before this ships)
 const FILE_LIMIT = 10 * 1024 * 1024;
@@ -82,17 +85,20 @@ function loadMeta(uid) {
 // (Only into the space it belongs to: a pass that outlives a switch writes nothing.)
 const saveMeta = (m) => { if (current(m.uid)) writeJson(SYNC_META, m); };
 
-// The engine that converted a song (library.js engine { n, id, at }) in its sync form { n, id } —
-// undefined when there's none (not null: a song without one keeps the fingerprint it had before
-// v90, so nothing goes up again for it).
+// The engine that converted a song (library.js engine { n, id, at }) as its row carries it, { n, id } —
+// undefined when there's none. Never part of a song's fingerprint (localItems, norm, apply): a v89 tab
+// in the same browser shares resonate.sync and builds the form without it — with it, the two tabs took
+// turns re-uploading every converted song, file and PDF, on each pass. So an engine reaches the cloud
+// with the song's next row (a conversion always brings a new sha) and is stored as it comes down;
+// one that changes alone (the same MusicXML from another engine) stays where it is.
 function engineOf(e) {
   if (!e || typeof e !== "object" || !Number.isInteger(e.n) || e.n < 1 || e.n > 9999) return undefined;
   return { n: e.n, id: typeof e.id === "string" ? e.id.slice(0, 100) : "" };
 }
 const sameEngine = (a, b) => (a?.n ?? null) === (b?.n ?? null) && (a?.id ?? null) === (b?.id ?? null);
-// MusicXML text. Anything else from the cloud — "null", which a v89 page gzipped for a PDF-only
-// song — is never stored as a song's music.
-const isMusicXml = (text) => typeof text === "string" && /<score-(partwise|timewise)[\s>]/.test(text.slice(0, 65536));
+// (isMusicXml, library.js: anything else — "null", which a v89 page gzipped for a PDF-only song — is
+// never stored as a song's music from the cloud, and a song here holding it is a PDF only: no sha,
+// it goes up as its PDF, never as that text.)
 
 async function sha256(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -120,17 +126,20 @@ async function localItems(meta) {
   for (const s of songs) {
     if (!synced.has(s.id)) continue;
     let info = meta.info[s.id];
-    const pdfOnly = s.k === "pdf";
+    const pdfOnly = s.k === "pdf"; // (library.js: no MusicXML — null, or a v89 device's "null")
+    // A PDF only has no sha, not even a cached one: a v89 tab sharing this meta caches sha256("null")
+    // for it — its form then differed from this one's and the two tabs took turns sending it up.
+    // (null in the meta: the v89 tab reads it too, and builds this same form.)
+    if (pdfOnly && info?.sha) info.sha = null;
     // (a song whose MusicXML was replaced under its id — its PDF processed again, or converted the
-    // first time — has a new rev: its content is read again, and the new sha sends it up; so is one
-    // whose engine isn't the one known)
-    if (!info || (info.rev ?? null) !== (s.rev ?? null) || (!pdfOnly && !info.sha) || (s.k === "conv" && (info.engine?.n || 0) !== (engineOf({ n: s.eng })?.n || 0))) {
+    // first time — has a new rev: its content is read again, and the new sha sends it up)
+    if (!info || (info.rev ?? null) !== (s.rev ?? null) || (!pdfOnly && !info.sha)) {
       const full = await getSong(s.id);
       if (!full) { synced.delete(s.id); continue; }
-      info = meta.info[s.id] = { ...(info || {}), sha: typeof full.xml === "string" ? await sha256(full.xml) : null, source: full.source || null, rev: s.rev ?? null, engine: engineOf(full.engine) };
+      info = meta.info[s.id] = { ...(info || {}), sha: isMusicXml(full.xml) ? await sha256(full.xml) : null, source: full.source || null, rev: s.rev ?? null };
     }
-    // (sha null: a PDF only — whatever was cached; engine undefined when none, so it's left out)
-    put("song", s.id, { title: s.title, added: s.added, source: info.source, sha: pdfOnly ? null : info.sha, pdf: pdfs.has(s.id), engine: info.engine });
+    // (v89's form exactly — the engine goes with the row, wireData)
+    put("song", s.id, { title: s.title, added: s.added, source: info.source, sha: pdfOnly ? null : info.sha, pdf: pdfs.has(s.id) });
   }
   // Settings, history and the last take: for songs in the cloud and the bundled samples.
   const ok = (id) => synced.has(id) || !isLibraryId(id);
@@ -150,7 +159,7 @@ async function localItems(meta) {
 // The sync form of what the cloud sent (what localItems would make of it once applied).
 function norm(kind, data) {
   if (!data) return null;
-  if (kind === "song") return { title: data.title, added: data.added, source: data.source ?? null, sha: data.sha ?? null, pdf: !!data.pdf, engine: engineOf(data.engine) };
+  if (kind === "song") return { title: data.title, added: data.added, source: data.source ?? null, sha: data.sha ?? null, pdf: !!data.pdf }; // (no engine: engineOf)
   if (kind === "take") return { takeId: data.takeId, at: data.at };
   if (kind === "profile") return { name: data.name ?? "", range: data.range ?? null };
   return data;
@@ -278,9 +287,16 @@ async function apply(sb, row, meta, changed, uid) {
       await removeSong(id, { quiet: true });
       // (removeSong took its take and PDF; what's kept by id goes as forget.js's delete does here)
       for (const k of [L.keys, L.rates, L.timing, L.history, L.play, PRACTICE]) setIn(k, id, null);
+      // Its conversion too: out of the queue, and its stored jobs — a kept one (iOS ended the tab
+      // mid-batch) would otherwise be resumed and spend minutes converting a song that's gone. Only
+      // while this space is still the one on the device: the queue and the jobs are the active space's.
+      if (current(uid)) {
+        dropFromQueue(id);
+        try { await deleteJobsFor(id); } catch (err) { console.warn("sync: jobs", id, err); }
+      }
       delete meta.info[id];
       delete meta.held[id];
-      (changed.gone ||= []).push(id); // (pages holding it let it go: play.js)
+      (changed.gone ||= []).push(id); // (pages holding it let it go: play.js; the shell's tray stops converting it)
     } else {
       const have = await getSong(id);
       const title = String(data.title ?? "").slice(0, 300) || "Song";
@@ -329,7 +345,8 @@ async function apply(sb, row, meta, changed, uid) {
         // or converted the first time) replaces ours — the song's settings stay; a title changed
         // alone is just renamed. Never back to a PDF only: a conversion here stays, and goes up.
         const info = meta.info[id];
-        const ours = typeof have.xml !== "string" ? null : info?.sha && (info.rev ?? null) === (have.rev ?? null) ? info.sha : await sha256(have.xml);
+        // (null: a PDF only — also a v89 device's "null" text, never sent back up as ours)
+        const ours = !isMusicXml(have.xml) ? null : info?.sha && (info.rev ?? null) === (have.rev ?? null) ? info.sha : await sha256(have.xml);
         let xml = null;
         if (theirs && ours !== theirs && xmlPath) {
           xml = await fetchXml();
@@ -361,9 +378,9 @@ async function apply(sb, row, meta, changed, uid) {
       // What this device now has, in its sync form (so nothing echoes back as a change) — or, when
       // ours is ahead of the cloud's row, the cloud's form, so the difference is noted and goes up.
       const stored = await getSong(id);
-      const sha = typeof stored?.xml !== "string" ? null : keptSha !== undefined ? keptSha : theirs;
-      meta.info[id] = { sha, source: data.source ?? null, pdf: !!data.pdf, rev: stored?.rev ?? null, engine: engineOf(stored?.engine) };
-      if (!pushOurs) h = fingerprint({ title: stored?.title ?? title, added: stored?.added ?? data.added, source: meta.info[id].source, sha, pdf: !!(await getPdf(id)), engine: meta.info[id].engine });
+      const sha = !isMusicXml(stored?.xml) ? null : keptSha !== undefined ? keptSha : theirs;
+      meta.info[id] = { sha, source: data.source ?? null, pdf: !!data.pdf, rev: stored?.rev ?? null };
+      if (!pushOurs) h = fingerprint({ title: stored?.title ?? title, added: stored?.added ?? data.added, source: meta.info[id].source, sha, pdf: !!(await getPdf(id)) });
     }
     for (const [sid, why] of Object.entries(meta.held)) if (why === "full") delete meta.held[sid];
     changed.songs = true;
@@ -493,10 +510,10 @@ async function wireData(sb, uid, it) {
   if (it.kind === "song") {
     const song = await getSong(it.id);
     if (!song) return null;
-    if (typeof song.xml !== "string") {
-      // A PDF only (not converted yet): its PDF is the song — it goes up, or the song waits (too
-      // large: held until it's converted; anything else: tried again next pass). Never a song row
-      // with no file.
+    if (!isMusicXml(song.xml)) {
+      // A PDF only (not converted yet — or a v89 device's "null": never that text): its PDF is the
+      // song — it goes up, or the song waits (too large: held until it's converted; anything else:
+      // tried again next pass). Never a song row with no file.
       const p = await getPdf(it.id);
       if (!p?.pdf) throw new Error("no PDF here");
       if (p.bytes > FILE_LIMIT) throw Object.assign(new Error("PDF too large"), { tooLarge: "pdf-large" });
@@ -521,7 +538,9 @@ async function wireData(sb, uid, it) {
       if (r.error && !(r.error.status >= 400 && r.error.status < 500)) throw r.error;
       if (!r.error) pdf = { path: pdfPath, bytes: p.bytes, name: p.name || "" };
     }
-    return { ...it.data, xml: { path: xmlPath, bytes: gz.byteLength }, pdf };
+    // The engine that converted it, from the song as stored (engineOf: in the row, not the fingerprint).
+    const engine = engineOf(song.engine);
+    return { ...it.data, ...(engine ? { engine } : {}), xml: { path: xmlPath, bytes: gz.byteLength }, pdf };
   }
   if (it.kind === "take") {
     const rec = await getTake(it.id);

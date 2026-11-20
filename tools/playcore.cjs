@@ -286,7 +286,7 @@ async function layoutChecks(page, tag) {
     await waitReady(page, "amazing-grace");
     ok(true, "open song removed → Amazing Grace");
     // a song that isn't music: the one line
-    const bad = await page.evaluate(async () => { const L = await import("./library.js?v=76"); return L.addSong("Broken", "<not-music/>"); });
+    const bad = await page.evaluate(async () => { const L = await import("./library.js?v=76"); return L.addSong("Broken", "<score-partwise><broken"); });
     await page.reload();
     await waitReady(page, "amazing-grace");
     await page.selectOption("#song", bad);

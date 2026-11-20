@@ -14,16 +14,19 @@
 // marked and passed by; one that stopped for another reason pauses the queue with the bar (Try
 // again / Retry / Skip go on, Close passes it by); the Reader's ✕ stops it and the rest. One done
 // row at the end: the song, or "✓ N converted". The screen is kept awake from the tap to the end.
-import { createImporter } from "../omr/importer.js?v=89";
-import { mount as mountReader } from "../omr/reader.js?v=89";
-import { readFlag } from "../omr/jobs.js?v=89";
-import { readQueue, writeQueue, enqueue, dropFromQueue, clearQueue } from "../omr/queue.js?v=89";
-import { ENGINE_N } from "../omr/engine.js?v=89";
-import { activeSpace, activeDb } from "../space.js?v=89";
-import { etaText } from "../omr/readerstate.js?v=89";
-import { songInfo } from "../catalog.js?v=89";
-import { listPdfIds, markConvFailed } from "../library.js?v=89";
-import { ic, esc, openOverlay, closeOverlay, overlayOpen, pageOpen } from "./chrome.js?v=89";
+// The queue is the space's, not the page's (another tab, a reload): an import kept on this device
+// that this tab isn't showing — another tab's, or one a closed tab left — is gone on with here before
+// the queue (waiting while the other tab runs it: "Running in another tab"); a song is counted once.
+import { createImporter } from "../omr/importer.js?v=90";
+import { mount as mountReader } from "../omr/reader.js?v=90";
+import { readFlag } from "../omr/jobs.js?v=90";
+import { readQueue, writeQueue, enqueue, dropFromQueue, clearQueue } from "../omr/queue.js?v=90";
+import { ENGINE_N } from "../omr/engine.js?v=90";
+import { activeSpace, activeDb } from "../space.js?v=90";
+import { etaText } from "../omr/readerstate.js?v=90";
+import { songInfo } from "../catalog.js?v=90";
+import { listPdfIds, markConvFailed } from "../library.js?v=90";
+import { ic, esc, openOverlay, closeOverlay, overlayOpen, pageOpen } from "./chrome.js?v=90";
 
 const $ = (id) => document.getElementById(id);
 const STAGE = { prep: "pages", boot: "engine", export: "MusicXML", save: "saving" };
@@ -32,19 +35,21 @@ const RING = 2 * Math.PI * 17;
 // 'nopdf': the song or its PDF isn't on this device): the song is marked and the queue goes on.
 const SAME_AGAIN = ["pdf", "nomusic", "blank", "unread", "missing", "nopdf"];
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
+const LEFTOVER_MS = 60000; // (queue.js at)
 
 export function mountTray({ version, spaceChanged, openSong, onChange = () => {}, onReplaced = () => {} }) {
   const sheet = $("tray"), host = $("reader-host"), bar = $("tray-bar"), barMsg = $("tray-msg");
   const mini = $("imp-mini"), doneRow = $("imp-done");
   let reader = null, running = false, unsaved = false, state = "idle", jobId = null, jobName = "";
   let title = "", result = null, error = null, resumable = false, stuck = null, busyErr = false;
-  // The song this run converts ({ id, title, wasPdf }; null: a new PDF read from a file — the ?pdf=
-  // test hook, an import begun before v90), kept while it's paused on the bar.
+  let why = null; // (the importer's reason for its last state: an idle 'gone' = finished or forgotten in another tab)
+  // The song this run converts ({ id, title, wasPdf, queued: taken from the queue here, force }; null:
+  // a new PDF read from a file — the ?pdf= test hook, an import begun before v90), kept while it's
+  // paused on the bar.
   let cur = null;
   let runP = null;          // the run under way (drive's promise)
-  let batchOk = 0;          // songs converted in this batch (this page's count)
+  let run = null;           // its token: { stopped } — Stop / ✕ while it starts: what it ends with isn't shown
   let lastOk = null;        // the last song converted (the Reader's Sing it / Play it at a batch's end)
-  const forced = new Set(); // asked for one by one (Convert, the Score's ⟳): converted even with this engine
   const forgetting = new Set(); // being deleted: a save that finishes anyway isn't announced
   const events = [];
   const log = [];
@@ -55,6 +60,16 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     onLog: (l) => { log.push(l); if (log.length > 4000) log.splice(0, 1000); },
     onState: showState,
   });
+  // The batch's screen wake lock (importer.js holdWake), asked for once until let go: a second ask in
+  // the same tap — the bar's Try again, then resumePending — raced the first (the importer asks while
+  // the first sentinel is still on its way: two, one never let go, the screen on after the batch).
+  // While it's held the importer asks again by itself at the next tap, should Safari drop it.
+  let woke = false;
+  function holdWake(on) {
+    if (on && woke) return;
+    woke = !!on;
+    imp.holdWake?.(on);
+  }
 
   function push(ev) {
     const e = Number.isFinite(ev.at) ? ev : { ...ev, at: Date.now() };
@@ -114,15 +129,16 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
   }
 
   // The importer's state → the Reader and the bar under it (pdf-import.js showState).
-  function showState({ state: s, job, resumable: r }) {
+  function showState({ state: s, job, resumable: r, why: w }) {
     state = s;
+    why = w || null;
     if (s === "stuck" || s === "waiting" || s === "idle") reader?.hold(true);
     reader?.canStop(s !== "waiting");
     if (job?.id) jobId = job.id;
     if (job?.name) jobName = job.name;
     stuck = s === "stuck" ? job?.stuck || null : null;
     if (s === "error") resumable = !!r;
-    if (s === "stuck") imp.holdWake?.(false); // (waiting for a tap: the screen may sleep — Skip / Retry ask again)
+    if (s === "stuck") holdWake(false); // (waiting for a tap: the screen may sleep — Skip / Retry ask again)
     renderBar();
     renderMini();
   }
@@ -157,7 +173,9 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
   });
   bar.addEventListener("click", (e) => {
     const act = e.target.closest("[data-act]")?.dataset.act;
-    if (act && act !== "dismiss" && readQueue().ids.length + (cur ? 1 : 0)) imp.holdWake?.(true); // (in the tap: a queue goes on)
+    // (in the tap: a queue goes on — Close too, past this song, unless the engine is another tab's)
+    const goesOn = act === "dismiss" ? !busyErr && readQueue().ids.length > 0 : readQueue().ids.length + (cur ? 1 : 0) > 0;
+    if (act && goesOn) holdWake(true);
     if (act === "skip" || act === "retry") { if (!running) continueJob({ id: jobId, name: jobName, size: 0, replace: cur?.id || null }, { [act]: true }); }
     else if (act === "again") again();
     else if (act === "dismiss") dismiss();
@@ -175,19 +193,23 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     ensureReader({ minimized });
     renderBar();
     onChange(); // (the song list: "converting")
+    const me = (run = { stopped: false });
     return (runP = (async () => {
       try {
         const res = await go();
-        if (res) done(res);
-        else if (state === "idle") { // (finished or forgotten in another tab)
+        if (me.stopped) { // (stopped as it started, and it saved all the same: an open song still loads it)
+          if (res?.replaced && res.songId) { try { onReplaced(res.songId); } catch (err) { console.warn("replaced", err); } }
+        } else if (res) done(res);
+        else if (state === "idle") { // (finished or forgotten in another tab — which counted it — or its PDF gone)
           clear();
-          if (cur) songEnded(false);
+          if (cur) { if (why === "gone") cur = null; else songEnded(false); }
         }
       } catch (err) {
-        if (err?.name !== "AbortError") fail(err);
+        if (err?.name !== "AbortError" && !me.stopped) fail(err);
       } finally {
         running = false;
         runP = null;
+        if (run === me) run = null;
         renderMini();
         onChange();
         setTimeout(pump, 0);
@@ -205,7 +227,8 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     const info = await songInfo(id).catch(() => null);
     return { id, title: info?.title || "", wasPdf: info?.k === "pdf" };
   }
-  function continueJob(job, opts = {}, { minimized = false } = {}) {
+  // song: the song it converts, when the caller read it already (pump).
+  function continueJob(job, opts = {}, { minimized = false, song = undefined } = {}) {
     const go = (song) => drive(job, async () => {
       if (!events.length || events.every((e) => e.t === "job")) {
         const stored = await imp.storedEvents(job.id);
@@ -218,13 +241,14 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     }, { minimized, song });
     if (!job.replace) return go(null);
     if (cur?.id === job.replace) return go(cur);
+    if (song !== undefined) return go(song);
     return songOf(job.replace).then(go);
   }
   // An unfinished import of this space: the tile at once (the flag names the job), its stored events
   // as soon as the database answers, then it goes on — minimized: home stays the tuner. Then the
   // queue goes on (a reload between two songs of a batch).
   async function resumePending({ minimized = true } = {}) {
-    if (readQueue().ids.length) imp.holdWake?.(true); // (Safari wants a tap: the importer asks again at the next one)
+    if (readQueue().ids.length) holdWake(true); // (Safari wants a tap: the importer asks again at the next one)
     const flag = readFlag();
     if (flag?.id && (flag.db ? flag.db === activeDb() : flag.space === activeSpace())) {
       ensureReader({ minimized });
@@ -265,12 +289,20 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     onChange();
     pump();
   }
+  // The job of the run under way. While the importer still reads the song's PDF and stores the job
+  // (imp.reprocess / start, before its run begins) there's no id yet: waited for — Stop must forget
+  // that job, not leave it converting unseen. Ends once the job exists or the run is over.
+  async function runJobId() {
+    while (running && !imp.current && !jobId) await sleep(50);
+    return imp.current?.id || jobId;
+  }
   // The Reader's ✕ (two taps): stop and forget it — and the rest of the queue.
   async function stopImport() {
-    const id = imp.current?.id || jobId;
     if (!spaceChanged()) clearQueue(); // (first: the run's end would start the next one)
-    forced.clear(); batchOk = 0; cur = null;
-    imp.holdWake?.(false);
+    cur = null;
+    if (run) run.stopped = true;
+    holdWake(false);
+    const id = await runJobId();
     try { if (id) await imp.discard(id); } catch (err) { console.warn("discard", err); }
     clear();
     onChange();
@@ -280,27 +312,30 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     title = res.title || title;
     const s = cur;
     if (res.replaced && res.songId && !forgetting.has(res.songId)) { try { onReplaced(res.songId); } catch (err) { console.warn("replaced", err); } }
-    if (s) songEnded(!forgetting.has(s.id), res); // (no done row between two songs of a queue, nor for one being deleted)
+    if (s) songEnded(!forgetting.has(s.id) && !res.deleted, res); // (no done row between two songs of a queue, nor for one deleted — here or elsewhere: not saved)
     else result = res;
     renderBar();
     renderMini();
   }
   // A queue's song is over (converted or not): counted, and the queue goes on — or, the last one,
-  // the done row: the song ("✓ Title · ready"), or the batch ("✓ 3 converted").
+  // the done row: the song ("✓ Title · ready"), or the batch ("✓ 3 converted"). Counted in the
+  // stored queue (done, and ok when converted: a reload or another tab counts on) only when it's a
+  // song of the batch: one this tab took from the queue, or one the batch has under way — taken off
+  // its list, not counted yet (a reload's, a closed tab's). Another tab's import gone on with here
+  // (pdf-import.html's: Play's Convert there) isn't one: its own row, when nothing waits.
   function songEnded(ok, res = null) {
     const s = cur;
     cur = null;
-    if (ok) { batchOk++; lastOk = { songId: res?.songId || s?.id, title: res?.title || s?.title }; }
+    if (ok) lastOk = { songId: res?.songId || s?.id, title: res?.title || s?.title };
     let q = readQueue();
+    const ofBatch = !!s?.queued || q.total > q.done + q.ids.length;
     const total = q.total;
-    if (!spaceChanged()) q = writeQueue({ ...q, done: q.done + 1 });
+    const n = q.ok + (ok && ofBatch ? 1 : 0);
+    if (ofBatch && !spaceChanged()) q = writeQueue({ ...q, done: q.done + 1, ok: n });
     if (q.ids.length) return "more";
-    imp.holdWake?.(false);
-    const n = batchOk;
-    batchOk = 0;
-    forced.clear();
-    if (!n) { result = null; return "end"; }
-    result = total > 1 ? { batch: n, songId: lastOk?.songId, title: "" } : { ...(res || {}), songId: res?.songId || lastOk?.songId, first: !!s?.wasPdf };
+    holdWake(false);
+    if (ofBatch && total > 1) { result = n ? { batch: n, songId: lastOk?.songId, title: "" } : null; return "end"; }
+    result = ok ? { ...(res || {}), songId: res?.songId || lastOk?.songId, first: !!s?.wasPdf } : null;
     return "end";
   }
   function fail(err) {
@@ -318,16 +353,29 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
       renderMini();
       return;
     }
+    const q = readQueue();
+    if (cur && kind !== "busy" && !resumable && (q.ids.length || q.total > 1)) {
+      // (in a batch, an error that can't be tried again — the job isn't kept: the same stage failed
+      // twice, or it couldn't be stored — passes the song by, said, and the rest go on; a song
+      // converted on its own keeps the bar: what happened, Close)
+      const s = cur;
+      flash(`“${s.title || "Song"}” didn't convert`);
+      dropReader();
+      error = null; stuck = null;
+      songEnded(false);
+      renderBar();
+      renderMini();
+      return;
+    }
     if (cur && kind === "busy" && !spaceChanged()) {
-      // (another tab holds the engine: this song waits first in the queue)
-      const q = readQueue();
-      writeQueue({ ...q, ids: [cur.id, ...q.ids.filter((x) => x !== cur.id)] });
+      // (another tab holds the engine: this song waits first in the queue — forced still, if it was)
+      writeQueue({ ...q, ids: [cur.id, ...q.ids.filter((x) => x !== cur.id)], force: cur.force ? [...q.force, cur.id] : q.force });
       busyErr = true;
       cur = null;
     }
     if (events.at(-1)?.t !== "error") push({ t: "error", message: err?.message || String(err) });
     error = err?.message || String(err);
-    imp.holdWake?.(false); // (paused for a tap: Try again asks again)
+    holdWake(false); // (paused for a tap: Try again asks again)
     renderBar();
     renderMini();
   }
@@ -344,10 +392,10 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
   function convert(ids, { force = false } = {}) {
     const list = [...new Set((ids || []).filter((id) => typeof id === "string" && id && id !== cur?.id))];
     if (!list.length || spaceChanged()) return false;
-    imp.holdWake?.(true);
-    if (!cur && !running && !readQueue().ids.length) batchOk = 0; // (a new batch)
-    if (force) for (const id of list) forced.add(id);
-    enqueue(list);
+    // (only when it starts converting, or a run goes on into it: a queue paused on the bar — an
+    // error, stopped twice — waits for a tap there, and that tap asks again)
+    if (running || (!error && !stuck && bar.hidden)) holdWake(true);
+    enqueue(list, { force });
     onChange();
     pump();
     return true;
@@ -363,11 +411,11 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
   // Stop: nothing more to convert, and the song being converted stops too (stays as it was).
   async function cancelQueue() {
     if (!spaceChanged()) clearQueue();
-    forced.clear(); batchOk = 0;
-    imp.holdWake?.(false);
+    holdWake(false);
     if (cur || busyErr) {
-      const id = imp.current?.id || jobId;
       cur = null;
+      if (run) run.stopped = true;
+      const id = await runJobId(); // (a song in its first moments too: its job a moment from existing)
       try { if (id && (running || resumable || stuck)) await imp.discard(id); } catch (err) { console.warn("discard", err); }
       clear();
     }
@@ -375,14 +423,23 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
   }
   // A song deleted (songlist.js, before forget.js forgetSong): out of the queue, and its conversion
   // stopped and forgotten — waited for, so a save under way lands before the song goes.
+  // (Also for a song deleted on another device: the sync's resonate:remote gone, below.)
   async function forget(id) {
-    forced.delete(id);
     if (!spaceChanged()) dropFromQueue(id);
+    // (what's left saying it was converted goes: the Reader's Sing it / Play it, the done row and its
+    // Open would open a song that's gone — a batch's "N converted" stays, without the song)
+    if (lastOk?.songId === id) lastOk = null;
+    if (result?.songId === id && cur?.id !== id) {
+      if (result.batch) result = { ...result, songId: null };
+      else if (!running) clear();
+      else result = null;
+      renderMini();
+    }
     if (cur?.id !== id) return;
     forgetting.add(id);
     try {
       if (running) {
-        for (let i = 0; i < 40 && running && !imp.current; i++) await sleep(50); // (the job a moment from starting)
+        await runJobId(); // (the job a moment from starting)
         const end = runP;
         const jid = imp.current?.id || jobId;
         try { if (jid) await imp.discard(jid); } catch (err) { console.warn("discard", err); }
@@ -402,9 +459,10 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     onChange();
     setTimeout(pump, 0);
   }
-  // The next song, when nothing runs, nothing waits on the bar and no import of this space is kept:
-  // the queue's first — passed by when it's gone, has no PDF here, or (Reconvert all) this engine
-  // read it already. Folded, unless the Reader is open.
+  // The next song, when nothing runs and nothing waits on the bar: an import of this space kept on
+  // this device first (below), else the queue's first — passed by when it's gone, has no PDF here, or
+  // (Reconvert all) this engine read it already and it wasn't asked for by itself. Folded, unless the
+  // Reader is open.
   let pumping = false;
   async function pump({ minimized = true } = {}) {
     if (pumping) return;
@@ -413,25 +471,36 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
       for (let n = 0; n < 1000; n++) {
         const paused = () => running || imp.busy() || !!cur || !bar.hidden || !!error || !!stuck;
         if (paused() || spaceChanged()) return;
-        if (await imp.pending().catch(() => null)) return; // (a kept import: its bar or the tile says so)
+        // An import kept on this device that this tab isn't showing (paused() covers its own): another
+        // tab's, or one a closed tab left (iOS ends tabs) — gone on with here, folded, before the queue
+        // (drive's end pumps again). While the other tab runs it the importer waits for the engine's lock
+        // ("Running in another tab"), then finds it finished there (not counted twice) or goes on.
+        const kept = await imp.pending().catch(() => null);
+        if (kept) {
+          const song = kept.replace ? await songOf(kept.replace) : null;
+          if (!paused() && !spaceChanged()) continueJob(kept, {}, { minimized, song });
+          return;
+        }
         const q = readQueue();
         const id = q.ids[0];
         if (!id) {
-          if (q.total) clearQueue(); // (counters left over: nothing waits)
-          imp.holdWake?.(false);
+          // (counters left over — nothing waits, no import kept — once untouched for a while: another
+          // tab may have just taken its next song and not stored that job yet)
+          if (q.total && Date.now() - q.at > LEFTOVER_MS) clearQueue();
+          holdWake(false);
           return;
         }
         const [info, pdfs] = await Promise.all([songInfo(id).catch(() => null), listPdfIds().catch(() => [])]);
-        if (paused() || spaceChanged() || readQueue().ids[0] !== id) continue; // (something changed meanwhile)
-        const skip = !info || info.k === "sample" || !pdfs.includes(id) || (info.k === "conv" && (info.eng || 0) >= ENGINE_N && !forced.has(id));
-        if (skip) { dropFromQueue(id); forced.delete(id); onChange(); continue; }
         const q2 = readQueue();
+        if (paused() || spaceChanged() || q2.ids[0] !== id) continue; // (something changed meanwhile)
+        const force = q2.force.includes(id);
+        const skip = !info || info.k === "sample" || !pdfs.includes(id) || (info.k === "conv" && (info.eng || 0) >= ENGINE_N && !force);
+        if (skip) { dropFromQueue(id); onChange(); continue; }
         writeQueue({ ...q2, ids: q2.ids.filter((x) => x !== id) }); // (running: the importer's job now, not the queue's)
-        forced.delete(id);
         const open = freshReader();
         log.length = 0;
         log.push(`Resonate ${version} · ${new Date().toISOString()}`, navigator.userAgent, `[convert] song ${id} · engine ${ENGINE_N}`);
-        drive({ name: "" }, () => imp.reprocess(id), { minimized: minimized && !open, song: { id, title: info.title || "", wasPdf: info.k === "pdf" } });
+        drive({ name: "" }, () => imp.reprocess(id), { minimized: minimized && !open, song: { id, title: info.title || "", wasPdf: info.k === "pdf", queued: true, force } });
         return;
       }
     } finally { pumping = false; }
@@ -504,13 +573,21 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
 
   // (Back from the back/forward cache — the engine stopped on pagehide: boot.js reloads the page.)
 
+  // A song deleted on another device (the sync's pull) — or here, by forget.js after songlist.js
+  // called forget already (nothing left to do then): its conversion and its queue place go as for a
+  // delete here, and a done row naming it.
+  addEventListener("resonate:remote", (e) => {
+    const gone = e.detail?.gone;
+    if (Array.isArray(gone)) for (const id of gone) forget(id).catch((err) => console.warn("forget", err));
+  });
+
   return {
     start, reprocess, convert, cancelQueue, queueInfo, forget, resumePending, expand, readingRow,
     busy: () => running || unsaved,
     debug: () => ({
       state, running, mode: reader?.mode || null, events: events.length, result: result && { songId: result.songId, title: result.title, batch: result.batch || 0 },
       error, stuck, reader: reader?.status() || null, mini: !mini.hidden, done: !doneRow.hidden, jobId, replaced: !!result?.replaced,
-      song: cur && { ...cur }, queue: queueInfo(), batchOk, busyErr,
+      song: cur && { ...cur }, queue: queueInfo(), batchOk: readQueue().ok, busyErr, lastOk: lastOk?.songId || null,
     }),
     eventList: events,
   };

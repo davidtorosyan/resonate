@@ -12,9 +12,9 @@
 // are quiet (one sound at a time); a tuner that was
 // listening listens again REOPEN ms after the last key lifts. Silent during a Sing take (quiet()).
 // Hidden (the module, the page): every note cut, the context asleep.
-import { mountKeyboard } from "../keyboard.js?v=89";
-import { loadPiano, pianoNow, holdPiano, primeHold, pianoBus, keepAlive, ownContext, sleepAudio } from "../piano.js?v=89";
-import { SHARPS } from "../music.js?v=89";
+import { mountKeyboard } from "../keyboard.js?v=90";
+import { loadPiano, pianoNow, holdPiano, primeHold, pianoBus, keepAlive, ownContext, sleepAudio } from "../piano.js?v=90";
+import { SHARPS } from "../music.js?v=90";
 
 const MIN_PRESS = 0.25; // s: a quick tap still sounds this long
 const LIFT_PLAY = 0.8; // s: a press that could only sound at the lift

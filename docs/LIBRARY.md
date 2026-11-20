@@ -34,9 +34,9 @@ This file is the implementation contract (the parts are built in parallel); keep
 (tools/jobstore.cjs checks it against the patch files).
 
 **Conversion queue** (`public/omr/queue.js`; localStorage `resonate.convert`, in space.js `DATA_KEYS`):
-`{ db, ids: [songId…], total, done }` — `db` = space.js `activeDb()` when written; read only when it matches
+`{ db, ids: [songId…], total, done, ok, force, at }` — `db` = space.js `activeDb()` when written; read only when it matches
 (else empty). `ids[0]` is next; the song being converted is the importer's running job (`job.replace`), not in
-`ids`. `total` / `done` count the batch for "2/5"; reset when the queue empties.
+`ids`. `total` / `done` count the batch for "2/5", `ok` the songs that converted (the done row's "N converted", kept across a reload), `force` the ids an explicit Convert / Reconvert asked for (never passed by as "already current"); reset when the queue empties.
 API: `readQueue()`, `writeQueue(q)`, `enqueue(ids)` (append, unique, keeps order), `dropFromQueue(id)`, `clearQueue()`.
 
 ## 2. Library API (library.js) — changes
@@ -144,9 +144,10 @@ disabled as "Title · PDF". `runRemote` open_song → `{ ok: false, pdf_only: tr
 - A PDF-only song's row: `sha: null`, `xml: null`, `pdf: {path, bytes, name}`; no xml.gz upload; the PDF is
   required (a failed upload throws / holds — never `pdf: null`; over 10 MB → held `pdf-large`, cleared when the
   song gets a rev). `sha` from `typeof xml === "string"` only.
-- `engine` travels in the row data (`{ n, id }`), only when the song has one (undefined otherwise, so existing
-  fingerprints don't change); `norm` and the post-apply fingerprint include it; pull stores it (putSong /
-  replaceSong `{ engine }`).
+- `engine` travels in the row data (`{ n, id }`, added in wireData from the stored record) but **not** in the
+  fingerprinted form — a v89 tab sharing the meta builds the same one (with it in, they re-uploaded every converted
+  song on each pass); pull stores it without hashing. An engine change without a new sha (an identical reconversion)
+  doesn't propagate — harmless.
 - Pull, new song with no xml path but a PDF path → download the PDF (required: an error retries), `putPdf`, then
   `putSong({ …, xml: null })`. A downloaded xml.gz that isn't MusicXML (`"null"` from a v89 tab) is refused (the
   song stays as it is / PDF only). A cloud PDF-only row meeting a local conversion → ours is kept and pushed.
@@ -155,6 +156,29 @@ disabled as "Title · PDF". `runRemote` open_song → `{ ok: false, pdf_only: tr
   4-arg `sync_count` that leaves out the row being re-pushed, folding in the never-applied sync_fixes), 60 files.
   Applied before the client ships.
 
-## 8. As built / tests
+## 8. As built (v90) / tests
 
-(filled in at ship)
+Built in four parallel parts against this contract, then one review pass (three lenses — data, the queue, the pages —
+each important finding verified) and its fixes:
+- **A deleted song never comes back:** a replace job whose song is gone (deleted here, in another tab, or on another
+  device and pulled by the sync) ends without saving; the sync's tombstone also drops the song's queue entry and stored
+  jobs and sends `resonate:remote { gone }`, which the tray turns into `forget(id)` (a running conversion discarded).
+- **Old tabs:** `engine` is out of the sync fingerprint (above); a stored text that isn't MusicXML (a v89 tab's `"null"`)
+  counts as PDF only everywhere (library.js `isMusicXml`, catalog, sync) and is never pushed.
+- **The queue:** a job kept by another tab or a reload is continued here (folded; "Running in another tab" while that
+  tab still has the engine) instead of stalling; Stop / the Reader's ✕ stop a song that is still starting; `ok` / `force`
+  persisted; the wake lock only while something can run (not while paused on the bar); an error that can't be tried
+  again passes the song by during a batch ("“Title” didn't convert"); the done row forgets a deleted song.
+- **The list:** a tap outside the ⋯ menu only closes it; a re-render waits while the menu is open (an armed Delete stays).
+- **Pages:** a PDF-only song converted on another device leaves the shell's PDF-only mode (`resonate:remote replaced` →
+  `songview.reload`); remote open_song answers `ok: false` with Play's message when the PDF didn't open; a PDF page that
+  fails to draw goes back to the last page that drew (not saved); pdf.js gets the `?r=` retry; the shell's Score reopens
+  a song Play holds as failed; deleting the song Sing holds no longer moves `resonate.sing.song` to Amazing Grace.
+- **Known limits:** songs converted before v90 show "engine ≤9" even when v89's engine 10 made them (no stamp then) —
+  Reconvert all offers them again; an identical reconversion's new engine stamp doesn't sync; a conversion only runs
+  while the page is visible (iOS suspends a hidden tab — the screen wake lock keeps it on); the MCP server's answers
+  don't know about PDF-only songs yet (`get_song` says "open it once"; `get_score_pdf` works).
+
+Tests (all in tools/regress.sh): libcore.cjs (45), songlib.cjs (209: the shell flows on the scripted worker, incl. the
+review's F1–F10), playpdfonly.cjs (121), singpdf.cjs (13), synclib.mjs (the real sync.js against a fake cloud, incl. v89's
+sync.js from git as a second tab), plus shell.cjs (324), reprocess.cjs (46), jobstore.cjs (ENGINE_N = the newest patch).

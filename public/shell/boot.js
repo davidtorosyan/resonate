@@ -3,16 +3,16 @@
 // Piano) sit beside it; a PDF is a song as soon as it's added, converted in the background (one
 // song after another: the Reader tray); the avatar (top right) opens the account menu. nav.js ran
 // first (shell.html), so whose data the device shows is settled before anything here reads it.
-import { spaceChanged } from "../nav.js?v=89";
-import { mountTuner, tunerHtml } from "./tuner.js?v=89";
-import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=89";
-import { mountSongView } from "./songview.js?v=89";
-import { mountTray } from "./tray.js?v=89";
-import { mountAccount } from "./account-menu.js?v=89";
-import { ic, fic, device, overlayOpen } from "./chrome.js?v=89";
-import { fadeIn } from "./motion.js?v=89";
-import { mountPlaces } from "./places.js?v=89";
-import { mountRemote } from "./remote.js?v=89";
+import { spaceChanged } from "../nav.js?v=90";
+import { mountTuner, tunerHtml } from "./tuner.js?v=90";
+import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=90";
+import { mountSongView } from "./songview.js?v=90";
+import { mountTray } from "./tray.js?v=90";
+import { mountAccount } from "./account-menu.js?v=90";
+import { ic, fic, device, overlayOpen } from "./chrome.js?v=90";
+import { fadeIn } from "./motion.js?v=90";
+import { mountPlaces } from "./places.js?v=90";
+import { mountRemote } from "./remote.js?v=90";
 
 const $ = (id) => document.getElementById(id);
 const version = $("version").textContent.trim();
@@ -85,4 +85,12 @@ if (testPdf) {
 
 // Back from the back/forward cache (a song page's Back): the page as left — sheets closed.
 addEventListener("pageshow", (e) => { if (e.persisted) location.reload(); });
+
+// The open song read again on another device (the sync's pull: resonate:remote replaced) — as the
+// tray's own conversion does (onReplaced): a PDF only gets its notes and its modules back (Sing
+// included), the Piano's range follows. Sing and the Score load the new notes on their own.
+addEventListener("resonate:remote", (e) => {
+  const r = e.detail?.replaced, id = song.current;
+  if (id && r && (typeof r.has === "function" ? r.has(id) : Array.isArray(r) && r.includes(id))) song.reload(id, { self: true });
+});
 

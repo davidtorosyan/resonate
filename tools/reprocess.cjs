@@ -195,7 +195,8 @@ async function until(p, pred, ms = 30000, f = dbg) {
     await ctx.close();
   }
 
-  // --- the song deleted meanwhile: saved as a new song ----------------------------------------------
+  // --- the song deleted meanwhile (another device, another tab): not saved — the delete wins -------------
+  // (v90 review: saved as a new song, it came back on every device under a new id)
   if (want('deleted')) {
     const ctx = await ctxFor('agSlow');
     const p = await ctx.newPage();
@@ -205,10 +206,18 @@ async function until(p, pred, ms = 30000, f = dbg) {
     await until(p, (x) => x.events.includes('phase:engine'), 20000);
     await p.evaluate(async ({ id, V }) => { const L = await import(`/resonate/library.js?v=${V}`); await L.removeSong(id); }, { id, V });
     const d = await until(p, (x) => x.done || !!x.err, 40000);
-    const nid = await p.evaluate(() => localStorage.getItem('resonate.sing.song'));
-    const a = await songInfo(p, nid), old = await songInfo(p, id);
-    ok(d.done && /saved to My songs/.test(d.detail), `done: "${d.detail}"`);
-    ok(nid !== id && a.exists && !old.exists && a.pdf > 0 && JSON.stringify(a.pages) === '[1]', `saved as a new song (${nid}, PDF ${a.pdf} bytes, pages ${JSON.stringify(a.pages)}); the old id stays gone`);
+    const list = await p.evaluate(async (V) => (await import(`/resonate/library.js?v=${V}`)).listSongs(), V);
+    const old = await songInfo(p, id);
+    const res = await p.evaluate(() => window.resonateDebug?.().eventList?.find((e) => e.t === 'done') || null);
+    ok(d.done && !d.err && /not saved: the song was deleted/.test(d.detail), `done, says so: "${d.detail}"`);
+    ok(list.length === 0 && !old.exists && !old.pdf, `no new song (${list.length} songs: ${JSON.stringify(list.map((x) => x.title))}); the old id stays gone`);
+    ok(res && res.songId === null, `the done event names no song (${JSON.stringify(res && { songId: res.songId })})`);
+    ok(!old.jobs.length && !old.flag, `the job deleted all the same (${old.jobs.length} left), no flag`);
+    ok(old.open === id, `the open song pointer left as it was (${old.open === id ? 'the old id' : old.open})`);
+    // A reload afterwards: nothing resumed, the picker.
+    await p.reload();
+    const r = await until(p, (x) => x.pick, 8000);
+    ok(r.pick && !r.events.length && (await p.evaluate(async (V) => (await import(`/resonate/library.js?v=${V}`)).listSongs(), V)).length === 0, 'a reload afterwards: the picker, still no song');
     ok(!ctx.errors.length, `no page errors${ctx.errors.length ? ': ' + ctx.errors.join(' | ') : ''}`);
     await ctx.close();
   }
@@ -262,7 +271,7 @@ async function until(p, pred, ms = 30000, f = dbg) {
     const started = await p.evaluate((id) => window.resonatePlay.reprocess(id), id);
     const again = await p.evaluate((id) => window.resonatePlay.reprocess(id), id);
     const toast = await p.evaluate(() => { const t = document.getElementById('toast'); return t && !t.hidden ? t.textContent : ''; });
-    ok(started === true && again === false && /Another PDF/.test(toast), `one at a time: a second reprocess refused and said ("${toast}")`);
+    ok(started === true && again === false && /^Already (queued|converting)$/.test(toast), `one at a time: a second reprocess of the same song refused and said ("${toast}")`);
     const s1 = await until(p, (x) => x.imp?.result && x.pitched !== s0.pitched && x.singNotes !== s0.singNotes, 40000, look);
     const a = await songInfo(p, id);
     ok(s1.imp?.result?.songId === id && s1.imp.replaced, `the tray: done, the same song replaced (${JSON.stringify(s1.imp?.result)})`);
@@ -272,7 +281,7 @@ async function until(p, pred, ms = 30000, f = dbg) {
     ok(a.title === 'My Grace' && !a.cleanOld && JSON.stringify(a.pages) === '[1]' && a.key === 2, `stored: title kept, no clean-up of the old notes (${a.clean ? 'a new one, made on reload' : 'none'}), pages ${JSON.stringify(a.pages)}, key kept (${a.key})`);
     const done = await p.evaluate(() => { const r = document.getElementById('imp-done'); return { shown: !r.hidden, s: r.querySelector('.s')?.textContent }; });
     ok(/updated/.test(done.s || ''), `the done row says "${done.s}"`);
-    if (process.env.SHOTS) await p.screenshot({ path: `${process.env.SHOTS}/reprocess-shell.png` });
+    if (process.env.SHOTS && process.env.SHOTS !== '0') await p.screenshot({ path: `${process.env.SHOTS}/reprocess-shell.png` }); // (SHOTS=0: none)
     ok(!ctx.errors.length, `no page errors${ctx.errors.length ? ': ' + ctx.errors.join(' | ') : ''}`);
     await ctx.close();
   }

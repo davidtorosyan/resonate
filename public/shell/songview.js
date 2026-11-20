@@ -17,14 +17,14 @@
 // alone, on its PDF — on every device, unsaved, whatever opened it (Next-up, the Reader's links, an
 // assistant): no Sing toggle, the Score's ▶ stays in its bar (hidden: nothing to play), the Piano as
 // saved (Play's own keyboard under the PDF). Converted (reload), the saved modules come back.
-import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=89";
-import { mountSing } from "./singview.js?v=89";
-import { mountScore } from "./scoreview.js?v=89";
-import { mountPiano, rangeOf } from "./pianoview.js?v=89";
-import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=89";
-import { loadSong, songInfo } from "../catalog.js?v=89";
-import { parseMusicXml } from "../musicxml.js?v=89";
-import { titleOf } from "./songlist.js?v=89";
+import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=90";
+import { mountSing } from "./singview.js?v=90";
+import { mountScore } from "./scoreview.js?v=90";
+import { mountPiano, rangeOf } from "./pianoview.js?v=90";
+import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=90";
+import { loadSong, songInfo } from "../catalog.js?v=90";
+import { parseMusicXml } from "../musicxml.js?v=90";
+import { titleOf } from "./songlist.js?v=90";
 
 const $ = (id) => document.getElementById(id);
 const PREF = "resonate.shell.modules"; // { phone | tablet | desktop: ["sing", "score", "piano"] } — this device's
@@ -340,14 +340,16 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
   // A song's MusicXML replaced (its PDF read again): Sing and the Score that hold it load it again,
   // in place — once nothing sounds (a take is never cut for it).
   // A PDF only that got its MusicXML (converted): the saved modules again, Sing included.
-  async function reload(id) {
+  // self: Sing and the Score load it on their own (the sync's resonate:remote replaced — another
+  // device converted it: sing.js and play.js listen to it): only the shell's part here.
+  async function reload(id, { self = false } = {}) {
     ranges.delete(id);
     if (rangeFor === id) rangeFor = undefined;
     for (let i = 0; i < 1200 && (sing.busy() || sing.state()?.busy || score.state()?.busy || switching || closing); i++) await sleep(500);
     const S = window.resonateSing;
     const jobs = [];
-    if (sing.loaded && S?.state?.().song === id) jobs.push(S.open(id));
-    if (score.loaded) jobs.push(score.reload(id));
+    if (!self && sing.loaded && S?.state?.().song === id) jobs.push(S.open(id));
+    if (!self && score.loaded) jobs.push(score.reload(id));
     for (const r of await Promise.allSettled(jobs)) if (r.status === "rejected") console.error(r.reason);
     if (isOpen && current === id) { titleId = null; nameIt(id); } // (a first conversion may name it: titleAuto)
     if (isOpen && current === id && pdfOnly && !(await isPdf(id)) && isOpen && current === id) {
