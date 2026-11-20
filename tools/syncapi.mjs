@@ -28,21 +28,22 @@ await upsert([{ user_id: uid, kind: 'song_state', id: sid, deleted: true, data: 
 row = await get('song_state', sid);
 check(row.deleted && row.data === null && row.updated_at > u1, 'a delete is a tombstone (data dropped), with a newer updated_at');
 
-// The song limit: count what's there, fill to 10, the next one is refused; a tombstone frees a slot.
+// The song limit: count what's there, fill to the limit, the next one is refused; a tombstone frees a slot.
+const LIMIT = 20; // (supabase/migrations/20261120010000_sync_limits_20.sql; public/sync.js SONG_LIMIT)
 const live = await (await fetch(`${SB}/rest/v1/sync_items?kind=eq.song&deleted=eq.false&select=id`, { headers: H })).json();
-const free = 10 - live.length;
+const free = LIMIT - live.length;
 const ids = Array.from({ length: free }, (_, i) => `t-${run}-song${i}`);
 for (const id of ids) await upsert([{ user_id: uid, kind: 'song', id, data: { title: id }, modified_at: t(40) }]);
 r = await upsert([{ user_id: uid, kind: 'song', id: `t-${run}-song-extra`, data: { title: 'x' }, modified_at: t(40) }]);
 const body = await r.json();
-check(r.status >= 400 && body.hint === 'resonate:limit:song', `11th song refused (${r.status} ${body.hint})`);
-// A song already there pushed again at 10: as an upsert the live trigger counts it too (the
-// optional migration fixes that) — as an update (what sync.js falls back to) it's accepted.
+check(r.status >= 400 && body.hint === 'resonate:limit:song', `song ${LIMIT + 1} refused (${r.status} ${body.hint})`);
+// A song already there pushed again at the limit: the trigger leaves the row itself out of its
+// count (20261120010000) — accepted as an upsert, and as an update (sync.js's fallback).
 const again = ids[0] || live[0].id;
 r = await upsert([{ user_id: uid, kind: 'song', id: again, data: { title: 'renamed' }, deleted: false, modified_at: t(45) }]);
-console.log(`     (re-push at 10 as an upsert: ${r.status}${r.status >= 400 ? ' — refused, as expected without the optional migration' : ''})`);
+check(r.status < 300 && (await get('song', again))?.data.title === 'renamed', `a song re-pushed at ${LIMIT} as an upsert is accepted (${r.status})`);
 r = await fetch(`${SB}/rest/v1/sync_items?kind=eq.song&id=eq.${encodeURIComponent(again)}`, { method: 'PATCH', headers: { ...H, Prefer: 'return=representation' }, body: JSON.stringify({ data: { title: 'renamed again' }, deleted: false, modified_at: t(46) }) });
-check(r.status === 200 && (await get('song', again))?.data.title === 'renamed again', `a song re-pushed at 10 as an update is accepted (${r.status})`);
+check(r.status === 200 && (await get('song', again))?.data.title === 'renamed again', `a song re-pushed at ${LIMIT} as an update is accepted (${r.status})`);
 await upsert([{ user_id: uid, kind: 'song', id: ids[0] || live[0].id, deleted: true, modified_at: t(50) }]);
 r = await upsert([{ user_id: uid, kind: 'song', id: `t-${run}-song-extra`, data: { title: 'x' }, modified_at: t(55) }]);
 check(r.status === 201, `after a delete there's room again (${r.status})`);

@@ -5,13 +5,16 @@
 //  B: has its own signed-out song; signs in → it's shelved, A's things arrive (the take too,
 //     without the recording); changes a tempo and removes a song → A follows; signs out → its
 //     own song is back.
-//  C: 12 songs signed out, creates the account (answered with the test user's session) → they
-//     go up until the cloud holds 10; signing out warns that the rest aren't in the cloud.
+//  C: SONG_LIMIT + 2 songs signed out, creates the account (answered with the test user's session)
+//     → they go up until the cloud holds SONG_LIMIT; signing out warns that the rest aren't in the cloud.
 const { chromium } = require('playwright');
 const fs = require('fs');
 const EMAIL = process.env.TEST_EMAIL, PW = process.env.TEST_PW;
 const SB = 'https://ltyadhjhnfxdlgsmrcds.supabase.co', KEY = 'sb_publishable_8FEg0aiW9Ir-RrrND8kfQw_IBirLBai';
 const URL0 = 'http://localhost:8097/resonate/';
+// The cloud's song limit, as sync.js has it (the server's: supabase/migrations/20261120010000_sync_limits_20.sql).
+const LIMIT = (() => { try { return Number(/export const SONG_LIMIT = (\d+)/.exec(fs.readFileSync(require('path').join(__dirname, '../public/sync.js'), 'utf8'))[1]); } catch { return 20; } })();
+const NC = LIMIT + 2; // C's songs: the account's one + LIMIT − 1 of them go up, the oldest three stay
 let fails = 0;
 const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) fails++; };
 
@@ -136,10 +139,10 @@ async function emptyCloud(t) {
   check(JSON.stringify(titles) === JSON.stringify(['B Local Song']) && !B.p.lastDialog, `B signed out: its own song is back, no warning needed (${titles}; ${B.p.lastDialog})`);
   check(await B.p.evaluate(() => !localStorage.getItem('resonate.profiles') && !localStorage.getItem('resonate.shelf')), 'B signed out: the account\'s profile left with it');
 
-  // --- C: 12 songs, creates the account → the cloud fills to 10, the rest stay ---
+  // --- C: LIMIT + 2 songs, creates the account → the cloud fills to LIMIT, the rest stay ---
   const C = await device('C');
   await C.p.goto(URL0 + 'sing.html'); await C.p.waitForTimeout(1200);
-  for (let i = 1; i <= 12; i++) { await lib(C.p, 'addSong', [`C Song ${String(i).padStart(2, '0')}`, xmlTitled(`C Song ${i}`), {}]); await C.p.waitForTimeout(5); }
+  for (let i = 1; i <= NC; i++) { await lib(C.p, 'addSong', [`C Song ${String(i).padStart(2, '0')}`, xmlTitled(`C Song ${i}`), {}]); await C.p.waitForTimeout(5); }
   const sess = await token();
   sess.user.created_at = new Date().toISOString(); // (answered as a new account: made just now)
   await C.p.route('**/auth/v1/signup**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(sess) }));
@@ -151,8 +154,8 @@ async function emptyCloud(t) {
   c = await cloud(t0);
   const cloudSongs = c.filter((x) => x.kind === 'song').map((x) => x.data.title).sort();
   const cLocal = (await lib(C.p, 'listSongs', [])).map((x) => x.title);
-  check(cloudSongs.length === 10 && cloudSongs.includes('Sync Song Two'), `C: the cloud holds 10 songs (${cloudSongs.length}: ${cloudSongs.join(', ')})`);
-  check(cLocal.length === 13 && cLocal.includes('Sync Song Two'), `C: keeps all 12 of its own (+ the account's) (${cLocal.length})`);
+  check(cloudSongs.length === LIMIT && cloudSongs.includes('Sync Song Two'), `C: the cloud holds ${LIMIT} songs (${cloudSongs.length}: ${cloudSongs.join(', ')})`);
+  check(cLocal.length === NC + 1 && cLocal.includes('Sync Song Two'), `C: keeps all ${NC} of its own (+ the account's) (${cLocal.length})`);
   check(!cloudSongs.includes('C Song 01') && !cloudSongs.includes('C Song 02') && !cloudSongs.includes('C Song 03'), 'C: the oldest three stayed on the device');
   // C deletes one of its songs that's in the cloud: room again, the newest held one goes up.
   const cSongs = await lib(C.p, 'listSongs', []);
@@ -161,7 +164,7 @@ async function emptyCloud(t) {
   await syncNow(C.p); await settle(C.p); await syncNow(C.p); await settle(C.p);
   c = await cloud(t0);
   const cloud2 = c.filter((x) => x.kind === 'song').map((x) => x.data.title).sort();
-  check(cloud2.length === 10 && !cloud2.includes('C Song 04') && cloud2.includes('C Song 03'), `C: a song deleted → a held one takes its place (${cloud2.join(', ')})`);
+  check(cloud2.length === LIMIT && !cloud2.includes('C Song 04') && cloud2.includes('C Song 03'), `C: a song deleted → a held one takes its place (${cloud2.join(', ')})`);
   await C.p.goto(URL0 + 'account.html'); await C.p.waitForFunction(() => window.resonateDebug?.().view === 'in', null, { timeout: 20000 });
   C.p.lastDialog = null;
   await C.p.click('#signout'); await C.p.waitForFunction(() => window.resonateDebug?.().view === 'out', null, { timeout: 60000 });

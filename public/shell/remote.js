@@ -10,14 +10,17 @@
 // place with the Score shown (score_open's song, else the song open, else the one Sing has) — for
 // that song only, the modules pref untouched — and run in play.js (resonatePlay.scoreRun); what the
 // Score shows goes with this device's state while it's shown.
+// A PDF not converted yet (v90): open_song opens it with the Score on its PDF (Sing can't open it)
+// and says pdf_only; Sing's commands on one open here are refused; the Score's wait takes its PDF
+// shown for ready (play.js state(): pdfOnly, shown).
 import { remote } from "../assist.js?v=89";
 import { songChoices } from "../catalog.js?v=89";
 
 const $ = (id) => document.getElementById(id);
 const HOME = { page: "home", song: null, key: null, tempo: null, doing: "idle", line: null, lines: 0, has_take: false, sound: "none" };
 
-// sing: singview's mount (load(), state()); song: songview's (open(), isOpen, current, title, mods);
-// places: places.js (close()).
+// sing: singview's mount (load(), state()); song: songview's (open(), isOpen, current, title, mods,
+// pdfOnly); places: places.js (close()).
 export function mountRemote({ sing, song, places }) {
   const btn = $("home-remote");
   let inner = null; // Sing's own hooks, once sing.js has started them
@@ -51,6 +54,28 @@ export function mountRemote({ sing, song, places }) {
   }
   // The Score on a song (opened in place with it shown), then play.js runs the command.
   const P = () => window.resonatePlay;
+  // Ready for a command: the song's notes laid out — or, a PDF only, its PDF shown.
+  const scoreReady = (id) => { const st = P()?.state?.(); return !!st && st.song === id && (st.ready || (st.pdfOnly && st.shown)); };
+  async function waitScore(id, ms = 30000) {
+    for (let t = 0; t < ms && !(P()?.scoreRun && scoreReady(id)); t += 100) await new Promise((r) => setTimeout(r, 100));
+    return !!P()?.scoreRun && scoreReady(id);
+  }
+  // The song an open_song means, as Sing finds it (its id, then its title, then a title holding the
+  // words; the samples first, then My songs) — when that's a PDF only, Sing can't open it.
+  async function pdfSongFor(want, onlyPdf = false) {
+    const w = String(want ?? "").trim().toLowerCase();
+    if (!w) return null;
+    let all = [];
+    try { const c = await songChoices(); all = [...c.samples, ...c.mine]; } catch { return null; }
+    if (onlyPdf) all = all.filter((x) => x.k === "pdf");
+    const hit = all.find((x) => x.id.toLowerCase() === w) || all.find((x) => (x.title || "").toLowerCase() === w) || all.find((x) => (x.title || "").toLowerCase().includes(w));
+    return hit?.k === "pdf" ? hit : null;
+  }
+  async function openPdfOnly(hit) {
+    await song.open(hit.id, { score: true });
+    await waitScore(hit.id, 15000);
+    return { ok: true, pdf_only: true, note: "Only its PDF so far: shown in the Score. Convert it (Songs → ⋯ → Convert) to sing it.", ...hooks.state() };
+  }
   async function runScore(action, a) {
     let id = action === "score_open" ? String(a.song ?? "") : song.isOpen ? song.current : sing.state()?.song || null;
     if (!id) return { ok: false, error: "No song is open — use score_open {song} first." };
@@ -61,18 +86,27 @@ export function mountRemote({ sing, song, places }) {
     }
     if (!(song.isOpen && song.current === id && song.mods.score)) await song.open(id, { score: true });
     else places.close(); // (a Record / Voice / Assistants sheet over it gives way)
-    for (let t = 0; t < 30000 && !(P()?.scoreRun && P().state?.().song === id && P().state().ready); t += 100) await new Promise((r) => setTimeout(r, 100));
+    await waitScore(id);
     if (!P()?.scoreRun) return { ok: false, error: "The Score didn't load on this device." };
     return P().scoreRun(action, a);
   }
   async function run(action, a) {
     if (String(action).startsWith("score_")) return runScore(action, a);
     if (action === "stop") { try { await P()?.scoreRun?.("score_stop", {}); } catch {} } // (the Score's ▶ too)
+    if (action === "open_song") { const hit = await pdfSongFor(a.song); if (hit) return openPdfOnly(hit); }
+    else if (action !== "stop" && song.isOpen && song.pdfOnly) {
+      return { ok: false, pdf_only: true, error: `“${song.title || "This song"}” is only a PDF so far — convert it first (Songs → ⋯ → Convert).`, ...hooks.state() };
+    }
     await loadSing();
     if (!inner?.run) return { ok: false, error: "Sing didn't load on this device." };
     if (action === "stop") return inner.run(action, a);
     if (action === "open_song") {
       const r = await inner.run(action, a);
+      if (r?.pdf_only) { // (Sing found a PDF only another way: the Score shows it)
+        const hit = (r.song?.id && { id: r.song.id }) || (r.id && { id: r.id }) || (await pdfSongFor(a.song, true));
+        if (hit) return openPdfOnly(hit);
+        return r;
+      }
       if (r?.ok !== false) { await showSing(sing.state()?.song); return { ...r, ...hooks.state() }; }
       return r;
     }
@@ -92,7 +126,7 @@ export function mountRemote({ sing, song, places }) {
       if (singShown()) return score ? { ...s, score } : s;
       const cur = song.isOpen ? song.current : null;
       const same = !!cur && s.song?.id === cur;
-      return { ...HOME, page: cur ? "song" : "home", song: cur ? { id: cur, title: song.title || s.song?.title || "" } : null,
+      return { ...HOME, page: cur ? "song" : "home", song: cur ? { id: cur, title: song.title || s.song?.title || "", ...(song.pdfOnly ? { pdf_only: true } : {}) } : null,
         key: same ? s.key : null, tempo: same ? s.tempo : null, has_take: same ? !!s.has_take : false,
         ...(score ? { score, doing: score.playing ? "score-play" : "idle" } : {}) };
     },

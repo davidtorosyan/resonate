@@ -184,14 +184,26 @@
       .sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px 16px; -webkit-overflow-scrolling: touch; }
       .sec { font: 700 12px/1 var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); margin: 14px 2px 8px; display: flex; align-items: center; justify-content: space-between; }
       .sec span { text-transform: none; letter-spacing: 0; font-weight: 600; }
+      .sec .sh { text-transform: inherit; letter-spacing: inherit; font-weight: inherit; }
+      .sec .sh .mono { text-transform: none; letter-spacing: 0; font-weight: 600; }
+      .sec { flex-wrap: wrap; gap: 6px; }
+      .sec .sacts { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
+      .sec .qstat { font: 600 12px/1 var(--mono); color: var(--now); }
+      .secbtn { min-height: 44px; padding: 0 14px; border-radius: 12px; background: var(--control); box-shadow: inset 0 0 0 1px var(--line-2); font: 650 12.5px/1 var(--font); color: var(--text); white-space: nowrap; }
       .rows { border-radius: 16px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
       .song { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 58px; padding: 9px 12px; position: relative; text-align: left; }
-      .song + .song { box-shadow: inset 0 1px 0 var(--line); }
+      .rows > * + * { box-shadow: inset 0 1px 0 var(--line); }
+      /* a row: the song (tap: open it) + its ⋯ (Convert / Reconvert, Delete) */
+      .songrow { display: flex; align-items: stretch; }
+      .songrow .song { flex: 1; min-width: 0; }
+      .songrow .more { width: 48px; flex: none; display: grid; place-items: center; color: var(--text-3); }
+      .songrow .more[aria-expanded="true"] { color: var(--text); background: var(--control); }
+      .song[data-old] .s::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); margin-right: 6px; vertical-align: 1px; }
       .song .tile { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; position: relative; }
       .song .tile svg.i { width: 19px; height: 19px; }
       .song .tile > svg:not(.i) { position: absolute; inset: 0; width: 40px; height: 40px; }
       .tile[data-src="pdf"] { background: rgba(255,79,159,.14); color: #ff8ec2; }
-      .tile[data-src="xml"] { background: rgba(79,124,255,.16); color: #9db4ff; }
+      .tile[data-src="xml"], .tile[data-src="conv"] { background: rgba(79,124,255,.16); color: #9db4ff; }
       .tile[data-src="sample"] { background: rgba(166,79,255,.16); color: var(--accent-hi); }
       .tile[data-src="reading"] { background: rgba(255,230,160,.08); color: var(--now); }
       .song .mid { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -209,6 +221,9 @@
       .linkrow button { height: 44px; padding: 0 16px; border-radius: 12px; background: var(--grad-primary); color: #fff; font: 700 14px/1 var(--font); }
       .pop { position: absolute; z-index: 50; border-radius: 18px; padding: 6px; background: linear-gradient(180deg,#23234a,#191934); box-shadow: var(--shadow-pop); }
       .addmenu { top: 64px; right: 14px; width: 260px; }
+      .rowmenu { width: 220px; }
+      .prow[data-armed] { color: var(--error); }
+      .l-del { background: rgba(255,179,138,.12); color: var(--error); }
       .prow { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 6px 10px; border-radius: 12px; text-align: left; }
       .prow + .prow { box-shadow: inset 0 1px 0 rgba(255,255,255,.06); }
       .prow .pl { flex: 1; min-width: 0; font: 600 15px/1.2 var(--font); }
@@ -528,10 +543,11 @@
         <button type="submit">Open</button>
       </form>
       <div class="pop addmenu" id="add-menu" role="menu" aria-label="Add a song" hidden>
-        <button class="prow" id="add-pdf" type="button" role="menuitem"><span class="lead l-pdf"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V8z"/><path d="M14 3v5h5"/></svg></span><span class="pl">PDF<small>read in the background</small></span></button>
+        <button class="prow" id="add-pdf" type="button" role="menuitem"><span class="lead l-pdf"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V8z"/><path d="M14 3v5h5"/></svg></span><span class="pl">PDF</span></button>
         <button class="prow" id="add-xml" type="button" role="menuitem"><span class="lead l-xml"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V8z"/><path d="M14 3v5h5M10 12.5l-2 2.2 2 2.2M14 12.5l2 2.2-2 2.2"/></svg></span><span class="pl">MusicXML<small>.musicxml · .mxl</small></span></button>
         <button class="prow" id="add-link" type="button" role="menuitem"><span class="lead l-plain"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></span><span class="pl">Link</span></button>
       </div>
+      <div class="pop rowmenu" id="row-menu" role="menu" aria-label="Song options" hidden></div>
       <p class="msg" id="songs-msg" role="status" hidden></p>
       <div class="sheet-body" id="songs-body"></div>
     </section>
@@ -545,7 +561,7 @@
 
     <div class="toast" id="toast" role="status" hidden></div>
     <input id="xml-input" type="file" hidden />
-    <input id="pdf-input" type="file" accept=".pdf,application/pdf" hidden />
+    <input id="pdf-input" type="file" accept=".pdf,application/pdf" multiple hidden />
     <div id="places"></div><!-- Record, Voice, Assistants in place (shell/places.js) -->
 
     <script type="module" src="nav.js?v=89"></script>

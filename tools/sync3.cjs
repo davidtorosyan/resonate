@@ -18,6 +18,8 @@ const fs = require('fs');
 const EMAIL = process.env.TEST_EMAIL, PW = process.env.TEST_PW;
 const SB = 'https://ltyadhjhnfxdlgsmrcds.supabase.co', KEY = 'sb_publishable_8FEg0aiW9Ir-RrrND8kfQw_IBirLBai';
 const URL0 = 'http://localhost:8097/resonate/';
+// The cloud's song limit, as sync.js has it (the server's: supabase/migrations/20261120010000_sync_limits_20.sql).
+const LIMIT = (() => { try { return Number(/export const SONG_LIMIT = (\d+)/.exec(fs.readFileSync(require('path').join(__dirname, '../public/sync.js'), 'utf8'))[1]); } catch { return 20; } })();
 let fails = 0;
 const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) fails++; };
 
@@ -219,23 +221,23 @@ async function emptyCloud(t) {
   }, uid);
   check(r10.there.active.startsWith('9999') && r10.there.parked && r10.there.songs === 0 && r10.back.active === uid && r10.back.songs === r10.before && !r10.back.parked, `10: another account parks this one, which comes back whole (${JSON.stringify(r10)})`);
 
-  // --- 12: at 10 songs, a song already in the cloud is pushed again; songs whose file is missing ---
+  // --- 12: at the song limit, a song already in the cloud is pushed again; songs whose file is missing ---
   await D2.p.goto(URL0 + 'sing.html'); await settle(D2.p); await pass(D2.p);
   c = await cloud(t0);
-  const room = 10 - c.filter((x) => x.kind === 'song').length;
+  const room = LIMIT - c.filter((x) => x.kind === 'song').length;
   const fillers = Array.from({ length: room }, (_, i) => `sfill${i}x${uid.slice(0, 6)}`);
   await upsert(t0, fillers.map((id) => ({ user_id: uid, kind: 'song', id, data: { title: `Filler ${id}`, added: 1, source: null, sha: 'x', xml: { path: `${uid}/${id}.xml.gz`, bytes: 1 }, pdf: null }, deleted: false, modified_at: new Date().toISOString() })));
   await pass(D2.p);
   c = await cloud(t0);
   let m12 = (await D2.p.evaluate(() => window.resonateSync().meta));
-  check(c.filter((x) => x.kind === 'song').length === 10 && fillers.every((id) => m12.missing[id]), `12: songs whose file is missing stay in the cloud, marked missing here (${c.filter((x) => x.kind === 'song').length} songs, ${Object.keys(m12.missing).length} missing)`);
+  check(c.filter((x) => x.kind === 'song').length === LIMIT && fillers.every((id) => m12.missing[id]), `12: songs whose file is missing stay in the cloud, marked missing here (${c.filter((x) => x.kind === 'song').length} songs, ${Object.keys(m12.missing).length} missing)`);
   const before12 = c.find((x) => x.kind === 'song' && x.id === e1)?.modified_at;
   await D2.p.evaluate((id) => { const m = JSON.parse(localStorage.getItem('resonate.sync')); m.items[`song:${id}`].h = 'stale'; localStorage.setItem('resonate.sync', JSON.stringify(m)); }, e1);
   await pass(D2.p);
   m12 = (await D2.p.evaluate(() => window.resonateSync().meta));
   c = await cloud(t0);
   const after12 = c.find((x) => x.kind === 'song' && x.id === e1)?.modified_at;
-  check(!m12.held[e1] && m12.items[`song:${e1}`]?.up && after12 && after12 !== before12, `12: at 10, a song already in the cloud goes up again (as an update), not held (${before12} → ${after12}, held ${JSON.stringify(m12.held)})`);
+  check(!m12.held[e1] && m12.items[`song:${e1}`]?.up && after12 && after12 !== before12, `12: at ${LIMIT}, a song already in the cloud goes up again, not held (${before12} → ${after12}, held ${JSON.stringify(m12.held)})`);
 
   // --- 11: sync off, a change, Sign out → warned ---
   await D1.p.goto(URL0 + 'sing.html'); await settle(D1.p);

@@ -11,6 +11,9 @@
 // ▶ plays the view (playtime.js: the song's written timeline, Sing's performance order): a
 // stretch dragged on the page — once or round after round — or from the page's first bar to the
 // end, its notes lit as they sound and the page turning with the music.
+//
+// A PDF only (added, not converted yet: docs/LIBRARY.md) opens straight into its PDF (📄's view, no
+// Verovio): ‹ › and the pedals turn its pages, the keyboard stays under it, ⟳ reads Convert.
 import { spaceChanged } from "./nav.js?v=89";
 import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=89";
 import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=89";
@@ -47,6 +50,7 @@ const K = {
   gen: "resonate.play.gen",     // the songs' database generation seen at the last visit — this device's
   song: "resonate.sing.song",   // the song open, shared with Sing
   timing: "resonate.sing.timing", // Sing's: { songId: { bpm (a tempo typed or tapped for the song), … } } — read only
+  index: "resonate.songs.index", // My songs' index (library.js: [{ id, k, … }]) — read only, before the library answers (pdfHint)
 };
 // v77–78's size prefs: a size chosen then (on a tablet 16 was the default) would hide the
 // printed-page default — removed, so every device starts at it.
@@ -147,7 +151,8 @@ for (const k of OLD_SIZE_KEYS) keep(k, null);
 const S = {
   gen: 0,           // bumped by every song open / hands switch: a newer one wins
   ready: false,     // a song is shown
-  failed: null,     // "engine" | "song"
+  failed: null,     // "engine" | "song" | "nopdf" | "pdf" (a PDF only: not on this device, or it didn't open)
+  pdfOnly: false,   // the song is a PDF only (not converted yet): shown in the PDF view, no notes
   song: null, title: "", rev: null, // (rev: the library's, of the MusicXML shown — a new one when it's replaced)
   P: null,          // prepare(): { doc, parts, views, facts }
   waiting: false,   // the view waits for the stage to get a size
@@ -204,13 +209,22 @@ function writePlay(all) {
 function saveState() {
   clearTimeout(saveTimer);
   saveTimer = 0;
-  if (!S.song || !Object.keys(S.st).length || spaceChanged()) return;
+  if (!S.song || gone.has(S.song) || !Object.keys(S.st).length || spaceChanged()) return;
   const all = readPlay();
   all[S.song] = S.st;
   writePlay(all);
 }
 let saveTimer = 0;
 const saveSoon = () => { clearTimeout(saveTimer); saveTimer = setTimeout(saveState, 1000); };
+// Songs deleted while this page holds them (the shell's Delete — resonatePlay.forget —, another
+// tab's, the sync's): their record is never written back — opening the next song saved the open
+// one's, and a turn's saveSoon could too.
+const gone = new Set();
+function forget(id) {
+  if (!id) return;
+  gone.add(id);
+  if (S.song === id) { clearTimeout(saveTimer); saveTimer = 0; S.st = {}; }
+}
 
 // A song's record goes with the song (Sing's ✕ and the sync's deletion remove it). What's left —
 // a song deleted in another tab while this one still wrote its record — goes here, only when the
@@ -247,6 +261,13 @@ function engine() {
     return t;
   })().catch((err) => { engineP = null; engineFails++; throw err; }));
 }
+// A PDF only, as My songs' index says — read at once, so Verovio (7 MB) isn't started for one before
+// the library answers. (loadSong decides what opens: an index out of date only starts it later, or
+// for nothing.)
+function pdfHint(id) {
+  if (!id || id in SAMPLES) return false;
+  try { return !!JSON.parse(recall(K.index))?.some?.((e) => e?.id === id && e.k === "pdf"); } catch { return false; }
+}
 
 // ---------------------------------------------------------------------------
 // Songs
@@ -259,7 +280,8 @@ async function fillSongs() {
   let mine = [], listed = true;
   try { ({ samples, mine } = await songChoices()); } catch (err) { console.warn("song list", err); listed = false; }
   samplesEl.replaceChildren(...samples.map((s) => new Option(s.title, s.id)));
-  mineEl.replaceChildren(...mine.map((s) => new Option(s.title, s.id)));
+  // (a PDF only opens as its PDF)
+  mineEl.replaceChildren(...mine.map((s) => new Option(s.k === "pdf" ? `${s.title} · PDF` : s.title, s.id)));
   mineEl.hidden = !mine.length;
   if (listed) S.mine = new Set(mine.map((s) => s.id));
   if (S.song) songSel.value = S.song;
@@ -291,21 +313,32 @@ function fail(kind, err) {
   clearPages();
   setBusy(false);
   pgEl.textContent = "";
-  showMsg(kind === "engine" ? "Couldn't load the music — check the connection." : "Couldn't open this song.");
+  showMsg(FAILS[kind] || "Couldn't open this song.");
   placeSelbar();
 }
+const FAILS = {
+  engine: "Couldn't load the music — check the connection.",
+  nopdf: "This song's PDF isn't on this device.",
+  pdf: "Couldn't open the PDF.",
+};
 
 async function open(id) {
   const gen = ++S.gen;
   if (S.song && S.song !== id) { saveState(); songClosed(); }
   clearPeek();
   stopPlay();
+  S.pdfOnly = false;
+  bar.toggleAttribute("data-pdfonly", pdfHint(id)); // (the bar as it will be: no flash of the notes' controls)
   if (pdf.on) pdfOff();
   pdf.has = false;
+  pdf.pages = 0; // (the last song's PDF's: this one's are counted when it opens)
   pdfBtn.hidden = true;
+  againButton();
   pmap = null; // (where its bars are on its PDF: read again — the song may have been read again)
   S.ready = false;
   S.failed = null;
+  S.page = 1; // (the last song's pages: not this one's)
+  S.pages = 0;
   S.song = id;
   S.title = "";
   S.rev = null;
@@ -326,14 +359,15 @@ async function open(id) {
   // chosen later on another song leaves this one alone)
   const last = recall(K.names);
   setNames(LEVELS.includes(S.st.names) ? S.st.names : LEVELS.includes(last) ? last : "all");
-  if (!LEVELS.includes(S.st.names)) S.st.names = S.names;
+  const pinned = !LEVELS.includes(S.st.names);
+  if (pinned) S.st.names = S.names;
   songSel.value = id;
   handsSel.hidden = true;
   showMsg("");
   clearPages();
   setBusy(true);
   const t0 = performance.now();
-  engine().catch(() => {}); // (started at load; a failed one is tried again)
+  if (!pdfHint(id)) engine().catch(() => {}); // (started at load; a failed one is tried again)
   let song;
   try { song = await loadSong(id); } catch (err) { if (gen === S.gen) fail("song", err); return; }
   if (gen !== S.gen) return;
@@ -344,6 +378,8 @@ async function open(id) {
   S.t.song = ms(t0);
   S.title = song.title;
   S.rev = song.rev ?? null;
+  if (song.pdfOnly || typeof song.xml !== "string") return openPdf(id, gen, t0, pinned);
+  delete bar.dataset.pdfonly; // (converted since the index said otherwise: before the layout)
   S.xml = song.xml;
   pdfCheck(id, song.source);
   await paint();
@@ -368,6 +404,30 @@ async function open(id) {
   if (!ac) idle(() => { if (!ac) warmAudio(); }); // (the piano ready for the first press)
   // (what ▶ needs, read while the page waits for a hand: the timeline, Sing's order)
   idle(() => { if (S.song === id && S.P) { songTime(); songSing(); } });
+}
+
+// A PDF only (not converted yet: docs/LIBRARY.md): its pages in the PDF view, no notes — nothing that
+// needs them shows (#bar[data-pdfonly]), the keyboard stays under the pages, ⟳ reads Convert. With no
+// PDF on this device (a song another device added, its PDF not here yet) it says so.
+async function openPdf(id, gen, t0, pinned) {
+  S.pdfOnly = true;
+  bar.dataset.pdfonly = "";
+  if (pinned) delete S.st.names; // (a level is pinned when the song's notes first show, not its PDF)
+  hideOffer();
+  againButton();
+  dock();
+  drawKeys(); // (its range: C3–B5 — no notes to take it from)
+  let has = false;
+  try { has = (await listPdfIds()).includes(id); } catch {}
+  if (gen !== S.gen) return;
+  pdf.has = has;
+  if (!has) return fail("nopdf");
+  setBusy(false);
+  await pdfOn();
+  if (gen !== S.gen || !pdf.on) return;
+  S.t.open = ms(t0);
+  holdWake();
+  if (!ac) idle(() => { if (!ac) warmAudio(); }); // (the piano ready for the first key)
 }
 
 // Load the current view into Verovio (its MusicXML built once per song) and show the anchor's page.
@@ -988,7 +1048,7 @@ function sizeButtons() {
   smallerBtn.disabled = !S.ready || pdf.on || nextStep(-1) == null;
   biggerBtn.disabled = !S.ready || pdf.on || nextStep(1) == null;
   namesBtn.disabled = chordsBtn.disabled = pdf.on;
-  keysBtn.disabled = pdf.on || !keysRoom();
+  keysBtn.disabled = (pdf.on && !S.pdfOnly) || !keysRoom();
   playButtons();
 }
 function resize(dir) {
@@ -1535,7 +1595,8 @@ function drawPeeks() {
 // button shows or hides it — this device's pref, by default on a tablet and a desktop, off on a
 // phone (a short screen: its height is the music's) — and the page is laid out again at the new
 // height, at the same place, as a rotation does. Hidden in the PDF view (📄): nothing there lights
-// it (no presses, no ▶), and the PDF's page gets the height (a page in portrait is fitted by it).
+// it (no presses, no ▶), and the PDF's page gets the height (a page in portrait is fitted by it) —
+// but under a PDF only it stays: the keys are all there is to play.
 //
 // What it shows: the view's range in whole octaves (C3–B5 at least), a dot on middle C, and lit —
 // by hand, a letter on each — the keys of the strikes on screen (held, and HIDE_AFTER after the
@@ -1573,16 +1634,16 @@ function setKeys(on, byHand = false) {
   if (byHand) keep(K.keys, on ? "on" : "off");
   dock(byHand);
 }
-keysBtn.addEventListener("click", () => { if (!pdf.on && keysRoom()) setKeys(!KB.on, true); });
+keysBtn.addEventListener("click", () => { if ((!pdf.on || S.pdfOnly) && keysRoom()) setKeys(!KB.on, true); });
 {
   const onRoom = () => { dock(); sizeButtons(); }; // (the stage's resize lays the music out again)
   if (ROOM.addEventListener) ROOM.addEventListener("change", onRoom); else ROOM.addListener?.(onRoom);
 }
-// The dock shown when the keyboard is on, has room and the sheet is shown (not the PDF). relay: lay
-// the music out again at the stage's new height now (the 🎹 tap; the resize observer would, 150 ms
-// later).
+// The dock shown when the keyboard is on, has room and the sheet is shown (not the PDF — but a PDF
+// only's: it's all the song has). relay: lay the music (or a PDF only's page) out again at the
+// stage's new height now (the 🎹 tap; the resize observer would, 150 ms later).
 function dock(relay = false) {
-  const show = KB.on && !pdf.on && keysRoom();
+  const show = KB.on && (!pdf.on || S.pdfOnly) && keysRoom();
   if (dockEl.hidden !== show) return;
   dockEl.hidden = !show;
   document.body.dataset.keys = show ? "on" : "off";
@@ -1590,6 +1651,7 @@ function dock(relay = false) {
   renderHear(); // (the chips for ▶: at the keyboard's left end, or in the stretch's controls)
   if (show) drawKeys();
   if (relay && S.ready && !pdf.on) { clearTimeout(resizeTimer); relayout(); }
+  else if (relay && S.pdfOnly && pdf.on) { clearTimeout(resizeTimer); sized(); }
 }
 // The keys lit: what ▶ sounds, and every strike on screen (a strike's on a key both have).
 function keysLit() {
@@ -1609,8 +1671,8 @@ function drawKeys() {
   for (const [m, L] of lit) keys.set(m, { hand: L.hand, fill: HAND[L.hand], letter: L.label.letter, acc: L.label.acc || "" });
   kb.update({ lit: keys, range: [lo, hi] });
 }
-// A song or a view on its way (shown: placed()).
-const loading = () => !!S.song && !S.ready && !S.failed && !pdf.on;
+// A song or a view on its way (shown: placed()). (A PDF only has no range to wait for.)
+const loading = () => !!S.song && !S.ready && !S.failed && !pdf.on && !S.pdfOnly;
 
 // The keyboard's range: the view's notes in whole octaves C…B (C3–B5 at least) — and the keys lit
 // (midis), which are the view's anyway.
@@ -2581,7 +2643,8 @@ function hideOffer() {
 }
 
 // ---------------------------------------------------------------------------
-// The original PDF (📄): for a song made with PDF → Song whose PDF is on this device. pdf.js
+// The original PDF (📄): for a song made with PDF → Song whose PDF is on this device — and all a PDF
+// only (not converted yet) shows: there it's always on, with the keyboard under it (openPdf). pdf.js
 // (shipped for the OMR) draws one page — two side by side when each is still ≥ 75% of print
 // size — fitted to the stage (the base canvas, #pdfview, at the screen's pixel ratio); the same
 // ‹ › and keys turn its pages (a tap on it does nothing). It zooms and pans: two fingers, a
@@ -2606,8 +2669,9 @@ const SETTLE = 160;    // ms after the last zoom / pan move: the view drawn shar
 // z, tx, ty: the zoom (1 = fitted) and where the sheet's top left is in the view;
 // want: what the next drawing places — "focus" (zoomed onto the focus), "keep" (same zoom, the
 // same point centred: a rotation), "turn" (same zoom and x, the page's top: ⌖ goes to the focus)
+// (shown: a page drawn since it opened)
 const pdf = {
-  has: false, on: false, open: 0, gen: 0, task: null, doc: null, pages: 0, page: 1, spread: false, canvas: null, busy: false, W: 0, H: 0,
+  has: false, on: false, open: 0, gen: 0, task: null, doc: null, pages: 0, page: 1, spread: false, canvas: null, busy: false, shown: false, W: 0, H: 0,
   wrap: null, sheet: null, detail: null, dgen: 0, dtask: null, dz: 0, settle: 0, anim: 0, borders: [],
   fit: null, z: 1, tx: 0, ty: 0, want: null, focus: null, center: null,
 };
@@ -2628,11 +2692,11 @@ async function pdfCheck(id, source) {
   try { has = (await listPdfIds()).includes(id); } catch {}
   if (S.song !== id) return;
   pdf.has = has;
-  pdfBtn.hidden = !has;
+  pdfBtn.hidden = !has || S.pdfOnly;
 }
 
 // (back from the PDF: the sheet is laid out again at once if the stage changed meanwhile — a rotation)
-pdfBtn.addEventListener("click", () => { if (!pdf.on) return pdfOn(); pdfOff(); clearTimeout(resizeTimer); sized(); });
+pdfBtn.addEventListener("click", () => { if (S.pdfOnly) return; if (!pdf.on) return pdfOn(); pdfOff(); clearTimeout(resizeTimer); sized(); });
 
 function pdfControls() {
   remote.changedSoon();
@@ -2641,7 +2705,7 @@ function pdfControls() {
   else delete stage.dataset.pdf;
   pdfBar.hidden = !pdf.on;
   pdfFocusBtn.hidden = !pdf.focus;
-  dock(); // (the keyboard: hidden over the PDF — the page gets its height)
+  dock(); // (the keyboard: hidden over the PDF — the page gets its height; a PDF only keeps it)
   renderHear();
   handsSel.disabled = pdf.on || !S.ready;
   for (const b of offerEl.querySelectorAll("button")) b.disabled = pdf.on; // (kept in place: the bar doesn't move)
@@ -2659,6 +2723,8 @@ function pdfControls() {
 const pdfFree = (task) => { try { task?.destroy()?.catch?.(() => {}); } catch {} };
 function pdfFailed() {
   pdfOff();
+  // (a PDF only has no sheet under it to go back to: it stays failed, said — not an empty stage)
+  if (S.pdfOnly) return fail("pdf");
   showMsg("Couldn't open the PDF.");
   setTimeout(() => { if (msgEl.textContent === "Couldn't open the PDF.") showMsg(""); }, 3000);
 }
@@ -2716,6 +2782,7 @@ function pdfOff() {
   pdf.dgen++;
   pdf.on = false;
   pdf.busy = false;
+  pdf.shown = false;
   pdf.W = pdf.H = 0;
   pdf.fit = null;
   pdf.focus = null;
@@ -2846,6 +2913,7 @@ async function pdfDraw(doc, g) {
     try { await task.promise; } finally { if (pdfTask === task) pdfTask = null; }
   }
   S.t.pdf = ms(t0);
+  pdf.shown = true;
   pdfSettle(0);
   return true;
 }
@@ -3151,15 +3219,24 @@ window.addEventListener("keydown", (e) => {
   e.preventDefault();
 });
 
-// ⟳: read the PDF again (fixes to the reading reach a song converted before them). The one-page
-// shell does it in place; here PDF → Song does, from the song's stored PDF.
+// ⟳: read the PDF again (fixes to the reading reach a song converted before them) — for a PDF only,
+// Convert: read it the first time (nothing to lose: no question). The one-page shell does it in
+// place (its queue); here PDF → Song does, from the song's stored PDF.
 function reprocess() {
   const id = S.song;
   if (!id || !pdf.has) return;
-  if (!confirm("Reprocess the PDF? The song's notes are read again.")) return;
+  if (!S.pdfOnly && !confirm("Reprocess the PDF? The song's notes are read again.")) return;
   const own = window.resonatePlay?.reprocess;
   if (typeof own === "function") { own(id); return; }
   location.href = "pdf-import.html?reprocess=" + encodeURIComponent(id);
+}
+// ⟳'s words: Reprocess, or Convert for a PDF only.
+function againButton() {
+  const text = S.pdfOnly ? "Convert" : "Reprocess", label = S.pdfOnly ? "Convert the PDF" : "Reprocess the PDF";
+  const t = [...pdfAgainBtn.childNodes].findLast((n) => n.nodeType === Node.TEXT_NODE);
+  if (t) t.nodeValue = text; else pdfAgainBtn.append(text);
+  pdfAgainBtn.setAttribute("aria-label", label);
+  pdfAgainBtn.title = label;
 }
 
 // ---------------------------------------------------------------------------
@@ -3359,11 +3436,15 @@ function sized() {
 }
 
 // ---------------------------------------------------------------------------
-// The screen stays on while a song is shown.
+// The screen stays on while a song is shown (a PDF only's pages too).
 
+// Something to read on screen: the notes laid out — or, a PDF only, a page of its PDF drawn.
+function shownNow() {
+  return S.ready || (S.pdfOnly && pdf.on && pdf.shown);
+}
 let wake = null, wakeRequests = 0, wakeAsking = false;
 async function holdWake() {
-  if (!S.ready || document.visibilityState !== "visible" || !navigator.wakeLock) return;
+  if (!shownNow() || document.visibilityState !== "visible" || !navigator.wakeLock) return;
   if (wakeAsking || (wake && !wake.released)) return;
   wakeAsking = true;
   try {
@@ -3424,8 +3505,10 @@ window.addEventListener("pageshow", (e) => {
   holdWake();
   lastTick = performance.now();
   for (const t of UNLOCK) document.addEventListener(t, unlockPlay, true); // (the next tap starts the audio again)
-  if (!ac && S.ready) idle(() => { if (!ac) warmAudio(); });
-  freshen(); // (Back from PDF → Song's ⟳ Reprocess: the song read again)
+  if (!ac && (S.ready || S.pdfOnly)) idle(() => { if (!ac) warmAudio(); });
+  // (a PDF only: its PDF closed at pagehide is all it shows — opened again)
+  if (S.pdfOnly && pdf.has && !pdf.on && !S.failed) pdfOn().then(() => holdWake());
+  freshen(); // (Back from PDF → Song's ⟳ Reprocess / Convert: the song read again)
 });
 
 // The song's MusicXML replaced since it was opened here — its PDF read again (⟳ Reprocess, in this
@@ -3440,22 +3523,24 @@ async function freshen() {
   try {
     for (let i = 0; i < 1200 && S.song === id && (PB.state !== "idle" || PB.starting); i++) await new Promise((r) => setTimeout(r, 500));
     const rev = await songRev(id).catch(() => undefined);
-    if (S.song === id && rev !== undefined && rev !== S.rev && (S.ready || S.failed)) { saveState(); await open(id); }
+    if (S.song === id && rev !== undefined && rev !== S.rev && (S.ready || S.failed || S.pdfOnly)) { saveState(); await open(id); }
   } finally { freshening = false; }
 }
 
 // The cloud sync changed My songs: list again; the open song may be gone, or read again.
+// (a song gone — deleted here, forget.js: `gone`, or elsewhere — isn't written back)
 window.addEventListener("resonate:remote", async (e) => {
   if (!e.detail?.songs) return;
-  await fillSongs();
-  if (S.song && !known(S.song)) return open(FIRST);
+  for (const id of e.detail.gone || []) forget(id);
+  const listed = await fillSongs();
+  if (S.song && !known(S.song)) { if (listed) forget(S.song); return open(FIRST); }
   if (S.song && e.detail.replaced?.has?.(S.song)) freshen();
 });
 
 // ---------------------------------------------------------------------------
 // Start: the engine, the song list and the song at once.
 
-engine().catch(() => {});
+if (!pdfHint(recall(K.song))) engine().catch(() => {}); // (a PDF only to open: none needed)
 setNames(S.names);
 chordsBtn.setAttribute("aria-pressed", String(S.chords));
 { const k = recall(K.keys), sk = window.resonatePlay?.keysOn; setKeys(sk != null ? !!sk : k === "on" ? true : k === "off" ? false : keysDefault()); } // (the shell: its Piano toggle, never 🎹's own setting)
@@ -3504,6 +3589,15 @@ function shownBars() {
 const selBars = () => (S.sel && S.P ? focusBars() : null);
 function scoreState() {
   if (!S.song) return null;
+  // (a PDF only: its pages — no views, bars or notes yet)
+  if (S.pdfOnly) {
+    const pages = pdf.pages || null;
+    return {
+      song: { id: S.song, title: S.title }, ready: S.ready, pdf_only: true, view: null, views: [],
+      page: pdf.on ? pdf.page : null, pages, measures: null, bars: null, at: null, selection: null, playing: null,
+      speed: Math.round(S.speed * 100), pdf: pdf.has ? { on: pdf.on, page: pdf.on ? pdf.page : null, pages } : null,
+    };
+  }
   const shown = S.ready && !pdf.on ? shownBars() : [];
   const sel = selBars();
   return {
@@ -3656,10 +3750,13 @@ async function scoreCrop({ maxW = FOCUS_W } = {}) {
 
 // --- an assistant's commands ------------------------------------------------------------------
 const nap = (t) => new Promise((r) => setTimeout(r, t));
+// (ready: the notes laid out — or, a PDF only, its PDF shown)
 async function untilReady(ms = 20000) {
-  for (let t = 0; t < ms && !S.ready && !S.failed; t += 100) await nap(100);
-  return S.ready;
+  for (let t = 0; t < ms && !shownNow() && !S.failed; t += 100) await nap(100);
+  return shownNow();
 }
+const ONLY_PDF = "Only its PDF so far — convert it first.";
+const pdfOnlyFailed = () => (S.failed === "nopdf" ? FAILS.nopdf : "Its PDF didn't open on this device.");
 // Show the page holding written bar mi (the place kept there).
 function goBar(mi) {
   if (!S.ready || !tk || !S.v) return false;
@@ -3699,12 +3796,22 @@ async function scoreRun(action, a = {}) {
   if (action === "score_open") {
     const id = String(a.song ?? "");
     if (!known(id)) return no(`That song isn't on this device.`, { songs: [...songSel.querySelectorAll("option")].map((o) => o.textContent.trim()) });
-    if (S.song !== id || !S.ready) { if (!spaceChanged()) keep(K.song, id); await open(id); }
-    if (!(await untilReady())) return no("The song didn't open on this device.");
-    if (a.view) return scoreRun("score_view", a);
+    if (S.song !== id || !shownNow()) { if (!spaceChanged()) keep(K.song, id); await open(id); }
+    if (!(await untilReady())) return no(S.pdfOnly ? pdfOnlyFailed() : "The song didn't open on this device.");
+    if (a.view && !S.pdfOnly) return scoreRun("score_view", a);
     return done();
   }
-  if (!(await untilReady())) return no("The Score isn't ready on this device.");
+  if (!(await untilReady())) return no(S.pdfOnly ? pdfOnlyFailed() : "The Score isn't ready on this device.");
+  // A PDF only: its state and its PDF; nothing that needs notes (views, bars, ▶) — said at once.
+  if (S.pdfOnly) {
+    if (action === "score_state") return done();
+    if (action === "score_pdf" && a.on !== false) {
+      if (!pdf.on) await pdfOn();
+      for (let t = 0; t < 15000 && pdf.on && !pdf.shown; t += 100) await nap(100);
+      return pdf.on && pdf.shown ? done() : no(pdfOnlyFailed());
+    }
+    return no(ONLY_PDF);
+  }
   const bar = (x, what) => { const mi = barOf(x); if (mi == null) throw new Error(`No bar “${x}” — ${what}: bars ${numberOf(0)}–${numberOf(barNumbers().length - 1)} (numbers as in the MusicXML).`); return mi; };
   try {
     switch (action) {
@@ -3771,8 +3878,9 @@ const playState = () => ({ page: "play", song: S.song ? { id: S.song, title: S.t
 window.resonatePlay = Object.assign(window.resonatePlay || {}, {
   open: (id) => open(id),
   stopAll: async () => { clearPeek(true); stopPlay(); },
+  // (pdfOnly: the song is a PDF only — shown once its PDF is drawn, never ready)
   state: () => ({ song: S.song, title: S.title, ready: S.ready, busy: PB.state !== "idle" || PB.starting, held: peeks.some((pk) => pk.held && !pk.dead),
-    page: S.page, pages: S.pages, at: S.at, lgen: S.lgen, W: S.W, H: S.H, sp: S.sp, mode: S.mode }),
+    page: S.page, pages: S.pages, at: S.at, lgen: S.lgen, W: S.W, H: S.H, sp: S.sp, mode: S.mode, pdfOnly: S.pdfOnly, shown: shownNow() }),
   resize: () => { clearTimeout(resizeTimer); sized(); },
   // (the shell's Piano toggle drives the keyboard — its 🎹 is hidden there; kept as 🎹 keeps it)
   keys: (on) => { if (on != null && !!on !== KB.on) setKeys(!!on); return KB.on; }, // (play.html's 🎹 setting left alone)
@@ -3786,6 +3894,8 @@ window.resonatePlay = Object.assign(window.resonatePlay || {}, {
   scoreCrop: (opts) => scoreCrop(opts),
   focusData: () => focusData(),
   sendFocus: () => sendFocus(),
+  // (the song deleted — the shell's Delete, before forget.js: its record isn't written back)
+  forget: (id) => forget(id),
 });
 
 // play.html's 📡: an assistant's commands for the Score reach this page (one device at a time, the
@@ -3876,7 +3986,7 @@ window.resonateDebug = () => {
   for (const n of S.counted.values()) rendered += n;
   return {
     play: {
-      ready: S.ready, failed: S.failed, song: S.song, title: S.title, rev: S.rev, view: S.view,
+      ready: S.ready, failed: S.failed, pdfOnly: S.pdfOnly, onScreen: shownNow(), song: S.song, title: S.title, rev: S.rev, view: S.view,
       views: S.P ? Object.keys(S.P.views) : [], parts: S.P?.parts ?? [],
       keep: plan ? { ...plan, ids: S.v?.ids ?? [] } : null,
       pages: S.pages, page: S.page, shown: shownPages(), spread: S.spread, sp: S.sp, scale: S.scale, step: S.step, size: S.step ? S.sp : null,
@@ -3908,14 +4018,14 @@ window.resonateDebug = () => {
       awake: { on: !!awake.src, same: !!awake.src && awake.a === ac, idle: awake.src ? Math.round(performance.now() - awake.at) : null, ms: AWAKE },
       offer: { shown: !offerEl.hidden, to: offerTo, days: S.st.days ? { ...S.st.days } : null },
       pdf: {
-        has: pdf.has, on: pdf.on, busy: pdf.busy, page: pdf.page, pages: pdf.pages, spread: pdf.spread,
+        has: pdf.has, on: pdf.on, busy: pdf.busy, shown: pdf.shown, page: pdf.page, pages: pdf.pages, spread: pdf.spread,
         canvas: pdf.canvas?.isConnected ? [pdf.canvas.width, pdf.canvas.height] : null,
         z: pdf.z, tx: pdf.tx, ty: pdf.ty, fit: pdf.fit ? { bw: pdf.fit.bw, bh: pdf.fit.bh, x0: pdf.fit.x0, list: pdf.fit.list.slice(), boxes: pdf.fit.boxes.map((b) => ({ p: b.p, x: b.x, w: b.w, h: b.h })) } : null,
         focus: pdf.focus ? { page: pdf.focus.page, rects: pdf.focus.rects.map((r) => ({ ...r })) } : null,
         borders: pdf.borders.map((b) => { const r = b.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }),
         detail: pdf.detail?.isConnected ? { z: pdf.dz, w: pdf.detail.width, h: pdf.detail.height, ...pdf.dbox } : null,
         map: pmap && pmap.id === S.song ? { how: pmap.how, pages: pmap.pages, sheets: pmap.layout?.sheets ?? null, bars: pmap.idx.length, matched: pmap.idx.filter((j) => j >= 0).length } : null,
-        bar: pdfBar.hidden ? null : { focus: !pdfFocusBtn.hidden, again: !pdfAgainBtn.hidden },
+        bar: pdfBar.hidden ? null : { focus: !pdfFocusBtn.hidden, again: !pdfAgainBtn.hidden, label: pdfAgainBtn.textContent.trim() },
       },
       wake: { held: !!wake && !wake.released, requests: wakeRequests },
       playback: playDebug(),

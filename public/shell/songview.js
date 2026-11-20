@@ -13,12 +13,16 @@
 // Motion (motion.js): a song's modules slide up from the bottom once they're ready (no blank frame),
 // the tuner shrinks into its small form, the wordmark folds; closing reverses it. The avatar, Songs
 // and the toggles never move.
+// A PDF not converted yet (v90, docs/LIBRARY.md §4: catalog songInfo k "pdf") opens with the Score
+// alone, on its PDF — on every device, unsaved, whatever opened it (Next-up, the Reader's links, an
+// assistant): no Sing toggle, the Score's ▶ stays in its bar (hidden: nothing to play), the Piano as
+// saved (Play's own keyboard under the PDF). Converted (reload), the saved modules come back.
 import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=89";
 import { mountSing } from "./singview.js?v=89";
 import { mountScore } from "./scoreview.js?v=89";
 import { mountPiano, rangeOf } from "./pianoview.js?v=89";
 import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=89";
-import { loadSong } from "../catalog.js?v=89";
+import { loadSong, songInfo } from "../catalog.js?v=89";
 import { parseMusicXml } from "../musicxml.js?v=89";
 import { titleOf } from "./songlist.js?v=89";
 
@@ -60,6 +64,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
   const tog = { sing: $("mod-sing"), score: $("mod-score"), piano: $("mod-piano") };
   const dockRow = document.querySelector(".dock .row"), corner = dockRow.querySelector(".corner"), nextup = $("nextup");
   let isOpen = false, closing = null, switching = null, watch = 0, title = "", titleId = null, current = null, gen = 0;
+  let pdfOnly = false; // (the song open is a PDF only: the Score alone, no Sing)
   let dev = device(), mods = savedMods(dev);
   let intent = mods, queued = null; // (the set the toggles show — taps while a change runs queue the latest)
 
@@ -89,7 +94,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
   // --- what shows -------------------------------------------------------------------------------
   // (sing / score: the regions; piano: the keyboard on its own; keys: the Score's own keyboard)
   const want = () => {
-    const s = isOpen && mods.sing, c = isOpen && mods.score;
+    const s = isOpen && mods.sing && !pdfOnly, c = isOpen && mods.score;
     return { sing: s, score: c, piano: mods.piano && !c, keys: c && mods.piano };
   };
   const formOf = (w) => (!w.sing && !w.score ? "full" : !w.sing ? (score.el.names ? "chip" : "strip") : w.score ? "strip" : dev === "phone" ? "strip" : "docked");
@@ -103,11 +108,12 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     app.dataset.form = form;
     app.dataset.tin = place;
   }
-  // The Score alone: its ▶ Play is the dock's primary (with Sing shown it stays in the Score's bar).
+  // The Score alone: its ▶ Play is the dock's primary (with Sing shown it stays in the Score's bar;
+  // a PDF only has nothing to play: Play hides it there).
   function placePlay(w) {
     const { play, hands } = score.el;
     if (!play) return;
-    const inDock = w.score && !w.sing;
+    const inDock = w.score && !w.sing && !pdfOnly;
     if (inDock && play.parentNode !== dockRow) corner.before(play);
     else if (!inDock && play.parentNode === dockRow) hands.after(play);
   }
@@ -130,7 +136,8 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     placePlay(w);
     pill.hidden = !isOpen;
     if (isOpen) nextup.hidden = true;
-    tog.sing.hidden = tog.score.hidden = !isOpen;
+    tog.score.hidden = !isOpen;
+    tog.sing.hidden = !isOpen || pdfOnly;
     pressed();
   }
   function pressed() {
@@ -180,7 +187,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
   // The modules shown, on the current song (each loaded the first time it shows: Verovio only then).
   async function ensure() {
     const id = current, jobs = [];
-    if (mods.sing) jobs.push(sing.open(id));
+    if (mods.sing && !pdfOnly) jobs.push(sing.open(id));
     if (mods.score) jobs.push(score.mount().then(() => { if (isOpen && current === id) { placeTuner(want()); placePlay(want()); } return score.open(id); }));
     const res = await Promise.allSettled(jobs);
     for (const r of res) if (r.status === "rejected") console.error(r.reason);
@@ -240,7 +247,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     let midis = null;
     try { if (window.resonateSing?.state?.().song === id) midis = window.resonateSing.debug?.()?.notes?.map((n) => n.midi); } catch {}
     if (!midis?.length) {
-      try { const s = await loadSong(id); midis = s ? parseMusicXml(s.xml, s.title).notes.map((n) => n.midi) : []; } catch { midis = []; }
+      try { const s = await loadSong(id); midis = s?.xml ? parseMusicXml(s.xml, s.title).notes.map((n) => n.midi) : []; } catch { midis = []; }
     }
     const r = rangeOf(midis);
     ranges.set(id, r);
@@ -262,32 +269,48 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
   // (the pill's title from the song list until Sing or the Score names it — with neither shown, nothing else would)
   const nameIt = (id) => { if (titleId !== id) titleOf(id).then((t) => { if (t && current === id && titleId !== id) setTitle(t, id); }); };
   const withMod = (m, k) => ({ ...m, [k]: true, ...(dev === "phone" ? { [k === "sing" ? "score" : "sing"]: false } : {}) });
+  // The modules a song opens with: `base` with Sing / the Score shown when asked — a PDF only: the
+  // Score, never Sing.
+  const modsFor = (base, pdf, withSing, withScore) =>
+    (pdf ? { ...base, sing: false, score: true } : withSing && !base.sing ? withMod(base, "sing") : withScore && !base.score ? withMod(base, "score") : base);
+  const differ = (a, b) => KEYS.some((k) => !!a[k] !== !!b[k]);
+  const isPdf = async (id) => (await songInfo(id).catch(() => null))?.k === "pdf";
   async function open(id, { sing: withSing = false, score: withScore = false } = {}) {
+    const pdf = await isPdf(id);
     if (closing) await closing;
     if (switching) await switching;
     openPage("song", { close: leave, back: closeSheet });
     if (isOpen) {
-      const k = withSing && !mods.sing ? "sing" : withScore && !mods.score ? "score" : null;
-      if (current === id) { if (k) await setMods(withMod(mods, k), { save: false }); return; }
+      if (current === id) {
+        const was = pdfOnly;
+        pdfOnly = pdf;
+        const next = modsFor(was && !pdf ? savedMods(dev) : mods, pdf, withSing, withScore);
+        if (differ(next, mods)) await setMods(next, { save: false });
+        else if (was !== pdf) render();
+        return;
+      }
       const g = ++gen;
       await stopSounds();
       while (switching) await switching.catch(() => {}); // (a change under way gives way to this open — or finishes — first)
       if (g !== gen) return;
+      // (from a PDF only: the saved set again; else the set shown stays — with what this song asks for)
+      const next = modsFor(pdfOnly && !pdf ? savedMods(dev) : mods, pdf, withSing, withScore);
       current = id;
+      pdfOnly = pdf;
       setTitle(titleId === id ? title : "");
       nameIt(id);
       updateRange();
-      if (k) return setMods(withMod(mods, k), { save: false }); // (its modules open the new song)
+      if (differ(next, mods)) return setMods(next, { save: false }); // (its modules open the new song)
       if (!laidOut()) return layOut(g, id); // (an open — or a change — still waiting to lay out was overtaken: this one does it)
+      apply(want()); // (the Sing toggle: shown or not for this song)
       return ensure();
     }
     const g = ++gen;
     isOpen = true;
     current = id;
+    pdfOnly = pdf;
     dev = device();
-    mods = savedMods(dev);
-    if (withSing && !mods.sing) mods = withMod(mods, "sing");
-    else if (withScore && !mods.score) mods = withMod(mods, "score");
+    mods = modsFor(savedMods(dev), pdf, withSing, withScore);
     intent = mods;
     tuner.park(); // (a song open: the tuner starts parked)
     piano.stopAll();
@@ -316,6 +339,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
   }
   // A song's MusicXML replaced (its PDF read again): Sing and the Score that hold it load it again,
   // in place — once nothing sounds (a take is never cut for it).
+  // A PDF only that got its MusicXML (converted): the saved modules again, Sing included.
   async function reload(id) {
     ranges.delete(id);
     if (rangeFor === id) rangeFor = undefined;
@@ -325,7 +349,22 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     if (sing.loaded && S?.state?.().song === id) jobs.push(S.open(id));
     if (score.loaded) jobs.push(score.reload(id));
     for (const r of await Promise.allSettled(jobs)) if (r.status === "rejected") console.error(r.reason);
+    if (isOpen && current === id) { titleId = null; nameIt(id); } // (a first conversion may name it: titleAuto)
+    if (isOpen && current === id && pdfOnly && !(await isPdf(id)) && isOpen && current === id) {
+      pdfOnly = false;
+      const next = savedMods(dev);
+      if (differ(next, mods)) await setMods(next, { save: false });
+      else { render(); await ensure(); }
+    }
     updateRange();
+  }
+  // A song deleted (songlist.js): closed if it's the one open — what runs stops first (a take is
+  // finished and saved, as ◎ does), its history entry goes (and the sheet's above it).
+  async function closeSong(id) {
+    if (!isOpen || (id && current !== id)) return false;
+    closePage();
+    await (closing || leave());
+    return true;
   }
   // Back: Sing's own topmost sheet first (the page stays), then the song.
   function closeSheet() {
@@ -341,6 +380,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
       if (switching) await switching.catch(() => {});
       await stopSounds();
       isOpen = false;
+      pdfOnly = false;
       mods = intent = savedMods(dev); // (a set opened for that song only ends with it)
       clearInterval(watch);
       dropClose();
@@ -371,7 +411,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
   // A rotation or a window crossing a size class: that class's modules, laid out again.
   addEventListener("resize", () => {
     if (switching || closing) return;
-    if (device() !== dev) { mods = intent = savedMods(device()); render({ motion: false }); updateRange(); }
+    if (device() !== dev) { const base = savedMods(device()); mods = intent = isOpen && pdfOnly ? modsFor(base, true) : base; render({ motion: false }); updateRange(); }
     else if (placeOf(want(), formOf(want())) !== app.dataset.tin) placeTuner(want());
   });
 
@@ -402,9 +442,10 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
   updateRange();
 
   return {
-    open, leave, setMods, reload, stopAll: stopSounds,
+    open, leave, setMods, reload, closeSong, stopAll: stopSounds,
     get isOpen() { return isOpen; },
     get current() { return isOpen ? current : null; },
+    get pdfOnly() { return isOpen && pdfOnly; },
     get title() { return title; },
     get mods() { return { ...mods }; },
     sing,
@@ -413,7 +454,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
       const st = sing.state(), sc = score.state();
       return { open: isOpen, loaded: sing.loaded, scoreLoaded: score.loaded, title, drop: dropped, form: app.dataset.form || "full", tin: app.dataset.tin,
         moving: running(), switching: !!switching, closing: !!closing, laid: app.hasAttribute("data-song"),
-        mods: isOpen ? (mods.sing && mods.score ? "both" : mods.sing ? "sing" : mods.score ? "score" : "none") : null, set: { ...mods }, dev,
+        mods: isOpen ? (mods.sing && mods.score ? "both" : mods.sing ? "sing" : mods.score ? "score" : "none") : null, set: { ...mods }, dev, pdfOnly: isOpen && pdfOnly,
         state: isOpen || st ? { ...(st || {}), song: current ?? st?.song ?? null, busy: !!(st?.busy || sc?.busy), take: !!st?.take } : null, score: sc };
     },
     singDebug: () => (isOpen ? sing.debug() : null),

@@ -4,8 +4,9 @@
 // Device-only: never synced. A job records the songs' database its song goes into (space.js dbName):
 // only the space whose data that is sees it, and it follows that data through sign-up (adopt), a
 // sign-in on top (shelved), a session ending (parked); Sign out deletes it with the data (space.js
-// leave → deleteJobsOf). The small flag nav.js reads is the space's own localStorage key
-// 'resonate.import' (space.js DATA_KEYS: shelved / parked with the space).
+// leave → deleteJobsOf); deleting a song deletes its conversions (forget.js → deleteJobsFor). The
+// small flag nav.js reads is the space's own localStorage key 'resonate.import' (space.js DATA_KEYS:
+// shelved / parked with the space).
 //
 // Stores (database version 1; never upgraded in place — an older tab never blocks it):
 //   jobs  { id, db, space, name, size, lastModified, engine, app, created, updated, phase,
@@ -172,6 +173,17 @@ export async function dropOrphans(ids) {
 export async function deleteJobsOf(db) {
   if (!db) return 0;
   const jobs = (await listJobs()).filter((j) => j.db === db);
+  for (const j of jobs) await deleteJob(j.id);
+  return jobs.length;
+}
+
+// A song deleted (forget.js): its stored conversions (jobs with replace === songId, this space's) go,
+// with their flag — a stuck or kept one would otherwise be resumed and save the song again as a new
+// one. A job running in this page is the host's to stop first (its next write would store it again).
+export async function deleteJobsFor(songId) {
+  if (!songId) return 0;
+  const db = activeDb();
+  const jobs = (await listJobs()).filter((j) => j.replace === songId && (!j.db || j.db === db));
   for (const j of jobs) await deleteJob(j.id);
   return jobs.length;
 }
