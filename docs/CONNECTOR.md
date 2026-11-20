@@ -145,8 +145,8 @@
 
 With the Supabase connector's `deploy_edge_function`: name `mcp`, `verify_jwt: false`, `import_map_path: "deno.json"`. Include the files `index.ts`, `resonate.ts`, `coaching.ts`, **`catalog.ts` (new)**, `deno.json` and `deno.lock`.
 
-Then:
-1. Run `tools/mcp1.cjs` and `tools/mcp2.cjs` (live, test user).
+Then — **always, before calling it done** — make one real signed-in call: a local run proves nothing about the edge runtime.
+1. Run `tools/mcp1.cjs` and `tools/mcp2.cjs` (live, test user) — or, quicker, call a Resonate tool from a session that has the connector (list_songs, get_score_xml).
 2. Check the function's logs for `mcp tools/list … v=2026-11-20`.
 
 ## The owner, once
@@ -166,6 +166,12 @@ Then:
 1. In a new chat: "Use Resonate's get_capabilities: what version is it?" The answer should be 2026-11-20.
 2. The function's logs show `mcp tools/call get_capabilities client=…`.
 3. The real test comes with the next ability. Add it as above (catalogue entry + page + deploy) and ask for it **in an existing chat, with no client step**. The assistant should find it in `get_capabilities`, or in the brief in `get_status`, and call `control_resonate {action: "<new>"}`.
+
+## Incident: every request failed for ~4 hours (2026-11-20)
+
+The first deploy of this design (function version 7, 17:23 UTC) logged each JSON-RPC message from `req.clone().json()`. In Supabase's edge runtime, reading the clone's body left the original unreadable. The SDK answered every signed-in POST with `400 Parse error: the request body could not be read`, a path that doesn't call `onerror`, so the logs showed only the 400s. ChatGPT, Claude and Claude Code all failed: `server/discover` (2026-07-28), the legacy `initialize` they fell back to, and `tools/call` alike. Local Deno doesn't reproduce it, and only the unauthenticated 401 was checked after the deploy.
+
+Fixed in version 8 (21:19 UTC): `readOnce` reads the body once and passes the SDK a fresh `Request` plus `parsedBody`. `logFailure` logs any JSON error a POST is answered with, giving its code and message. tools/mcpcatalog.mjs fails on a `.clone()` in index.ts. Clients needed no step: a new chat, or a retry, connects again.
 
 ## Watch
 

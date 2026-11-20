@@ -19,6 +19,10 @@ check(names.join() === FROZEN.join(), `tools registered = the frozen 15, in orde
 const block = (name) => index.slice(index.indexOf(`registerTool("${name}"`), index.indexOf("annotations:", index.indexOf(`registerTool("${name}"`)));
 check(["control_resonate", "read_resonate"].every((n) => /z\.looseObject\(/.test(block(n)) && !/z\.enum\(/.test(block(n))), "control_resonate / read_resonate: open schemas (looseObject, no enums)");
 check(/version: VERSION/.test(index) && /listChanged: false/.test(index), "serverInfo.version = catalog VERSION; tools.listChanged false");
+// The request body is read once and handed on (readOnce + parsedBody): a req.clone() whose body is
+// read breaks the original in Supabase's edge runtime — every POST answered 400 (2026-11-20, v91).
+const code = index.replace(/\/\/.*$/gm, "");
+check(!/\.clone\(\)/.test(code) && /parsedBody: parsed/.test(code), "index.ts never clones the request; the SDK gets the body parsed (parsedBody)");
 
 // 2 The catalogue.
 check(C.CHANGES.at(-1).version === C.VERSION, `VERSION ${C.VERSION} has a CHANGES line`);

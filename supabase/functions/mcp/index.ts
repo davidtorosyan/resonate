@@ -181,23 +181,47 @@ async function sessionAlive(req: Request): Promise<boolean> {
 
 // One log line per JSON-RPC message (the function's logs): which assistant asked for what, so a
 // re-fetch of the tool list (initialize / server/discover / tools/list) can be seen. Of a tool
-// call only the tool and its action / what — never the arguments. Best effort: it reads a copy
-// of the (small) body and never throws.
+// call only the tool and its action / what — never the arguments. Best effort, never throws.
 type Rec = Record<string, unknown>;
-async function logRpc(req: Request, client: string) {
+function logRpc(method: string, body: unknown, client: string) {
   try {
-    if (req.method !== "POST") return void console.log(`mcp ${req.method} client=${client}`);
-    const body = await req.clone().json();
+    if (method !== "POST") return void console.log(`mcp ${method} client=${client}`);
     for (const m of Array.isArray(body) ? body : [body]) {
-      if (!m || typeof m !== "object" || typeof m.method !== "string") continue;
-      const p = (m.params || {}) as Rec, meta = (p._meta || {}) as Rec, a = (p.arguments || {}) as Rec;
+      if (!m || typeof m !== "object" || typeof (m as Rec).method !== "string") continue;
+      const p = ((m as Rec).params || {}) as Rec, meta = (p._meta || {}) as Rec, a = (p.arguments || {}) as Rec;
       const info = (p.clientInfo || meta["io.modelcontextprotocol/clientInfo"]) as { name?: string; version?: string } | undefined;
       const proto = p.protocolVersion || meta["io.modelcontextprotocol/protocolVersion"];
-      const extra = m.method === "tools/call" ? ` ${String(p.name)}${a.action || a.what ? `:${String(a.action || a.what).slice(0, 40)}` : ""}`
+      const extra = (m as Rec).method === "tools/call" ? ` ${String(p.name)}${a.action || a.what ? `:${String(a.action || a.what).slice(0, 40)}` : ""}`
         : `${info ? ` ${info.name ?? "?"}/${info.version ?? "?"}` : ""}${proto ? ` ${String(proto)}` : ""}`;
-      console.log(`mcp ${m.method}${extra} client=${client} v=${VERSION}`);
+      console.log(`mcp ${(m as Rec).method}${extra} client=${client} v=${VERSION}`);
     }
-  } catch { /* not JSON: the handler answers it */ }
+  } catch { /* logging only */ }
+}
+
+// The request body is read ONCE, here, and the SDK gets a fresh Request made from it plus the
+// parsed JSON (parsedBody: it then reads no body itself). Never req.clone() a request's body in
+// the Supabase edge runtime: v91 logged from a clone, and the original's body could no longer be
+// read — the SDK answered every POST 400 "Parse error: the request body could not be read" (and
+// reports that one without onerror), so every assistant failed from 2026-11-20 17:23 until v92.
+async function readOnce(req: Request): Promise<{ fwd: Request; parsed?: unknown }> {
+  if (req.method.toUpperCase() !== "POST") return { fwd: req };
+  const text = await req.text();
+  let parsed: unknown;
+  try { parsed = text ? JSON.parse(text) : undefined; } catch { parsed = undefined; }
+  const fwd = new Request(req.url, { method: req.method, headers: req.headers, body: text, signal: req.signal });
+  return { fwd, parsed };
+}
+
+// An error the SDK answers a POST with (4xx / 5xx, JSON; a GET's 405 is how a stateless server
+// says "no stream here" and is left out) goes to the logs too — its JSON-RPC error code
+// and message only (no arguments) — so a failure no tool sees is never silent again.
+async function logFailure(res: Response, method: string, client: string): Promise<Response> {
+  if (method !== "POST" || res.status < 400 || !(res.headers.get("content-type") || "").includes("application/json")) return res;
+  const text = await res.text();
+  let msg = text.slice(0, 300);
+  try { const j = JSON.parse(text); if (j?.error) msg = `${j.error.code} ${String(j.error.message).slice(0, 300)}`; } catch { /* as text */ }
+  console.warn(`mcp answered ${res.status}: ${msg} client=${client} v=${VERSION}`);
+  return new Response(text, { status: res.status, statusText: res.statusText, headers: res.headers });
 }
 
 const handler = pipeline(
@@ -208,9 +232,11 @@ const handler = pipeline(
     // A connection removed in Resonate (Assistants → Remove) ends its session at once — its
     // token's signature alone would still pass until it expires.
     if (!(await sessionAlive(req))) return Response.json({ error: "This connection was removed — connect again." }, { status: 401 });
-    await logRpc(req, String(ctx.jwtClaims?.client_id));
+    const client = String(ctx.jwtClaims?.client_id);
+    const { fwd, parsed } = await readOnce(req);
+    logRpc(req.method.toUpperCase(), parsed, client);
     const mcp = createMcpHandler(() => build(ctx.supabase), { onerror: (e) => console.error("MCP request failed", e) });
-    return mcp.fetch(req);
+    return logFailure(await mcp.fetch(fwd, parsed === undefined ? undefined : { parsedBody: parsed }), req.method.toUpperCase(), client);
   },
 );
 
