@@ -3,16 +3,16 @@
 // Piano) sit beside it; a PDF is a song as soon as it's added, converted in the background (one
 // song after another: the Reader tray); the avatar (top right) opens the account menu. nav.js ran
 // first (shell.html), so whose data the device shows is settled before anything here reads it.
-import { spaceChanged } from "../nav.js?v=90";
-import { mountTuner, tunerHtml } from "./tuner.js?v=90";
-import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=90";
-import { mountSongView } from "./songview.js?v=90";
-import { mountTray } from "./tray.js?v=90";
-import { mountAccount } from "./account-menu.js?v=90";
-import { ic, fic, device, overlayOpen } from "./chrome.js?v=90";
-import { fadeIn } from "./motion.js?v=90";
-import { mountPlaces } from "./places.js?v=90";
-import { mountRemote } from "./remote.js?v=90";
+import { spaceChanged } from "../nav.js?v=91";
+import { mountTuner, tunerHtml } from "./tuner.js?v=91";
+import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=91";
+import { mountSongView } from "./songview.js?v=91";
+import { mountTray } from "./tray.js?v=91";
+import { mountAccount } from "./account-menu.js?v=91";
+import { ic, fic, device, overlayOpen } from "./chrome.js?v=91";
+import { fadeIn } from "./motion.js?v=91";
+import { mountPlaces } from "./places.js?v=91";
+import { mountRemote } from "./remote.js?v=91";
 
 const $ = (id) => document.getElementById(id);
 const version = $("version").textContent.trim();
@@ -51,7 +51,7 @@ mountAccount({ version });
 
 // --- a song opens in place; Sing, the Score and the Piano on or off beside Songs ----------------
 let places = null, remoteHome = null;
-const song = mountSongView({ tuner, version, onLoad: hooks, onLeave: showNextUp, openSongs: () => songs.open(), reprocess: (id) => tray.reprocess(id) });
+const song = mountSongView({ tuner, version, onLoad: hooks, onLeave: showNextUp, reprocess: (id) => tray.reprocess(id) });
 setOpener((id, opts) => song.open(id, opts));
 function hooks() { // (sing.js, play.js, record.js… set their own when they load: the shell's go back on top, with theirs inside)
   window.resonateBusy = () => tray.busy() || song.busy(); // (nav.js: a reload for another tab's sign-in/out waits for it)

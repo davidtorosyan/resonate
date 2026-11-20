@@ -176,7 +176,11 @@
       .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 45; display: flex; flex-direction: column; overflow: hidden;
         background: linear-gradient(180deg, var(--sheet), var(--sheet-2)); border-radius: var(--r-sheet) var(--r-sheet) 0 0;
         box-shadow: var(--shadow-sheet), inset 0 1px 0 rgba(255,255,255,.08); padding-bottom: var(--sab); }
-      .grab { width: 40px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.2); margin: 8px auto 2px; flex: none; touch-action: none; }
+      .grab { position: relative; width: 40px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.2); margin: 8px auto 2px; flex: none; touch-action: none; }
+      /* (dragged down, it closes the sheet — chrome.js; the 40×5 bar alone is a sliver for a finger) */
+      .grab::before { content: ""; position: absolute; left: -70px; right: -70px; top: -8px; bottom: -6px; }
+      /* (the head drags it too: no browser pan to cancel it, no text selected — dragging a selection is the browser's own drag) */
+      .sheet.songs .sheet-head, .sheet.acct .acct-head, .grab { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
       .sheet-head { display: flex; align-items: center; gap: 10px; padding: 8px 16px 10px; flex: none; }
       .sheet-head h2 { margin: 0; font: 800 24px/1 var(--display); letter-spacing: -.02em; }
       .addbtn { height: 44px; padding: 0 15px 0 12px; border-radius: 12px; display: inline-flex; align-items: center; gap: 6px; background: var(--grad-primary); color: #fff; font: 700 14px/1 var(--font); box-shadow: var(--glow-primary); }
@@ -198,7 +202,6 @@
       .songrow .song { flex: 1; min-width: 0; }
       .songrow .more { width: 48px; flex: none; display: grid; place-items: center; color: var(--text-3); }
       .songrow .more[aria-expanded="true"] { color: var(--text); background: var(--control); }
-      .song[data-old] .s::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); margin-right: 6px; vertical-align: 1px; }
       .song .tile { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; position: relative; }
       .song .tile svg.i { width: 19px; height: 19px; }
       .song .tile > svg:not(.i) { position: absolute; inset: 0; width: 40px; height: 40px; }
@@ -209,6 +212,10 @@
       .song .mid { flex: 1; min-width: 0; display: flex; flex-direction: column; }
       .song .t { font: 650 15px/1.2 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .song .s { font: 500 12px/1.2 var(--mono); color: var(--text-3); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      /* the fact line: what the song is · how old — and, read by an older engine than this one, a quiet "v9 → v10" */
+      .song .sl { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 3px; }
+      .song .sl .s { margin-top: 0; min-width: 0; }
+      .song .eng { flex: none; padding: 2px 6px; border-radius: 6px; font: 600 10.5px/1.2 var(--mono); color: rgba(255,213,138,.85); background: rgba(255,213,138,.08); box-shadow: inset 0 0 0 1px rgba(255,213,138,.22); white-space: nowrap; }
       .song .s b { color: var(--now); font-weight: 600; }
       .song .chev { width: 18px; height: 18px; color: var(--text-3); }
       .song[data-current]::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
@@ -317,12 +324,13 @@
         .scope { height: 96px; }
         .tray { width: min(1040px, calc(100vw - 2 * var(--gutter))); }
         .sheet.songs { height: min(620px, calc(100dvh - var(--sat) - var(--top-h) - 120px)); }
-        /* the folded import: a pill beside Songs */
-        .imptile { width: auto; max-width: 300px; height: 56px; padding: 0 14px 0 8px; gap: 10px; display: flex; border-radius: 18px; }
+        /* the folded import: a pill beside Songs — one width whatever it says (its words change every
+           second: a width that followed them moved the Score's ▶ beside it), the words cut inside */
+        .imptile { width: 280px; height: 56px; padding: 0 14px 0 8px; gap: 10px; display: flex; border-radius: 18px; }
         .imptile .n { display: none; }
-        .imptile .pw { display: flex; flex-direction: column; min-width: 0; }
-        .imptile .pt { font: 650 13.5px/1.2 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
-        .imptile .ps { font: 600 11.5px/1.2 var(--mono); color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+        .imptile .pw { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; }
+        .imptile .pt { font: 650 13.5px/1.2 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .imptile .ps { font: 600 11.5px/1.2 var(--mono); color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .corner > .imptile { margin-top: 1px; }
       }
       @media (min-width: 700px) and (max-height: 860px) {
@@ -332,14 +340,15 @@
         .level { margin-top: 12px; }
       }
 
-      /* --- a song open: the pill (title · ✕), the tuner's small forms, the modules (songview.js) ------- */
-      .songpill { height: 44px; min-width: 0; max-width: min(60vw, 400px); display: inline-flex; align-items: center; border-radius: 14px; flex: 0 1 auto;
-        background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); }
-      .songpill .pt { height: 44px; min-width: 0; flex: 0 1 auto; display: inline-flex; align-items: center; gap: 6px; padding: 0 2px 0 14px; font: 700 15px/1 var(--font); }
-      .songpill .t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .songpill .pt svg { width: 16px; height: 16px; color: var(--text-3); }
-      .songpill .px { width: 44px; height: 44px; flex: none; display: grid; place-items: center; color: var(--text-2); border-radius: 14px; }
-      .songpill .px svg { width: 17px; height: 17px; }
+      /* --- a song open: its title · ✕, the tuner's small forms, the modules (songview.js) ------------------ */
+      /* (the title is a plain label, not a box or a menu: Songs, bottom right, is the one way to the list;
+         nothing on it takes a tap — the ✕ beside it closes the song) */
+      .songpill { height: 44px; min-width: 0; max-width: min(60vw, 400px); display: inline-flex; align-items: center; gap: 2px; flex: 0 1 auto; }
+      .songpill .pt { min-width: 0; flex: 0 1 auto; padding: 0 0 0 4px; font: 700 16px/1.2 var(--font); pointer-events: none; user-select: none; -webkit-user-select: none; }
+      .songpill .t { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .songpill .px { width: 44px; height: 44px; flex: none; display: grid; place-items: center; color: var(--text-2); border-radius: 50%;
+        background: radial-gradient(circle, var(--control) 14.5px, transparent 15px); }
+      .songpill .px svg { width: 15px; height: 15px; }
       .songpill[data-loading] .t { animation: shpulse 1s ease-in-out infinite alternate; }
       @keyframes shpulse { to { opacity: .45; } }
       .app { --tslot: 52px; }
@@ -489,11 +498,11 @@
     <div class="app" id="app" data-form="full" data-tin="home">
       <header class="top">
         <a class="brand" id="brand" href="shell.html" aria-label="Resonate — home"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6f8dff"/><stop offset=".55" stop-color="#a64fff"/><stop offset="1" stop-color="#ff5fa8"/></linearGradient></defs><circle cx="12" cy="12" r="9.5" fill="none" stroke="url(#lg)" stroke-width="2.4"/><path d="M6.5 12.5c1.2 0 1.4-4 2.8-4s1.4 7 2.8 7 1.4-5 2.7-5 1 2 2.7 2" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg><span class="bt">Resonate</span></a>
-        <span class="songpill" id="song-pill" hidden><button class="pt" id="song-title" type="button" aria-haspopup="dialog"><span class="t"></span><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button><button class="px" id="song-close" type="button" aria-label="Close the song" title="Close"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>
+        <span class="songpill" id="song-pill" hidden><span class="pt" id="song-title"><span class="t"></span></span><button class="px" id="song-close" type="button" aria-label="Close the song" title="Close"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>
         <span class="spacer"></span>
         <span class="sing-scope sing-top" id="sing-top" hidden></span>
         <button class="hremote" id="home-remote" type="button" aria-pressed="false" hidden>📡</button>
-        <span id="version" class="ver mono">v90</span>
+        <span id="version" class="ver mono">v91</span>
         <button class="avatar" id="avatar" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Account"></button>
       </header>
       <main class="home">
@@ -564,7 +573,7 @@
     <input id="pdf-input" type="file" accept=".pdf,application/pdf" multiple hidden />
     <div id="places"></div><!-- Record, Voice, Assistants in place (shell/places.js) -->
 
-    <script type="module" src="nav.js?v=90"></script>
-    <script type="module" src="shell/boot.js?v=90"></script>
+    <script type="module" src="nav.js?v=91"></script>
+    <script type="module" src="shell/boot.js?v=91"></script>
   </body>
 </html>

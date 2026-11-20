@@ -36,7 +36,7 @@
 // must not read as "every song deleted". Every change announces itself with a "resonate:data"
 // event so the sync, when it runs, can follow.
 
-import { dbName } from "./space.js?v=90";
+import { dbName } from "./space.js?v=91";
 
 const STORE = "songs";
 const INDEX_KEY = "resonate.songs.index"; // [{ id, title, added, rev?, k, eng?, fail? }]

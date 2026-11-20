@@ -5,15 +5,16 @@
 // v90 (docs/LIBRARY.md §4): a PDF added is a song at once (its PDF only: no 5-minute wait); each
 // row's ⋯ converts it (or reads it again with the newest engine) and deletes it; the header converts
 // them all. The conversions run one after another in the tray (tray.js: its queue), each row says
-// where its song is: "PDF only", "queued", "converting 3/7", the engine that read it.
-import { listSongs, addSong, addPdfSong, listPdfIds } from "../library.js?v=90";
-import { SAMPLES, songInfo } from "../catalog.js?v=90";
-import { readScoreFile, parseMusicXml } from "../musicxml.js?v=90";
-import { spaceChanged } from "../nav.js?v=90";
-import { forgetSong } from "../forget.js?v=90";
-import { titleFromFileName } from "../omr/importer.js?v=90";
-import { ENGINE_N } from "../omr/engine.js?v=90";
-import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=90";
+// what its song is and where it is: "PDF only · 2d", "PDF · 2d" (converted), "queued", "converting
+// 3/7" — and, only when a newer engine would read it again, a quiet "v9 → v10" beside that.
+import { listSongs, addSong, addPdfSong, listPdfIds } from "../library.js?v=91";
+import { SAMPLES, songInfo } from "../catalog.js?v=91";
+import { readScoreFile, parseMusicXml } from "../musicxml.js?v=91";
+import { spaceChanged } from "../nav.js?v=91";
+import { forgetSong } from "../forget.js?v=91";
+import { titleFromFileName } from "../omr/importer.js?v=91";
+import { ENGINE_N } from "../omr/engine.js?v=91";
+import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=91";
 
 const SONG_KEY = "resonate.sing.song";
 const $ = (id) => document.getElementById(id);
@@ -43,8 +44,10 @@ export async function titleOf(id) {
   if (SAMPLES[id]) return SAMPLES[id].title;
   try { return (await listSongs()).find((s) => s.id === id)?.title || null; } catch { return null; }
 }
-// The engine that read a song (index eng: 0 = before v90, unrecorded).
-const engLabel = (n) => (n ? `engine ${n}` : "engine ≤9");
+// The engine that read a converted song — shown only when it's older than this release's (Reconvert
+// would read it again): "v9 → v10" (index eng 0: before v90, unrecorded — "≤v9").
+const isOld = (s) => s.k === "conv" && (s.eng || 0) < ENGINE_N;
+const engOf = (n) => (n ? `v${n}` : "≤v9");
 const isPdfFile = (f) => /\.pdf$/i.test(f.name) || f.type === "application/pdf";
 const MORE = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.7" fill="currentColor" stroke="none"/></svg>';
 const AGAIN = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4v4.5H15"/></svg>';
@@ -72,7 +75,7 @@ export function mountSongs({ tray, view = () => null, onDeleted = () => {} }) {
     if (q.running === s.id) return runningFact(q);
     const when = q.ids.includes(s.id) ? "queued" : age(s.added);
     if (s.k === "pdf") return `PDF only · ${s.fail && when !== "queued" ? "couldn't read" : when}`;
-    if (s.k === "conv") return `${engLabel(s.eng)} · ${when}`;
+    if (s.k === "conv") return `PDF · ${when}`;
     return `MusicXML · ${age(s.added)}`;
   }
   let rendering = 0;
@@ -94,18 +97,19 @@ export function mountSongs({ tray, view = () => null, onDeleted = () => {} }) {
     pdfIds = pdfs;
     const cur = openSongId();
     const q = tray.queueInfo();
-    const row = (id, title, { src = "xml", fact = "", menu = true, old = false, conv = false, f = 0 } = {}) => `<div class="songrow" data-id="${esc(id)}"><button class="song" type="button" data-id="${esc(id)}" ${id === cur ? "data-current" : ""} ${old ? "data-old" : ""}>
+    // (old: the engine's badge after the fact — "v9 → v10")
+    const row = (id, title, { src = "xml", fact = "", menu = true, old = null, conv = false, f = 0 } = {}) => `<div class="songrow" data-id="${esc(id)}"><button class="song" type="button" data-id="${esc(id)}" ${id === cur ? "data-current" : ""} ${old ? "data-old" : ""}>
       <span class="tile" data-src="${conv ? "reading" : src}">${conv ? ring(f) : ""}${ic(src === "pdf" ? "doc" : "score")}</span>
-      <span class="mid"><span class="t">${esc(title)}</span>${fact ? `<span class="s mono">${esc(fact)}</span>` : ""}</span></button>${menu ? `<button class="more" type="button" data-act="menu" aria-label="Song options" aria-haspopup="menu" aria-expanded="false">${MORE}</button>` : ""}</div>`;
+      <span class="mid"><span class="t">${esc(title)}</span>${fact ? `<span class="sl"><span class="s mono">${esc(fact)}</span>${old ? `<span class="eng mono" title="Read by an older engine — Reconvert reads it with v${ENGINE_N}">${esc(old)} → v${ENGINE_N}</span>` : ""}</span>` : ""}</span></button>${menu ? `<button class="more" type="button" data-act="menu" aria-label="Song options" aria-haspopup="menu" aria-expanded="false">${MORE}</button>` : ""}</div>`;
     const reading = tray.readingRow();
     const mineHtml = mine.map((s) => row(s.id, s.title, {
       src: s.k === "pdf" ? "pdf" : s.k === "conv" ? "conv" : "xml", fact: factOf(s, q),
-      old: s.k === "conv" && (s.eng || 0) < ENGINE_N && q.running !== s.id, conv: q.running === s.id, f: q.fraction,
+      old: isOld(s) && q.running !== s.id ? engOf(s.eng) : null, conv: q.running === s.id, f: q.fraction,
     })).join("");
     // The header: convert them all — or, while a queue runs, where it is and Stop.
     const waiting = new Set([...q.ids, q.running].filter(Boolean));
     const nConv = mine.filter((s) => s.k === "pdf" && !s.fail && !waiting.has(s.id) && pdfs.has(s.id)).length;
-    const nRe = mine.filter((s) => s.k === "conv" && (s.eng || 0) < ENGINE_N && !waiting.has(s.id) && pdfs.has(s.id)).length;
+    const nRe = mine.filter((s) => isOld(s) && !waiting.has(s.id) && pdfs.has(s.id)).length;
     const acts = waiting.size
       ? `<span class="qstat mono">Converting${q.total > 1 ? ` ${Math.min(q.done + 1, q.total)}/${q.total}` : ""}</span><button class="secbtn" type="button" data-act="stop">Stop</button>`
       : (nConv ? `<button class="secbtn" type="button" data-act="convert-all">Convert all · ${nConv}</button>` : "") +
@@ -144,7 +148,7 @@ export function mountSongs({ tray, view = () => null, onDeleted = () => {} }) {
     } else if (act === "convert-all" || act === "reconvert-all") {
       const q = tray.queueInfo(), waiting = new Set([...q.ids, q.running].filter(Boolean));
       const ids = [...known.values()].filter((s) => !waiting.has(s.id) && pdfIds.has(s.id) &&
-        (act === "convert-all" ? s.k === "pdf" && !s.fail : s.k === "conv" && (s.eng || 0) < ENGINE_N)).map((s) => s.id);
+        (act === "convert-all" ? s.k === "pdf" && !s.fail : isOld(s))).map((s) => s.id);
       tray.convert(ids); // (in the tap: the screen stays awake)
       render();
     } else if (act === "stop") tray.cancelQueue().finally(render);
