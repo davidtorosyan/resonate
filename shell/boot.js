@@ -1,21 +1,43 @@
-// Resonate on one page (preview): the shell's entry. Home is the full tuner, Next-up a chip above
-// Songs; Songs (bottom right) holds the song list and + Add, the module toggles (Sing · Score ·
-// Piano) sit beside it; a PDF is a song as soon as it's added, converted in the background (one
-// song after another: the Reader tray); the avatar (top right) opens the account menu. nav.js ran
-// first (shell.html), so whose data the device shows is settled before anything here reads it.
-import { spaceChanged } from "../nav.js?v=91";
-import { mountTuner, tunerHtml } from "./tuner.js?v=91";
-import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=91";
-import { mountSongView } from "./songview.js?v=91";
-import { mountTray } from "./tray.js?v=91";
-import { mountAccount } from "./account-menu.js?v=91";
-import { ic, fic, device, overlayOpen } from "./chrome.js?v=91";
-import { fadeIn } from "./motion.js?v=91";
-import { mountPlaces } from "./places.js?v=91";
-import { mountRemote } from "./remote.js?v=91";
+// Resonate on one page — the site's root since v92 (index.html; the old pages land here, away.js):
+// the shell's entry. Home is the full tuner, Next-up a chip above Songs; Songs (bottom right) holds
+// the song list and + Add, the module toggles (Sing · Score · Piano) sit beside it; a PDF is a song
+// as soon as it's added, converted in the background (one song after another: the Reader tray); the
+// avatar (top right) opens the account menu. nav.js ran first, so whose data the device shows is
+// settled before anything here reads it.
+import { spaceChanged, handing } from "../nav.js?v=92";
+import { mountTuner, tunerHtml } from "./tuner.js?v=92";
+import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=92";
+import { mountSongView } from "./songview.js?v=92";
+import { mountTray } from "./tray.js?v=92";
+import { mountAccount } from "./account-menu.js?v=92";
+import { ic, fic, device, overlayOpen } from "./chrome.js?v=92";
+import { fadeIn } from "./motion.js?v=92";
+import { mountPlaces } from "./places.js?v=92";
+import { mountRemote } from "./remote.js?v=92";
+import { songInfo } from "../catalog.js?v=92";
+import { readFlag } from "../omr/jobs.js?v=92";
+import { activeSpace, activeDb } from "../space.js?v=92";
+
+// An email link at the root, handed to account.html (nav.js): nothing here starts. (nav.js waits
+// forever then, which holds this module back in Chromium — not in WebKit, which runs a module whose
+// import another <script> started.)
+if (handing) await new Promise(() => {});
 
 const $ = (id) => document.getElementById(id);
 const version = $("version").textContent.trim();
+
+// --- what the address asks for -------------------------------------------------------------------
+// The old pages land here (away.js: sing.html → ./?open=sing, play.html → score, record.html,
+// voice.html, assistants.html → their place, pdf-import.html → import — with its own ?reprocess= /
+// ?pdf=); the address loses them at once (before any sheet or song takes a history entry), so a
+// reload or Back comes home instead of doing it again.
+const params = new URLSearchParams(location.search);
+const want = params.get("open"), reprocessId = params.get("reprocess"), testPdf = params.get("pdf");
+if (["open", "reprocess", "pdf"].some((k) => params.has(k))) {
+  for (const k of ["open", "reprocess", "pdf"]) params.delete(k);
+  const q = params.toString();
+  try { history.replaceState(history.state, "", location.pathname + (q ? `?${q}` : "") + location.hash); } catch {}
+}
 
 // --- the tuner and the dock's main button ------------------------------------------------------
 const tunerEl = $("tuner");
@@ -77,11 +99,28 @@ places = mountPlaces({
 remoteHome = mountRemote({ sing: song.sing, song, places });
 hooks();
 
-// Test hook: read a PDF from a URL (?pdf=…) without the picker; else continue an unfinished import.
-const testPdf = new URLSearchParams(location.search).get("pdf");
+// Test hook: read a PDF from a URL (?pdf=…) without the picker; else continue an unfinished import
+// — shown when the address asked for it (pdf-import.html, its pill on the old pages), else folded.
+// ?reprocess=<song>: that song's PDF read again (the old Play's ⟳), queued as the Score's would be.
 if (testPdf) {
   fetch(testPdf).then((r) => r.blob()).then((b) => tray.start(new File([b], testPdf.split("/").pop(), { type: "application/pdf" })));
-} else tray.resumePending();
+} else {
+  const f = readFlag();
+  const pending = !!f?.id && (f.db ? f.db === activeDb() : f.space === activeSpace());
+  tray.resumePending({ minimized: want !== "import" });
+  if (reprocessId) tray.reprocess(reprocessId);
+  if (want === "import" && !pending) songs.open(); // (nothing to show: the songs — a reprocess's row says "converting")
+}
+// ?open=sing / score: the song open last with Sing / the Score shown for it only (as Next-up), else
+// Songs; record / voice / assistants: that place's sheet over home.
+if (want === "sing" || want === "score") {
+  let id = null;
+  try { id = localStorage.getItem("resonate.sing.song"); } catch {}
+  (id ? songInfo(id).catch(() => null) : Promise.resolve(null)).then((info) => {
+    if (info) openSong(id, { [want]: true });
+    else songs.open();
+  });
+} else if (want === "record" || want === "voice" || want === "assistants") places.open(want);
 
 // Back from the back/forward cache (a song page's Back): the page as left — sheets closed.
 addEventListener("pageshow", (e) => { if (e.persisted) location.reload(); });

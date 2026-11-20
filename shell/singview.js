@@ -8,7 +8,7 @@
 // The song page around it (songview.js) opens and closes it; a touch that can start sound or a mic
 // in Sing parks the tuner and stops the Score first (beforeSound), synchronously, so Sing's handler
 // finds no live track and sets its own audio session.
-import { scopeCss } from "./scopecss.js?v=91";
+import { scopeCss } from "./scopecss.js?v=92";
 
 const $ = (id) => document.getElementById(id);
 // Controls in Sing that can't start sound or a mic: a touch there leaves the tuner listening.
@@ -52,7 +52,7 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
     return (loading ||= (async () => {
       if (!mounted) await mount();
       mounted = true;
-      await import("../sing.js?v=91");
+      await import("../sing.js?v=92");
       S = window.resonateSing;
       singDebug = window.resonateDebug;
       singBusy = window.resonateBusy;

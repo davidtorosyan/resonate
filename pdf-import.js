@@ -7,11 +7,11 @@
 // ?reprocess=<song id>: that song's stored PDF read again (after an engine or clean-up fix) — a job like
 // any import; the result replaces the song's MusicXML under the same id (importer.js reprocess).
 
-import { spaceChanged } from "./nav.js?v=91";
-import { activeSpace, activeDb } from "./space.js?v=91";
-import { mount as mountReader } from "./omr/reader.js?v=91";
-import { createImporter } from "./omr/importer.js?v=91";
-import { readFlag } from "./omr/jobs.js?v=91";
+import { spaceChanged } from "./nav.js?v=92";
+import { activeSpace, activeDb } from "./space.js?v=92";
+import { mount as mountReader } from "./omr/reader.js?v=92";
+import { createImporter } from "./omr/importer.js?v=92";
+import { readFlag } from "./omr/jobs.js?v=92";
 
 const $ = (id) => document.getElementById(id);
 const chooseBtn = $("choose");
@@ -28,8 +28,11 @@ let jobId = null;
 const events = []; // every event of this run, as the Reader got them (what a resume would replay)
 const params = new URLSearchParams(location.search);
 const reprocessId = params.get("reprocess");
+// This page's own address: ?page kept (away.js sends pdf-import.html without it to the shell, v92) —
+// never the rest (a ?reprocess= that survived a stop would start it again).
+const home = () => location.pathname + (params.has("page") ? "?page" : "");
 // (the address loses ?reprocess once the job is kept: a reload continues that job, never starts another)
-const dropParam = () => { if (reprocessId && /[?&]reprocess=/.test(location.search)) try { history.replaceState(history.state, "", location.pathname); } catch {} };
+const dropParam = () => { if (reprocessId && /[?&]reprocess=/.test(location.search)) try { history.replaceState(history.state, "", home()); } catch {} };
 
 // The first lines (browser/device) are kept when the log is trimmed: they're what
 // makes a pasted failure report diagnosable.
@@ -106,7 +109,7 @@ async function stopImport() {
   leaving = true; // (no "leave the page?" prompt for an import being thrown away)
   const id = imp.current?.id || jobId;
   try { if (id) await imp.discard(id); } catch (err) { console.warn("discard", err); }
-  location.replace(location.pathname);
+  location.replace(home());
 }
 // The picker again (a job the flag named was gone: finished or forgotten in another tab).
 function showPicker() {

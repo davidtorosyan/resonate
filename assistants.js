@@ -1,8 +1,8 @@
 // Assistants (v73): connect ChatGPT / Claude to the account (the MCP server's URL), see and
 // remove connected assistants (Supabase Auth OAuth grants), and the account's devices — which
 // one has 📡 Remote on (switched on only from that device's Sing page; off from here too).
-import { SUPABASE_URL } from "./auth.js?v=91";
-import { ready, device, renameDevice } from "./assist.js?v=91";
+import { SUPABASE_URL } from "./auth.js?v=92";
+import { ready, device, renameDevice } from "./assist.js?v=92";
 
 // (In the one-page shell this page is mounted in a sheet: its own elements first — the Voice sheet has
 // a #msg too. On assistants.html resonateAssistants isn't set: the document.)
@@ -83,7 +83,7 @@ async function showDevices() {
   const { data, error } = await c.sb.from("devices").select("id,name,remote,seen_at,state").order("seen_at", { ascending: false });
   const box = $("devices");
   box.textContent = "";
-  if (error || !data?.length) { box.append(Object.assign(document.createElement("div"), { className: "none", textContent: error ? "Couldn't read them." : "Open the Sing page on a device to add it." })); return; }
+  if (error || !data?.length) { box.append(Object.assign(document.createElement("div"), { className: "none", textContent: error ? "Couldn't read them." : "Open Resonate on a device to add it." })); return; }
   const me = device().id;
   for (const d of data) {
     const name = document.createElement("span");

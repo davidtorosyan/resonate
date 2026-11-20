@@ -37,6 +37,8 @@
       .tag { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.08em; padding: 0.12rem 0.45rem; border-radius: 999px; background: rgba(255,200,90,0.18); color: #ffd58a; }
       .note { font-size: 0.78rem; opacity: 0.5; text-align: center; }
       #checks { margin: 0.6rem 0 0; padding: 0; list-style: none; font-size: 0.8rem; line-height: 1.7; }
+      .credit { font-size: 0.72rem; opacity: 0.5; line-height: 1.5; text-align: center; margin: 0.5rem 0 0; }
+      .credit a { color: inherit; }
       #checks b { display: inline-block; width: 1.3em; }
       /* Headers wrap rather than overflow (a phone, with the Play pill and Sing's 📡). */
       header { flex-wrap: wrap; row-gap: 0.4rem; }
@@ -48,22 +50,19 @@
     <header>
       <div class="header-left">
         <h1>Tools</h1>
-        <a class="nav-link" href="./">Tuner</a>
-        <a class="nav-link" href="record.html">Record</a>
-        <a class="nav-link" href="sing.html">Sing</a>
-        <a class="nav-link" href="play.html">Play</a>
+        <a class="nav-link" href="./">Resonate</a>
         <a class="nav-link" href="account.html" data-account-link>Sign in</a>
       </div>
-      <span id="version" class="mono">v91</span>
+      <span id="version" class="mono">v92</span>
     </header>
     <main>
-      <a class="tool" href="shell.html">
-        <h2>New Resonate (preview)</h2>
-        <p>The one-page redesign: the tuner, your songs, PDFs read in the background.</p>
+      <a class="tool" href="tuner.html">
+        <h2>Tuner (old)</h2>
+        <p>The first page, as it was.</p>
       </a>
-      <a class="tool" href="pdf-import.html">
+      <a class="tool" href="pdf-import.html?page">
         <h2>PDF → Song <span class="tag">HEAVY</span></h2>
-        <p>Sheet music → a song to sing. Audiveris, in your browser · ~60 MB once · ~½–1 min per page.</p>
+        <p>The old page, with the engine log · ~60 MB once · ~½–1 min per page.</p>
       </a>
       <a class="tool" href="audiotest.html">
         <h2>Audio test</h2>
@@ -73,8 +72,11 @@
         <h2>Device check</h2>
         <ul id="checks" class="mono"></ul>
       </section>
+      <p class="credit">PDF → Song: <a href="https://github.com/Audiveris/audiveris">Audiveris</a> (AGPL-3.0,
+        <a href="https://github.com/davidtorosyan/resonate/tree/main/omr-build">this build's source</a>) ·
+        Tesseract OCR · pdf.js · <a href="https://cheerpj.com">CheerpJ</a> (Community Edition, personal use)</p>
     </main>
-    <script type="module" src="nav.js?v=91"></script>
+    <script type="module" src="nav.js?v=92"></script>
     <script type="module">
       const checks = document.getElementById("checks");
       const row = (ok, label, extra = "") => {

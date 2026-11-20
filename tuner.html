@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f0f1e" />
+    <title>Resonate</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; -webkit-tap-highlight-color: transparent; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: radial-gradient(ellipse at top, #1a1a3e, #0f0f1e 70%);
+        color: #e8e8f0;
+        display: flex;
+        flex-direction: column;
+        padding-top: env(safe-area-inset-top);
+      }
+      header {
+        padding: 1rem 1.25rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+      }
+      h1 {
+        font-size: 1.25rem;
+        margin: 0;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        opacity: 0.95;
+      }
+      .page-link {
+        font-size: 0.8rem;
+        color: rgba(255,255,255,0.7);
+        text-decoration: none;
+        padding: 0.2rem 0.65rem;
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: 999px;
+      }
+      #status {
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.75rem;
+        opacity: 0.55;
+      }
+      .header-right {
+        display: flex;
+        align-items: baseline;
+        gap: 0.6rem;
+      }
+      #version {
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        color: #a64fff;
+        opacity: 0.9;
+      }
+      main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.25rem;
+        padding: 0.5rem 1rem;
+        width: 100%;
+        max-width: 900px;
+        margin: 0 auto;
+        min-height: 0;
+      }
+      #pitch-display {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.6rem;
+        flex-shrink: 0;
+      }
+      #note {
+        font-size: clamp(4rem, 18vw, 7rem);
+        font-weight: 800;
+        letter-spacing: -0.05em;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+        background: linear-gradient(135deg, #4f7cff, #a64fff, #ff4f9f);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        color: transparent;
+        transition: opacity 0.22s ease-out;
+        min-width: 4ch;
+        text-align: center;
+        opacity: 1;
+      }
+      #note[data-active="false"] {
+        background: none;
+        -webkit-text-fill-color: rgba(255,255,255,0.25);
+        color: rgba(255,255,255,0.25);
+      }
+      #note[data-onnote="false"] { opacity: 0.35; }
+      #cents-bar {
+        position: relative;
+        width: 280px;
+        max-width: 80vw;
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(255,255,255,0.08);
+      }
+      #cents-bar::before {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: -5px;
+        width: 1px;
+        height: 16px;
+        background: rgba(255,255,255,0.35);
+        transform: translateX(-50%);
+      }
+      #cents-needle {
+        position: absolute;
+        top: -3px;
+        left: 50%;
+        width: 6px;
+        height: 12px;
+        border-radius: 3px;
+        background: rgba(255,255,255,0.6);
+        transform: translateX(-50%);
+        transition: left 0.18s ease-out, background 0.2s ease;
+        box-shadow: 0 0 12px rgba(255,255,255,0.3);
+      }
+      #cents-needle[data-tune="good"]  { background: #4ade80; box-shadow: 0 0 14px rgba(74,222,128,0.7); }
+      #cents-needle[data-tune="ok"]    { background: linear-gradient(135deg, #4f7cff, #a64fff); box-shadow: 0 0 12px rgba(166,79,255,0.6); }
+      #cents-needle[data-tune="off"]   { background: linear-gradient(135deg, #ff4f6f, #ff8a4f); box-shadow: 0 0 12px rgba(255,79,111,0.6); }
+      #cents-label {
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.85rem;
+        opacity: 0.65;
+        font-variant-numeric: tabular-nums;
+        min-width: 6ch;
+        text-align: center;
+      }
+      #volume-row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        width: 280px;
+        max-width: 80vw;
+        margin-top: 0.25rem;
+        transition: opacity 0.25s ease;
+      }
+      #volume-row[data-state="idle"] { opacity: 0.4; }
+      #volume-meter {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      #volume-bar {
+        position: relative;
+        height: 10px;
+        border-radius: 3px;
+        background: rgba(255,255,255,0.08);
+        overflow: hidden;
+        transition: box-shadow 0.12s ease;
+      }
+      #volume-bar[data-over="true"] {
+        box-shadow: 0 0 14px rgba(255,79,111,0.85), inset 0 0 0 1px rgba(255,79,111,0.6);
+      }
+      #volume-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, rgba(79,124,255,0.6), #a64fff 70%, #ff4f9f);
+        border-radius: 3px;
+        transition: width 0.05s linear, background 0.18s ease;
+      }
+      #volume-bar[data-over="true"] #volume-fill {
+        background: linear-gradient(90deg, #a64fff, #ff4f9f 50%, #ff4f6f);
+      }
+      .vtick {
+        position: absolute;
+        top: 0;
+        width: 1px;
+        height: 100%;
+        margin-left: -0.5px;
+        background: rgba(255,255,255,0.22);
+        pointer-events: none;
+      }
+      #volume-scale {
+        display: flex;
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.55rem;
+        letter-spacing: 0.04em;
+        opacity: 0.45;
+        font-variant-numeric: tabular-nums;
+      }
+      #volume-scale span {
+        flex: 1;
+        text-align: center;
+      }
+      #volume-range {
+        display: flex;
+        justify-content: space-between;
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.55rem;
+        letter-spacing: 0.03em;
+        opacity: 0.5;
+        font-variant-numeric: tabular-nums;
+        margin-top: 2px;
+      }
+      #volume-readout {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 1px;
+        min-width: 0;
+        padding: 0.25rem 0.15rem;
+        border: 0;
+        background: none;
+        box-shadow: none;
+        color: inherit;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #volume-readout:active { transform: none; }
+      #volume-steady {
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 1.05rem;
+        font-weight: 700;
+        line-height: 1.15;
+        font-variant-numeric: tabular-nums;
+        color: #a64fff;
+        width: 2ch;
+        text-align: right;
+      }
+      #volume-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.28rem;
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.65rem;
+        letter-spacing: 0.12em;
+        color: rgba(255,255,255,0.42);
+      }
+      .gear {
+        width: 12px;
+        height: 12px;
+        flex: none;
+        color: rgba(255,255,255,0.62);
+      }
+      #volume-readout:hover #volume-label { color: rgba(255,255,255,0.62); }
+      #volume-readout:hover .gear { color: rgba(255,255,255,0.95); }
+      /* 1-10 scale, ticks, dB range, and steady number only make sense
+         once the meter has been calibrated to the singer. */
+      #volume-row:not([data-calibrated="true"]) .vtick,
+      #volume-row:not([data-calibrated="true"]) #volume-scale,
+      #volume-row:not([data-calibrated="true"]) #volume-range,
+      #volume-row:not([data-calibrated="true"]) #volume-steady {
+        display: none;
+      }
+      canvas {
+        width: 100%;
+        flex: 0 1 auto;
+        height: 28vh;
+        max-height: 240px;
+        min-height: 120px;
+        border-radius: 1rem;
+        background: rgba(255,255,255,0.02);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+        touch-action: none;
+      }
+      footer {
+        padding: 1.25rem 1.25rem calc(1.5rem + env(safe-area-inset-bottom));
+        display: flex;
+        justify-content: center;
+      }
+      button {
+        font: inherit;
+        font-size: 1rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        padding: 1rem 2.5rem;
+        border: 0;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #4f7cff, #a64fff);
+        color: white;
+        cursor: pointer;
+        transition: transform 0.1s ease, filter 0.2s ease, background 0.2s ease;
+        min-width: 180px;
+        box-shadow: 0 8px 24px -8px rgba(79,124,255,0.5);
+      }
+      button:active { transform: scale(0.97); }
+      button[data-recording="true"] {
+        background: linear-gradient(135deg, #ff4f6f, #ff8a4f);
+        box-shadow: 0 8px 24px -8px rgba(255,79,111,0.5);
+      }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      button.ghost {
+        background: transparent;
+        border: 1px solid rgba(255,255,255,0.2);
+        box-shadow: none;
+        color: rgba(255,255,255,0.85);
+        min-width: 130px;
+        padding: 0.85rem 1.5rem;
+      }
+      button.ghost:hover { background: rgba(255,255,255,0.06); }
+      footer {
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+      .me-row { display: flex; justify-content: center; gap: 0.5rem; max-width: 100%; }
+      #profile-chip, #account-chip {
+        min-width: 0;
+        font-size: 0.78rem;
+        color: rgba(255,255,255,0.7);
+        text-decoration: none;
+        padding: 0.3rem 0.8rem;
+        border: 1px solid rgba(255,255,255,0.16);
+        border-radius: 999px;
+        background: rgba(255,255,255,0.04);
+        max-width: 85vw;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #calibrate-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        background: rgba(10,10,25,0.78);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+        padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
+      }
+      #calibrate-modal[hidden] { display: none; }
+      .cal-card {
+        width: 100%;
+        max-width: 380px;
+        background: linear-gradient(180deg, rgba(40,40,80,0.55), rgba(20,20,50,0.55));
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 1rem;
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        box-shadow: 0 20px 60px -20px rgba(0,0,0,0.6);
+      }
+      #cal-title {
+        margin: 0;
+        font-size: 1.05rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      #cal-instructions {
+        margin: 0;
+        opacity: 0.78;
+        line-height: 1.45;
+        font-size: 0.9rem;
+      }
+      .cal-pads {
+        display: flex;
+        gap: 0.7rem;
+      }
+      .cal-pad {
+        flex: 1;
+        min-width: 0;
+        position: relative;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.3rem;
+        height: 104px;
+        padding: 0.5rem;
+        border-radius: 0.75rem;
+        border: 1px solid rgba(255,255,255,0.16);
+        background: rgba(255,255,255,0.04);
+        color: #e8e8f0;
+        box-shadow: none;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        transition: border-color 0.15s ease, background 0.15s ease;
+      }
+      .cal-pad:active { transform: none; }
+      .cal-pad[data-state="capturing"] {
+        border-color: rgba(166,79,255,0.7);
+        background: rgba(166,79,255,0.1);
+      }
+      .cal-pad[data-state="done"] {
+        border-color: rgba(74,222,128,0.55);
+        background: rgba(74,222,128,0.08);
+      }
+      .cal-pad-fill {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: var(--cal-progress, 0%);
+        background: linear-gradient(180deg, rgba(79,124,255,0.45), rgba(166,79,255,0.6));
+        pointer-events: none;
+      }
+      .cal-pad-label {
+        position: relative;
+        font-size: 1.1rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+      }
+      .cal-pad-db {
+        position: relative;
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.8rem;
+        opacity: 0.72;
+        font-variant-numeric: tabular-nums;
+      }
+      #cal-live {
+        font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace;
+        font-size: 0.95rem;
+        text-align: center;
+        opacity: 0.55;
+        font-variant-numeric: tabular-nums;
+      }
+      .cal-buttons {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-top: 0.25rem;
+      }
+      .cal-actions {
+        display: flex;
+        gap: 0.6rem;
+        margin-left: auto;
+      }
+      .cal-actions button {
+        font-size: 0.9rem;
+        padding: 0.7rem 1.3rem;
+        min-width: 104px;
+      }
+      .cal-link {
+        background: none;
+        border: 0;
+        box-shadow: none;
+        min-width: 0;
+        padding: 0.4rem 0;
+        font-size: 0.78rem;
+        font-weight: 500;
+        color: rgba(255,255,255,0.55);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      .cal-link[hidden] { display: none; }
+      /* Headers wrap rather than overflow (a phone, with the Play pill and Sing's 📡). */
+      header { flex-wrap: wrap; row-gap: 0.4rem; }
+      .header-left, .header-right { flex-wrap: wrap; row-gap: 0.3rem; }
+      @media (max-width: 420px) { header { column-gap: 0.5rem; } .nav-link, .page-link { padding: 0.2rem 0.42rem; } .header-left { gap: 0.3rem; } .header-right { gap: 0.4rem; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Resonate</h1>
+      <div class="header-right">
+        <a class="page-link" href="record.html">Record</a>
+        <a class="page-link" href="sing.html">Sing</a>
+        <a class="page-link" href="play.html">Play</a>
+        <a class="page-link" href="tools.html">Tools</a>
+        <span id="version">v92</span>
+        <span id="status">idle</span>
+      </div>
+    </header>
+    <main>
+      <section id="pitch-display">
+        <div id="note" data-active="false" data-onnote="true">—</div>
+        <div id="cents-bar"><div id="cents-needle"></div></div>
+        <div id="cents-label">—</div>
+        <div id="volume-row" data-state="idle" data-calibrated="false">
+          <div id="volume-meter">
+            <div id="volume-bar">
+              <div id="volume-fill"></div>
+              <i class="vtick" style="left:10%"></i>
+              <i class="vtick" style="left:20%"></i>
+              <i class="vtick" style="left:30%"></i>
+              <i class="vtick" style="left:40%"></i>
+              <i class="vtick" style="left:50%"></i>
+              <i class="vtick" style="left:60%"></i>
+              <i class="vtick" style="left:70%"></i>
+              <i class="vtick" style="left:80%"></i>
+              <i class="vtick" style="left:90%"></i>
+            </div>
+            <div id="volume-scale">
+              <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span>
+            </div>
+            <div id="volume-range">
+              <span id="vol-db-lo">— dB</span>
+              <span id="vol-db-hi">— dB</span>
+            </div>
+          </div>
+          <button id="volume-readout" type="button" aria-label="Calibrate volume">
+            <span id="volume-steady">—</span>
+            <span id="volume-label">VOL<svg class="gear" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+          </button>
+        </div>
+        <div class="me-row">
+          <a id="profile-chip" href="voice.html" title="Voice profile">Voice profile ›</a>
+          <a id="account-chip" href="account.html" data-account-link="chip">Sign in ›</a>
+        </div>
+      </section>
+      <canvas id="scope"></canvas>
+    </main>
+    <footer>
+      <button id="toggle">Start</button>
+    </footer>
+    <div id="calibrate-modal" hidden>
+      <div class="cal-card" role="dialog" aria-modal="true" aria-labelledby="cal-title">
+        <h2 id="cal-title">Calibrate your volume</h2>
+        <p id="cal-instructions">
+          Hold a pad and sing until it fills: <b>Low</b> quietest, <b>High</b> loudest.
+        </p>
+        <div class="cal-pads">
+          <button id="cal-low" class="cal-pad" type="button" data-state="empty">
+            <span class="cal-pad-fill"></span>
+            <span class="cal-pad-label">Low</span>
+            <span class="cal-pad-db" id="cal-low-db">— dB</span>
+          </button>
+          <button id="cal-high" class="cal-pad" type="button" data-state="empty">
+            <span class="cal-pad-fill"></span>
+            <span class="cal-pad-label">High</span>
+            <span class="cal-pad-db" id="cal-high-db">— dB</span>
+          </button>
+        </div>
+        <div id="cal-live">— dB</div>
+        <div class="cal-buttons">
+          <button id="cal-clear" class="cal-link" type="button" hidden>Clear calibration</button>
+          <span class="cal-actions">
+            <button id="cal-cancel" type="button" class="ghost">Cancel</button>
+            <button id="cal-confirm" type="button" disabled>Confirm</button>
+          </span>
+        </div>
+      </div>
+    </div>
+    <script src="app.js?v=92"></script>
+    <script type="module" src="nav.js?v=92"></script>
+  </body>
+</html>

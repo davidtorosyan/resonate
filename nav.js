@@ -1,14 +1,20 @@
 // Every page: the account link says "Account" when signed in, "Sign in" when not (read from the
 // saved session, so the sign-in library isn't loaded on every page); the space and the cloud
 // sync start here (space.js, sync.js).
-import { savedUser } from "./auth.js?v=91";
-import { ensureSpace, activeSpace, activeDb, park } from "./space.js?v=91";
+import { savedUser } from "./auth.js?v=92";
+import { ensureSpace, activeSpace, activeDb, park } from "./space.js?v=92";
 
 // An email link (confirm / reset) that landed on another page than the account page — Supabase
 // sends it to the project's Site URL (the site's root) when the page that asked isn't on its
 // redirect list: hand it to the account page, which reads it.
-const handing = !/account\.html$/.test(location.pathname) && /(^|[#&])(access_token|error_code|error_description)=/.test(location.hash);
+export const handing = !/account\.html$/.test(location.pathname) && /(^|[#&])(access_token|error_code|error_description)=/.test(location.hash);
 if (handing) location.replace("account.html" + location.hash);
+// A page on its way out — an email link handed on, or an old page going into the shell (away.js
+// marks <html data-away>) — runs nothing more: this module never finishes, so the modules that
+// import it (sing.js, play.js, pdf-import.js, the shell) never start — no import resumed, no
+// Verovio, no 📡. (WebKit still runs a module script whose import of this one another <script>
+// started: away.js stops the old pages' loading before their modules, the shell checks `handing`.)
+if (handing || document.documentElement.hasAttribute("data-away")) await new Promise(() => {});
 
 const user = savedUser();
 // The session ended without Sign out (expired, signed out in another tab): the account's data is
@@ -24,7 +30,7 @@ for (const a of document.querySelectorAll("[data-account-link]")) {
 // Cloud sync, for a signed-in account whose data is the one on this device (the library loads
 // only then: signed-out pages stay as light as before).
 if (!handing && user && activeSpace() === user.id) {
-  import("./sync.js?v=91").then((m) => { if (!m.syncOff()) m.start(); }).catch((err) => console.warn("sync", err));
+  import("./sync.js?v=92").then((m) => { if (!m.syncOff()) m.start(); }).catch((err) => console.warn("sync", err));
 }
 
 // Another tab switched whose data this device shows (signed in, out, …): this page still shows
@@ -57,7 +63,9 @@ const ENGINE_LOCK = "resonate-omr-engine";
 let pillGen = 0;
 async function importPill() {
   const gen = ++pillGen;
-  if (/(pdf-import|shell)\.html$/.test(location.pathname)) return; // (both draw the import themselves)
+  // (both draw the import themselves: the shell — the root since v92, <html data-shell>; shell.html
+  // for a shell from before, still open somewhere)
+  if (document.documentElement.hasAttribute("data-shell") || /(pdf-import|shell)\.html$/.test(location.pathname)) return;
   let f = null;
   try { f = JSON.parse(localStorage.getItem(IMPORT_FLAG) || "null"); } catch {}
   const here = f && (f.db ? f.db === activeDb() : f.space === activeSpace());
