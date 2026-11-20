@@ -196,8 +196,9 @@ another voice on the same staff starts, in an earlier compound slot (or this one
 that rest's end (consecutive shared rests too). Used for the times a slot infers, the mapping check, `applyMapping`
 (logged `… after a rest shared with another voice`) and extinct voices. The voice gets a gap there, which the export
 writes as a `<forward>`, as printed (the rest drawn once). A/B, native, the same build without / with 0010: Killing
-changes in bars 7 and 9 only (both as printed); Stumblin' In: never fires (two bars differ by a dot, the engine's own
-run-to-run variation).
+changes in bars 7 and 9 only (both as printed); Goodbye Yellow Brick Road, Greensleeves, Amazing Grace: identical, it
+never fires; Stumblin' In: never fires — two runs of the build *without* it differ in 3 bars (a dot read or not), and one of
+them equals a run with it.
 
 `build.sh` applies the patches with `git am --keep-cr`: the upstream sources are CRLF.
 

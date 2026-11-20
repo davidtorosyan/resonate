@@ -19,7 +19,7 @@ const BASE = new URL('.', import.meta.url).href;          // .../omr/
 // audiveris.jar's SHA-256 — tools/jobstore.mjs checks them) and the CheerpJ version. A stored book is
 // continued only by the same engine; another one starts the import over from the stored PDF.
 // Change it with lib/ (not with the version badge).
-export const ENGINE = 'f310d3a-8222738d-cj4.2';
+export const ENGINE = '8b47407-813dad18-cj4.2';
 
 // The engine's Web Lock: one conversion per browser at a time (CheerpJ's files are one database per
 // site). Held by the page for a whole import (importer.js), or by convertPdf itself.
