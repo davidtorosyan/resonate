@@ -29,6 +29,8 @@
     var to = "./?open=" + open + (q ? "&" + q : "");
     try { window.stop(); } catch (e) {}
     location.replace(to);
+    // (back to this page from the bfcache: on to the shell again, not a blank page)
+    addEventListener("pageshow", function (e) { if (e.persisted) location.replace(to); });
     var html = document.documentElement;
     html.setAttribute("data-away", "");
     // (nothing shows on its way out — unless the shell hasn't come in 3 s: then a plain link there)
@@ -37,6 +39,8 @@
     setTimeout(function () {
       var a = document.createElement("a");
       a.href = to;
+      // (a replace, as the redirect: a tap mustn't leave this page in the history under the shell)
+      a.addEventListener("click", function (e) { e.preventDefault(); location.replace(to); });
       a.textContent = "Resonate ›";
       a.style.cssText = "display:block;padding:24px;color:#c48bff;font:15px/1.4 -apple-system,system-ui,sans-serif";
       (document.body || html).appendChild(a);

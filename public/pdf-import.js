@@ -28,8 +28,11 @@ let jobId = null;
 const events = []; // every event of this run, as the Reader got them (what a resume would replay)
 const params = new URLSearchParams(location.search);
 const reprocessId = params.get("reprocess");
+// This page's own address: ?page kept (away.js sends pdf-import.html without it to the shell, v92) —
+// never the rest (a ?reprocess= that survived a stop would start it again).
+const home = () => location.pathname + (params.has("page") ? "?page" : "");
 // (the address loses ?reprocess once the job is kept: a reload continues that job, never starts another)
-const dropParam = () => { if (reprocessId && /[?&]reprocess=/.test(location.search)) try { history.replaceState(history.state, "", location.pathname); } catch {} };
+const dropParam = () => { if (reprocessId && /[?&]reprocess=/.test(location.search)) try { history.replaceState(history.state, "", home()); } catch {} };
 
 // The first lines (browser/device) are kept when the log is trimmed: they're what
 // makes a pasted failure report diagnosable.
@@ -106,7 +109,7 @@ async function stopImport() {
   leaving = true; // (no "leave the page?" prompt for an import being thrown away)
   const id = imp.current?.id || jobId;
   try { if (id) await imp.discard(id); } catch (err) { console.warn("discard", err); }
-  location.replace(location.pathname);
+  location.replace(home());
 }
 // The picker again (a job the flag named was gone: finished or forgotten in another tab).
 function showPicker() {

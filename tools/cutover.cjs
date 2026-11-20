@@ -15,7 +15,8 @@
 //      no worker
 //   F  the shell's fetch path stays inert: with redirect=1, Sing, the Score, Record, Voice and
 //      Assistants mounted in place — no navigation, one load
-//   E  the escapes: pdf-import.html?page stays the old page; without resonate.redirect an automated
+//   E  the escapes: pdf-import.html?page stays the old page (its Reader's ✕ too); the 3-second
+//      fallback link replaces the leaving page; without resonate.redirect an automated
 //      browser stays on sing.html; email links (an error, a token) at the root and on sing.html
 //      reach account.html
 //   node -r ./harness/noshots.cjs cutover.cjs      (BASE=http://localhost:8097/resonate/; ONLY=iphone; PARTS=N,E)
@@ -394,6 +395,17 @@ async function escapes(sz) {
     await p.waitForTimeout(1500);
     let r = await p.evaluate(() => ({ path: location.pathname, away: document.documentElement.hasAttribute('data-away'), dbg: typeof window.resonateDebug }));
     ok(r.path.endsWith('pdf-import.html') && !r.away && r.dbg === 'function', `${sz.n} E: pdf-import.html?page stays the old page (${JSON.stringify(r)})`);
+    // the Reader's ✕ → Stop? there: back to the picker on the same page (?page kept — v92 review)
+    await p.setInputFiles('#file', `${FX}/import/greensleeves3.pdf`);
+    const stop = p.locator('.rd-stop');
+    await stop.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
+    const reloaded = p.waitForEvent('load', { timeout: 10000 }).catch(() => {});
+    await stop.click().catch(() => {});
+    await stop.click().catch(() => {});
+    await reloaded;
+    await p.waitForTimeout(1500);
+    r = await p.evaluate(() => ({ path: location.pathname, search: location.search, away: document.documentElement.hasAttribute('data-away'), shell: document.documentElement.hasAttribute('data-shell') })).catch((e) => ({ err: String(e) }));
+    ok(/pdf-import\.html$/.test(r.path || '') && r.search === '?page' && !r.away && !r.shell, `${sz.n} E: ✕ → Stop? on pdf-import.html?page stays there, at the picker (${JSON.stringify(r)})`);
     await p.close();
     // an email link's error on sing.html and at the root → account.html; a token at the root too
     for (const [url, what] of [['sing.html#error=access_denied&error_code=otp_expired&error_description=x', 'sing.html'], ['#error=access_denied&error_code=otp_expired&error_description=x', 'the root']]) {
@@ -411,6 +423,29 @@ async function escapes(sz) {
     ok(/account\.html$/.test(new URL(p.url()).pathname), `${sz.n} E: an email link's token at the root → account.html (${new URL(p.url()).pathname})`);
     await p.close();
     await ctx.close(); // (the account page's own errors with no network aren't this suite's)
+  }
+  {
+    // the 3-second fallback link (the shell slow to come): a tap replaces the leaving page, so Back
+    // from the shell goes to the page before it, not to the hidden old page (v92 review)
+    const ctx = await context(sz, { hold: 6000 });
+    const p = await ctx.newPage();
+    await p.goto(BASE + 'tools.html');
+    await p.goto(BASE + 'sing.html', { waitUntil: 'commit' });
+    const link = p.locator('a', { hasText: 'Resonate ›' });
+    await link.waitFor({ state: 'visible', timeout: 6000 }).catch(() => {});
+    await link.tap().catch(() => {});
+    await p.waitForFunction(() => document.documentElement.hasAttribute('data-shell'), null, { timeout: 20000 }).catch(() => {});
+    await p.waitForTimeout(800);
+    // Back until the address leaves the shell (a landed song may take one Back of its own)
+    let back = '';
+    for (let i = 0; i < 3; i++) {
+      await p.goBack({ waitUntil: 'commit', timeout: 8000 }).catch(() => {});
+      await p.waitForTimeout(800);
+      back = new URL(p.url()).pathname;
+      if (!back.endsWith('/resonate/')) break;
+    }
+    ok(back.endsWith('tools.html'), `${sz.n} E: the fallback link, tapped, leaves no entry: Back from the shell reaches tools.html (${back})`);
+    await closeCtx(ctx, `${sz.n} fallback link`);
   }
   {
     const ctx = await context(sz, { redirect: false });

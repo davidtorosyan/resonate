@@ -83,7 +83,7 @@ async function showDevices() {
   const { data, error } = await c.sb.from("devices").select("id,name,remote,seen_at,state").order("seen_at", { ascending: false });
   const box = $("devices");
   box.textContent = "";
-  if (error || !data?.length) { box.append(Object.assign(document.createElement("div"), { className: "none", textContent: error ? "Couldn't read them." : "Open the Sing page on a device to add it." })); return; }
+  if (error || !data?.length) { box.append(Object.assign(document.createElement("div"), { className: "none", textContent: error ? "Couldn't read them." : "Open Resonate on a device to add it." })); return; }
   const me = device().id;
   for (const d of data) {
     const name = document.createElement("span");
