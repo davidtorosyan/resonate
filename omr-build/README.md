@@ -185,6 +185,20 @@ next to itself) skips the finished sheets and processes the rest from LOAD, read
   Tests outside the repo: tools/importresume.cjs, tools/importwk.mjs. `ENGINE` in `public/omr/omr.js` must change with
   `public/omr/lib/` (`<commit>-<first 8 hex of audiveris.jar's SHA-256>-cj<CheerpJ version>`; `build.sh` prints it).
 
+`0010` — **A rest shared by two voices.** When both voices of a staff rest at the same moment, engravers print one
+rest; `MeasureRhythm` gives every rest to exactly one voice. The other voice's next chord then got the end of that
+voice's previous chord as its time — the time of the rest, a slot to its *left* — and where the voices disagreed
+`checkSlotTime` kept the lowest time ("pick up the lowest one and reject the mappings that led to other values"): the
+whole slot came a beat early and the voices ended short of the measure. The owner's report: Killing Me Softly bars 7
+and 9, a piano right hand with a quarter rest on beat 3 shared by both voices — its beat-4 eighths came out on beat 3,
+under the voice's rest. Now `voiceEnd(chord, slot, inclusive)`: a voice whose last chord ends exactly where a rest of
+another voice on the same staff starts, in an earlier compound slot (or this one, for `purgeExtinctVoices`), is free at
+that rest's end (consecutive shared rests too). Used for the times a slot infers, the mapping check, `applyMapping`
+(logged `… after a rest shared with another voice`) and extinct voices. The voice gets a gap there, which the export
+writes as a `<forward>`, as printed (the rest drawn once). A/B, native, the same build without / with 0010: Killing
+changes in bars 7 and 9 only (both as printed); Stumblin' In: never fires (two bars differ by a dot, the engine's own
+run-to-run variation).
+
 `build.sh` applies the patches with `git am --keep-cr`: the upstream sources are CRLF.
 
 ## StripVolatile (applied to every jar)

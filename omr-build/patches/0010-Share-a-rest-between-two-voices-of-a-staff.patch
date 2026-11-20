@@ -1,0 +1,152 @@
+From 703b706736db6efad18478639a65524b6051db92 Mon Sep 17 00:00:00 2001
+From: build <build@localhost>
+Date: Fri, 20 Nov 2026 01:47:29 +0000
+Subject: [PATCH] Share a rest between two voices of a staff
+
+When two voices of a staff rest together, engravers print one rest; the
+rhythm algorithm gives it to one voice only. The other voice's next chord
+then got the end of that voice's previous chord as its time, i.e. the time
+of the rest, a slot to its left, and when the voices disagreed the lowest
+time won: the chord, and the chords of the other voice in its slot, came
+a beat early and the voices ended short of the measure.
+
+Now a voice that ends exactly where a rest of another voice on the same
+staff starts, in an earlier slot, is free at the end of that rest (and of
+consecutive shared rests): MeasureRhythm.voiceEnd is used for the times a
+slot infers, for checking a mapping, when applying it, and for extinct
+voices. Logged as "after a rest shared with another voice".
+---
+ .../omr/sheet/rhythm/MeasureRhythm.java       | 81 +++++++++++++++++--
+ 1 file changed, 76 insertions(+), 5 deletions(-)
+
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/rhythm/MeasureRhythm.java b/app/src/main/java/org/audiveris/omr/sheet/rhythm/MeasureRhythm.java
+index d31593d4..f26f8ec4 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/rhythm/MeasureRhythm.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/rhythm/MeasureRhythm.java
+@@ -29,6 +29,7 @@ import org.audiveris.omr.sheet.Part;
+ import org.audiveris.omr.sheet.ProcessingSwitch;
+ import org.audiveris.omr.sheet.Scale;
+ import org.audiveris.omr.sheet.Sheet;
++import org.audiveris.omr.sheet.Staff;
+ import org.audiveris.omr.sheet.rhythm.ChordsMapper.Mapping;
+ import org.audiveris.omr.sheet.rhythm.Slot.CompoundSlot;
+ import org.audiveris.omr.sheet.rhythm.Slot.MeasureSlot;
+@@ -672,9 +673,9 @@ public class MeasureRhythm
+                 final AbstractChordInter lastChord = voice.getLastChord();
+ 
+                 if (lastChord.getTimeOffset() != null) {
+-                    final Rational end = lastChord.getEndTime();
++                    final Rational end = voiceEnd(lastChord, slot, true);
+ 
+-                    if (end.compareTo(firstTime) < 0) {
++                    if ((end != null) && (end.compareTo(firstTime) < 0)) {
+                         // Lookup following NextInVoice chord(s) within the current measure
+                         AbstractChordInter next = lastChord.getNextChordInVoiceSequence();
+ 
+@@ -705,6 +706,70 @@ public class MeasureRhythm
+         }
+     }
+ 
++    //----------//
++    // voiceEnd //
++    //----------//
++    /**
++     * Report when the voice ending with the provided chord is free again, as seen from the
++     * provided slot.
++     * <p>
++     * This is normally the chord end time.
++     * But when two voices of a staff rest together, engravers print just one rest, which this
++     * algorithm gives to one voice only: the other voice rests as well, and its next chord comes
++     * after that rest.
++     * So, when a rest of another voice on the same staff, located in a slot before the provided
++     * one (or in it, if inclusive), starts exactly where this voice ends, the voice is free at the
++     * end of that rest, and so on for consecutive shared rests.
++     * Without this, the next chord would get the time of that rest, i.e. the time of a slot
++     * located before its own, and the voice would end too early in the measure.
++     *
++     * @param chord     the last chord of a voice
++     * @param slot      the slot at hand
++     * @param inclusive true to consider the rests of the slot itself
++     * @return the time the voice is free, or null if unknown
++     */
++    private Rational voiceEnd (AbstractChordInter chord,
++                               CompoundSlot slot,
++                               boolean inclusive)
++    {
++        Rational end = chord.getEndTime();
++
++        if (end == null) {
++            return null;
++        }
++
++        final int index = slots.indexOf(slot);
++
++        if (index < 0) {
++            return end;
++        }
++
++        final List<CompoundSlot> before = slots.subList(0, inclusive ? index + 1 : index);
++        final Voice voice = chord.getVoice();
++        final Staff staff = chord.getTopStaff();
++
++        Search:
++        while (true) {
++            for (CompoundSlot sl : before) {
++                for (AbstractChordInter ch : sl.getChords()) {
++                    if ((ch instanceof RestChordInter) && (ch.getVoice() != null)
++                            && (ch.getVoice() != voice) && (ch.getTopStaff() == staff)
++                            && end.equals(ch.getTimeOffset())) {
++                        final Rational restEnd = ch.getEndTime();
++
++                        if ((restEnd != null) && (restEnd.compareTo(end) > 0)) {
++                            end = restEnd;
++
++                            continue Search;
++                        }
++                    }
++                }
++            }
++
++            return end;
++        }
++    }
++
+     //--------------//
+     // removeTuplet //
+     //--------------//
+@@ -923,7 +988,13 @@ public class MeasureRhythm
+                 ch.setVoice(act.getVoice());
+ 
+                 if (act.getTimeOffset() != null) {
+-                    ch.setAndPushTime(act.getEndTime());
++                    final Rational end = voiceEnd(act, slot, false);
++
++                    if (!end.equals(act.getEndTime())) {
++                        logger.info("{} {} after a rest shared with another voice", measure, ch);
++                    }
++
++                    ch.setAndPushTime(end);
+                 } else {
+                     measure.setAbnormal(true);
+                 }
+@@ -1280,7 +1351,7 @@ public class MeasureRhythm
+ 
+                 if (act != null) {
+                     if (act.getTimeOffset() != null) {
+-                        final Rational end = act.getEndTime();
++                        final Rational end = voiceEnd(act, slot, false);
+                         List<AbstractChordInter> list = times.get(end);
+ 
+                         if (list == null) {
+@@ -1441,7 +1512,7 @@ public class MeasureRhythm
+                         for (ChordPair pair : mapping.pairsOf(narrowChords)) {
+                             final AbstractChordInter ch = pair.rookie;
+                             final AbstractChordInter act = pair.active;
+-                            final Rational actEnd = act.getEndTime();
++                            final Rational actEnd = voiceEnd(act, slot, false);
+ 
+                             if (actEnd == null) {
+                                 return; // Computing cannot continue
+-- 
+2.43.0
+
