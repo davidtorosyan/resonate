@@ -437,11 +437,12 @@ async function shot(page, { url, view = "both", layout, pageNo = 1, measure = nu
       if (s.owner) {
         const text = (r.title + " " + r.credits).toLowerCase();
         // the full score's parts: the tune's, the piano, any other part that plays
-        const wantScore = /killing|wichita/.test(s.name) ? "P1,P2" : /pianoman/.test(s.name) ? "P1,P2,P3" : /songbird/.test(s.name) ? "P2,P3" : /longest/.test(s.name) ? "P1" : null;
+        const wantScore = /killing|wichita/.test(s.name) ? "P1,P2" : /pianoman/.test(s.name) ? "P1,P2,P3" : /songbird/.test(s.name) ? "P1,P2,P3" : /longest/.test(s.name) ? "P1" : null;
         ok(P.score && P.score.parts.join() === wantScore, `${tag}: full score parts ${P.score?.parts} (want ${wantScore})`);
         if (P.score) {
-          const home = P.score.words.part + "|" + (P.score.words.staff ?? 1);
-          ok(V.score.lyricHome.join() === home, `${tag}: full score words on ${V.score.lyricHome}`);
+          // (the tune's words, and a second singer's: Songbird's Eurydice on her own staff)
+          const home = [P.score.words.part + "|" + (P.score.words.staff ?? 1), ...P.score.words.also.map((id) => id + "|1")].sort().join();
+          ok([...V.score.lyricHome].sort().join() === home, `${tag}: full score words on ${V.score.lyricHome} (want ${home})`);
           // the top part's endings only (Audiveris reads a piano's 8va lines as endings)
           ok(P.score.parts.slice(1).every((pid) => V.score.endingsXml[pid] === 0), `${tag}: lower parts' endings ${JSON.stringify(V.score.endingsXml)}`);
           // (the same endings as Both, which copies the top part's onto the piano)

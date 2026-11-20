@@ -150,7 +150,7 @@ const near = (a, b) => Math.abs(a.sec - b.sec) < 0.002 && a.midi === b.midi;
     const want = {
       killing: { score: [["Voice", "P1", "voice"], ["Piano", "P2", "piano"]], both: RL("P2") },
       pianoman: { score: [["Voice", "P1", "voice"], ["Piano", "P2", "piano"], ["Part 3", "P3", "part"]], both: RL("P2") },
-      songbird: { score: [["Voice", "P2", "voice"], ["Piano", "P3", "piano"]], both: RL("P3") },
+      songbird: { score: [["Voice 1", "P1", "voice"], ["Voice 2", "P2", "voice"], ["Piano", "P3", "piano"]], both: RL("P3") },
       wichita: { score: [["Voice", "P1", "voice"], ["Piano", "P2", "piano"]], both: RL("P2") },
       longest: { score: RL("P1"), both: RL("P1") },
       "amazing-grace": { score: [["RH", "P1", "rh"], ["LH", "P2", "lh"]], both: [["RH", "P1", "rh"], ["LH", "P2", "lh"]] },

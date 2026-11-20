@@ -78,7 +78,7 @@ async function partA(browser) {
   await page.evaluate(() => window.boot);
   const list = [
     ["synth-voice", "/__fx/synth-voice.musicxml"], ["amazing-grace", BASE + "songs/amazing-grace.musicxml"], ["synth-pvg", "/__fx/synth-pvg.musicxml"],
-    ["synth-longest", "/__fx/synth-longest.musicxml"], ["score-pvg", "/__fx/score-pvg.musicxml"], ["score-duet", "/__fx/score-duet.musicxml"],
+    ["synth-longest", "/__fx/synth-longest.musicxml"], ["score-pvg", "/__fx/score-pvg.musicxml"], ["score-duet", "/__fx/score-duet.musicxml"], ["score-duet-partner", "/__fx/score-duet-partner.musicxml"],
     ["score-guitar", "/__fx/score-guitar.musicxml"], ["score-tunein", "/__fx/score-tunein.musicxml"],
     ...OWNER.map((n) => [n, "/__scores/" + encodeURIComponent(n + ".musicxml")]),
   ];
@@ -194,8 +194,8 @@ async function partA(browser) {
   }
   // ---- offered / not, and the parts
   const want = {
-    "synth-voice": null, "amazing-grace": "P1,P2", "synth-pvg": "P1,P2", "synth-longest": "P1", "score-pvg": "P1,P2,P3", "score-duet": "P2,P3", "score-guitar": "P1,P2", "score-tunein": "P1",
-    killing: "P1,P2", wichita: "P1,P2", pianoman: "P1,P2,P3", songbird: "P2,P3", longest: "P1",
+    "synth-voice": null, "amazing-grace": "P1,P2", "synth-pvg": "P1,P2", "synth-longest": "P1", "score-pvg": "P1,P2,P3", "score-duet": "P2,P3", "score-duet-partner": "P1,P2,P3", "score-guitar": "P1,P2", "score-tunein": "P1",
+    killing: "P1,P2", wichita: "P1,P2", pianoman: "P1,P2,P3", songbird: "P1,P2,P3", longest: "P1",
   };
   for (const [name, r] of Object.entries(R)) {
     const w = want[name];
@@ -242,6 +242,15 @@ async function partA(browser) {
   }
   const du = R["score-duet"];
   if (du?.plan) ok(du.marks.some((m) => /D\.S\. al Fine/.test(m)) && du.endingsDrawn >= 2 && du.lyricHome.join() === "P2|1", `A score-duet: the spurious top part's road map on the duet (${du.marks.join(" | ")}; endings ${du.endingsDrawn})`);
+  // the partner's own staff (all its notes sung) in, its marks handed to the duet: shown only in the
+  // first system and where she sings (bars 4 and 19)
+  const dp = R["score-duet-partner"];
+  if (dp?.plan) {
+    const withP1 = dp.sys.filter((sy) => sy.includes("1")).length;
+    ok(dp.plan.sparse.join() === "P1" && dp.plan.sung.join() === "P1,P2" && dp.lyricHome.includes("P1|1") && dp.lyricHome.includes("P2|1"), `A score-duet-partner: P1 sung, sparse (${JSON.stringify({ sparse: dp.plan.sparse, sung: dp.plan.sung, home: dp.lyricHome })})`);
+    ok(withP1 >= 2 && withP1 <= 3 && withP1 < dp.sys.length, `A score-duet-partner: P1 in ${withP1} of ${dp.sys.length} systems (${dp.sys.join(" ")})`);
+    ok(dp.marks.some((m) => /D\.S\. al Fine/.test(m)) && dp.endingsDrawn >= 2, `A score-duet-partner: the road map still drawn (${dp.marks.join(" | ")}; endings ${dp.endingsDrawn})`);
+  }
   const ag = R["amazing-grace"];
   if (ag?.plan) ok(ag.plan.brace && ag.plan.braced.join() === "P1,P2" && ag.stanzas.length === 1 && !ag.plan.sung.length, `A amazing-grace: braced as Both, verse 1 only (${ag.stanzas})`);
   const tu = R["score-tunein"];
@@ -254,7 +263,8 @@ async function partA(browser) {
     ok(p3 && p3.live >= 0.1 && R.pianoman.plan.parts.includes("P3") && !R.pianoman.lyricHome.includes("P3|1"), `A pianoman: the accordion staff P3 (${Math.round(100 * p3.live)}% of bars) in, its stray syllables out`);
     ok(R.pianoman.sys.some((sy) => !sy.includes("4")) && R.pianoman.sys.some((sy) => sy.includes("4")), `A pianoman: the accordion only where it plays`);
   }
-  if (R.songbird?.plan) ok(!R.songbird.plan.parts.includes("P1"), `A songbird: the 4-note P1 left out`);
+  // (P1 = Eurydice's own staff where the print gives her one: 4 notes, 3 sung)
+  if (R.songbird?.plan) ok(R.songbird.plan.parts.includes("P1") && R.songbird.plan.sung.includes("P1") && R.songbird.sys.filter((sy) => sy.includes("1")).length <= 3, `A songbird: Eurydice's P1 in, only where she sings (${R.songbird.sys.filter((sy) => sy.includes("1")).length} systems)`);
   for (const e of errors) ok(false, "A pageerror " + e);
   await page.close();
 }

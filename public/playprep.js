@@ -93,8 +93,9 @@ export function partsOf(doc) {
 // at Some is its bass note] }. The full score also has words { part (the tune's), staff (null, or
 // the one staff of it that keeps its words: the tune inside the keyboard part), also (other sung
 // parts that keep theirs), tune { staff, voice } (where its syllables gather) }, sung (the parts
-// that sing, not the keyboard's: the voice's strip colour), braced (the hymn pair braced as Both)
-// and condense (≥ 3 staves: a staff resting a whole system is left out of it, as printed).
+// that sing, not the keyboard's: the voice's strip colour), braced (the hymn pair braced as Both),
+// sparse (kept parts playing in < 10% of bars: a duet partner's staff — no marks on it) and
+// condense (≥ 3 staves: a staff resting a whole system is left out of it, as printed).
 export function planViews(doc, parts = partsOf(doc)) {
   const view = (key, o) => ({ key, label: VIEW_LABELS[key], kind: "piano", staff: null, voice: null, brace: false, lyrics: false, staves: 1, ...o });
   const views = {};
@@ -140,15 +141,20 @@ export function planViews(doc, parts = partsOf(doc)) {
     // The full score, as piano/vocal music is printed: the tune's staff with its words over the
     // piano (and any other part that plays), in score order. Offered when it shows more than
     // Both: more parts, or the words Both leaves out (the tune inside the piano, a hymn).
-    const keep = parts.filter((p) => p.id === mp.id || (piano ? p.id === piano.id || live(p) : both.parts.includes(p.id)));
+    // (and a part whose notes mostly carry words, however few: a duet partner's own staff where
+    // the print gives her one — Songbird's Eurydice, two systems of 150 bars)
+    const sings = (p) => p.id !== piano?.id && p.lyrics >= 2 && p.lyrics >= 0.5 * p.notes;
+    const keep = parts.filter((p) => p.id === mp.id || sings(p) || (piano ? p.id === piano.id || live(p) : both.parts.includes(p.id)));
     if (keep.length > both.parts.length || !both.lyrics) {
       const ids = keep.map((p) => p.id);
       const braced = both.brace && both.parts.every((id) => ids.includes(id)) ? [...both.parts] : null;
       // (the sung parts: the tune's and any other kept part that sings — a second singer's)
       const sung = keep.filter((p) => singer(p) && !braced?.includes(p.id)).map((p) => p.id);
       const staves = keep.reduce((s, p) => s + p.staves, 0);
+      // (parts kept that play in few bars: a duet partner's staff)
+      const sparse = keep.filter((p) => p.id !== mp.id && !live(p)).map((p) => p.id);
       score = view("score", {
-        kind: "score", parts: ids, brace: !!braced, braced, lyrics: true, staves, sung, condense: staves >= 3,
+        kind: "score", parts: ids, brace: !!braced, braced, lyrics: true, staves, sung, ...(sparse.length ? { sparse } : {}), condense: staves >= 3,
         words: {
           part: mp.id,
           // (the tune inside the keyboard part: its staff's words only, not a stray syllable under
@@ -350,8 +356,12 @@ export function buildView(doc, plan) {
   // Audiveris writes endings, D.S. / To Coda, tempo and section marks on the top (vocal) part
   // only, and reads a piano's 8va lines as endings (Sing's readStructure reads endings from the
   // top part for the same reason): a view without the top part gets its marks.
-  const host = all.find((p) => keep.has(p.getAttribute("id")));
+  // (the full score's top part playing in few bars — a duet partner's staff — hands them on too,
+  // and keeps no copy: they'd keep its empty staff in every system with one)
+  const sparse = new Set(plan.sparse || []);
+  const host = all.find((p) => keep.has(p.getAttribute("id")) && !sparse.has(p.getAttribute("id")));
   if (all[0] && host && host !== all[0]) copyMarks(d, all[0], host);
+  if (host && host !== all[0] && keep.has(all[0].getAttribute("id"))) dropMarks(all[0]);
   const dropped = all.some((p) => !keep.has(p.getAttribute("id")));
   for (const p of all) if (!keep.has(p.getAttribute("id"))) p.remove();
   const score = plan.kind === "score";
@@ -360,7 +370,10 @@ export function buildView(doc, plan) {
   if (score) {
     scoreEndings(d, partsIn(root));
     scoreBarlines(d, partsIn(root));
-    scoreMarks(d, partsIn(root));
+    // (marks go over the first part that isn't sparse; barlines and endings stay the first part's,
+    // the one Verovio reads them from)
+    const ps = partsIn(root), first = ps.find((p) => !sparse.has(p.getAttribute("id"))) || ps[0];
+    scoreMarks(d, [first, ...ps.filter((p) => p !== first)]);
   }
   // A part the part-list doesn't name (or no part-list): Verovio loads it and draws nothing. Its
   // entry goes where its <part> stands (Verovio orders the staves by the part-list: appended, a
@@ -862,6 +875,11 @@ function copyMarks(d, top, host) {
     }
   }
   for (const b of [...host.getElementsByTagName("barline")]) if (!b.children.length) b.remove();
+}
+
+// The marks copyMarks hands on, taken off the part they came from.
+function dropMarks(part) {
+  kids(part, "measure").forEach((m, i) => { for (const dir of kids(m, "direction")) if (isMark(dir, i === 0)) dir.remove(); });
 }
 
 // Verovio's MusicXML import takes a measure's barlines — style, repeats, endings — from the first

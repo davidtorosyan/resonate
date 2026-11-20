@@ -1,5 +1,6 @@
 // restoreTies (omr/fixscore.js, through fixOmrScore) on hand-built scores shaped like Audiveris
-// output: ties the engine missed, wrote half, or read as slurs — and the look-alikes left alone.
+// output: ties the engine missed, wrote half, linked to the wrong head or read as slurs, accidentals
+// a lost tie didn't carry — and the look-alikes left alone; then markUnmarkedTuplets' runs.
 // usage: node tiecases.cjs   (BASE defaults to the sitetest server: http://localhost:8097/resonate/)
 const { chromium } = require('playwright');
 const BASE = process.env.BASE || 'http://localhost:8097/resonate/';
@@ -7,7 +8,10 @@ const FIX = process.env.FIX || './omr/fixscore.js'; // (a scratch copy to try a 
 
 // A part: { id, staves, measures: [[note...]] }; a note: [pitch "F#4" | "r", dur (eighths), opts]
 // opts: { v voice, st staff, ch chord, tie 'start'|'stop'|'both', tied (only <tied>), slur [type, number], lyr text, back eighths,
-//   grace (a grace note before the next), art (an articulation) } — durations in eighths (½ = a 16th; divisions 4)
+//   grace (a grace note before the next), art (an articulation), acc (a printed accidental) } — durations in eighths (½ = a 16th;
+//   divisions 4). A pitch's ♯/♭ is its <alter>, printed only with acc (as the engine writes a note whose accidental is the key's
+//   or carried).
+// A tie listed with its note's pitch as it comes out: a continuation that takes the first note's accidental reads with it.
 function score(parts, { time = [4, 4] } = {}) {
   const pl = parts.map((p) => `<score-part id="${p.id}"><part-name>${p.name || p.id}</part-name></score-part>`).join('');
   const body = parts.map((p) => `<part id="${p.id}">` + p.measures.map((m, i) => {
@@ -24,7 +28,7 @@ function score(parts, { time = [4, 4] } = {}) {
       if (!o.grace) n += `<duration>${dur * 2}</duration>`;
       const ts = o.tie === 'both' ? ['stop', 'start'] : o.tie ? [o.tie] : [];
       if (!o.tied) for (const t of ts) n += `<tie type="${t}"/>`;
-      n += `<voice>${o.v || 1}</voice><type>eighth</type><staff>${o.st || 1}</staff>`;
+      n += `<voice>${o.v || 1}</voice><type>eighth</type>${o.acc ? `<accidental>${o.acc}</accidental>` : ''}<staff>${o.st || 1}</staff>`;
       const no = ts.map((t) => `<tied type="${t}"/>`).join('') + (o.slur ? o.slur.map(([t, k]) => `<slur type="${t}" number="${k}"/>`).join('') : '') + (o.art ? `<articulations><${o.art}/></articulations>` : '');
       if (no) n += `<notations>${no}</notations>`;
       if (o.lyr) n += `<lyric number="1"><syllabic>single</syllabic><text>${o.lyr}</text></lyric>`;
@@ -164,6 +168,135 @@ const cases = [
     ] }]),
     want: { P2: [['m1', 'G4', 'start'], ['m1', 'A4', 'start'], ['m2', 'G4', 'stop'], ['m2', 'A4', 'stop']] }, slurs: 0, changed: true,
   },
+  // --- notes paired by staff position (step + octave), not whole strikes by pitch
+  {
+    name: 'slur from a note into a fuller chord, ending on its continuation in another voice → tie (Songbird bar 37)',
+    xml: score([{ id: 'P2', name: 'Piano', measures: [
+      [['r', 6], ['G4', 2, { slur: [['start', 1]] }]],
+      [['B4', 8], ['back', 8], ['G4', 8, { v: 2, slur: [['stop', 1]] }]],
+    ] }]),
+    want: { P2: [['m1', 'G4', 'start'], ['m2', 'G4', 'stop']] }, slurs: 0, changed: true,
+  },
+  {
+    name: 'slur from a phantom head a step above the real one into its continuation → the real head tied (Songbird bar 37, left hand)',
+    xml: score([{ id: 'P2', name: 'Piano', measures: [
+      [['r', 4], ['D4', 4], ['Eb4', 4, { ch: true, slur: [['start', 1]] }]],
+      [['D4', 8, { slur: [['stop', 1]] }]],
+    ] }]),
+    want: { P2: [['m1', 'D4', 'start'], ['m2', 'D4', 'stop']] }, slurs: 0, changed: true,
+  },
+  {
+    name: 'slur linked to the next chord\'s other head, the continuation lost its sharp → tied, sharp carried (Killing bar 68)',
+    xml: score([{ id: 'P2', name: 'Piano', measures: [
+      [['B4', 3], ['C5', 1], ['B4', 3], ['C5', 1], ['back', 8], ['G#4', 8, { v: 2, slur: [['start', 1]] }]],
+      [['B4', 1, { slur: [['stop', 1]] }], ['C5', 1], ['B4', 1], ['C5', 1], ['B4', 4], ['back', 8], ['G4', 8, { v: 2 }]],
+    ] }]),
+    want: { P2: [['m1', 'G#4', 'start'], ['m2', 'G#4', 'stop']] }, slurs: 0, changed: true,
+  },
+  {
+    name: 'a slur between notes a fourth apart, the continuation in the next chord → a slur, untouched',
+    xml: score([{ id: 'P2', name: 'Piano', measures: [
+      [['r', 6], ['G4', 2, { slur: [['start', 1]] }]],
+      [['C5', 8, { slur: [['stop', 1]] }], ['G4', 8, { ch: true }]],
+    ] }]),
+    want: { P2: [] }, slurs: 2, changed: false,
+  },
+  {
+    name: 'a sung line\'s slur over the held note to the next one → the tie added, the slur kept (Piano Man bar 161)',
+    xml: score([{ id: 'P1', name: 'Voice', measures: [
+      [['B4', 8, { lyr: 'da', slur: [['start', 1]] }]],
+      [['B4', 2], ['Bb4', 3, { slur: [['stop', 1]] }], ['A4', 1, { lyr: 'la' }], ['r', 2]],
+    ] }]),
+    want: { P1: [['m1', 'B4', 'start'], ['m2', 'B4', 'stop']] }, slurs: 2, changed: true,
+  },
+  {
+    name: 'the same shape in a piano part (a tie linked to a chord struck twice) → untouched (Yellow Submarine bar 59)',
+    xml: score([{ id: 'P2', name: 'Piano', measures: [
+      [['r', 2], ['C#4', 1, { slur: [['start', 1]] }], ['C#4', 2], ['C#4', 1, { slur: [['stop', 1]] }], ['r', 2]],
+    ] }]),
+    want: { P2: [] }, slurs: 2, changed: false,
+  },
+  {
+    name: 'doubling: the piano\'s continuation lost the sharp the voice ties over → tied, sharp carried (Killing bar 24)',
+    xml: score([
+      { id: 'P1', name: 'Voice', measures: [sung([['r', 6], ['D4', 1], ['D#4', 1, { tie: 'start' }]]), sung([['D#4', 1, { tie: 'stop' }], ['E4', 1], ['r', 6]])] },
+      { id: 'P2', name: 'Piano', measures: [[['r', 6], ['D4', 1], ['D#4', 1, { acc: 'sharp' }]], [['D4', 1], ['E4', 1], ['r', 6]]] },
+    ]),
+    want: { P2: [['m1', 'D#4', 'start'], ['m2', 'D#4', 'stop']] }, changed: true,
+  },
+  {
+    name: 'chord tied on one note, its next strike lost a sharp → all tied, sharp carried (Wichita bar 11)',
+    xml: score([{ id: 'P2', name: 'Piano', measures: [
+      [['D4', 8, { tie: 'start' }], ['F#4', 8, { ch: true, acc: 'sharp' }], ['A4', 8, { ch: true }]],
+      [['D4', 1, { tie: 'stop' }], ['F4', 1, { ch: true }], ['A4', 1, { ch: true }], ['D4', 1], ['F#4', 1, { ch: true, acc: 'sharp' }], ['A4', 1, { ch: true }], ['r', 4]],
+    ] }]),
+    want: { P2: [['m1', 'D4', 'start'], ['m1', 'F#4', 'start'], ['m1', 'A4', 'start'], ['m2', 'D4', 'stop'], ['m2', 'F#4', 'stop'], ['m2', 'A4', 'stop']] }, changed: true,
+  },
+  {
+    name: 'a printed natural on the next strike is a change → untouched',
+    xml: score([{ id: 'P2', name: 'Piano', measures: [
+      [['D4', 8, { tie: 'start' }], ['F#4', 8, { ch: true, acc: 'sharp' }]],
+      [['D4', 8, { tie: 'stop' }], ['F4', 8, { ch: true, acc: 'natural' }]],
+    ] }]),
+    want: { P2: [] }, changed: false,
+  },
+  {
+    name: 'a phantom duplicate head in the tied chord → the real heads tied, the phantom left (Piano Man bar 101)',
+    xml: score([{ id: 'P3', name: 'Voice', measures: [
+      [['E4', 6, { tie: 'start' }], ['G4', 6, { ch: true }], ['C5', 6, { ch: true }], ['C5', 6, { ch: true }], ['E5', 6, { ch: true, tie: 'start' }]],
+      [['E4', 6, { tie: 'stop' }], ['G4', 6, { ch: true }], ['C5', 6, { ch: true }], ['E5', 6, { ch: true, tie: 'stop' }]],
+    ] }], { time: [3, 4] }),
+    want: { P3: [['m1', 'E4', 'start'], ['m1', 'G4', 'start'], ['m1', 'C5', 'start'], ['m1', 'E5', 'start'], ['m2', 'E4', 'stop'], ['m2', 'G4', 'stop'], ['m2', 'C5', 'stop'], ['m2', 'E5', 'stop']] }, changed: true,
+  },
+  {
+    name: 'the tune tied over an inner voice that goes on striking in its own rhythm → the inner voice untouched (Yellow Submarine bar 13)',
+    xml: score([{ id: 'P2', name: 'Piano', measures: [
+      [['r', 4], ['D5', 4, { tie: 'start' }], ['back', 8], ['r', 4, { v: 2 }], ['F4', 4, { v: 2 }], ['A4', 4, { v: 2, ch: true }]],
+      [['D5', 2, { tie: 'stop' }], ['r', 6], ['back', 8], ['F4', 4, { v: 2 }], ['A4', 4, { v: 2, ch: true }], ['r', 4, { v: 2 }]],
+    ] }]),
+    want: { P2: [] }, changed: false,
+  },
+  {
+    name: 'the tune tied over an inner voice that is held on (an eighth into a half) → the inner voice tied too (Killing bar 62)',
+    xml: score([{ id: 'P2', name: 'Piano', measures: [
+      [['r', 7], ['D5', 1, { tie: 'start' }], ['back', 8], ['r', 7, { v: 2 }], ['F4', 1, { v: 2 }], ['A4', 1, { v: 2, ch: true }]],
+      [['D5', 1, { tie: 'stop' }], ['r', 7], ['back', 8], ['F4', 4, { v: 2 }], ['A4', 4, { v: 2, ch: true }], ['r', 4, { v: 2 }]],
+    ] }]),
+    want: { P2: [['m1', 'D5', 'start'], ['m1', 'F4', 'start'], ['m1', 'A4', 'start'], ['m2', 'D5', 'stop'], ['m2', 'F4', 'stop'], ['m2', 'A4', 'stop']] }, changed: true,
+  },
+  {
+    name: 'the engine\'s own tie into a continuation that lost its flat (a page turn) → the flat carried along the chain (gybr bars 103–105)',
+    xml: score([{ id: 'P2', name: 'Piano', measures: [
+      [['Eb3', 8, { tie: 'start', acc: 'flat' }]], [['E3', 8, { tie: 'both' }]], [['E3', 8, { tie: 'stop' }]], [['E3', 8]],
+    ] }]),
+    want: { P2: [['m1', 'Eb3', 'start'], ['m2', 'Eb3', 'stop'], ['m2', 'Eb3', 'start'], ['m3', 'Eb3', 'stop']] }, changed: false, carried: true,
+  },
+];
+
+// markUnmarkedTuplets (fixOmrScore's own clean-up before restoreTies): bars too long by a run of equal notes
+// want: per measure, the time-modification of each note in order ("" = none)
+const tuplets = [
+  {
+    name: 'a note tied in, then an unmarked triplet → 3:2 on the last three, not 4:3 with the held note (Songbird bar 61)',
+    xml: score([{ id: 'P1', name: 'Voice', measures: [
+      sung([['r', 4], ['Bb4', 2, { tie: 'start' }]]),
+      sung([['Bb4', 2, { tie: 'stop' }], ['r', 2], ['Ab4', 2], ['G4', 2]]),
+    ] }], { time: [3, 4] }),
+    want: { m2: ['', '3:2', '3:2', '3:2'] },
+  },
+  {
+    name: 'an unmarked quadruplet starting with a rest stays 4:3 (Songbird bars 41, 84)',
+    xml: score([{ id: 'P1', name: 'Voice', measures: [sung([['r', 2], ['G4', 2], ['G4', 2], ['G4', 2]])] }], { time: [3, 4] }),
+    want: { m1: ['4:3', '4:3', '4:3', '4:3'] },
+  },
+  {
+    name: 'a run of exactly three starting on a tied-in note is still the tuplet',
+    xml: score([{ id: 'P1', name: 'Voice', measures: [
+      sung([['r', 4], ['G4', 2, { tie: 'start' }]]),
+      sung([['G4', 2, { tie: 'stop' }], ['A4', 2], ['B4', 2], ['C5', 1], ['r', 1]]),
+    ] }], { time: [3, 4] }),
+    want: { m2: ['3:2', '3:2', '3:2', '', ''] },
+  },
 ];
 
 (async () => {
@@ -221,6 +354,27 @@ const cases = [
     if (c.forms && r.forms.length) errs.push(`<tie>/<tied> differ: ${r.forms}`);
     if (r.again.length || !r.same) errs.push(`not idempotent: ${JSON.stringify(r.again)}`);
     if (r.order.some((o) => o !== 'stop,start|stop,start')) errs.push(`a note tied both ways isn't stop-then-start: ${r.order}`);
+    if (c.carried != null && r.changes.some((x) => /accidentals carried/.test(x)) !== c.carried) errs.push(`accidentals carried: ${JSON.stringify(r.changes)}`);
+    console.log(`${errs.length ? 'FAIL' : 'ok  '} ${c.name}${errs.length ? '\n     ' + errs.join('\n     ') : ''}`);
+    fails += errs.length ? 1 : 0;
+  }
+  for (const c of tuplets) {
+    const r = await page.evaluate(async ({ xml, fix }) => {
+      const { fixOmrScore } = await import(fix);
+      const once = fixOmrScore(xml), twice = fixOmrScore(once.xml);
+      const doc = new DOMParser().parseFromString(once.xml, 'application/xml');
+      const out = {};
+      for (const m of doc.querySelectorAll('part > measure')) {
+        out['m' + m.getAttribute('number')] = [...m.querySelectorAll(':scope > note')].map((n) => {
+          const tm = n.querySelector(':scope > time-modification');
+          return tm ? `${tm.querySelector('actual-notes').textContent}:${tm.querySelector('normal-notes').textContent}` : '';
+        });
+      }
+      return { out, same: twice.xml === once.xml };
+    }, { xml: c.xml, fix: FIX });
+    const errs = [];
+    for (const [m, want] of Object.entries(c.want)) if ((r.out[m] || []).join() !== want.join()) errs.push(`${m} ${JSON.stringify(r.out[m])} ≠ ${JSON.stringify(want)}`);
+    if (!r.same) errs.push('not idempotent');
     console.log(`${errs.length ? 'FAIL' : 'ok  '} ${c.name}${errs.length ? '\n     ' + errs.join('\n     ') : ''}`);
     fails += errs.length ? 1 : 0;
   }
