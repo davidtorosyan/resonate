@@ -1,0 +1,36 @@
+From b04845a92c02561edc04357799bbea90976cada5 Mon Sep 17 00:00:00 2001
+From: build <build@localhost>
+Date: Fri, 20 Nov 2026 21:40:15 +0000
+Subject: [PATCH] Give stem-less heads a small boost again (whole notes of
+ other fonts)
+
+Heads are matched against Bravura's templates. A whole note of another
+engraving font matches at a grade of only 0.45-0.6, and a stem-less head
+below the minimum contextual grade (0.5) is dropped at once: it can never
+get support from a stem. A whole note on a ledger line, next to an
+accidental, or the upper note of an octave lost a few hundredths and
+vanished; the half-note head found at its place (grade ~0.2) then had no
+stem and was removed too, so the note was missing from the export.
+
+stemLessBoost (0.38 upstream once, then 0) is now 0.15: grades from about
+0.45 up are kept.
+---
+ .../java/org/audiveris/omr/sheet/note/NoteHeadsBuilder.java     | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/note/NoteHeadsBuilder.java b/app/src/main/java/org/audiveris/omr/sheet/note/NoteHeadsBuilder.java
+index 0f908275..77124df8 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/note/NoteHeadsBuilder.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/note/NoteHeadsBuilder.java
+@@ -1258,7 +1258,7 @@ public class NoteHeadsBuilder
+                 "Vertical margin for intercepting stem seed around a target pitch");
+ 
+         private final Constant.Ratio stemLessBoost = new Constant.Ratio(
+-                0, // Was 0.38,
++                0.15, // Was 0.38, then 0
+                 "How much do we boost stem-less heads (always isolated)");
+ 
+         private final Constant.Ratio crossBoost = new Constant.Ratio(
+-- 
+2.43.0
+

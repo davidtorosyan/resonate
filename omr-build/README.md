@@ -211,6 +211,57 @@ one-staff conditions came from it. A/B, native, the same build without / with 00
 Amazing Grace: identical, it never fires; Stumblin' In: never fires (two runs of the build without it differ in 3 bars, a
 dot read or not). Piano Man, Wichita, Songbird and The Longest Time weren't run (their PDFs aren't in this container).
 
+`0011`–`0013` — **Keys, whole notes and chords this engraving loses** (the Musicnotes font: a flat with a taller stem,
+whole notes unlike Bravura's). Found by comparing the owner's songs with their PDFs; Goodbye Yellow Brick Road (key of
+F) had no key signature on 19 of its 36 systems (B♭ read as B, and a "key change" to C with cancelling naturals where a
+system without the key followed one with it), whole notes missing (left-hand C4s on a ledger, F3, D♭3, the upper note of
+whole-note octaves) and three half-note chords gone. Three causes, one patch each:
+- `0011` **A one-flat key whose flat measures half a step off.** A key item's pitch comes from the glyph's mass and
+  area centers shifted by offsets measured on Bravura's flat (`AlterInter.computePitch`). This font's flat has a longer
+  stem, so a flat on the B line measures −0.5…−0.6 in treble and 1.4…1.5 in bass (`KeyBuilder` debug: "invalid FLAT
+  pitch -0.5 vs 0 for TREBLE"), and a one-item key tolerated 0.5 (`maxDeltaPitch_1`): "no clef-key compatibility" on
+  every staff, and the system lost its key (`KeyColumn` checks the staves of a system together). The export then wrote
+  nothing (C) on those systems, fifths 0 after a system that had the key, and sometimes took the key's flat for an
+  accidental on the first note (C♭5, A♭4, A♭2). Now a key made of a single flat may be up to one step off
+  (`maxDeltaPitchFlat_1` = 1.0; the only position a one-flat key has is the B one); sharps and longer keys unchanged (two
+  items already allowed one step). Systems with the key: Goodbye Yellow Brick Road 17 → 36 of 36, Wichita all 11
+  (`unifyKeySignatures` had only partly repaired it: it treats a key missing on every staff of a system at once as a
+  real change, and here a miss is always on every staff).
+- `0012` **Whole notes below the stem-less grade.** Whole notes of this font match Bravura's template at only
+  0.45–0.6, and a stem-less head under the minimum contextual grade (0.5) is dropped at once in HEADS
+  (`isWeakStemLessHead`: it can never get a stem's support); a ledger through it, an accidental beside it, the other
+  note of an octave cost a few hundredths. The half-note head found in its place (grade ~0.2) then had no stem and
+  went at REDUCTION: no note at all. `stemLessBoost` (0.38 upstream once, then 0) is now 0.15: candidates from about
+  0.45 are kept (on Goodbye Yellow Brick Road the lost whole notes were at 0.47–0.50; the one stray whole candidate seen,
+  on a half-note chord, was at 0.38 and stays out).
+- `0013` **A ledger discarded for a beam that isn't one.** Before ledgers are searched, `LedgersFilter` drops every
+  ledger section intersecting any beam or hook candidate. Void heads stacked a third apart around a ledger above the
+  staff were read in BEAMS as a little slanted beam and hook (~1 interline wide; purged later by the heads), so the
+  ledger went, the head beyond it was never searched (heads outside the staff are only scanned along ledgers found),
+  the stem seed ran past the topmost remaining head ("not an end", `HeadLinker`) and no stem was built: every head of
+  the chord was deleted for want of a stem. A section that sticks out of the candidate by ≥ ¼ interline on both
+  sides isn't part of it and is kept (`minLedgerOverhang`). Goodbye Yellow Brick Road: exactly 4 more ledgers (bars
+  54, 62 ×2, 81), all real.
+
+A/B, native, the build with 0001–0010 vs with 0011–0013 too, the owner's nine songs; every changed bar checked against
+the PDF; the base and the new build run again where a bar differed by a dot:
+
+| song | bars changed | what |
+|---|---|---|
+| Goodbye Yellow Brick Road | 52 | the key of F on every system: B → B♭ (33 bars with nothing else changed), C♭5 → C5 (bars 35, 50, 108, 112, 123: the key's flat had become an accidental), E → E♭ (73: a printed flat that OCR had taken for text is an accidental again; 76, 137: tied from the added notes); whole notes added: C4 (4, 20, 40), F3 (27), D♭3 (50), E♭2 (75), D♭3 (88), E♭4 (135, 136); chords added: [G3 B♭3 D4] (54, 62 ×2), [A3 D4 F4] (81) — all as printed. Besides notes (text and curves are built from what the symbol steps leave, so they shift a little): a slur over a system break (93–96) and a tie over one (99–100) now read, as printed; 3 chord names read better; one syllable OCR'd worse (bar 63, "rn" for "m") |
+| Wichita Lineman | 13 | the key of F on every system: 11 bars of B → B♭, A♭4 → A4 (4), A♭2 → A2 (25) — as printed |
+| Too Sweet | 9 | the middle G4 of whole-note chords (21, 22, 53, 54, 69, 70, 97, 98, 113) |
+| The Longest Time | 3 | the tune's whole notes in the right hand, with their 4 syllables: B♭4 (6, 13), C5 (8) |
+| Stumblin' In | 2 | G4 in the last whole chord (78); bar 55 a dot (varies between runs of either build) |
+| Piano Man | 2 | accordion-staff dots (101, 168; bar 48 too between two base runs) — they come and go between runs of either build; 168 was read right by both new runs, wrong by both base runs |
+| Killing Me Softly | 1 | bar 20's dot (varies between runs, as before) |
+| Hey, Little Songbird, Yellow Submarine | 0 | |
+
+Not fixed: Stumblin' In's duet (bars 32–35, 73–78) prints the second voice in **cue-size heads** on the main voice's
+stem (≈ ⅔ the width), around the C4/A3 ledgers: with the `smallHeads` switch off (the default, and the browser's) only
+normal heads are searched, and a template matched across the ledger between a normal and a cue head gives one note a
+step off (C4 for [B3 D4]); with `smallHeads` on, the chords stay single and 17 bars of rests and rhythms get worse.
+
 `build.sh` applies the patches with `git am --keep-cr`: the upstream sources are CRLF.
 
 ## StripVolatile (applied to every jar)

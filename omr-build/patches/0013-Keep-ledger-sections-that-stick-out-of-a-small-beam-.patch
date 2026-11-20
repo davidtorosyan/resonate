@@ -1,0 +1,81 @@
+From 168d818bebe044af44e3d930948a699127ef7ab5 Mon Sep 17 00:00:00 2001
+From: build <build@localhost>
+Date: Fri, 20 Nov 2026 21:40:15 +0000
+Subject: [PATCH] Keep ledger sections that stick out of a small beam candidate
+
+Before ledgers are searched, every ledger section intersecting a beam or
+beam-hook candidate is discarded, beam pixels being no ledger. Two void
+heads stacked a third apart around a ledger above the staff can be read as
+a little slanted beam (and hook) about one interline wide, removed later by
+the heads. Its candidate made the ledger disappear, so the head beyond the
+ledger was never searched; with the chord's end head missing the stem was
+never attached ("not an end": the stem seed runs past the remaining heads)
+and all the chord's heads were deleted for want of a stem.
+
+A section that extends beyond the beam candidate on both sides (by at least
+a quarter interline) is no part of it and is kept.
+---
+ .../omr/sheet/ledger/LedgersFilter.java       | 33 ++++++++++++++++++-
+ 1 file changed, 32 insertions(+), 1 deletion(-)
+
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/ledger/LedgersFilter.java b/app/src/main/java/org/audiveris/omr/sheet/ledger/LedgersFilter.java
+index 2dbfbe8c..10c9492f 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/ledger/LedgersFilter.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/ledger/LedgersFilter.java
+@@ -163,7 +163,7 @@ public class LedgersFilter
+                     if (sBox.intersects(bBox)) {
+                         AbstractBeamInter beam = (AbstractBeamInter) bi;
+ 
+-                        if (beam.getArea().intersects(sBox)) {
++                        if (beam.getArea().intersects(sBox) && !overhangs(sBox, bBox, system)) {
+                             discarded.add(s);
+                         }
+                     }
+@@ -258,6 +258,33 @@ public class LedgersFilter
+ 
+     //~ Inner Classes ------------------------------------------------------------------------------
+ 
++    //-----------//
++    // overhangs //
++    //-----------//
++    /**
++     * Tell whether the section extends beyond the beam candidate on both horizontal sides.
++     * <p>
++     * A section made of beam pixels lies within the beam abscissa range.
++     * A ledger crossed by a short beam candidate sticks out on both sides: typically a ledger
++     * between two stacked void heads, whose pixels can be read as a little beam or hook
++     * (later purged by the heads), which used to discard the ledger, hence the heads beyond it.
++     *
++     * @param sBox   section bounds
++     * @param bBox   beam bounds
++     * @param system containing system
++     * @return true if section overhangs the beam on left and right sides
++     */
++    private boolean overhangs (Rectangle sBox,
++                               Rectangle bBox,
++                               SystemInfo system)
++    {
++        final Scale scale = system.getSheet().getScale();
++        final int margin = scale.toPixels(constants.minLedgerOverhang);
++
++        return (sBox.x <= bBox.x - margin)
++                && ((sBox.x + sBox.width) >= (bBox.x + bBox.width + margin));
++    }
++
+     //-----------//
+     // Constants //
+     //-----------//
+@@ -272,6 +299,10 @@ public class LedgersFilter
+                 0.5,
+                 "Minimum vertical distance from nearest staff");
+ 
++        private final Scale.Fraction minLedgerOverhang = new Scale.Fraction(
++                0.25,
++                "Minimum section overhang on both sides of a beam, to keep it as ledger candidate");
++
+         private final Constant.String ledgerVipSections = new Constant.String(
+                 "",
+                 "(Debug) Comma-separated values of VIP ledger sections IDs");
+-- 
+2.43.0
+

@@ -1,0 +1,72 @@
+From 633aad959171dac5042039699476e332bbc23b30 Mon Sep 17 00:00:00 2001
+From: build <build@localhost>
+Date: Fri, 20 Nov 2026 21:40:15 +0000
+Subject: [PATCH] Accept a one-flat key signature whose flat measures up to a
+ step off
+
+A key signature's flat gets its pitch from the glyph's mass and area centers
+shifted by offsets measured on Bravura's flat. In an engraving whose flat
+has a taller stem (Musicnotes' scores), a flat on the B line measures about
+half a step high (-0.5..-0.6 in treble, 1.4..1.5 in bass), and a key made of
+one item only tolerated 0.5: the staff had "no clef-key compatibility", and
+since the staves of a system are checked together the whole system lost its
+key. The export then spelled those systems in C (B natural), wrote fifths 0
+at a system start after a system that had the key (a spurious key change
+with cancelling naturals), and sometimes took the key's flat for an
+accidental on the first note (C-flat 5, A-flat 4).
+
+A single flat may now be up to one step from its position (the only one a
+one-flat signature can have); sharps and longer signatures are unchanged
+(two items already tolerated one step).
+---
+ .../java/org/audiveris/omr/sheet/key/KeyBuilder.java | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/key/KeyBuilder.java b/app/src/main/java/org/audiveris/omr/sheet/key/KeyBuilder.java
+index 5df6a5fb..cbffdeb5 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/key/KeyBuilder.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/key/KeyBuilder.java
+@@ -795,6 +795,11 @@ public class KeyBuilder
+                 2.0,
+                 "Maximum adjustment in pitch for 4+ items");
+ 
++        private final Constant.Double maxDeltaPitchFlat_1 = new Constant.Double(
++                "pitch",
++                1.0,
++                "Maximum adjustment in pitch for a key made of a single flat");
++
+         private final Scale.Fraction maxTrailingCumul = new Scale.Fraction(
+                 0.25,
+                 "Maximum cumul threshold in trailing area");
+@@ -869,6 +874,8 @@ public class KeyBuilder
+ 
+         final double maxDeltaPitch_4;
+ 
++        final double maxDeltaPitchFlat_1;
++
+         final int maxSliceDeltaX;
+ 
+         final int maxSliceDeltaWidth;
+@@ -918,6 +925,7 @@ public class KeyBuilder
+             peakAreaQuorum = constants.peakAreaQuorum.getValue();
+             maxDeltaPitch_1 = constants.maxDeltaPitch_1.getValue();
+             maxDeltaPitch_4 = constants.maxDeltaPitch_4.getValue();
++            maxDeltaPitchFlat_1 = constants.maxDeltaPitchFlat_1.getValue();
+ 
+             {
+                 // Use sheet large interline scale
+@@ -1629,7 +1637,11 @@ public class KeyBuilder
+             }
+ 
+             // Define dPitch threshold based on alters.length
++            // A lone flat gets a wider tolerance: its measured pitch relies on the flat proportions
++            // of the reference music font (stem height vs belly), which vary with the engraving font,
++            // while the only position a one-flat signature can have is the B one.
+             final double maxDeltaPitch = (n >= 4) ? params.maxDeltaPitch_4
++                    : ((n == 1) && (keyShape == FLAT)) ? params.maxDeltaPitchFlat_1
+                     : (params.maxDeltaPitch_1 + (((params.maxDeltaPitch_4 - params.maxDeltaPitch_1)
+                             * (n - 1)) / 3));
+ 
+-- 
+2.43.0
+
