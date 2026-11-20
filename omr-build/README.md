@@ -186,19 +186,30 @@ next to itself) skips the finished sheets and processes the rest from LOAD, read
   `public/omr/lib/` (`<commit>-<first 8 hex of audiveris.jar's SHA-256>-cj<CheerpJ version>`; `build.sh` prints it).
 
 `0010` — **A rest shared by two voices.** When both voices of a staff rest at the same moment, engravers print one
-rest; `MeasureRhythm` gives every rest to exactly one voice. The other voice's next chord then got the end of that
-voice's previous chord as its time — the time of the rest, a slot to its *left* — and where the voices disagreed
-`checkSlotTime` kept the lowest time ("pick up the lowest one and reject the mappings that led to other values"): the
-whole slot came a beat early and the voices ended short of the measure. The owner's report: Killing Me Softly bars 7
-and 9, a piano right hand with a quarter rest on beat 3 shared by both voices — its beat-4 eighths came out on beat 3,
-under the voice's rest. Now `voiceEnd(chord, slot, inclusive)`: a voice whose last chord ends exactly where a rest of
-another voice on the same staff starts, in an earlier compound slot (or this one, for `purgeExtinctVoices`), is free at
-that rest's end (consecutive shared rests too). Used for the times a slot infers, the mapping check, `applyMapping`
-(logged `… after a rest shared with another voice`) and extinct voices. The voice gets a gap there, which the export
-writes as a `<forward>`, as printed (the rest drawn once). A/B, native, the same build without / with 0010: Killing
-changes in bars 7 and 9 only (both as printed); Goodbye Yellow Brick Road, Greensleeves, Amazing Grace: identical, it
-never fires; Stumblin' In: never fires — two runs of the build *without* it differ in 3 bars (a dot read or not), and one of
-them equals a run with it.
+rest, in the middle of the staff; `MeasureRhythm` gives every rest to exactly one voice. The other voice's next chord then
+got the end of that voice's previous chord as its time — the time of the rest, a slot to its *left* — and where the voices
+disagreed `checkSlotTime` kept the lowest time ("pick up the lowest one and reject the mappings that led to other values"):
+the whole slot came a beat early and the voices ended short of the measure. The owner's report: Killing Me Softly bars 7
+and 9, a piano right hand with a quarter rest on beat 3 shared by both voices — its beat-4 eighths came out on beat 3.
+Now:
+- `voiceEnd(chord, slot, inclusive)`: a voice whose last chord (on one staff) ends exactly where a *centered* rest
+  (pitch within ±1.5 of the middle line; a rest of one voice among others is moved up or down) of another voice on the
+  same staff starts, in an earlier compound slot, would be free at that rest's end (consecutive shared rests too).
+- `SlotMapper.endFor` uses it — for the times a slot infers, the mapping check and `applyMapping` (logged
+  `… after a rest shared with another voice`) — only when the narrow slot *confirms* that time: its time is already known
+  to be that, or another chord of the slot comes there on its own (its voice's last chord end, or a beam or tie). Else the
+  raw end, as before: a rest drawn out of line with its column, or a stray rest-shaped symbol, doesn't push a lone chord late.
+- `purgeExtinctVoices`: a voice resting along with such a rest stays active until the rest ends, and is over if it doesn't
+  resume right there (kept any longer, a stale end brought the early-slot bug back one slot later).
+- The voice gets a gap, which the export writes as a `<forward>`, as printed (the rest drawn once).
+- Not reconciled with implicit tuplets (`shrinkVoice` re-times from raw ends; the switch is off by default and in the
+  browser).
+
+One review round (three lenses, each finding verified): the confirmation rule, the purge rule, the centered and
+one-staff conditions came from it. A/B, native, the same build without / with 0010: Killing changes in bars 7 and 9 only
+(both as printed; bar 20's dot comes and goes between runs of either build); Goodbye Yellow Brick Road, Greensleeves,
+Amazing Grace: identical, it never fires; Stumblin' In: never fires (two runs of the build without it differ in 3 bars, a
+dot read or not). Piano Man, Wichita, Songbird and The Longest Time weren't run (their PDFs aren't in this container).
 
 `build.sh` applies the patches with `git am --keep-cr`: the upstream sources are CRLF.
 
