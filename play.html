@@ -383,6 +383,13 @@
       #pdfbar button svg { width: 22px; height: 22px; display: block; margin: auto; }
       #pdfbar #pdf-again { display: flex; align-items: center; gap: 0.35rem; padding: 0 0.8rem 0 0.6rem; }
       #pdfbar #pdf-again svg { margin: 0; }
+      /* (the keyboard docked under the stage has the bottom safe area: the controls just above it —
+         only a PDF only's view shows both) */
+      body[data-keys="on"] #pdfbar { bottom: 10px; }
+      /* A PDF only (not converted yet): its pages, the keyboard and the pager — nothing that needs
+         the notes (play.js openPdf). */
+      #bar[data-pdfonly] #hands, #bar[data-pdfonly] #play, #bar[data-pdfonly] #names, #bar[data-pdfonly] #chords,
+      #bar[data-pdfonly] .size, #bar[data-pdfonly] #offer, #bar[data-pdfonly] #pdf { display: none; }
     </style>
   </head>
   <body>
@@ -417,7 +424,7 @@
       </span>
       <span class="brk"></span>
       <button id="remote-btn" type="button" hidden aria-pressed="false" aria-label="Remote">📡</button>
-      <span id="version" class="mono">v89</span>
+      <span id="version" class="mono">v90</span>
     </header>
     <main id="stage" data-names="all">
       <p id="msg" hidden></p>
@@ -441,7 +448,7 @@
       <div id="hear" class="hear" role="group" aria-label="Hear" hidden></div>
       <div id="strip" aria-hidden="true"></div>
     </div>
-    <script type="module" src="nav.js?v=89"></script>
-    <script type="module" src="play.js?v=89"></script>
+    <script type="module" src="nav.js?v=90"></script>
+    <script type="module" src="play.js?v=90"></script>
   </body>
 </html>

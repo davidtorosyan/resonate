@@ -1,18 +1,18 @@
 // Resonate on one page (preview): the shell's entry. Home is the full tuner, Next-up a chip above
 // Songs; Songs (bottom right) holds the song list and + Add, the module toggles (Sing · Score ·
-// Piano) sit beside it; a PDF is read in the background (the Reader tray); the avatar (top right)
-// opens the account menu. nav.js ran first (shell.html), so whose
-// data the device shows is settled before anything here reads it.
-import { spaceChanged } from "../nav.js?v=89";
-import { mountTuner, tunerHtml } from "./tuner.js?v=89";
-import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=89";
-import { mountSongView } from "./songview.js?v=89";
-import { mountTray } from "./tray.js?v=89";
-import { mountAccount } from "./account-menu.js?v=89";
-import { ic, fic, device, overlayOpen } from "./chrome.js?v=89";
-import { fadeIn } from "./motion.js?v=89";
-import { mountPlaces } from "./places.js?v=89";
-import { mountRemote } from "./remote.js?v=89";
+// Piano) sit beside it; a PDF is a song as soon as it's added, converted in the background (one
+// song after another: the Reader tray); the avatar (top right) opens the account menu. nav.js ran
+// first (shell.html), so whose data the device shows is settled before anything here reads it.
+import { spaceChanged } from "../nav.js?v=90";
+import { mountTuner, tunerHtml } from "./tuner.js?v=90";
+import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=90";
+import { mountSongView } from "./songview.js?v=90";
+import { mountTray } from "./tray.js?v=90";
+import { mountAccount } from "./account-menu.js?v=90";
+import { ic, fic, device, overlayOpen } from "./chrome.js?v=90";
+import { fadeIn } from "./motion.js?v=90";
+import { mountPlaces } from "./places.js?v=90";
+import { mountRemote } from "./remote.js?v=90";
 
 const $ = (id) => document.getElementById(id);
 const version = $("version").textContent.trim();
@@ -36,7 +36,7 @@ $("rec-btn").querySelector(".b").innerHTML = fic("rec");
 
 // --- songs, the import tray, the account corner -------------------------------------------------
 const tray = mountTray({ version, spaceChanged, openSong: (id, opts) => openSong(id, opts), onChange: () => songs.render(), onReplaced: (id) => song.reload(id) });
-const songs = mountSongs({ tray });
+const songs = mountSongs({ tray, view: () => song, onDeleted: () => showNextUp() });
 const nextUp = $("nextup");
 let nextUpShown = 0;
 const showNextUp = () => {
@@ -56,7 +56,7 @@ setOpener((id, opts) => song.open(id, opts));
 function hooks() { // (sing.js, play.js, record.js… set their own when they load: the shell's go back on top, with theirs inside)
   window.resonateBusy = () => tray.busy() || song.busy(); // (nav.js: a reload for another tab's sign-in/out waits for it)
   window.resonateDebug = () => ({
-    device: device(), tuner: tuner.debug(), import: tray.debug(), eventList: tray.eventList, song: song.debug(), sing: song.singDebug(), score: song.scoreDebug(), piano: song.pianoDebug(),
+    device: device(), tuner: tuner.debug(), import: tray.debug(), eventList: tray.eventList, songs: songs.debug(), song: song.debug(), sing: song.singDebug(), score: song.scoreDebug(), piano: song.pianoDebug(),
     place: places?.debug(), remote: remoteHome?.debug(),
     overlay: document.querySelector("body > .sheet:not([hidden]), #places > .sheet:not([hidden]), .pop:not([hidden])")?.id || (overlayOpen("tuner") ? "tuner" : null),
   });
@@ -85,4 +85,12 @@ if (testPdf) {
 
 // Back from the back/forward cache (a song page's Back): the page as left — sheets closed.
 addEventListener("pageshow", (e) => { if (e.persisted) location.reload(); });
+
+// The open song read again on another device (the sync's pull: resonate:remote replaced) — as the
+// tray's own conversion does (onReplaced): a PDF only gets its notes and its modules back (Sing
+// included), the Piano's range follows. Sing and the Score load the new notes on their own.
+addEventListener("resonate:remote", (e) => {
+  const r = e.detail?.replaced, id = song.current;
+  if (id && r && (typeof r.has === "function" ? r.has(id) : Array.isArray(r) && r.includes(id))) song.reload(id, { self: true });
+});
 

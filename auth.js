@@ -13,7 +13,7 @@ export const STORAGE_KEY = "resonate.auth"; // localStorage: the session supabas
 let client = null;
 export async function supabase() {
   if (!client) {
-    const { createClient } = await import("./vendor/supabase-2.118.0.js?v=89");
+    const { createClient } = await import("./vendor/supabase-2.118.0.js?v=90");
     client = createClient(SUPABASE_URL, SUPABASE_KEY, {
       auth: {
         storageKey: STORAGE_KEY,

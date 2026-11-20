@@ -6,7 +6,7 @@
 // first time the Score is shown, never before. Another song goes through play.js's own open
 // (resonatePlay.open). play.js lays the music out to its stage's box; the shell tells it when the
 // region changed size (resize), and play.js's own ResizeObserver catches the rest (a rotation).
-import { scopeCss } from "./scopecss.js?v=89";
+import { scopeCss } from "./scopecss.js?v=90";
 
 const $ = (id) => document.getElementById(id);
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
@@ -73,7 +73,7 @@ export function mountScore({ version, hooks, keys = () => null, onLoad = () => {
       await mount();
       window.resonatePlay = Object.assign(window.resonatePlay || {}, hooks, { region: true, playBtn: el.play });
       window.resonatePlay.keysOn = !!keys(); // (play.js starts with the Piano toggle's keyboard, so it lays out once — play.html's own 🎹 setting untouched)
-      await import("../play.js?v=89");
+      await import("../play.js?v=90");
       P = window.resonatePlay;
       playDebug = window.resonateDebug;
       P.debug = playDebug; // (tests: Play's own resonateDebug, as on play.html)
@@ -81,10 +81,13 @@ export function mountScore({ version, hooks, keys = () => null, onLoad = () => {
       for (let i = 0; i < 100 && !P.state().song; i++) await sleep(100); // (play.js opens the saved song itself)
     })().catch((err) => { if (!P) loading = null; throw err; }));
   }
-  // The Score on the song; another song goes through play.js's own open.
+  // The Score on the song; another song goes through play.js's own open — and so does the same song
+  // when it failed (its PDF not here then, pdf.js or Verovio not loaded offline): opened again, it
+  // may show now; skipped, it stayed failed until a reload.
   async function open(id) {
     await load();
-    if (P.state().song !== id) await P.open(id);
+    const st = P.state();
+    if (st.song !== id || st.failed) await P.open(id);
   }
   // The song's MusicXML was replaced (its PDF read again): play.js loads it again, when it holds it.
   async function reload(id) {

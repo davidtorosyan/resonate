@@ -3,20 +3,26 @@
 // engine's book after every finished page and the events shown). No DOM: the host page draws the
 // events (the Reader, omr/reader.js) and its own buttons.
 //
-//   import { createImporter } from './omr/importer.js?v=89';
+//   import { createImporter } from './omr/importer.js?v=90';
 //   const imp = createImporter({ onEvent, onLog, onState, onProgress, app: 'v80', spaceChanged });
 //   const job = await imp.pending();            // an unfinished import of this space, or null:
 //                                               //   { id, name, size, done, of, page, stuck: { s, page } | null, phase }
 //   reader.load(await imp.storedEvents(job.id)); // what it showed so far (pages, finished sheets)
 //   const res = await imp.resume(job.id);       // continue it: the same result as start()
 //   const res = await imp.start(file);          // a new import (a File from the picker)
-//     → { songId | null, title, score, xml, pages, failed, unsaved, log, replaced }
-//   const res = await imp.reprocess(songId);    // the song's stored PDF read again: its MusicXML replaced
+//     → { songId | null, title, score, xml, pages, failed, unsaved, log, replaced, deleted }
+//   const res = await imp.reprocess(songId);    // the song's stored PDF read again (or a PDF-only song
+//                                               //   converted the first time): its MusicXML replaced
 //                                               //   under the same id (replaced: true) — or, the song
-//                                               //   deleted meanwhile, saved as a new one
+//                                               //   deleted meanwhile, not saved (songId null, deleted:
+//                                               //   true): the delete wins
 //   imp.resume(id, { skip: true })              // a page that stopped the engine twice: leave it out
 //   imp.restart(id)                             // the same PDF from the beginning
 //   imp.discard(id); imp.stop(); imp.busy(); imp.current
+//   imp.holdWake(true)                          // a batch (the tray's queue): keep the screen awake between
+//                                               //   jobs — call it in the tap; holdWake(false) when it ends
+//
+// Every saved song records the engine that made it (library.js engine: { n: ENGINE_N, id: ENGINE, at }).
 //
 // onEvent gets the Reader's events (readerstate.js has the contract), each stamped with `at`. A resume
 // passes only the live run's: the host shows the stored ones first, storedEvents() (a job event with
@@ -30,12 +36,13 @@
 // At most the page under way is read again. A job made by another engine (ENGINE) starts over from
 // the stored PDF.
 
-import { convertPdf, ENGINE, LOCK, BUSY, STEPS } from './omr.js?v=89';
-import * as J from './jobs.js?v=89';
-import { readScoreFile, parseMusicXml } from '../musicxml.js?v=89';
-import { addSong, getSong, getPdf, replaceSong } from '../library.js?v=89';
-import { fixOmrScore, joinMovements } from './fixscore.js?v=89';
-import { activeSpace, dbName, knownDbs } from '../space.js?v=89';
+import { convertPdf, ENGINE, LOCK, BUSY, STEPS } from './omr.js?v=90';
+import { ENGINE_N } from './engine.js?v=90';
+import * as J from './jobs.js?v=90';
+import { readScoreFile, parseMusicXml } from '../musicxml.js?v=90';
+import { addSong, getSong, getPdf, replaceSong } from '../library.js?v=90';
+import { fixOmrScore, joinMovements } from './fixscore.js?v=90';
+import { activeSpace, dbName, knownDbs } from '../space.js?v=90';
 
 const LEFT = 'resonate.import.left'; // { id, stage, at }: the page was left (reload, navigation, hidden) in that stage — not a crash
 const WAIT_MS = 6000;                // a reload's old page releases the engine lock as it unloads
@@ -80,23 +87,34 @@ export function createImporter(opts = {}) {
 
   // --- screen wake lock (Safari wants a gesture: retried on the next tap) -----------------
   // Held while a job runs (asked for in the tap that picks the file: `force`); let go when it ends —
-  // saved, failed, stopped or refused — also when it ends while the request is still pending.
-  let wantWake = false;
+  // saved, failed, stopped or refused — also when it ends while the request is still pending. A batch
+  // (holdWake(true), in the tap that starts it) keeps it between its jobs: Safari wouldn't grant it
+  // again without a tap, and an iPad left to sleep mid-batch suspends the page.
+  let wantWake = false, asking = false;
+  let holding = false;
   async function keepAwake(force = false) {
     if (force) wantWake = true;
-    if (wake || !navigator.wakeLock || document.hidden || !(current || wantWake)) return;
+    if (wake || asking || !navigator.wakeLock || document.hidden || !(current || wantWake || holding)) return;
+    asking = true; // (two calls while a request is pending would get two locks, one never let go)
     try {
       const w = await navigator.wakeLock.request('screen');
-      if (!(current || wantWake)) { w.release().catch(() => {}); return; }
+      if (!(current || wantWake || holding)) { w.release().catch(() => {}); return; }
       wake = w;
       w.addEventListener('release', () => { if (wake === w) wake = null; });
-    } catch {}
+    } catch {} finally { asking = false; }
   }
+  // A job is over: let go, unless a batch holds it.
   function releaseWake() {
+    if (holding) return;
     wantWake = false;
     const w = wake;
     wake = null;
     try { w?.release()?.catch?.(() => {}); } catch {}
+  }
+  function holdWake(on) {
+    holding = !!on;
+    if (holding) keepAwake(true);
+    else if (!current) releaseWake();
   }
   const onVisible = () => { if (!document.hidden) keepAwake(); };
   const onTap = () => keepAwake();
@@ -524,9 +542,12 @@ export function createImporter(opts = {}) {
       // A page skipped after it stopped the engine twice failed on purpose (drawn blank): say so.
       res.failed = res.failed.map((f) => ((job.skip || []).includes(f.sheet) ? { ...f, step: 'skip', reason: 'left out: it stopped the engine twice' } : f));
       const firstFailed = res.failed.some((f) => f.sheet === 1);
-      // A reprocess keeps the title the singer knows (the song list's); the song deleted meanwhile → a new song.
+      // A reprocess keeps the title the singer knows (the song list's) — unless it's still the PDF's file
+      // name (a PDF-only song's first conversion: titleAuto), then the best title found now (the song
+      // deleted meanwhile: it isn't saved, below).
       const old = job.replace ? await getSong(job.replace).catch(() => null) : null;
-      const title = old?.title || chooseTitle(res, fixed.xml, firstFailed, base);
+      const named = old && !old.titleAuto && old.title;
+      const title = named || chooseTitle(res, fixed.xml, firstFailed, base);
       let xml = setTitle(fixed.xml, title);
       const mode = modeFromFileName(base);
       if (mode) { xml = setMode(xml, mode); fixLog(`key mode from the file name: ${mode}`); }
@@ -534,32 +555,43 @@ export function createImporter(opts = {}) {
       emit({ t: 'meta', title: score.title });
       for (const t of excerpts(xml)) emit({ t: 'xml', text: t });
       emit({ t: 'phase', phase: 'save' });
+      // Forgotten meanwhile (✕, the song deleted: discard() during the clean-ups): nothing is saved.
+      if (cur.discarded) throw Object.assign(new Error('stopped'), { name: 'AbortError' });
       const unsaved = host.spaceChanged();
-      let songId = null, replaced = false;
+      let songId = null, replaced = false, deleted = false;
       // Which PDF page each music sheet is (Play's 📄 lines the PDF up with the music).
       const pages = Array.isArray(res.pages) ? res.pages.slice() : null; // (= res.music's pages, sheet order)
-      if (!unsaved) {
-        if (job.replace && (await replaceSong(job.replace, xml, { pages }))) {
+      // The engine that made it (a song converted again later can tell): its number and exact build.
+      const engine = { n: ENGINE_N, id: job.engine || ENGINE, at: Date.now() };
+      if (!unsaved && job.replace) {
+        // (A replace — Convert, Reconvert, Reprocess — leaves the open song as it is: the singer's.)
+        // Its song deleted meanwhile — on another device (the sync pulled the delete), in another tab,
+        // a kept job resumed after it — isn't saved: the delete wins. (Saved as a new song, with the
+        // job's copy of the PDF, it came back on every device under a new id.) The job goes all the same.
+        if (await replaceSong(job.replace, xml, { pages, engine, ...(named ? {} : { title }) })) {
           songId = job.replace;
           replaced = true;
-          try { localStorage.setItem('resonate.sing.song', songId); } catch {}
         } else {
-          // The original PDF goes with the song (Play's 📄): the job's copy, else the bytes this run had.
-          const pdf = (cur.stored ? await J.getData(job.id, 'pdf') : null) || pdfBytes;
-          songId = await addSong(score.title, xml, { source: 'pdf', pages, ...(pdf ? { pdf, pdfName: job.name } : {}) });
-          try { localStorage.setItem('resonate.sing.song', songId); localStorage.removeItem('resonate.sing.verse'); } catch {}
+          deleted = true;
+          host.onLog(`[save] the song was deleted meanwhile; not saved`);
         }
+      } else if (!unsaved) {
+        // The original PDF goes with the song (Play's 📄): the job's copy, else the bytes this run had.
+        const pdf = (cur.stored ? await J.getData(job.id, 'pdf') : null) || pdfBytes;
+        songId = await addSong(score.title, xml, { source: 'pdf', pages, engine, ...(pdf ? { pdf, pdfName: job.name } : {}) });
+        try { localStorage.setItem('resonate.sing.song', songId); localStorage.removeItem('resonate.sing.verse'); } catch {}
       }
       if (cur.stored) { cur.discarded = true; await cur.saving; try { await J.deleteJob(job.id); } catch {} }
       emit({ t: 'done', songId, title: score.title });
       ended(cur);
       release?.();
-      const out = { songId, title: score.title, score, xml, pages: res.pages, failed: res.failed, lost: res.lost || [], unsaved, log: res.log, jobId: job.id, replaced, replace: job.replace || null };
+      const out = { songId, title: score.title, score, xml, pages: res.pages, failed: res.failed, lost: res.lost || [], unsaved, log: res.log, jobId: job.id, replaced, deleted, replace: job.replace || null };
       setState('done', { job: null, result: out });
       return out;
     } catch (err) {
       ended(cur);
       release?.();
+      if (err?.name === 'AbortError') { setState('idle', { job: summary(job), stopped: true }); throw err; }
       const keep = keepAfter(job, err, cur.stored && !cur.discarded);
       if (cur.stored && !cur.discarded) {
         if (keep) { try { await J.putJob(job); } catch {} } else { try { await J.deleteJob(job.id); } catch {} }
@@ -573,7 +605,7 @@ export function createImporter(opts = {}) {
   }
 
   return {
-    pending, storedEvents, start, reprocess, resume, restart, discard, stop,
+    pending, storedEvents, start, reprocess, resume, restart, discard, stop, holdWake,
     busy: () => !!current,
     resumable: () => !!current?.stored, // a reload now continues the import (it's kept on this device)
     get current() { return current ? summary(current.job) : null; },
@@ -597,6 +629,13 @@ function cleanFileName(name) {
   const plain = name.replace(/_+/g, " ").replace(/\s+/g, " ").trim();
   const title = plain.replace(SELLER, "").trim();
   return { title: title || plain, seller: title !== plain && !!title };
+}
+
+// A PDF's title from its file name alone (a PDF kept as a song before it's converted: library.js
+// addPdfSong) — "Wichita_Lineman_-_F_Major_-_MN0305807.pdf" → "Wichita Lineman".
+export function titleFromFileName(name) {
+  const base = String(name || "").replace(/\.pdf$/i, "").trim();
+  return cleanFileName(base).title || "Song";
 }
 
 // The key's mode a seller put in the file name ("…_-_F_Major_-_MN0305807"), or null.

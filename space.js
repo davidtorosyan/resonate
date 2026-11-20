@@ -37,6 +37,7 @@ export const DATA_KEYS = [
   "resonate.sing.session",    // guided practice: the session under way
   "resonate.play",            // per song: Play's names level, hands, place, PDF page, practice days (device only)
   "resonate.import",          // an unfinished PDF → Song import (omr/jobs.js: its id; the job itself is in IndexedDB, per space)
+  "resonate.convert",         // songs waiting to be converted, one after another (omr/queue.js)
   "resonate.profiles",        // voice profiles
   "resonate.volCal",          // the Tuner's calibration before profiles
   "resonate.sing.customXml", "resonate.sing.customName", "resonate.sing.transpose", // (legacy)
@@ -201,7 +202,7 @@ export async function leave(uid) {
   if (db) {
     await deleteDbs(db);
     // An unfinished PDF → Song import of this account (its PDF, the engine's book) goes with it.
-    try { await (await import("./omr/jobs.js?v=89")).deleteJobsOf(db); } catch {}
+    try { await (await import("./omr/jobs.js?v=90")).deleteJobsOf(db); } catch {}
   }
   return true;
 }

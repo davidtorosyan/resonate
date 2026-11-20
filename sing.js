@@ -2,23 +2,24 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=89";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=89";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=89";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=89";
-import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=89";
-import * as P from "./practice.js?v=89";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=89";
-import { startCapture, playVoice } from "./capture.js?v=89";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=89";
-import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=89";
-import { listSongs, getSong, addSong, removeSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=89";
-import { SAMPLES, songXml, songRev } from "./catalog.js?v=89";
-import { activeProfile } from "./profiles.js?v=89";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=89";
-import { DATA_KEYS } from "./space.js?v=89";
-import { spaceChanged } from "./nav.js?v=89";
-import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=89";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=90";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=90";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=90";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=90";
+import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=90";
+import * as P from "./practice.js?v=90";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=90";
+import { startCapture, playVoice } from "./capture.js?v=90";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=90";
+import { makeFeatures, findClicks, findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=90";
+import { listSongs, getSong, addSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=90";
+import { SAMPLES, songXml, songRev, songInfo } from "./catalog.js?v=90";
+import { forgetSong } from "./forget.js?v=90";
+import { activeProfile } from "./profiles.js?v=90";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=90";
+import { DATA_KEYS } from "./space.js?v=90";
+import { spaceChanged } from "./nav.js?v=90";
+import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=90";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -483,8 +484,24 @@ function setScore(sc, stored = null) {
 }
 
 // id: a sample key, or a saved song's id (from library.js). Its last take comes back with it.
+// → true once it's open; false when it isn't: a PDF only (not converted yet — nothing changes here,
+// a word says so), a song that couldn't be read (the one before stays: its score, the menu, the
+// saved choice), or a newer choice came first. remember false: not saved as the song open
+// (resonate.sing.song, shared with Play and the shell) — a stand-in for one Sing can't open.
 let songGen = 0; // a newer selectSong wins over one still loading
-async function selectSong(id) {
+let songAsk = 0, songWent = 0; // (requests in the order made: one that looked its song up wins only if no later one went ahead)
+async function selectSong(id, { remember = true } = {}) {
+  const ask = ++songAsk;
+  if (!SAMPLES[id]) {
+    const info = await songInfo(id).catch(() => null);
+    if (info?.k === "pdf") {
+      if (songId) songSelect.value = songId;
+      showMsg(`“${info.title}” is a PDF — convert it in Songs.`);
+      return false;
+    }
+    if (ask < songWent) return false;
+  }
+  songWent = ask;
   stopLoop();
   stopGuided();
   stopSession();
@@ -492,14 +509,13 @@ async function selectSong(id) {
   $("tapalong").hidden = true;
   tapAlong = null;
   const gen = ++songGen;
+  const before = scoreId; // (the song loaded now: it stays if this one can't be read)
   songId = id;
   songSelect.value = id;
-  store(K.song, id);
   removeBtn.hidden = !!SAMPLES[id];
   const stored = getTake(id, { voice: true }).catch(() => null);
-  let rev = null;
+  let rev = null, sc, rec;
   try {
-    let sc;
     if (SAMPLES[id]) {
       const res = await fetch(SAMPLES[id].url);
       if (!res.ok) throw new Error(`couldn't load (${res.status})`);
@@ -508,17 +524,28 @@ async function selectSong(id) {
     } else {
       const song = await getSong(id);
       if (!song) throw new Error("that song is no longer saved");
-      sc = parseMusicXml(songXml(song), song.title);
+      const xml = songXml(song);
+      if (xml == null) throw new Error("it's only a PDF so far"); // (the index said otherwise: another tab's)
+      sc = parseMusicXml(xml, song.title);
       rev = song.rev ?? null;
     }
-    const rec = await stored;
-    if (gen !== songGen) return;
-    songRevNow = rev;
-    return setScore(sc, rec);
+    rec = await stored;
+    if (gen !== songGen) return false;
   } catch (err) {
     console.error(err);
+    if (gen !== songGen) return false;
     showMsg(`Couldn't load song: ${err.message}`, "error");
+    songId = before;
+    songSelect.value = before ?? "";
+    removeBtn.hidden = !before || !!SAMPLES[before];
+    return false;
   }
+  // (Read: it's the song open now, whatever goes wrong drawing it.)
+  songRevNow = rev;
+  if (remember) store(K.song, id);
+  try { setScore(sc, rec); }
+  catch (err) { console.error(err); showMsg(`Couldn't load song: ${err.message}`, "error"); }
+  return true;
 }
 
 // (SAMPLES, the OMR clean-ups on load — cleanXml — and songXml are in catalog.js, shared with Play.)
@@ -535,11 +562,19 @@ function showMsg(text, kind = "info", link = null) {
   songMsgEl.hidden = !text && !link;
 }
 
+// (A PDF only — not converted yet — is listed, but can't be chosen: "Title · PDF".)
 async function refreshLibrary() {
   const songs = await listSongs();
   mySongsEl.textContent = "";
-  for (const s of songs) mySongsEl.appendChild(new Option(s.title, s.id));
+  for (const s of songs) {
+    const pdf = s.k === "pdf";
+    const o = new Option(pdf ? `${s.title} · PDF` : s.title, s.id);
+    o.dataset.title = s.title;
+    if (pdf) { o.disabled = true; o.dataset.k = "pdf"; }
+    mySongsEl.appendChild(o);
+  }
   mySongsEl.hidden = !songs.length;
+  if (songId) songSelect.value = songId;
 }
 
 // Validate, save to My songs, and switch to it.
@@ -2737,7 +2772,8 @@ const lineArg = (a) => {
   if (!(li >= 0 && li < lines.length)) throw new Error(`No line ${a.line} (lines 1–${lines.length}).`);
   return li;
 };
-const songOptions = () => [...songSelect.querySelectorAll("option")].map((o) => ({ id: o.value, title: o.textContent.trim() }));
+const songOptions = () => [...songSelect.querySelectorAll("option")].map((o) => ({ id: o.value, title: o.dataset.title || o.textContent.trim(), pdf: o.dataset.k === "pdf" }));
+const pdfOnlyAnswer = (id, title) => ({ ok: false, pdf_only: true, id, title, error: `“${title}” is only a PDF so far — convert it first (Songs → ⋯ → Convert).` });
 async function runRemote(action, a) {
   const done = (extra = {}) => ({ ok: true, ...remoteState(), ...extra });
   // (a take still being finished — recording, rhythm, review — is let finish first)
@@ -2758,9 +2794,14 @@ async function runRemote(action, a) {
       const all = songOptions();
       const hit = all.find((o) => o.id.toLowerCase() === want) || all.find((o) => o.title.toLowerCase() === want) || all.find((o) => o.title.toLowerCase().includes(want));
       if (!want || !hit) return { ok: false, error: `No song like “${a.song ?? ""}”.`, songs: all.map((o) => o.title) };
+      if (hit.pdf) return pdfOnlyAnswer(hit.id, hit.title); // (Sing can't open it: nothing stops)
       if (drill) stopLoop();
       if (session?.kind === "sing") await stopSing(); else if (session) stopSession();
-      await selectSong(hit.id);
+      if (!(await selectSong(hit.id))) {
+        const info = await songInfo(hit.id).catch(() => null);
+        if (info?.k === "pdf") return pdfOnlyAnswer(hit.id, info.title);
+        return { ok: false, error: songMsgEl.dataset.kind === "error" && !songMsgEl.hidden ? songMsgEl.textContent : `Couldn't open “${hit.title}”.`, ...remoteState() };
+      }
       return done();
     }
     case "set_key": {
@@ -3573,18 +3614,19 @@ fileInput.addEventListener("change", () => {
 });
 openFileBtn.addEventListener("click", () => fileInput.click());
 openLinkBtn.addEventListener("click", importLink);
+// ✕: the song and everything kept for it go (forget.js — as the shell's Songs list deletes);
+// not while a take, a loop or a playback runs or a take is being finished (it'd be saved back).
 removeBtn.addEventListener("click", async () => {
   const id = songSelect.value;
-  if (SAMPLES[id]) return;
-  const title = songSelect.selectedOptions[0]?.textContent || "this song";
+  if (SAMPLES[id] || busyNow()) return;
+  const o = songSelect.selectedOptions[0];
+  const title = o?.dataset.title || o?.textContent || "this song"; // (the index's title, not the menu's text)
   if (!confirm(`Remove “${title}” from My songs?`)) return;
-  await removeSong(id);
-  for (const k of [K.keys, K.rates, K.timing, K.history, "resonate.play"]) { // (resonate.play: the Play page's record)
-    const all = (() => { try { return JSON.parse(recall(k)) || {}; } catch { return {}; } })();
-    if (id in all) { delete all[id]; store(k, JSON.stringify(all)); }
-  }
+  try { await forgetSong(id); }
+  catch (err) { console.error(err); return showMsg(`Couldn't remove it: ${err.message}`, "error"); }
+  const opened = selectSong("amazing-grace"); // (songId moves now: the "gone" from forgetSong finds it moved)
   await refreshLibrary();
-  await selectSong("amazing-grace");
+  await opened;
 });
 
 // Download the current song's MusicXML (as stored: for PDF imports, the cleaned-up score).
@@ -3755,7 +3797,9 @@ function flushRemote() {
       await refreshLibrary();
       if (songId) songSelect.value = songId;
       gone = !!songId && !SAMPLES[songId] && ![...mySongsEl.querySelectorAll("option")].some((o) => o.value === songId);
-      if (gone && !busyNow()) return selectSong("amazing-grace");
+      // (a stand-in, not a choice: the saved song may be another one open now — the shell's Score
+      // on a song Sing doesn't hold —, and one that named the deleted song is already cleared)
+      if (gone && !busyNow()) return selectSong("amazing-grace", { remember: false });
     }
     const sid = songId;
     if (!score || scoreId !== sid || busyNow()) return queueRemote({ ...p, songs: gone }); // (setScore flushes; a song gone meanwhile is closed later)
@@ -3811,8 +3855,14 @@ if (!navigator.mediaDevices?.getUserMedia) {
   }
   store(K.rate, null);
   await refreshLibrary();
-  const known = SAMPLES[savedSong] || (savedSong && [...mySongsEl.querySelectorAll("option")].some((o) => o.value === savedSong));
-  await selectSong(known ? savedSong : "amazing-grace");
+  // A PDF only (not converted yet — Play or the shell opened it last): Amazing Grace here, the
+  // saved choice kept for them. A song that can't be read: Amazing Grace too.
+  const saved = savedSong ? [...mySongsEl.querySelectorAll("option")].find((o) => o.value === savedSong) : null;
+  const pdfOnly = saved?.dataset.k === "pdf";
+  const known = SAMPLES[savedSong] || (saved && !pdfOnly);
+  const ask = songAsk + 1;
+  const ok = await selectSong(known ? savedSong : "amazing-grace", { remember: !pdfOnly });
+  if (!ok && !score && songAsk === ask) await selectSong("amazing-grace", { remember: false });
 })();
 
 // The one-page shell (shell.html) mounts this page's Sing: it opens songs, stops everything
@@ -3832,7 +3882,7 @@ async function stopAll() {
   for (const id of ["options", "taptempo", "tapalong"]) $(id).hidden = true;
 }
 window.resonateSing = Object.assign(window.resonateSing || {}, {
-  open: async (id) => { await refreshLibrary(); return selectSong(id); },
+  open: async (id) => { await refreshLibrary(); return selectSong(id); }, // → true / false (not opened: a PDF only, …)
   stopAll,
   state: () => ({ busy: busyNow() || !!getReady, take: session?.kind === "sing" || starting === "sing", song: scoreId, title: score?.title || "" }),
   // (the shell, synchronously before its Piano or the Score sounds: on — the monitor's mic closes now;

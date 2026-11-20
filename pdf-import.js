@@ -7,11 +7,11 @@
 // ?reprocess=<song id>: that song's stored PDF read again (after an engine or clean-up fix) — a job like
 // any import; the result replaces the song's MusicXML under the same id (importer.js reprocess).
 
-import { spaceChanged } from "./nav.js?v=89";
-import { activeSpace, activeDb } from "./space.js?v=89";
-import { mount as mountReader } from "./omr/reader.js?v=89";
-import { createImporter } from "./omr/importer.js?v=89";
-import { readFlag } from "./omr/jobs.js?v=89";
+import { spaceChanged } from "./nav.js?v=90";
+import { activeSpace, activeDb } from "./space.js?v=90";
+import { mount as mountReader } from "./omr/reader.js?v=90";
+import { createImporter } from "./omr/importer.js?v=90";
+import { readFlag } from "./omr/jobs.js?v=90";
 
 const $ = (id) => document.getElementById(id);
 const chooseBtn = $("choose");
@@ -200,7 +200,8 @@ function showResult(res) {
   const read = res.pages.filter((p) => !res.failed.some((f) => f.page === p));
   $("result-detail").textContent =
     `${score.notes.length} notes · ${lyrics} with lyrics${score.verses.length > 1 ? ` · ${score.verses.length} verses` : ""} · ` +
-    `page${read.length === 1 ? "" : "s"} ${read.join(", ")} · ${unsaved ? "not saved (signed in or out in another tab) — download it" : res.replaced ? "song updated" : "saved to My songs"}`;
+    `page${read.length === 1 ? "" : "s"} ${read.join(", ")} · ${unsaved ? "not saved (signed in or out in another tab) — download it"
+      : res.replaced ? "song updated" : res.deleted || !res.songId ? "not saved: the song was deleted" : "saved to My songs"}`; // (deleted: a reprocess whose song went meanwhile)
   // Pages the engine gave up on; bars of read pages the export couldn't write (their notes are missing).
   const missing = [];
   if (res.failed.length) {

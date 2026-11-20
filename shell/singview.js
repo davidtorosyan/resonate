@@ -3,10 +3,12 @@
 // layer at the end of the body, 📡 into the top bar — never its page header), its CSS is scoped
 // under .sing-scope (sing.html styles body, header, main, footer… directly), and sing.js is imported
 // once; another song goes through sing.js's own song switch (resonateSing.open → selectSong).
+// Sing's ✕ (remove the song) isn't shown here: the song list's ⋯ deletes (forget.js), and closes the
+// song first — Sing's own would leave the shell on a song that's gone.
 // The song page around it (songview.js) opens and closes it; a touch that can start sound or a mic
 // in Sing parks the tuner and stops the Score first (beforeSound), synchronously, so Sing's handler
 // finds no live track and sets its own audio session.
-import { scopeCss } from "./scopecss.js?v=89";
+import { scopeCss } from "./scopecss.js?v=90";
 
 const $ = (id) => document.getElementById(id);
 // Controls in Sing that can't start sound or a mic: a touch there leaves the tuner listening.
@@ -18,7 +20,7 @@ const OVERRIDES = `
 .sing-root .s-main { padding: 0 0 6px; gap: 8px; max-width: 900px; }
 .sing-scope .overlay .sheet { position: static; display: block; overflow-x: hidden; left: auto; right: auto; bottom: auto; z-index: auto; }
 .sing-scope #getready { z-index: 65; }
-.sing-root .controls:first-child { display: none; }
+.sing-root .controls:first-child, .sing-scope #remove-song { display: none !important; }
 .sing-root .controls { gap: 6px; align-items: center; }
 .sing-root .controls select { min-height: 44px; border-radius: 12px; background: var(--control); border: 1px solid var(--line-2); font-size: 14px; padding: 0 8px; }
 .sing-root .tool-btn, .sing-scope .rv-head .tool-btn { min-height: 44px; min-width: 44px; border-radius: 12px; background: var(--control); border-color: var(--line-2); font-size: 14px; display: inline-grid; place-items: center; }
@@ -50,7 +52,7 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
     return (loading ||= (async () => {
       if (!mounted) await mount();
       mounted = true;
-      await import("../sing.js?v=89");
+      await import("../sing.js?v=90");
       S = window.resonateSing;
       singDebug = window.resonateDebug;
       singBusy = window.resonateBusy;
@@ -75,7 +77,7 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
     region.append(main);
     const rows = main.querySelectorAll(".controls");
     const head = rows[1];
-    head.append($("save-song"), $("remove-song"));
+    head.append($("save-song")); // (⤓; ✕ stays in the hidden first row)
     head.append(take("#status"));
     // 📡 and the assistant's chip: the top bar.
     top.append(take("#assistant-chip"), take("#remote-btn"));
@@ -114,9 +116,11 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
   }
 
   // Sing on the song (loaded the first time); another song goes through sing.js's own switch.
+  // → false: Sing didn't open it (a PDF only, a song that can't be read — Sing says so).
   async function open(id) {
     await load();
-    if (S.state().song !== id) await S.open(id);
+    if (S.state().song === id) return true;
+    return (await S.open(id)) !== false;
   }
   async function stopAll() {
     try { await S?.stopAll(); } catch (err) { console.warn("sing stop", err); }
