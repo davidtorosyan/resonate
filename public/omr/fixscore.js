@@ -771,14 +771,23 @@ function markTupletGroups(doc, changes) {
 //      part also plays the voice's note before the tie (or, after a rest, the one after it) at its
 //      time and length (Musicnotes P/V/G: the piano's right hand doubles the tune; repeated block
 //      chords holding the tied pitch are accompaniment, struck again; where the piano strikes a
-//      different chord — Killing bar 7, F♯ then F♯/A — it re-strikes, as printed);
+//      different chord — Killing bar 7, F♯ then F♯/A — it re-strikes, as printed); a note held
+//      there over another voice of its staff striking in its own rhythm (notes of other lengths
+//      start with it: no strike) is tied to what its own voice plays next, the voice's tied-to note
+//      again for as long (Yellow Submarine's right hand, the tune's dotted halves over inner
+//      dotted-quarter chords: bars 1, 3, 11, 23, 25, 51, 55);
 //   3. a strike tied on some notes is tied on all of them when the next strike is the same notes
 //      again — except another voice under them going on in a voice of its own for as long again:
 //      struck again (Yellow Submarine bar 13, the inner dotted quarters under the tune's tied D♯4;
 //      Killing bar 62's inner eighth into a half note is held, as printed);
 //   4. every tie carries its accidental: a continuation with no printed accidental takes the
 //      first note's alteration, along the chain (gybr bars 103–105, E♭ → E; the engine doesn't
-//      carry it over a page turn either) — also the engine's own ties, before the rules too.
+//      carry it over a page turn either) — also the engine's own ties, before the rules too;
+//   5. a later ending that starts with the notes the bar before the first ending ties into it
+//      (the print's tie-in from nowhere, which Audiveris drops) takes their accidentals there
+//      (Killing Me Softly bar 40: the piano's G♯3 held from bar 37 read as G3, and bar 41 with it
+//      over the engine's tie); no tie is written into the ending (Sing and Play strike again after
+//      a jump anyway).
 // Known limit: an inner voice striking the same notes again under a held melody note, its new
 // notes of another length (printed with a tie on the melody only), looks like a tie lost on it.
 // A tie is written both ways the readers take it: <tie> after <duration> (Sing's parser) and
@@ -875,9 +884,15 @@ function restoreTies(doc, changes, debug = null, { round = 0, where = new Map(),
       if (n.on > EPS) return byBar[n.mi].find((x) => x.staff === n.staff && x.voice === n.voice && Math.abs(x.on + x.d - n.on) < EPS) || null;
       return n.mi > 0 ? byBar[n.mi - 1].find((x) => x.staff === n.staff && x.voice === n.voice && Math.abs(x.on + x.d - ends[n.mi - 1]) < EPS) || null : null;
     };
+    // the notes of n's staff and voice starting where it ends (at the next bar's start when it ends its bar)
+    const nextInVoice = (n) => {
+      const t = n.on + n.d, inBar = t < ends[n.mi] - EPS;
+      const at = inBar ? t : 0, g = (byBar[inBar ? n.mi : n.mi + 1] || []).filter((x) => x.staff === n.staff && x.voice === n.voice && Math.abs(x.on - at) < EPS);
+      return g.length ? g : null;
+    };
     const sung = notes.filter((n) => n.lyric).length >= 0.25 * notes.length;
     const inTime = notes.map((n, i) => [n, i]).sort((x, y) => x[0].mi - y[0].mi || x[0].on - y[0].on || x[1] - y[1]).map(([n]) => n);
-    return { part, id: part.getAttribute("id"), notes, inTime, byBar, graces, strike, chord, next, before, lyric: notes.length > 0 && sung };
+    return { part, id: part.getAttribute("id"), notes, inTime, byBar, graces, strike, chord, next, nextInVoice, before, lyric: notes.length > 0 && sung };
   });
 
   // the same note again (a tie carries the first one's accidental; a printed one is a change —
@@ -1060,11 +1075,26 @@ function restoreTies(doc, changes, debug = null, { round = 0, where = new Map(),
         if (!doubled(lead)) continue;
         for (const c of p.byBar[n.mi] || []) {
           if (c.midi !== n.midi || Math.abs(c.on - n.on) > EPS || Math.abs(c.d - n.d) > EPS || tiedOn(c.el)) continue;
-          const A = p.strike(c), B = A && p.next(c);
-          if (!B || B[0].mi !== m.mi || Math.abs(B[0].on - m.on) > EPS) continue;
-          const L = link(A, B);
-          if (!same(L) || !clear(p, L.pairs)) continue;
-          const mine = L.pairs.filter(([x]) => x === c);
+          const A = p.strike(c);
+          let mine;
+          if (A) {
+            const B = p.next(c);
+            if (!B || B[0].mi !== m.mi || Math.abs(B[0].on - m.on) > EPS) continue;
+            const L = link(A, B);
+            if (!same(L) || !clear(p, L.pairs)) continue;
+            mine = L.pairs.filter(([x]) => x === c);
+          } else {
+            // held, alone in its own voice, over another voice of its staff striking shorter notes
+            // with it (Yellow Submarine's right hand: the tune's dotted halves over inner
+            // dotted-quarter chords): what its own voice plays next, alone, is the voice's tied-to
+            // note again, for as long. (Not where the strike is the tune's note alone: Killing bar
+            // 7's F♯ then F♯/A — the A in another voice — is struck again.)
+            const g = p.nextInVoice(c) || [], y = g.length === 1 && cont(c, g[0]) ? g[0] : null;
+            if (!y || y.mi !== m.mi || Math.abs(y.on - m.on) > EPS || Math.abs(y.d - m.d) > EPS || tiedIn(y.el)) continue;
+            if (p.byBar[c.mi].some((x) => x !== c && x.staff === c.staff && x.voice === c.voice && Math.abs(x.on - c.on) < EPS)) continue;
+            mine = [[c, y]];
+            if (!clear(p, mine)) continue;
+          }
           if (tieAll(p, mine)) mark("dbl", p, mine);
         }
       }
@@ -1090,6 +1120,38 @@ function restoreTies(doc, changes, debug = null, { round = 0, where = new Map(),
       if (tieAll(p, L.pairs)) mark("chord", p, L.pairs);
     }
   }
+
+  // 5. a later ending starts with the notes held from the bar before the first ending: the tie
+  // into it (printed as a tie-in from nowhere) carries their accidentals — Killing Me Softly bar
+  // 40, the piano's G♯3 held from bar 37, read as G3 (and so on through bar 41's tie). Endings are
+  // read from the top part (Audiveris writes them there only). The notes there take nothing else.
+  const marks = [];
+  for (const [mi, m] of kids(parts[0]?.part || doc.createElement("part"), "measure").entries()) {
+    for (const bl of kids(m, "barline")) for (const e of kids(bl, "ending")) {
+      if (e.getAttribute("type") !== "start") continue;
+      marks.push({ mi, first: (e.getAttribute("number") || "").split(/[^0-9]+/).includes("1") });
+    }
+  }
+  marks.forEach((e, i) => {
+    const f = e.first ? null : marks.slice(0, i).reverse().find((x) => x.first);
+    if (!f || f.mi < 1 || e.mi <= f.mi) return;
+    for (const p of parts) {
+      const seen = new Set();
+      for (const a of p.byBar[f.mi - 1] || []) {
+        // a strike tied out of the bar before the first ending, into its first notes
+        const B = tiedOn(a.el) && p.next(a);
+        if (!B || B[0].mi !== f.mi || seen.has(B)) continue;
+        seen.add(B);
+        const A = p.chord(a).filter((x) => tiedOn(x.el));
+        const In = link(A, B);
+        if (In.miss.length || !In.pairs.every(([, y]) => tiedIn(y.el))) continue;
+        const E = (p.byBar[e.mi] || []).filter((y) => y.staff === a.staff && y.on < EPS);
+        const L = link(A, E);
+        if (!L.pairs.length || L.miss.length) continue;
+        for (const [x, y] of L.pairs) carry(p, x, y);
+      }
+    }
+  });
 
   carryTies();
   // (a tie rule 3 completes, an accidental it or the closing carry hands on, can make what rules

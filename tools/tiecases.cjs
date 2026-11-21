@@ -20,6 +20,7 @@ function score(parts, { time = [4, 4], key = 1 } = {}) {
     for (const [pitch, dur, o = {}] of m) {
       if (pitch === 'back') { x += `<backup><duration>${dur * 2}</duration></backup>`; continue; }
       if (pitch === 'key') { x += `<attributes><key><fifths>${dur}</fifths></key></attributes>`; continue; }
+      if (pitch === 'ending') { x += `<barline location="left"><ending number="${dur}" type="start"/></barline>`; continue; }
       let n = `<note${o.x != null ? ` default-x="${o.x}"` : ''}>` + (o.grace ? '<grace/>' : '') + (o.ch ? '<chord/>' : '');
       if (pitch === 'r') n += '<rest/>';
       else {
@@ -346,6 +347,88 @@ const cases = [
       ['r', 2, { v: 2 }], ['B3', 2, { v: 2, slur: [['start', 1]] }], ['B3', 2, { v: 2 }], ['C4', 2, { v: 2, slur: [['stop', 1]] }],
     ]] }], { key: 0 }),
     want: { P2: [] }, slurs: 4, changed: false,
+  },
+  // Yellow Submarine bars 11, 23, 31, 55 (and 59 over the line break): the right hand doubles the tune's tied
+  // dotted half while an inner voice of its staff strikes dotted-quarter chords under it
+  {
+    name: 'R2 doubling: the tune held over an inner voice striking again → the tune\'s own voice tied, the inner voice untouched (Yellow Submarine bar 23)',
+    xml: score([
+      { id: 'P1', name: 'Voice', measures: [sung([['E4', 8]]), sung([['G4', 8, { tie: 'start' }]]), sung([['G4', 4, { tie: 'stop' }], ['A4', 4]])] },
+      { id: 'P2', name: 'Piano', measures: [
+        [['E4', 8], ['back', 8], ['C4', 8, { v: 2 }]],
+        [['G4', 8], ['back', 8], ['C4', 4, { v: 2 }], ['C4', 4, { v: 2 }]],
+        [['G4', 4], ['A4', 4], ['back', 8], ['C4', 4, { v: 2 }], ['D4', 4, { v: 2 }]],
+      ] },
+    ], { key: 0 }),
+    want: { P2: [['m2', 'G4', 'start'], ['m3', 'G4', 'stop']] }, changed: true,
+  },
+  {
+    name: 'R2 the tune\'s note alone in its strike, another voice coming in with it where the voice\'s tie ends → struck again, untouched (Killing bar 7: F#, then F#/A with the A in another voice)',
+    xml: score([
+      { id: 'P1', name: 'Voice', measures: [sung([['E4', 8]]), sung([['G4', 8, { tie: 'start' }]]), sung([['G4', 4, { tie: 'stop' }], ['A4', 4]])] },
+      { id: 'P2', name: 'Piano', measures: [
+        [['E4', 8], ['back', 8], ['C4', 8, { v: 2 }]],
+        [['G4', 8]],
+        [['G4', 4], ['A4', 4], ['back', 8], ['B4', 4, { v: 2 }], ['D4', 4, { v: 2 }]],
+      ] },
+    ], { key: 0 }),
+    want: { P2: [] }, changed: false,
+  },
+  {
+    name: 'R2 held over an inner voice, its own voice striking a shorter note where the voice\'s tie ends → untouched',
+    xml: score([
+      { id: 'P1', name: 'Voice', measures: [sung([['E4', 8]]), sung([['G4', 8, { tie: 'start' }]]), sung([['G4', 4, { tie: 'stop' }], ['A4', 4]])] },
+      { id: 'P2', name: 'Piano', measures: [
+        [['E4', 8], ['back', 8], ['C4', 8, { v: 2 }]],
+        [['G4', 8], ['back', 8], ['C4', 4, { v: 2 }], ['C4', 4, { v: 2 }]],
+        [['G4', 2], ['A4', 6], ['back', 8], ['C4', 4, { v: 2 }], ['D4', 4, { v: 2 }]],
+      ] },
+    ], { key: 0 }),
+    want: { P2: [] }, changed: false,
+  },
+  {
+    name: 'R2 the same, the tune\'s own voice striking a chord with the tied note where the voice\'s tie ends → struck again, untouched',
+    xml: score([
+      { id: 'P1', name: 'Voice', measures: [sung([['E4', 8]]), sung([['G4', 8, { tie: 'start' }]]), sung([['G4', 4, { tie: 'stop' }], ['A4', 4]])] },
+      { id: 'P2', name: 'Piano', measures: [
+        [['E4', 8], ['back', 8], ['C4', 8, { v: 2 }]],
+        [['G4', 8], ['back', 8], ['C4', 4, { v: 2 }], ['C4', 4, { v: 2 }]],
+        [['G4', 4], ['B4', 4, { ch: true }], ['A4', 4], ['back', 8], ['C4', 4, { v: 2 }], ['D4', 4, { v: 2 }]],
+      ] },
+    ], { key: 0 }),
+    want: { P2: [] }, changed: false,
+  },
+  // Killing Me Softly bars 37-41: the piano's [G#3 B3] held from bar 37 into the 1st ending (bar 38) and, printed as
+  // a tie-in, into the 2nd ending (bar 40), which Audiveris reads as G3; bar 40 is tied on into 41
+  {
+    name: 'R5 a 2nd ending starting with the notes held into the 1st ending → their accidental carried (Killing Me Softly bar 40)',
+    xml: score([
+      { id: 'P1', name: 'Voice', measures: [sung([['E4', 8]]), sung([['B3', 8]]), [['ending', '1'], ['r', 8]], [['ending', '2'], ['r', 8]], [['r', 8]]] },
+      { id: 'P2', name: 'Piano', measures: [
+        [['E4', 8]],
+        [['G#3', 8, { tie: 'start', acc: 'sharp' }], ['B3', 8, { ch: true, tie: 'start' }]],
+        [['G#3', 8, { tie: 'stop' }], ['B3', 8, { ch: true, tie: 'stop' }]],
+        [['G3', 8, { tie: 'start' }], ['B3', 8, { ch: true, tie: 'start' }]],
+        [['G3', 8, { tie: 'stop' }], ['B3', 8, { ch: true, tie: 'stop' }]],
+      ] },
+    ]),
+    want: { P2: [['m2', 'G#3', 'start'], ['m2', 'B3', 'start'], ['m3', 'G#3', 'stop'], ['m3', 'B3', 'stop'], ['m4', 'G#3', 'start'], ['m4', 'B3', 'start'], ['m5', 'G#3', 'stop'], ['m5', 'B3', 'stop']] },
+    changed: false, carried: true,
+  },
+  {
+    name: 'R5 the same, the chord before the 1st ending not tied into it → the 2nd ending\'s G3 untouched',
+    xml: score([
+      { id: 'P1', name: 'Voice', measures: [sung([['E4', 8]]), sung([['B3', 8]]), [['ending', '1'], ['r', 8]], [['ending', '2'], ['r', 8]], [['r', 8]]] },
+      { id: 'P2', name: 'Piano', measures: [
+        [['E4', 8]],
+        [['G#3', 8, { acc: 'sharp' }], ['B3', 8, { ch: true }]],
+        [['G#3', 8, { acc: 'sharp' }], ['B3', 8, { ch: true }]],
+        [['G3', 8, { tie: 'start' }], ['B3', 8, { ch: true, tie: 'start' }]],
+        [['G3', 8, { tie: 'stop' }], ['B3', 8, { ch: true, tie: 'stop' }]],
+      ] },
+    ]),
+    want: { P2: [['m4', 'G3', 'start'], ['m4', 'B3', 'start'], ['m5', 'G3', 'stop'], ['m5', 'B3', 'stop']] },
+    changed: false, carried: false,
   },
 ];
 
