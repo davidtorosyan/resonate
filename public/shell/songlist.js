@@ -20,7 +20,7 @@ const SONG_KEY = "resonate.sing.song";
 const $ = (id) => document.getElementById(id);
 const openSongId = () => { try { return localStorage.getItem(SONG_KEY); } catch { return null; } };
 // (DATA_KEYS: not written after another tab switched whose data this device shows — as sing.js store)
-function setOpenSong(id, { newSong = false } = {}) {
+export function setOpenSong(id, { newSong = false } = {}) {
   if (spaceChanged()) return;
   try {
     localStorage.setItem(SONG_KEY, id);

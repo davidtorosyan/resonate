@@ -281,18 +281,26 @@ titlecases.cjs:5 (in regress), keycases.cjs:75, repeatcases.cjs:55, flow.cjs:6 a
   - cutover L and songlib passed unchanged.
   - **"Fit my range… goes to voice.html":** not reproduced at v93's code in Chromium (iPad and iPhone sizes) or in WebKitGTK. The capture handler already opened `voice.html` in place. With the link named `./?open=voice`, even an uncaught tap lands on Voice in the shell. ROADMAP keeps it as a device check.
 - **3.2:**
-  - `staleShell(doc, open)` in shell/chrome.js is called right after DOMParser in singview, scoreview and places. It compares `#version`, checks `resonateBusy`, and keeps a sessionStorage `resonate.shell.stale` stamp for 10 min.
+  - `staleShell(doc, open)` in shell/chrome.js is called right after DOMParser in singview, scoreview and places. It compares `#version`, checks what's under way, and keeps a sessionStorage `resonate.shell.stale` stamp for 10 min.
+  - Under way is boot.js's `setUnderWay`: the tray busy, Sing or the Score sounding (songview `soundBusy`), an assistant's command running (remote.js `busy`). It was `resonateBusy` at first, whose `switching` / `closing` made the shell's own module change count as busy (v94 review, below). `resonateBusy` stays as it was for nav.js's reload.
   - Sing loaded hidden for 📡 at home (no song page open) reloads to `./`.
   - cutover G (iPhone and iPad, 16 checks each):
     - sing.html (Next-up), play.html (`?open=score`) and voice.html (a link) are each served with badge v0;
     - each gives one reload into `./?open=…`, with no sing.js / play.js / voice.js asked for before it and nothing mounted as the page left;
     - each lands there, mounted on the second try;
     - another badge while busy: no reload; a matching badge: no reload.
+  - **v94 review (2 verifiers each; the fixes):**
+    - The guard never fired when Sing or the Score was first mounted by the shell's own module change: a toggle (the iPad's Score + Piano, then Sing; the phone's Sing, then the Score), the Reader's Sing it / Play it on the song open, a song switch whose modules differ. `songview.busy()` counted the `switching` doing the mount. Now the narrower predicate above; setMods has stopped the sounds by then.
+    - A 📡 command that mounted Sing or the Score on a stale shell was claimed, then the page reloaded: never run or answered (the claim blocks the reloaded page), and score_open reopened the previous song. Now a running command counts as under way (the mount happens in place, as before), and remote.js writes the open song (`setOpenSong`) for the song showSing / score_open / a PDF only opens, so a later reload reopens that one.
+    - A place's reload over an open song closed the song (`./?open=voice` lands at home). Now a place with a song open (`pageOpen()`) mounts in place without the guard: the simplest; the address can't carry both.
+    - Not fixed (low): after the reload, Back takes an extra step through a second home entry (ROADMAP known gaps).
+    - cutover G is now 30 checks on the iPhone and 28 on the iPad: the toggles, Sing it / Play it, a switch to a PDF only from Sing (each: one reload, nothing mounted before it, lands there), an import under way for a place and for the iPad's toggle, a place over an open song. 17 of the new checks fail on the build before the fixes (the others: no page errors, and the import under way, which held before too). shellplaces desktop: open_song and score_open on a stale shell run in place and are answered; score_open's song is the open song, and the Sing toggle afterwards reloads into it (8 checks, 6 failing before).
 - **3.3:** titlecases, keycases, repeatcases and flow load tools.html. So does libcheck.mjs, which drops its `#my-songs` read and checks `listSongs` alone.
 - **synclib 9b (sync.js):**
   - The cause: a pulled delete applied while the space changed under it removed the song, but left its queue entry and jobs, which belonged to the other space by then. It also wasn't recorded, because `saveMeta` never writes into another space. On the next pass in that space, `noteChanges` took the song's absence for a delete of its own and stamped it with now. take1's "ours is newer" then passed the cloud's tombstone over for good. (It passed only when the push's dropped-write path happened to refetch it.)
   - The fix, in take1: a song's tombstone met by a delete of ours that hasn't gone up is applied anyway. Both are the same change, so nothing is sent. apply's delete is idempotent: no song to remove, the queue and jobs cleared, `gone` said.
   - `node synclib.mjs`: 12 of 12 runs PASS (the old sync.js: 5 of 10 FAIL).
+  - v94 review: applying the cloud's tombstone in place of our delete moved ours back in time when ours was the later one. A change another device made between the two (stamped after the cloud's delete, not sent yet) then won, and the song came back everywhere. Now our pending entry is put back after the apply when it's later, so it still goes up; equal stamps send nothing. synclib 13 (three devices) checks it, failing on the build before. 10 of 10 runs PASS.
 
 ## Phase 4 — The old Tuner goes (one release)
 

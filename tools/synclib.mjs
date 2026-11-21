@@ -11,7 +11,8 @@
 // takes the song out of the conversion queue and its stored jobs (omr/queue.js, omr/jobs.js — faked), not
 // once the space changed; a v89 tab (its sync.js vendored from 4b0ec14: fixtures/sync/v89-sync.js) and a v90 tab taking turns on one
 // device send nothing up again; a song a v89 device stored as "null" is a PDF only — never sent up as that
-// text, no ping-pong with the PDF-only row.
+// text, no ping-pong with the PDF-only row. v94 review: a later delete of ours met by the cloud's earlier
+// one still goes up with its own stamp, so a change made between them doesn't bring the song back (13).
 //   node synclib.mjs
 import { register } from 'node:module';
 register('./synclib/hooks.mjs', import.meta.url);
@@ -227,6 +228,30 @@ const up12 = since(L).filter((e) => e[0] === 'upload').map((e) => e[1]);
 check(row('song', P6).data.sha === null && row('song', P6).data.xml === null && !up12.some((p) => p.endsWith('.xml.gz')) && E.songs.get(P6).xml === 'null', `12: v89's form in the cloud: put right as the PDF only, no "null" sent (uploads ${JSON.stringify(up12)}, row ${JSON.stringify(row('song', P6).data)})`);
 L = W.cloud.log.length; await pass(); device('F'); await pass(); device('E'); await pass();
 check(since(L).length === 0, `12: then nothing (${JSON.stringify(since(L).map((e) => e.slice(0, 2)))})`);
+
+// 13. Two deletes with a change between them (v94 review): G deletes a song (up); H reads it again
+// (stamped after G's delete, its upload failing: still to go up); I, not synced since, deletes it
+// later. I's delete goes up with its own stamp (it used to take G's earlier one and send nothing),
+// so H's change, sent at last, is the older: the song stays gone on every device.
+const X13 = { id: 's000aac1', title: 'Twice Gone', xml: XML('Twice Gone'), added: 9100, source: 'file' };
+const tick = () => new Promise((r) => setTimeout(r, 5));
+const G13 = device('G'); G13.songs.set(X13.id, structuredClone(X13)); await pass();
+const H13 = device('H'); await pass();
+const I13 = device('I'); await pass();
+check(H13.songs.has(X13.id) && I13.songs.has(X13.id), '13: three devices have the song');
+await tick(); device('G'); await lib.removeSong(X13.id); await pass();
+await tick(); device('H'); await lib.replaceSong(X13.id, XML('Twice Gone v2'));
+W.failUpload = (path) => path.includes(X13.id); await pass(); W.failUpload = null;
+check(H13.songs.has(X13.id) && !meta().items[`song:${X13.id}`].up, '13: H\'s change waits to go up');
+await tick(); device('I'); await lib.removeSong(X13.id);
+L = W.cloud.log.length; await pass();
+const up13 = since(L).filter((e) => e[1]?.includes(X13.id));
+check(up13.length > 0 && meta().items[`song:${X13.id}`].up && meta().items[`song:${X13.id}`].del, `13: I's later delete goes up (${JSON.stringify(up13)})`);
+device('H'); await pass(); device('G'); await pass(); device('I'); await pass(); device('H'); await pass();
+check(row('song', X13.id)?.deleted && !G13.songs.has(X13.id) && !H13.songs.has(X13.id) && !I13.songs.has(X13.id),
+  `13: H's change, sent at last, is older: gone everywhere (cloud ${row('song', X13.id)?.deleted ? 'deleted' : 'live'}; G ${G13.songs.has(X13.id)}, H ${H13.songs.has(X13.id)}, I ${I13.songs.has(X13.id)})`);
+L = W.cloud.log.length; device('G'); await pass(); device('I'); await pass();
+check(!since(L).some((e) => e[1]?.includes(X13.id)), '13: then nothing more of it goes up');
 
 // 10. Limit 20.
 check(S.SONG_LIMIT === 20, '10: SONG_LIMIT 20');

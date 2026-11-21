@@ -4,7 +4,8 @@
 // Sing it / Play it open the new song in place (the scripted worker of shell.cjs / importfixes.cjs);
 // 📡 from home with a signed-in, approved account faked cheaply: the session in localStorage, the
 // REST calls answered by route, sync.js stubbed, the Realtime socket held open and silent — commands
-// go in through assist.js's own remote.handle(), the same path a Realtime command takes.
+// go in through assist.js's own remote.handle(), the same path a Realtime command takes; on a stale
+// shell (sing.html / play.html of another badge) a command that mounts Sing or the Score runs in place.
 //   node shellplaces.cjs           (http://localhost:8097/resonate/; SHOTS=dir for the 2 screenshots)
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -338,12 +339,65 @@ async function remote(sz) {
   await closeCtx(ctx);
 }
 
+// --- 📡 on a stale shell (v94 review): a command that mounts Sing or the Score for the first time
+// with another badge on sing.html / play.html runs in place (no reload under it: it would stay
+// claimed and never be answered) and is answered; the song a command opens is the open song, so a
+// later reload (the Sing toggle, no command running) reopens that one.
+async function remoteStale(sz) {
+  const cmdIn = (p, action, args = {}) => p.evaluate(async ({ action, args }) => {
+    const m = await import(`/resonate/assist.js?v=${document.getElementById('version').textContent.trim().replace(/^v/, '')}`);
+    const id = `c${Math.random().toString(36).slice(2, 8)}`;
+    m.remote.handle({ id, device: m.device().id, action, args, at: new Date().toISOString() });
+    return `eq.${id}`;
+  }, { action, args });
+  for (const action of ['open_song', 'score_open']) {
+    const ctx = await context(sz, { 'resonate.auth': JSON.stringify(session()), 'resonate.sing.song': 'amazing-grace', 'resonate.shell.modules': JSON.stringify({ desktop: ['score', 'piano'] }) }, { cloud: true });
+    ctx.net.remote = true; // (📡 on already: the app opened again — Sing isn't mounted until a command comes)
+    let stale = true;
+    await ctx.route((u) => /\/(sing|play)\.html$/.test(u.pathname), async (r) => {
+      const res = await r.fetch();
+      const body = await res.text();
+      r.fulfill({ response: res, body: stale ? body.replace(/(<span id="version"[^>]*>)v\d+(<\/span>)/, '$1v0$2') : body });
+    });
+    const p = await home(ctx);
+    let d = await until(p, (x) => x.remote?.on, 10000);
+    const other = action === 'score_open' && await p.evaluate(async () => {
+      const lib = await import(`./library.js?v=${document.getElementById('version').textContent.trim().replace(/^v/, '')}`);
+      const xml = await (await fetch('songs/amazing-grace.musicxml')).text();
+      return lib.addSong('Grace Again', xml.replace(/Amazing [Gg]race/g, 'Grace Again'));
+    });
+    ok(d?.remote?.on && !d.song.loaded && !d.song.scoreLoaded, `${sz.n} stale: 📡 on at boot, Sing and the Score not mounted (${JSON.stringify(d?.remote && { on: d.remote.on })})`);
+    const want = action === 'open_song' ? 'amazing-grace' : other;
+    const id = await cmdIn(p, action, action === 'open_song' ? { song: 'Amazing Grace' } : { song: other });
+    const end = Date.now() + 30000;
+    let a = null;
+    while (Date.now() < end && !(a = ctx.net.answers.find((x) => x.id === id))) await p.waitForTimeout(100);
+    d = await until(p, (x) => x.song.open && !x.song.moving && !x.song.switching, 10000);
+    const stamp = await p.evaluate(() => sessionStorage.getItem('resonate.shell.stale'));
+    const mounted = action === 'open_song' ? d?.song.loaded && d.song.set.sing : d?.song.scoreLoaded && d.song.set.score;
+    ok(a?.status === 'done' && a.result?.ok !== false && p.loads === 1 && !stamp, `${sz.n} stale: ${action} with sing.html / play.html of another badge → run in place and answered (${a?.status}${a?.result?.error ? ' ' + a.result.error : ''}; loads ${p.loads}, stamp ${stamp})`);
+    ok(mounted && d.song.state?.song === want, `${sz.n} stale: … the song open, its module mounted (${d?.song.state?.song} ${JSON.stringify(d?.song.set)})`);
+    if (action === 'score_open') {
+      const saved = await p.evaluate(() => localStorage.getItem('resonate.sing.song'));
+      ok(saved === other, `${sz.n} stale: score_open's song is the open song (resonate.sing.song ${saved})`);
+      // no command now: the Sing toggle mounts sing.html → the reload, into the song score_open opened
+      await tap(p, sz, '#mod-sing');
+      d = await until(p, (x) => x.song.open && x.song.loaded && !x.song.moving && !x.song.switching && p.loads > 1, 30000);
+      const st = await p.evaluate(() => sessionStorage.getItem('resonate.shell.stale'));
+      ok(p.loads === 2 && !!st && d?.song.state?.song === other && d.song.set.sing && d.song.set.score, `${sz.n} stale: then the Sing toggle (no command running) → one reload, back on that song with Sing (${d?.song.state?.song} ${JSON.stringify(d?.song.set)}; loads ${p.loads})`);
+    }
+    stale = false;
+    await closeCtx(ctx);
+  }
+}
+
 (async () => {
   browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${FX}/shell/a3.wav`] });
   try {
     if (!ONLY || ONLY.has('phone')) await record(SIZES[0]);
     if (!ONLY || ONLY.has('ipad')) await voice(SIZES[1]);
     if (!ONLY || ONLY.has('desktop')) await remote(SIZES[2]);
+    if (!ONLY || ONLY.has('desktop')) await remoteStale(SIZES[2]);
   } catch (err) {
     ok(false, `crashed: ${err.stack || err}`);
   }

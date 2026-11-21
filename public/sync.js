@@ -452,11 +452,13 @@ async function apply(sb, row, meta, changed, uid) {
 
 // A row from the cloud: applied unless ours is the same change or a newer one (still to go up).
 // false: stop pulling here (tried again next pass — skipping it could make what follows wrong).
-// A song's delete met by a delete of ours not sent yet is applied all the same (the same change:
-// nothing to send): a delete pulled while the space changed under it took the song out but not its
-// conversion (the queue and the jobs were the other space's then) and wasn't recorded — the meta is
-// never written into another space —, so the next pass here took the song's absence for a delete of
-// its own, stamped now, and passed the cloud's over for good (tools/synclib.mjs 9b).
+// A song's delete met by a delete of ours not sent yet is applied all the same: a delete pulled
+// while the space changed under it took the song out but not its conversion (the queue and the jobs
+// were the other space's then) and wasn't recorded — the meta is never written into another space —,
+// so the next pass here took the song's absence for a delete of its own, stamped now, and passed the
+// cloud's over for good (tools/synclib.mjs 9b). Ours, when later, still goes up: the cloud's earlier
+// stamp in its place would let a change made between the two (another device's, not sent yet) bring
+// the song back everywhere (synclib 13).
 async function take1(sb, row, meta, changed, uid) {
   const key = `${row.kind}:${row.id}`;
   const m = meta.items[key];
@@ -477,7 +479,11 @@ async function take1(sb, row, meta, changed, uid) {
     }
     return true;
   }
-  try { await apply(sb, row, meta, changed, uid); return true; }
+  try {
+    await apply(sb, row, meta, changed, uid);
+    if (bothGone && Date.parse(row.modified_at) < m.m && meta.items[key]?.del) meta.items[key] = m;
+    return true;
+  }
   catch (err) {
     console.warn("sync: couldn't apply", key, err);
     return !!err.permanent; // a broken row is passed by; anything else is tried again

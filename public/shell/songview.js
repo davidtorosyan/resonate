@@ -461,6 +461,9 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     get mods() { return { ...mods }; },
     sing,
     busy: () => !!(sing.busy() || score.state()?.busy || closing || switching),
+    // (what sounds — Sing's take, loop, playback or get-ready, the Score's ▶ — without the change
+    // under way: chrome.js staleShell)
+    soundBusy: () => !!(sing.busy() || sing.state()?.busy || score.state()?.busy),
     debug: () => {
       const st = sing.state(), sc = score.state();
       return { open: isOpen, loaded: sing.loaded, scoreLoaded: score.loaded, title, drop: dropped, form: app.dataset.form || "full", tin: app.dataset.tin,

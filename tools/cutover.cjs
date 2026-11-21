@@ -21,8 +21,11 @@
 //      reach account.html
 //   G  a stale shell (cleanup C 3.2): sing.html / play.html / voice.html fetched with another badge (v0)
 //      → the shell reloads into ./?open=sing / score / voice before mounting it (no sing.js / play.js /
-//      voice.js asked for, nothing mounted as it leaves), and lands there; the second time within 10 min
-//      it mounts (no loop); not while something is under way; a matching badge mounts in place (F too)
+//      voice.js asked for, nothing mounted as it leaves), and lands there — from home, and from the
+//      shell's own module change (v94 review: the iPad's Sing toggle over the Score, the phone's Score
+//      toggle under Sing, the Reader's Sing it / Play it on the song open, a switch to a PDF only); the
+//      second time within 10 min it mounts (no loop); not while an import runs (a place, a toggle), nor
+//      a place over an open song (mounted in place: the song stays); a matching badge mounts in place
 //   node -r ./harness/noshots.cjs cutover.cjs      (BASE=http://localhost:8097/resonate/; ONLY=iphone; PARTS=N,E)
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -419,52 +422,97 @@ async function staleCtx(sz, page, seed) {
   return ctx;
 }
 const docReqs = (ctx, t0, re) => ctx.reqs.filter((q) => q.at >= t0 && re.test(new URL(q.url).pathname + new URL(q.url).search));
+// (an import under way: the scripted worker answers once and then never again)
+const HANG = 'self.onmessage = (e) => { if (e.data.type === "run") self.postMessage({ type: "engine", milestone: "fetch" }); };';
+const openIt = (p, id, opts = {}) => p.evaluate(async ([id, opts]) => {
+  const m = await import(`/resonate/shell/songlist.js?v=${document.getElementById('version').textContent.trim().slice(1)}`);
+  m.openSong(id, opts); // (as Songs, Next-up and the Reader's Sing it / Play it do: the open song written, then songview's open)
+}, [id, opts]);
+const settledSong = (p, pred, ms = 30000) => until(p, (x) => x.song?.open && !x.song.moving && !x.song.switching && pred(x.song), ms);
 async function stale(sz) {
   const K = { sing: ['sing.html', /\/sing\.js/], score: ['play.html', /\/play\.js/], voice: ['voice.html', /\/voice\.js/] };
-  for (const what of ['sing', 'score', 'voice']) {
+  const AG = 'amazing-grace';
+  // what: where the reload goes (./?open=…); go: to the state before the mount (t0 set after it);
+  // act: what mounts the stale page; there(d, ctx): landed in that state
+  const cases = [
+    // the first open from home: Next-up (opens with Sing), the address (the Score), a link to a place
+    { n: 'sing', what: 'sing', go: (p) => p.goto(BASE), act: async (p) => { await p.waitForTimeout(300); await p.tap('#nextup'); } },
+    { n: 'score', what: 'score', go: () => {}, act: (p) => p.goto(BASE + '?open=score') },
+    { n: 'voice', what: 'voice', go: (p) => p.goto(BASE), act: async (p) => { await p.waitForTimeout(300); await p.evaluate(() => { const a = document.createElement('a'); a.href = './?open=voice'; document.body.append(a); a.click(); a.remove(); }); } },
+    // the shell's own module change mounting it (v94 review): a toggle — the iPad's Score + Piano,
+    // then Sing; the phone's Sing, then the Score —, the same song opened with the other module (the
+    // Reader's Sing it / Play it), a song switch whose modules differ (a PDF only: the Score)
+    { n: 'the Sing toggle', what: 'sing', dev: 'tablet', go: async (p) => { await p.goto(BASE + '?open=score'); await settledSong(p, (s) => s.scoreLoaded); await p.waitForTimeout(800); },
+      act: (p) => p.tap('#mod-sing'), there: (d) => d.song.set.score && d.song.set.piano },
+    { n: 'the Score toggle', what: 'score', dev: 'phone', go: async (p) => { await p.goto(BASE + '?open=sing'); await settledSong(p, (s) => s.loaded); await p.waitForTimeout(800); },
+      act: (p) => p.tap('#mod-score'), there: (d) => d.song.set.sing },
+    { n: 'Sing it on the song the Score shows', what: 'sing', dev: 'tablet', go: async (p) => { await p.goto(BASE + '?open=score'); await settledSong(p, (s) => s.scoreLoaded); await p.waitForTimeout(800); },
+      act: (p) => openIt(p, AG, { sing: true }), there: (d) => d.song.set.score },
+    { n: 'Play it on the song Sing shows', what: 'score', dev: 'phone', go: async (p) => { await p.goto(BASE + '?open=sing'); await settledSong(p, (s) => s.loaded); await p.waitForTimeout(800); },
+      act: (p) => openIt(p, AG, { score: true }), there: (d) => !d.song.set.sing },
+    { n: 'a switch to a PDF only from Sing', what: 'score', dev: 'phone', go: async (p, c) => { await p.goto(BASE + '?open=sing'); await settledSong(p, (s) => s.loaded); c.id = await addPdfSong(p, 'Stale Pdf'); await p.waitForTimeout(500); },
+      act: (p, c) => openIt(p, c.id), song: (c) => c.id, there: (d) => d.song.pdfOnly && !d.song.set.sing },
+  ];
+  for (const c of cases) {
+    if (c.dev && c.dev !== sz.dev) continue;
+    const { what } = c;
     const [page, script] = K[what];
-    const ctx = await staleCtx(sz, page, { 'resonate.sing.song': 'amazing-grace' });
+    const ctx = await staleCtx(sz, page, { 'resonate.sing.song': AG });
     const p = await ctx.newPage();
+    ctx.stale = false; // (the state before: as it was before the deploy)
+    await c.go(p, c);
+    if (c.go.length) await p.waitForFunction(() => window.resonateDebug?.().tuner, null, { timeout: 15000 });
+    const loads0 = p.loads;
+    ctx.stale = true;
     const t0 = Date.now();
-    // sing: Next-up (opens with Sing); score: the address (the Score shown for the song); voice: a link to its place
-    await p.goto(BASE + (what === 'score' ? '?open=score' : ''));
-    await p.waitForFunction(() => window.resonateDebug?.().tuner, null, { timeout: 15000 });
-    if (what === 'sing') { await p.waitForTimeout(300); await p.tap('#nextup'); }
-    if (what === 'voice') { await p.waitForTimeout(300); await p.evaluate(() => { const a = document.createElement('a'); a.href = './?open=voice'; document.body.append(a); a.click(); a.remove(); }); }
+    await c.act(p, c);
+    if (what === 'score' && !c.go.length) await p.waitForFunction(() => window.resonateDebug?.().tuner, null, { timeout: 15000 });
+    const song = c.song ? c.song(c) : AG;
     const d = what === 'voice' ? await until(p, (x) => x.place?.open === 'voice' && x.place.loaded.includes('voice') && p.loads > 1, 20000)
-      : await until(p, (x) => x.song?.open && (what === 'sing' ? x.song.loaded : x.song.scoreLoaded) && !x.song.moving && p.loads > 1, 30000);
+      : await until(p, (x) => x.song?.open && (what === 'sing' ? x.song.loaded : x.song.scoreLoaded) && !x.song.moving && !x.song.switching && p.loads > Math.max(1, loads0), 30000);
     await p.waitForTimeout(1500);
     const fetched = docReqs(ctx, t0, new RegExp(`/${page.replace('.', '\\.')}\\?v=`))[0]?.at ?? Infinity;
     const reload = docReqs(ctx, fetched, new RegExp(`^/resonate/\\?open=${what}$`));
     const early = ctx.reqs.filter((q) => q.at >= fetched && q.at < (reload[0]?.at ?? Infinity) && script.test(q.url)).map((q) => q.url.split('/').pop());
     const left = await p.evaluate(() => JSON.parse(sessionStorage.getItem('__shellLeave') || 'null'));
-    ok(fetched < Infinity && reload.length === 1 && p.loads === 2,
-      `${sz.n} G: ${page} with another badge → one reload into ./?open=${what} (${reload.length} reloads, ${p.loads} loads)`);
+    ok(fetched < Infinity && reload.length === 1 && p.loads === 2, // (the page before, the one after)
+      `${sz.n} G: ${c.n}: ${page} with another badge → one reload into ./?open=${what} (${reload.length} reloads, ${p.loads} loads)`);
     ok(!early.length && !!left && !left[what === 'voice' ? 'place' : what], `${sz.n} G: … before mounting it (${early.join(', ') || 'no script asked for'}; as it left: ${JSON.stringify(left)})`);
-    const there = what === 'voice' ? d?.place?.open === 'voice' : !!d?.song?.open && d.song.state?.song === 'amazing-grace' && d.song.set[what];
+    const there = what === 'voice' ? d?.place?.open === 'voice' : !!d?.song?.open && d.song.state?.song === song && d.song.set[what] && (!c.there || c.there(d));
     const stamp = await p.evaluate(() => sessionStorage.getItem('resonate.shell.stale'));
-    ok(there && !!stamp && atRoot(p) && !/open=/.test(p.url()), `${sz.n} G: … lands there: the second try within 10 min mounts it, no loop (${what === 'voice' ? d?.place?.open : JSON.stringify(d?.song?.set)}, ${p.url().split('/').slice(3).join('/')})`);
-    await closeCtx(ctx, `${sz.n} stale ${what}`);
+    ok(there && !!stamp && atRoot(p) && !/open=/.test(p.url()), `${sz.n} G: … lands there: the second try within 10 min mounts it, no loop (${what === 'voice' ? d?.place?.open : `${d?.song?.state?.song} ${JSON.stringify(d?.song?.set)}${d?.song?.pdfOnly ? ' pdf only' : ''}`}, ${p.url().split('/').slice(3).join('/')})`);
+    await closeCtx(ctx, `${sz.n} stale ${c.n}`);
   }
-  // not while something is under way; a matching badge mounts in place
-  for (const how of ['busy', 'same']) {
-    const ctx = await staleCtx(sz, 'voice.html', {});
-    ctx.stale = how === 'busy';
+  // not while something is under way (an import: the tray), nor for a place over an open song (the
+  // address can't carry both: v94 review); a matching badge mounts in place
+  for (const how of ['busy', 'song', 'same', 'busy toggle']) {
+    if (how === 'busy toggle' && sz.dev !== 'tablet') continue;
+    const page = how === 'busy toggle' ? 'sing.html' : 'voice.html';
+    const ctx = await staleCtx(sz, page, { 'resonate.sing.song': AG });
+    ctx.stale = false;
+    if (how.startsWith('busy')) await ctx.route('**/omr/omr-worker.js*', (r) => r.fulfill({ contentType: 'text/javascript', body: HANG }));
     const p = await ctx.newPage();
-    await p.goto(BASE);
+    await p.goto(BASE + (how === 'song' ? '?open=sing' : how.startsWith('busy') ? '?pdf=/imp/amazing-grace1.pdf' : ''));
     await p.waitForFunction(() => window.resonateDebug?.().tuner, null, { timeout: 15000 });
+    if (how === 'song') await settledSong(p, (s) => s.loaded);
+    if (how.startsWith('busy')) await until(p, (x) => x.import?.running, 15000);
+    if (how === 'busy toggle') { await openIt(p, AG); await settledSong(p, (s) => s.scoreLoaded); }
     await p.waitForTimeout(300);
+    ctx.stale = how !== 'same';
     const t0 = Date.now();
-    await p.evaluate((busy) => {
-      if (busy) window.resonateBusy = () => true;
-      const a = document.createElement('a'); a.href = './?open=voice'; document.body.append(a); a.click(); a.remove();
-    }, how === 'busy');
-    const d = await until(p, (x) => x.place?.open === 'voice' && x.place.loaded.includes('voice'), 15000);
+    if (how === 'busy toggle') await p.tap('#mod-sing');
+    else await p.evaluate(() => { const a = document.createElement('a'); a.href = './?open=voice'; document.body.append(a); a.click(); a.remove(); });
+    const d = how === 'busy toggle' ? await settledSong(p, (s) => s.loaded && s.set.sing, 20000)
+      : await until(p, (x) => x.place?.open === 'voice' && x.place.loaded.includes('voice'), 15000);
     await p.waitForTimeout(800);
     const stamp = await p.evaluate(() => sessionStorage.getItem('resonate.shell.stale'));
     const reloads = docReqs(ctx, t0, /^\/resonate\/\?open=/).length;
-    ok(d?.place?.open === 'voice' && p.loads === 1 && !reloads && !stamp,
-      `${sz.n} G: ${how === 'busy' ? 'another badge while something is under way' : 'a matching badge'}: Voice mounted in place, no reload (${d?.place?.open}; loads ${p.loads}, reloads ${reloads}, stamp ${stamp})`);
+    const what = how === 'busy toggle' ? 'Sing (its toggle)' : 'Voice';
+    const shown = how === 'busy toggle' ? !!d?.song?.loaded : d?.place?.open === 'voice';
+    const kept = how !== 'song' || (d?.song?.open && d.song.state?.song === AG);
+    const imp = how.startsWith('busy') ? (await dbg(p))?.import?.running : null;
+    ok(shown && kept && p.loads === 1 && !reloads && !stamp,
+      `${sz.n} G: ${how === 'busy' ? 'another badge while an import runs' : how === 'busy toggle' ? 'another badge, a toggle while an import runs' : how === 'song' ? 'another badge, a place over an open song' : 'a matching badge'}: ${what} mounted in place, no reload (${what === 'Voice' ? d?.place?.open : d?.song?.loaded}${how === 'song' ? `, the song ${d?.song?.state?.song} still open` : ''}${imp != null ? `, import running ${imp}` : ''}; loads ${p.loads}, reloads ${reloads}, stamp ${stamp})`);
     await closeCtx(ctx, `${sz.n} stale ${how}`);
   }
 }

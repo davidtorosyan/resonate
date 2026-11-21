@@ -9,7 +9,7 @@
 // Their scripts look their elements up in the sheet first (window.resonateRecord / resonateVoice /
 // resonateAssistants .root — sing.html has a #play and a #status, play.html a #strip).
 import { scopeCss } from "./scopecss.js?v=93";
-import { ic, openOverlay, closeOverlay, overlayOpen, staleShell } from "./chrome.js?v=93";
+import { ic, openOverlay, closeOverlay, overlayOpen, staleShell, pageOpen } from "./chrome.js?v=93";
 import { reduced } from "./motion.js?v=93";
 
 const $ = (id) => document.getElementById(id);
@@ -70,7 +70,9 @@ export function mountPlaces({ onBefore = () => {}, onLoad = () => {}, onClose = 
       const res = await fetch(`${P.page}?v=${encodeURIComponent(v)}`);
       if (!res.ok) throw new Error(`${P.title} didn't load (${res.status})`);
       const doc = new DOMParser().parseFromString(await res.text(), "text/html");
-      if (staleShell(doc, name)) return new Promise(() => {}); // (another version: reloading)
+      // (another version: reloading — not with a song open: the address can't carry the song and the
+      // place both, and the song would be gone; mounted in place then, as before)
+      if (!pageOpen() && staleShell(doc, name)) return new Promise(() => {});
       if (!$("place-css")) {
         const st = document.createElement("style");
         st.id = "place-css";

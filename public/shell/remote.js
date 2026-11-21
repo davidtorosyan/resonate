@@ -15,6 +15,7 @@
 // shown for ready (play.js state(): pdfOnly, shown).
 import { remote } from "../assist.js?v=93";
 import { songChoices } from "../catalog.js?v=93";
+import { setOpenSong } from "./songlist.js?v=93";
 
 const $ = (id) => document.getElementById(id);
 const HOME = { page: "home", song: null, key: null, tempo: null, doing: "idle", line: null, lines: 0, has_take: false, sound: "none" };
@@ -24,6 +25,7 @@ const HOME = { page: "home", song: null, key: null, tempo: null, doing: "idle", 
 export function mountRemote({ sing, song, places }) {
   const btn = $("home-remote");
   let inner = null; // Sing's own hooks, once sing.js has started them
+  let running = 0;  // commands under way (a stale shell doesn't reload under one: chrome.js staleShell)
   const singShown = () => song.isOpen && song.mods.sing;
 
   function show(on) {
@@ -47,9 +49,10 @@ export function mountRemote({ sing, song, places }) {
   // The song in place with Sing shown: the song open here, else the one Sing has open. (Through
   // songview's open even when it shows already: a Record / Voice / Assistants sheet open now gives
   // way there — what it does stops — and its history entry goes to the song, not back after it.)
+  // The song open is written first, as Songs does (here and for the Score's): a reload reopens it.
   async function showSing(id) {
     id ||= sing.state()?.song;
-    if (id) await song.open(id, { sing: true });
+    if (id) { setOpenSong(id); await song.open(id, { sing: true }); }
     else places.close();
   }
   // The Score on a song (opened in place with it shown), then play.js runs the command.
@@ -75,6 +78,7 @@ export function mountRemote({ sing, song, places }) {
   // Opened in the Score; answered once Play has its PDF shown — or with Play's own words when it
   // doesn't (its PDF isn't on this device, or didn't open): an assistant mustn't say it's showing.
   async function openPdfOnly(hit) {
+    setOpenSong(hit.id);
     await song.open(hit.id, { score: true });
     const has = () => !!P()?.scoreRun && P().state?.()?.song === hit.id; // (Play loaded, on this song)
     for (let t = 0; t < 15000 && !has(); t += 100) await new Promise((r) => setTimeout(r, 100));
@@ -94,7 +98,7 @@ export function mountRemote({ sing, song, places }) {
       try { const c = await songChoices(); all = [...c.samples, ...c.mine]; } catch {}
       if (all && !all.some((x) => x.id === id)) return { ok: false, error: "That song isn't on this device.", songs: all.map((x) => x.title) };
     }
-    if (!(song.isOpen && song.current === id && song.mods.score)) await song.open(id, { score: true });
+    if (!(song.isOpen && song.current === id && song.mods.score)) { setOpenSong(id); await song.open(id, { score: true }); }
     else places.close(); // (a Record / Voice / Assistants sheet over it gives way)
     await waitScore(id);
     if (!P()?.scoreRun) return { ok: false, error: "The Score didn't load on this device." };
@@ -126,7 +130,10 @@ export function mountRemote({ sing, song, places }) {
   // The Score's state while it's shown (play.js scoreState), else none.
   const scoreNow = () => { try { return song.isOpen && song.mods.score ? P()?.scoreState?.() || null : null; } catch { return null; } };
   const hooks = {
-    run,
+    async run(action, a) {
+      running++;
+      try { return await run(action, a); } finally { running--; }
+    },
     // What this device shows: Sing's own while it's shown; else home, or the song open without Sing
     // — and the Score's, while it's shown.
     state() {
@@ -156,6 +163,7 @@ export function mountRemote({ sing, song, places }) {
 
   return {
     adopt,
+    busy: () => running > 0,
     debug: () => ({ available: remote.available, on: remote.on, shown: !!btn.getClientRects().length, wrapped: remote.hooks === hooks, inner: !!inner, state: hooks.state() }),
   };
 }

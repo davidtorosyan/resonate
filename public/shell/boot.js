@@ -10,7 +10,7 @@ import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=93
 import { mountSongView } from "./songview.js?v=93";
 import { mountTray } from "./tray.js?v=93";
 import { mountAccount } from "./account-menu.js?v=93";
-import { ic, fic, device, overlayOpen } from "./chrome.js?v=93";
+import { ic, fic, device, overlayOpen, setUnderWay } from "./chrome.js?v=93";
 import { fadeIn } from "./motion.js?v=93";
 import { mountPlaces } from "./places.js?v=93";
 import { mountRemote } from "./remote.js?v=93";
@@ -98,6 +98,9 @@ places = mountPlaces({
 });
 remoteHome = mountRemote({ sing: song.sing, song, places });
 hooks();
+// A stale shell's reload (chrome.js staleShell) waits for these — not for the module change or the
+// song switch that mounts the page (song.busy() counts those: nav.js's reload waits for them too).
+setUnderWay(() => tray.busy() || song.soundBusy() || remoteHome.busy());
 
 // Test hook: read a PDF from a URL (?pdf=…) without the picker; else continue an unfinished import
 // — shown when the address asked for it (pdf-import.html, its pill on the old pages), else folded.
