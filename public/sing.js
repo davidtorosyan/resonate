@@ -3361,7 +3361,7 @@ function typeTempo() {
 // is the one the count-in clicks (feltBeat): a dotted quarter in 6/8, 9/8, 12/8 (a dotted
 // eighth in 6/16, 12/16), else the time signature's unit (an eighth in 3/8).
 
-const tapQ = () => feltBeat(meterAt(entryIdx)).q;
+const tapQ = () => feltBeat(countInMeter(entryIdx)).q; // (the count-in's meter: a pickup bar in the old meter counts the new one, as the clicks)
 const unitGlyph = (q) => ({ 0.25: "𝅘𝅥𝅯", 0.5: "♪", 0.75: "♪.", 1: "♩", 1.5: "♩.", 2: "𝅗𝅥" })[q] || "♩";
 let tapTimes = [];
 let tappedBpm = null; // quarter notes per minute

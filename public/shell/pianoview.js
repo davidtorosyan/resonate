@@ -54,7 +54,7 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
   const sounding = new Set(); // every press whose note may still sound or start (a lifted one waiting for the context too)
   const log = [];
   let reopenAt = 0, reopenT = 0, resume = false;
-  const awake = { src: null, timer: 0 };
+  const awake = { a: null, src: null, timer: 0 }; // (a: the context its source is on — a replaced one gets its own, as play.js)
 
   const kb = mountKeyboard(kbEl, {
     range,
@@ -116,7 +116,11 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
     return gate;
   }
   function keepAwake(a) {
-    if (!awake.src) { const nodes = []; try { keepAlive(a, nodes); } catch {} awake.src = nodes[0] || null; }
+    if (awake.a !== a || !awake.src) {
+      try { awake.src?.stop(); } catch {}
+      const nodes = []; try { keepAlive(a, nodes); } catch {}
+      awake.a = a; awake.src = nodes[0] || null;
+    }
     clearTimeout(awake.timer);
     awake.timer = setTimeout(quietDown, AWAKE);
   }
@@ -275,7 +279,7 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
     debug: () => ({ shown, linked, range: linked && scoreRange ? [...scoreRange] : [...range], own: [...range], held: [...held].map((k) => k.midi), lit: linked && scoreRange ? [...scoreLit.keys()] : litKeys.slice(),
       litHands: linked && scoreRange ? [...scoreLit].map(([m, L]) => [m, L.hand]) : litKeys.map((m) => [m, m >= 60 ? "rh" : "lh"]), chips: hearBox.querySelectorAll("button[data-key]").length,
       fingers: kb.held(), log: log.slice(), ctx: ac?.state || null, stuck,
-      awake: !!awake.src, reopenAt, draws: kb.draws, rect: shown ? (({ left, top, width, height }) => ({ left, top, width, height }))(el.getBoundingClientRect()) : null }),
+      awake: !!awake.src, awakeHere: !!awake.src && awake.a === ac, reopenAt, draws: kb.draws, rect: shown ? (({ left, top, width, height }) => ({ left, top, width, height }))(el.getBoundingClientRect()) : null }),
   };
 }
 

@@ -60,7 +60,7 @@ async function piano(b) {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     return true;
   };
-  const state = (label) => p.evaluate((label) => { const d = window.resonateDebug().piano; return { label, made: window.__ctxs.length, ctx: d.ctx, stuck: d.stuck, sounding: window.__starts, log: d.log.length }; }, label);
+  const state = (label) => p.evaluate((label) => { const d = window.resonateDebug().piano; return { label, made: window.__ctxs.length, ctx: d.ctx, stuck: d.stuck, sounding: window.__starts, log: d.log.length, awakeHere: d.awakeHere }; }, label);
   const out = [];
   ok(await tap(60), 'Piano: a key under the finger');
   await p.waitForTimeout(800); out.push(await state('a tap sounds'));
@@ -73,6 +73,7 @@ async function piano(b) {
   ok(out[0].sounding > 0 && out[0].ctx === 'running', `Piano: a tap sounds (${out[0].sounding} sources, ${out[0].ctx})`);
   ok(out[1].sounding === 0 && out[1].ctx !== 'running' && out[1].stuck === true, `Piano: the resume hangs — silent, the context marked stuck (${out[1].ctx}, stuck ${out[1].stuck})`);
   ok(out[2].made > out[1].made && out[2].sounding > 0 && out[2].ctx === 'running' && !out[2].stuck, `Piano: the next tap sounds on a new context (${out[1].made} → ${out[2].made} made, ${out[2].sounding} sources, ${out[2].ctx})`);
+  ok(out[2].awakeHere === true, `Piano: the keep-awake source follows to the new context (${out[2].awakeHere})`);
   ok(!errs.length, `Piano: no page errors ${JSON.stringify(errs)}`);
   await cdp.detach();
   await ctx.close();
