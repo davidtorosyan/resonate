@@ -216,7 +216,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++
   ok(r.forgetSample === false, 'forgetSong refuses a sample');
   ok(r.delOther === 1 && r.jobsLeft === 0, 'deleteJobsFor');
   ok(JSON.stringify(r.titles) === JSON.stringify(['Wichita Lineman', 'Killing Me Softly', 'Scanned Document 2', 'Song', 'IMG 0042']), 'titleFromFileName ' + JSON.stringify(r.titles));
-  ok(r.hold && r.engineN === 10, 'holdWake, ENGINE_N');
+  ok(r.hold && r.engineN === 15, 'holdWake, ENGINE_N');
   ok(!errs.length, 'no page errors ' + JSON.stringify(errs.slice(0, 3)));
   if (fails && !process.env.VERBOSE) console.log(JSON.stringify(r).slice(0, 4000));
   await browser.close();
