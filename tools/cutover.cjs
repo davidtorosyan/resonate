@@ -1,7 +1,7 @@
 // The cut-over (v92, docs/CUTOVER.md): the one-page shell is the site's root. On an iPhone 393×852
 // and an iPad 820×1180 (touch):
 //   R  the root is the shell (index.html, <html data-shell>) — and no import pill over it, even with
-//      an import flag of this space —; tuner.html is the old Tuner
+//      an import flag of this space —; tuner.html (a stub since cleanup C phase 4) lands on home
 //   S  shell.html (a stub) carries ?search and #hash to the root without a history entry of its own
 //   L  each old page lands in the shell in its state (localStorage resonate.redirect = "1": an
 //      automated browser stays on the old pages otherwise): sing.html → the last song with Sing,
@@ -192,10 +192,16 @@ async function rootAndStub(sz) {
   await p.waitForFunction(() => window.resonateDebug?.().tuner, null, { timeout: 15000 }).catch(() => {});
   ok(await p.evaluate(() => document.documentElement.hasAttribute('data-shell')), `${sz.n} R: index.html is the shell`);
 
-  await p.goto(BASE + 'tuner.html');
-  await p.waitForTimeout(800);
-  const t = await p.evaluate(() => ({ toggle: !!document.getElementById('toggle'), chip: document.getElementById('account-chip')?.textContent, shell: document.documentElement.hasAttribute('data-shell'), app: !!document.querySelector('script[src^="app.js"]') }));
-  ok(t.toggle && t.app && !t.shell && t.chip === 'Sign in ›', `${sz.n} R: tuner.html is the old Tuner (${JSON.stringify(t)})`);
+  // tuner.html: a stub since cleanup C phase 4 (the old Tuner went) — an old link lands home, no entry of its own
+  await p.goto(BASE + 'tools.html');
+  const ht = await p.evaluate(() => history.length);
+  await p.goto(BASE + 'tuner.html', { waitUntil: 'commit' });
+  await p.waitForURL((u) => u.pathname === ROOT_PATH, { timeout: 10000 }).catch(() => {});
+  await p.waitForFunction(() => window.resonateDebug?.().tuner, null, { timeout: 15000 }).catch(() => {});
+  const t = await p.evaluate(() => ({ path: location.pathname, search: location.search, shell: document.documentElement.hasAttribute('data-shell'), hist: history.length, song: window.resonateDebug?.().song?.open, overlay: window.resonateDebug?.().overlay }));
+  ok(t.path === ROOT_PATH && t.shell && !t.search && !t.song && !t.overlay && t.hist === ht + 1, `${sz.n} R: tuner.html (a stub) → home, no entry of its own (${JSON.stringify(t)})`);
+  const stub = await (await fetch(BASE + 'tuner.html')).text();
+  ok(!/id="version"/.test(stub) && !/app\.js/.test(stub), `${sz.n} R: the stub has no badge and no app.js`);
 
   // S: tools.html → shell.html?x=1#frag: the root with both, one entry
   await p.goto(BASE + 'tools.html');

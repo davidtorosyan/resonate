@@ -1,4 +1,4 @@
-// Mic + YIN pitch detection, same algorithm and settings as the tuner (app.js).
+// Mic + YIN pitch detection: the tuner's (shell/tuner.js), Sing's, Record's and Voice's.
 
 export const MIN_RMS = 0.012;    // loudness gate
 export const MIN_CLARITY = 0.8;  // YIN clarity gate

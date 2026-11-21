@@ -322,6 +322,30 @@ This was planned in docs/CUTOVER.md. shell/tuner.js is the port, and it is the h
 
 **Size:** about −1,250 lines.
 
+### Phase 4 — as built (2026-11-21, the owner's OK relayed; in the same release as Phases 2–3)
+
+- **Removed:**
+  - public/app.js.
+  - tuner.html's page. It is now a stub, like shell.html: `location.replace("./")` and a "Resonate ›" link, no badge. vcheck's STUBS has both stubs.
+  - The Tools card.
+  - nav.js's app.js reload clause. A session that ended still parks the account's data (`park()`); only the reload went.
+- **nav.js's pill** is a fixed bottom-left link. `placePill`, its 1.5 s re-place, the MutationObserver and the resize listener are gone; the storage listener stays.
+- **Kept:**
+  - The volCal reads (profiles.js `LEGACY_VOL`, shell/tuner.js).
+  - pitch.js, which the shell's tuner, Sing, Record and Voice use.
+- **Comments** that named app.js as live now name shell/tuner.js (profiles.js, pitch.js, voice.js, shell/tuner.js).
+- **CLAUDE.md:**
+  - The Pages entry is the stub's. Its iOS audio-session, watchdog and sleep notes stay, as the shell tuner's.
+  - "Pitch detection", "Locked-note display logic" and "Tunable constants" point at pitch.js and shell/tuner.js, with the two volume defaults and the watchdog added.
+  - "Volume meter" is the shell's `showLevel`. The old `(dB + 55) * 2` text was already wrong: app.js had used the calibrated floor and ceiling, −65 / −5 dB by default.
+  - The `grep -L` note names both stubs.
+- **Tests:**
+  - tunerfix.cjs and tunerprof.cjs are deleted.
+  - tuner.html is out of sleep.cjs, smoke.cjs and playheaders.cjs.
+  - cutover R: tuner.html lands on home, with no history entry of its own and no badge or app.js in the stub.
+  - importfixes M (the pill's text) and X move to tools.html. X now checks the link: fixed at the bottom left, in view, z-index 30 (under the sheets' 40+), and it stays put when a control shows up where it is. importfixes O still starts from the pill.
+- **Checks:** sleep 108/108 (the shell's part unchanged), smoke, playheaders, cutover R/S, importfixes M/O/X, vcheck. The full regress covers Phases 2–4 together (Phase 3's report).
+
 ## Phase 5 — Copies that drifted (one release)
 
 Each item fixes a copy that has already drifted. Each is small and has a test.

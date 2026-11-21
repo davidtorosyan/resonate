@@ -19,8 +19,8 @@ if (handing || document.documentElement.hasAttribute("data-away")) await new Pro
 const user = savedUser();
 // The session ended without Sign out (expired, signed out in another tab): the account's data is
 // put away (space.js) before the page reads anything — this script comes first on the pages
-// that read the user's data, except the Tuner, whose classic script already has: it reloads.
-if (!user && activeSpace() !== "anon" && park() && activeSpace() === "anon" && document.querySelector('script[src^="app.js"]')) location.reload();
+// that read the user's data.
+if (!user && activeSpace() !== "anon") park();
 ensureSpace(user?.id);
 for (const a of document.querySelectorAll("[data-account-link]")) {
   a.textContent = (user ? "Account" : "Sign in") + (a.dataset.accountLink === "chip" ? " ›" : "");
@@ -53,8 +53,10 @@ window.addEventListener("storage", (e) => {
 window.addEventListener("pageshow", (e) => { if (e.persisted && activeSpace() !== activeAtLoad) { changed = true; followSpace(); } });
 
 // A PDF → Song import left unfinished on this device (the page was left or reloaded while it read):
-// a pill back to it — the import page continues where it was (omr/importer.js). Read from the small
+// a pill back to it — the shell's tray continues where it was (omr/importer.js). Read from the small
 // flag omr/jobs.js keeps (resonate.import), not the jobs database: nothing is opened on other pages.
+// (Only Tools shows it to people since cleanup C phase 4: the other pages with nav.js go into the
+// shell — away.js —, which draws the import itself.)
 // Leaving the import page stops its engine, so the pill says paused (⏸) — unless another tab holds
 // the engine's lock (⟳: it's reading there) — and counts as the Reader does: the PDF page being read
 // (the next one) of the PDF's pages.
@@ -79,44 +81,15 @@ async function importPill() {
   a.textContent = `${running ? "⟳" : "⏸"} PDF → Song${count}`;
   a.setAttribute("aria-label", `PDF → Song${running ? "" : ", paused"}${f.page && f.pages ? `, page ${f.page} of ${f.pages}` : ""}: ${running ? "show" : "continue"}`);
   a.dataset.state = running ? "running" : "paused";
-  // (Under the pages' sheets and dialogs — Sing's options, More, review: z-index 40+.)
+  // (Fixed bottom-left, under the pages' sheets and dialogs — Sing's options, More, review: z-index 40+.)
   a.style.cssText = "position:fixed;left:max(12px,env(safe-area-inset-left));bottom:max(12px,env(safe-area-inset-bottom));" +
     "z-index:30;display:inline-flex;align-items:center;min-height:40px;padding:0 14px;border-radius:999px;" +
     "background:rgba(26,26,62,.92);border:1px solid #a64fff;color:#e8e8f0;font:600 13px/1 system-ui,-apple-system,sans-serif;" +
     "text-decoration:none;box-shadow:0 4px 16px rgba(0,0,0,.4);-webkit-tap-highlight-color:transparent";
   document.body.append(a);
-  placePill(a);
-  setTimeout(() => placePill(a), 1500); // pages that lay out late (the Tuner's controls)
 }
-// Bottom-left unless that covers a control (the Tuner's Start, Sing's Listen, Play's keyboard chips):
-// then the bottom-right, then a little higher, up to mid-screen.
-function placePill(a) {
-  if (!a.isConnected) return;
-  a.style.left = "max(12px, env(safe-area-inset-left))"; a.style.top = "auto"; a.style.bottom = "max(12px, env(safe-area-inset-bottom))";
-  const r0 = a.getBoundingClientRect(), w = r0.width, h = r0.height;
-  const W = innerWidth, H = innerHeight, left = r0.left, bottom = H - r0.bottom;
-  const ctl = [...document.querySelectorAll("button, a[href], select, input, [role=button]")]
-    .filter((el) => el !== a && el.getClientRects().length && getComputedStyle(el).visibility !== "hidden")
-    .map((el) => el.getBoundingClientRect()).filter((r) => r.width && r.height);
-  const free = (x, y) => !ctl.some((r) => r.left < x + w && r.right > x && r.top < y + h && r.bottom > y);
-  for (let y = H - h - bottom; y > H * 0.5; y -= 8) {
-    for (const x of [left, W - w - left]) {
-      if (free(x, y)) { a.style.left = `${x}px`; a.style.top = `${y}px`; a.style.bottom = "auto"; return; }
-    }
-  }
-}
-// Controls that show later (Play's keyboard and its chips once the song is drawn, a page's bar
-// changing): placed again when something is shown or hidden — at most every 400 ms.
-let placeTimer = null;
-const placeSoon = () => {
-  if (placeTimer || !document.getElementById("import-pill")) return;
-  placeTimer = setTimeout(() => { placeTimer = null; const a = document.getElementById("import-pill"); if (a) placePill(a); }, 400);
-};
-// (Not on the shell — the root since v92, <html data-shell>: it draws the import itself, its tray.
-// Nothing is wired there: every `hidden` change on the shell would run placeSoon.)
+// (Not on the shell — the root since v92, <html data-shell>: it draws the import itself, its tray.)
 if (!document.documentElement.hasAttribute("data-shell")) {
   importPill();
-  new MutationObserver(placeSoon).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden"] });
   window.addEventListener("storage", (e) => { if (e.key === IMPORT_FLAG || e.key === null) importPill(); });
-  window.addEventListener("resize", () => { const a = document.getElementById("import-pill"); if (a) placePill(a); });
 }

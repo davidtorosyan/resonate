@@ -2,7 +2,7 @@ const { chromium } = require('playwright');
 (async () => {
   const base = process.argv[2] || 'http://localhost:8097/resonate';
   const b = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
-  for (const page of ['tuner.html', 'index.html', 'record.html', 'sing.html', 'tools.html', 'pdf-import.html']) {
+  for (const page of ['index.html', 'record.html', 'sing.html', 'tools.html', 'pdf-import.html']) {
     const p = await b.newPage({ viewport: { width: 390, height: 844 } });
     const errs = []; p.on('pageerror', (e) => errs.push(e.message)); p.on('console', (m) => m.type() === 'error' && !/Failed to load resource/.test(m.text()) && errs.push(m.text()));
     const r = await p.goto(`${base}/${page}`); await p.waitForTimeout(1500);

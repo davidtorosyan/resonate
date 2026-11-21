@@ -458,11 +458,12 @@ async function crash(p) {
     await p.evaluate(() => localStorage.clear());
     await p.reload();
     await seedJob(p, { phase: 'read', done: [1], stage: '2' });
+    // (since cleanup C phase 4 only Tools shows the pill to people: the other pages go into the shell)
+    await p.reload();
+    await p.waitForTimeout(1500);
     if (want('M')) {
-      await p.goto(BASE + '/resonate/sing.html');
-      await p.waitForTimeout(1500);
       const pill = await p.evaluate(() => document.getElementById('import-pill')?.textContent || null);
-      ok('M', /⏸/.test(pill || '') && /3\/4/.test(pill || ''), `the Sing page's pill: "${pill}" (paused, PDF page 3 of 4 as the Reader counts)`);
+      ok('M', /⏸/.test(pill || '') && /3\/4/.test(pill || ''), `Tools' pill: "${pill}" (paused, PDF page 3 of 4 as the Reader counts)`);
     }
     if (want('O')) {
       await p.evaluate(() => localStorage.setItem('resonate.import.min', '1'));
@@ -580,39 +581,34 @@ async function crash(p) {
     await ctx.close();
   }
 
-  // X — the pill sits under the pages' sheets and moves off controls that show later
+  // X — the pill (only Tools shows it since cleanup C phase 4): fixed at the bottom left, in view,
+  // under the pages' sheets (z-index 30, theirs 40+), and steady — a control shown later doesn't move it
+  // (v81–93 steered it around the old Tuner's, Sing's and Play's controls; those pages go into the shell)
   if (want('X')) {
     const ctx = await ctxFor({ viewport: { width: 393, height: 852 }, mobile: true, init: () => {
       localStorage.setItem('resonate.import', JSON.stringify({ id: 'jx', space: 'anon', db: 'resonate', name: 'a.pdf', done: 1, of: 3, page: 3, pages: 4, at: Date.now() }));
     } });
-    const p = await page(ctx, '/resonate/sing.html');
-    await p.waitForTimeout(2500);
-    await p.click('#options-btn').catch(() => {});
-    await p.waitForTimeout(500);
-    const r1 = await p.evaluate(() => {
+    const p = await page(ctx, '/resonate/tools.html');
+    await p.waitForTimeout(1500);
+    const r = await p.evaluate(async () => {
       const a = document.getElementById('import-pill');
       if (!a) return { pill: false };
-      const r = a.getBoundingClientRect();
-      const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-      return { pill: true, topIsPill: top === a || a.contains(top), sheet: !document.getElementById('options')?.hidden };
-    });
-    ok('X', r1.pill && r1.sheet && !r1.topIsPill, `Sing's options open: the pill under the sheet (top at its centre is the pill: ${r1.topIsPill})`);
-    const p2 = await page(ctx, '/resonate/tools.html');
-    await p2.waitForTimeout(2200);
-    const r2 = await p2.evaluate(async () => {
-      const a = document.getElementById('import-pill');
-      const r = a.getBoundingClientRect();
+      const cs = getComputedStyle(a), r0 = a.getBoundingClientRect();
+      const top = document.elementFromPoint(r0.left + r0.width / 2, r0.top + r0.height / 2);
       const b = document.createElement('button');
       b.textContent = 'late'; b.hidden = true;
-      b.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:1`;
+      b.style.cssText = `position:fixed;left:${r0.left}px;top:${r0.top}px;width:${r0.width}px;height:${r0.height}px;z-index:1`;
       document.body.append(b);
       await new Promise((res) => setTimeout(res, 100));
       b.hidden = false;
       await new Promise((res) => setTimeout(res, 900));
-      const q = a.getBoundingClientRect(), c = b.getBoundingClientRect();
-      return !(q.left < c.right && q.right > c.left && q.top < c.bottom && q.bottom > c.top);
+      const r1 = a.getBoundingClientRect();
+      return { pill: true, href: a.getAttribute('href'), fixed: cs.position === 'fixed', z: Number(cs.zIndex), left: Math.round(r0.left), gap: Math.round(innerHeight - r0.bottom),
+        onTop: top === a || a.contains(top), steady: r0.left === r1.left && r0.top === r1.top };
     });
-    ok('X', r2, `a control shown later where the pill was: the pill moved off it (${r2})`);
+    ok('X', r.pill && r.fixed && r.z < 40 && r.left <= 24 && r.gap >= 0 && r.gap <= 24 && r.onTop && r.href === './?open=import',
+      `Tools' pill: fixed at the bottom left, in view, under the sheets' layer (${JSON.stringify(r)})`);
+    ok('X', r.steady, `a control shown later where the pill is: the pill stays put (${r.steady})`);
     await ctx.close();
   }
 

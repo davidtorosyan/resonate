@@ -33,7 +33,7 @@ const ON_CENTS = 50;
 const SMOOTH_MS = 120;     // pitch = median of the last voiced frames
 const ANCHOR_MS = 1200;    // a steady comfortable note this long starts the test
 const PAUSE_MS = 700;      // ✓ / ✗ shown between notes
-const VOL_HOLD_MS = 2000, VOL_MIN_DB = -50; // as the Tuner's calibration (app.js)
+const VOL_HOLD_MS = 2000, VOL_MIN_DB = -50; // as the old Tuner's calibration (its gear)
 
 // Typical ranges (limits, comfortable), for starting without a test.
 const PRESETS = {

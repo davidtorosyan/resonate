@@ -1,7 +1,7 @@
 // The version stamp bump.mjs writes. v54's failure: GitHub Pages lets a browser reuse each file for 10
 // minutes, one module at a time, so v54's sing.js ran with a cached v53 library.js ("does not provide an
 // export named 'saveClean'"). So:
-//   • every page but the shell.html stub carries the badge (<span id="version">vN</span>);
+//   • every page but the shell.html and tuner.html stubs carries the badge (<span id="version">vN</span>);
 //   • every local <script src> and module address — import … from, export … from, import(), new Worker(),
 //     addModule(), importScripts() — in public/ carries ?v=<badge> (the badge read from index.html).
 // Vendored code is left out, as bump.mjs leaves it: vendor/, omr/pdfjs/, omr/tesseract/ (and template
@@ -13,7 +13,7 @@ import C from './lib/check.cjs';
 const { ok, done } = C;
 const PUBLIC = new URL('../public/', import.meta.url).pathname;
 const VENDORED = ['vendor/', 'omr/pdfjs/', 'omr/tesseract/'];
-const STUBS = ['shell.html']; // (no badge: it only forwards to ./)
+const STUBS = ['shell.html', 'tuner.html']; // (no badge: they only forward to ./)
 
 const badge = /<span id="version"[^>]*>v(\d+)<\/span>/.exec(fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8'))?.[1];
 ok(!!badge, `index.html carries the badge (v${badge})`);

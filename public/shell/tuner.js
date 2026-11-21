@@ -1,6 +1,6 @@
 // The full tuner (home): the voice profile's range, a ±50¢ arc, the note, cents, level and the
-// waveform. Detection is today's Tuner's (app.js): pitch.js's YIN with the same gates, and its
-// locked-note logic — a long median for the cents, a short one that re-locks the shown note
+// waveform. Detection is the old Tuner's (app.js, gone in cleanup C phase 4: this is its port):
+// pitch.js's YIN with the same gates, and its locked-note logic — a long median for the cents, a short one that re-locks the shown note
 // after it stays > 50¢ off for 250 ms. Nothing opens the mic until Start.
 // Forms (REDESIGN §5): "full" (home, and the drop over a song), "strip" (a phone with a song open)
 // and "docked" (a tablet / desktop with a song open) — one DOM, laid out by data-form; the small
@@ -37,7 +37,7 @@ export function mountTuner(root, { onState = () => {} } = {}) {
   function readProfile() {
     const prof = activeProfile();
     let cal = prof ? prof.vol : null;
-    if (!prof) { try { cal = JSON.parse(localStorage.getItem("resonate.volCal")); } catch {} } // (the Tuner's, before profiles)
+    if (!prof) { try { cal = JSON.parse(localStorage.getItem("resonate.volCal")); } catch {} } // (the old Tuner's, before profiles)
     calibrated = !!(cal && typeof cal.floor === "number" && typeof cal.ceiling === "number" && cal.ceiling > cal.floor);
     floor = calibrated ? cal.floor : VOL_FLOOR_DEFAULT;
     ceil = calibrated ? cal.ceiling : VOL_CEIL_DEFAULT;
@@ -120,7 +120,7 @@ export function mountTuner(root, { onState = () => {} } = {}) {
     root.dataset.hold = hold || "";
   }
 
-  // --- the locked note (app.js updatePitchDisplay) -------------------------------------------
+  // --- the locked note (the old Tuner's updatePitchDisplay) -----------------------------------
   const median = (a) => { const s = [...a].sort((x, y) => x - y), n = s.length; return n % 2 ? s[n >> 1] : (s[n / 2 - 1] + s[n / 2]) / 2; };
   const longMidi = () => (hist.length < 5 ? null : median(hist.map((p) => p.midi)));
   function shortMidi(now) {
@@ -248,7 +248,7 @@ export function mountTuner(root, { onState = () => {} } = {}) {
     drawScope();
   }
 
-  // --- Start / Stop (app.js start/stop: iOS's audio session, the watchdog, startGen) ---------------
+  // --- Start / Stop (the old Tuner's: iOS's audio session, the watchdog, startGen) -----------------
   async function start() {
     if (state === "listening" || state === "starting") return;
     const g = ++gen;

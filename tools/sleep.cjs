@@ -7,7 +7,7 @@
 // source running, no live mic track, the session "auto", nothing scheduled to sound later. Back in
 // front (visible) nothing sounds by itself; a tap → a note sounds again (a source started on a
 // running context) / the mic listens again.
-//   tuner.html Start · sing.html Listen, a chip key held, a take (kept, as Stop), 🎤 Pitch ·
+//   sing.html Listen, a chip key held, a take (kept, as Stop), 🎤 Pitch ·
 //   voice.html range test · record.html a take · index.html the tuner, then Sing's Listen, then the
 //   Score (a press; back: its context suspended and the session "auto" until the next press)
 //   node sleep.cjs   (screenshots into SHOTS)
@@ -160,39 +160,6 @@ async function sounds(p, label, n, ms = 6000) {
 }
 const touch = (p, type, pts) => p.cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
 const center = (p, sel) => p.$eval(sel, (e) => { e.scrollIntoView({ block: 'nearest' }); const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
-
-async function tuner() {
-  console.log('\n=== tuner.html (the Tuner)');
-  const p = await page();
-  await p.goto(BASE + 'tuner.html');
-  await p.waitForTimeout(500);
-  await p.click('#toggle');
-  ok(await until(p, () => document.getElementById('toggle').dataset.recording === 'true'), 'Start listens');
-  await p.waitForTimeout(500);
-  await hide(p);
-  await asleep(p, 'tuner hidden');
-  ok(/backgrounded/.test(await p.textContent('#status')), `tuner: "${await p.textContent('#status')}"`);
-  await front(p, 'tuner');
-  await p.click('#toggle');
-  ok(await until(p, () => document.getElementById('toggle').dataset.recording === 'true' && window.__z.ctxs.some((c) => c.state === 'running') && window.__z.state().live === 1), 'tuner: a tap → listening again (a running context, a live track)');
-  if (SHOTS) await p.screenshot({ path: `${SHOTS}/tuner-back.png` });
-  // A Start still waiting for the mic when the page is hidden stands down.
-  await p.click('#toggle');
-  await p.waitForTimeout(300);
-  await p.evaluate(() => { const g = navigator.mediaDevices.getUserMedia; navigator.mediaDevices.getUserMedia = (c) => new Promise((r) => setTimeout(() => r(g(c)), 1500)); });
-  await p.click('#toggle');
-  await p.waitForTimeout(200);
-  await hide(p);
-  await asleep(p, 'tuner hidden while the mic opened', 2500);
-  await show(p);
-  // pagehide while listening.
-  await p.click('#toggle');
-  await until(p, () => document.getElementById('toggle').dataset.recording === 'true');
-  await p.evaluate(() => window.__z.pagehide());
-  await asleep(p, 'tuner pagehide');
-  ok(!p.errors.length, `tuner: no page errors ${p.errors.join(' | ')}`);
-  await p.context().close();
-}
 
 async function sing() {
   console.log('\n=== sing.html');
@@ -382,7 +349,7 @@ async function shell() {
 (async () => {
   browser = await chromium.launch();
   const only = process.env.ONLY ? process.env.ONLY.split(',') : null;
-  for (const [name, fn] of Object.entries({ tuner, sing, voice, record, shell })) {
+  for (const [name, fn] of Object.entries({ sing, voice, record, shell })) {
     if (only && !only.includes(name)) continue;
     try { await fn(); } catch (err) { ok(false, `${name}: ${err.message.split('\n')[0]}`); }
   }
