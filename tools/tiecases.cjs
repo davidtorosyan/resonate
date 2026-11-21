@@ -447,6 +447,48 @@ const cases = [
     want: { P2: [['m4', 'G3', 'start'], ['m4', 'B3', 'start'], ['m5', 'G3', 'stop'], ['m5', 'B3', 'stop']] },
     changed: false, carried: false,
   },
+  // v94 review: a 2nd ending's first notes struck again take nothing; one tied into already is rule 4's
+  {
+    name: 'R5 the voice holds G#4 into the 1st ending; the 2nd ending sings a new word on G4 → struck again, the key\'s G4',
+    xml: score([
+      { id: 'P1', name: 'Voice', measures: [
+        sung([['E4', 8]]),
+        sung([['E4', 4], ['G#4', 4, { tie: 'start', acc: 'sharp' }]]),
+        [['ending', '1'], ['G#4', 4, { tie: 'stop' }], ['r', 4]],
+        [['ending', '2'], ['G4', 4, { lyr: 'Lo' }], ['A4', 4, { lyr: 'ra' }]],
+        sung([['C5', 8]]),
+      ] },
+    ], { key: 0 }),
+    want: { P1: [['m2', 'G#4', 'start'], ['m3', 'G#4', 'stop']] }, changed: false, carried: false,
+  },
+  {
+    name: 'R5 the piano holds G#3 into the 1st ending; the 2nd ending strikes another chord on G3 [C3 G3 E4] → struck again, the key\'s G3',
+    xml: score([
+      { id: 'P1', name: 'Voice', measures: [sung([['E4', 8]]), sung([['B4', 8]]), [['ending', '1'], ['r', 8]], [['ending', '2'], ['r', 8]], [['r', 8]]] },
+      { id: 'P2', name: 'Piano', measures: [
+        [['E3', 8]],
+        [['G#3', 8, { tie: 'start', acc: 'sharp' }]],
+        [['G#3', 8, { tie: 'stop' }]],
+        [['C3', 4], ['G3', 4, { ch: true }], ['E4', 4, { ch: true }], ['C3', 4]],
+        [['C3', 8]],
+      ] },
+    ], { key: 0 }),
+    want: { P2: [['m2', 'G#3', 'start'], ['m3', 'G#3', 'stop']] }, changed: false, carried: false,
+  },
+  {
+    name: 'R5 the 1st ending ends on a printed G3 natural tied into the 2nd ending\'s G3 (the engine\'s tie) → its natural, rule 4\'s; no flip-flop',
+    xml: score([
+      { id: 'P1', name: 'Voice', measures: [sung([['E4', 8]]), sung([['B4', 8]]), [['ending', '1'], ['r', 8]], [['ending', '2'], ['r', 8]], [['r', 8]]] },
+      { id: 'P2', name: 'Piano', measures: [
+        [['E3', 8]],
+        [['G#3', 8, { tie: 'start', acc: 'sharp' }]],
+        [['G#3', 4, { tie: 'stop' }], ['G3', 4, { tie: 'start', acc: 'natural' }]],
+        [['G3', 8, { tie: 'stop' }]],
+        [['C3', 8]],
+      ] },
+    ], { key: 0 }),
+    want: { P2: [['m2', 'G#3', 'start'], ['m3', 'G#3', 'stop'], ['m3', 'G3', 'start'], ['m4', 'G3', 'stop']] }, changed: false, carried: false,
+  },
 ];
 
 // markUnmarkedTuplets (fixOmrScore's own clean-up before restoreTies): bars too long by a run of equal notes

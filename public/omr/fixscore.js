@@ -844,8 +844,9 @@ function markTupletGroups(doc, changes) {
 //   5. a later ending that starts with the notes the bar before the first ending ties into it
 //      (the print's tie-in from nowhere, which Audiveris drops) takes their accidentals there
 //      (Killing Me Softly bar 40: the piano's G♯3 held from bar 37 read as G3, and bar 41 with it
-//      over the engine's tie); no tie is written into the ending (Sing and Play strike again after
-//      a jump anyway).
+//      over the engine's tie) — only where the ending starts with those notes alone, as the rules
+//      above, and none tied into already (rule 4's: the engine's tie gives it its accidental); no
+//      tie is written into the ending (Sing and Play strike again after a jump anyway).
 // Known limit: an inner voice striking the same notes again under a held melody note, its new
 // notes of another length (printed with a tie on the melody only), looks like a tie lost on it.
 // A tie is written both ways the readers take it: <tie> after <duration> (Sing's parser) and
@@ -1208,7 +1209,11 @@ function restoreTies(doc, changes, debug = null, { round = 0, where = new Map(),
         if (In.miss.length || !In.pairs.every(([, y]) => tiedIn(y.el))) continue;
         const E = (p.byBar[e.mi] || []).filter((y) => y.staff === a.staff && y.on < EPS);
         const L = link(A, E);
-        if (!L.pairs.length || L.miss.length) continue;
+        // (only the held notes there, not struck again: a new syllable, an articulation, a grace
+        // note or another chord is a new strike — the key's then; one tied into already, the engine's
+        // tie, takes its accidental from that tie: rule 4's — both carrying, they'd undo each other)
+        if (!L.pairs.length || L.miss.length || L.extra.length || !clear(p, L.pairs)) continue;
+        if (L.pairs.some(([, y]) => tiedIn(y.el))) continue;
         for (const [x, y] of L.pairs) carry(p, x, y);
       }
     }
