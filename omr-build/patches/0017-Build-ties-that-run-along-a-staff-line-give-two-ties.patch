@@ -1,0 +1,651 @@
+From f2b936b34d32a7a8a3b0807b15c852ef9673526d Mon Sep 17 00:00:00 2001
+From: build <build@localhost>
+Date: Sat, 21 Nov 2026 08:43:49 +0000
+Subject: [PATCH] Build ties that run along a staff line; give two ties into
+ one note to the right heads
+
+Long flat ties lie along a staff line: just above the top line or below the
+bottom line (a whole note or a dotted half tied to the next note: Goodbye
+Yellow Brick Road's and The Longest Time's left hands, Yellow Submarine's
+right hand, Too Sweet's whole-note chords), or along a line inside the
+staff. Close enough to merge with the line, they came out lost, though
+their arcs were all in the skeleton.
+
+The skeleton is computed on the image with its staff lines. Where the tie
+touches the line, each vertical run holds both, and the skeleton runs in
+its middle, a pixel or two off the tie towards the line, joined to the line
+at both ends: the tie is cut into a free middle arc, merged stretches and
+the free ends beyond the line. SlursBuilder could not join them again:
+1. A merged stretch is flatter than the tie. Added to the middle arc, it
+   gave a side model (the circle through three points of the last six
+   interlines) bending the other way than the slur, a fraction of a pixel
+   over a nearly straight side, and addArc refused the extension (ccw).
+2. Where the extension was taken, the side model through the shifted points
+   missed the points beyond it, and weed dropped the candidate (distance to
+   the side model over 0.1 interline).
+The middle arc alone ends two or more interlines short of the heads, so
+ClumpPruner linked no head and no slur was kept: no curve at any step.
+
+Now:
+- SlurInfo.computeSideModel defines a side model by points moved back onto
+  the curve (SlursBuilder.onCurve: where the run holding a staff line sticks
+  out of it on one side only, by 0.1 interline or more, the curve's middle
+  is half a line thickness inside the run's outer end), and computeImpacts
+  measures a side model on those points too (sidePoints; a slur no longer
+  than a side keeps its global model on the skeleton points).
+- addArc lets an extension through when the new side model bends against
+  the slur but is flat over its side (sagitta at most 0.07 interline:
+  isFlat), unless the arc added is a piece of bare staff line, one interline
+  or more, at least 4 points in 5 on a line with nothing sticking out
+  (isAlongLine): a slur may not run on along a line.
+
+Ties of a chord tied over the barline lie one above the other along the
+lines, and two of them could be linked to the same two heads, nearest both
+curve ends (Too Sweet's whole-note chords [D4 G4 Bb4 D5], Piano Man's
+accordion [A3 C4 F4], Stumblin' In bar 5): the note between got none.
+checkStaffTie now looks, when another curve links the very same heads, for
+another pair right at this curve's ends (tieAlternativePair, as
+tieAlternative sees one head: tie-compatible, not the end of another tie,
+the space between clear) and moves the curve there; when both twins could
+move, the one whose ends lie farther from the heads.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ETLv1P36qBemBoAsvF94d2
+---
+ .../audiveris/omr/sheet/curve/SlurInfo.java   |  24 ++
+ .../omr/sheet/curve/SlursBuilder.java         | 218 +++++++++++++++++-
+ .../audiveris/omr/sig/inter/SlurInter.java    | 180 +++++++++++++--
+ 3 files changed, 395 insertions(+), 27 deletions(-)
+
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/curve/SlurInfo.java b/app/src/main/java/org/audiveris/omr/sheet/curve/SlurInfo.java
+index e34aa0253..2425f630b 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/curve/SlurInfo.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/curve/SlurInfo.java
+@@ -29,6 +29,7 @@ import java.awt.geom.CubicCurve2D;
+ import java.awt.geom.Point2D;
+ import java.util.Collection;
+ import java.util.List;
++import java.util.function.UnaryOperator;
+ 
+ /**
+  * Class <code>SlursInfo</code> gathers physical description of a slur.
+@@ -70,6 +71,9 @@ public class SlurInfo
+     /** Global Bézier curve for the slur. */
+     protected CubicCurve2D curve;
+ 
++    /** Where the curve really passes at a skeleton point, if known. */
++    protected UnaryOperator<Point> onCurve;
++
+     //~ Constructors -------------------------------------------------------------------------------
+ 
+     /**
+@@ -143,6 +147,13 @@ public class SlurInfo
+         Point p1 = points.get(np / 2);
+         Point p2 = points.get(np - 1);
+ 
++        if (onCurve != null) {
++            // A skeleton point on a staff line the curve runs along is moved back onto the curve
++            p0 = onCurve.apply(p0);
++            p1 = onCurve.apply(p1);
++            p2 = onCurve.apply(p2);
++        }
++
+         // Choose a circle-model, otherwise a line-model
+         CircleModel rough = CircleModel.createValid(p0, p1, p2);
+ 
+@@ -341,6 +352,19 @@ public class SlurInfo
+         }
+     }
+ 
++    //------------//
++    // setOnCurve //
++    //------------//
++    /**
++     * Set the function that reports where the curve really passes at a skeleton point.
++     *
++     * @param onCurve the function, or null
++     */
++    public void setOnCurve (UnaryOperator<Point> onCurve)
++    {
++        this.onCurve = onCurve;
++    }
++
+     //--------------//
+     // setSideModel //
+     //--------------//
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/curve/SlursBuilder.java b/app/src/main/java/org/audiveris/omr/sheet/curve/SlursBuilder.java
+index 3b4a71f19..1d710036b 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/curve/SlursBuilder.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/curve/SlursBuilder.java
+@@ -24,8 +24,11 @@ package org.audiveris.omr.sheet.curve;
+ import org.audiveris.omr.constant.Constant;
+ import org.audiveris.omr.constant.ConstantSet;
+ import org.audiveris.omr.math.Circle;
++import org.audiveris.omr.run.Run;
++import org.audiveris.omr.run.RunTable;
+ import org.audiveris.omr.score.Page;
+ import org.audiveris.omr.sheet.Part;
++import org.audiveris.omr.sheet.Picture;
+ import org.audiveris.omr.sheet.Scale;
+ import org.audiveris.omr.sheet.Staff;
+ import org.audiveris.omr.sheet.SystemInfo;
+@@ -65,6 +68,7 @@ import static java.lang.Math.toRadians;
+ import java.util.ArrayList;
+ import java.util.Collection;
+ import java.util.Collections;
++import java.util.HashMap;
+ import java.util.Iterator;
+ import java.util.LinkedHashMap;
+ import java.util.LinkedHashSet;
+@@ -109,6 +113,12 @@ public class SlursBuilder
+     /** Current maximum length for arcs to be tried. */
+     private Integer maxLength = null;
+ 
++    /** Vertical runs of the binary image (with staff lines). */
++    private final RunTable verticalRuns;
++
++    /** Skeleton points moved back onto their curve, or not (cache). */
++    private final Map<Point, Point> onCurvePoints = new HashMap<>();
++
+     //~ Constructors -------------------------------------------------------------------------------
+ 
+     /**
+@@ -122,6 +132,7 @@ public class SlursBuilder
+         clumpPruner = new ClumpPruner(sheet);
+ 
+         params = new Parameters(sheet.getScale());
++        verticalRuns = sheet.getPicture().getVerticalTable(Picture.TableKey.BINARY);
+     }
+ 
+     //~ Methods ------------------------------------------------------------------------------------
+@@ -175,7 +186,10 @@ public class SlursBuilder
+                 }
+ 
+                 if (slur.getModel() != null) {
+-                    if ((newSideModel.ccw() * slur.getModel().ccw()) < 0) {
++                    // A side too flat to bend either way can't contradict the slur,
++                    // unless the arc is a piece of bare staff line
++                    if (((newSideModel.ccw() * slur.getModel().ccw()) < 0)
++                            && (!isFlat(newSideModel, pts) || isAlongLine(arc))) {
+                         return null;
+                     }
+                 }
+@@ -290,7 +304,7 @@ public class SlursBuilder
+                     return null;
+                 }
+ 
+-                double d = sideModel.computeDistance(slur.getSidePoints(bool));
++                double d = sideModel.computeDistance(sidePoints(slur, bool));
+                 sideModel.setDistance(d);
+                 sum += d;
+             }
+@@ -303,7 +317,7 @@ public class SlursBuilder
+                 return null;
+             }
+ 
+-            dist = sideModel.computeDistance(slur.getSidePoints(reverse));
++            dist = sideModel.computeDistance(sidePoints(slur, reverse));
+         }
+ 
+         // Distance to model
+@@ -480,6 +494,7 @@ public class SlursBuilder
+                 model,
+                 parts,
+                 params.sideLength);
++        slur.setOnCurve(this::onCurve);
+         pageInfos.add(slur);
+ 
+         return slur;
+@@ -747,6 +762,151 @@ public class SlursBuilder
+         }
+     }
+ 
++    //-------------//
++    // isAlongLine //
++    //-------------//
++    /**
++     * Tell whether an arc is a piece of bare staff line: at least one interline long, and
++     * at least 4 of its points in 5 on a staff line with nothing else (see
++     * {@link #isBareLine(Point)}).
++     * <p>
++     * A curve may not go on along a staff line, even where its side is too flat for its bending
++     * direction to count.
++     *
++     * @param arc the arc
++     * @return true if so
++     */
++    private boolean isAlongLine (Arc arc)
++    {
++        final List<Point> points = arc.getPoints();
++
++        if (points.size() < params.minBareLength) {
++            return false;
++        }
++
++        int bare = 0;
++
++        for (Point p : points) {
++            if (isBareLine(p)) {
++                bare++;
++            }
++        }
++
++        return (5 * bare) >= (4 * points.size());
++    }
++
++    //------------//
++    // isBareLine //
++    //------------//
++    /**
++     * Tell whether this skeleton point lies on a staff line with nothing else: its vertical
++     * run holds the line and sticks out of it on neither side.
++     *
++     * @param p the skeleton point
++     * @return true if so
++     */
++    private boolean isBareLine (Point p)
++    {
++        final Run run = verticalRuns.getRunAt(p.x, p.y);
++        final Staff staff = (run != null) ? sheet.getStaffManager().getClosestStaff(p) : null;
++
++        if ((staff == null) || staff.isTablature()) {
++            return false;
++        }
++
++        final LineInfo line = staff.getClosestStaffLine(p);
++        final double ly = line.yAt((double) p.x);
++        final double half = line.getThickness() / 2;
++
++        return (ly >= run.getStart()) && (ly <= run.getStop())
++                       && (((ly - half) - run.getStart()) < params.minStickOut)
++                       && ((run.getStop() - (ly + half)) < params.minStickOut);
++    }
++
++    //--------//
++    // isFlat //
++    //--------//
++    /**
++     * Tell whether a side model bends too little over its side of the curve for its bending
++     * direction to mean anything.
++     * <p>
++     * The side of a long flat tie is nearly straight: the circle through three of its points
++     * bends either way by a fraction of a pixel, and a side that seems to bend against the slur
++     * stops the slur from reaching its end (Goodbye Yellow Brick Road's left-hand ties along the
++     * staff's top line, The Longest Time's under the bottom line).
++     *
++     * @param model the side model
++     * @param pts   the curve points the side model was computed on
++     * @return true if its sagitta over the side is at most maxFlatSagitta
++     */
++    private boolean isFlat (Model model,
++                            List<Point> pts)
++    {
++        if (!(model instanceof CircleModel circleModel)) {
++            return true;
++        }
++
++        final double r = circleModel.getCircle().getRadius();
++        final List<Point> side = reverse ? pts.subList(0, params.sideLength)
++                : pts.subList(pts.size() - params.sideLength, pts.size());
++        final double chord = side.get(0).distance(side.get(side.size() - 1));
++        final double sagitta = r - Math.sqrt(Math.max(0, (r * r) - ((chord * chord) / 4)));
++
++        return sagitta <= params.maxFlatSagitta;
++    }
++
++    //---------//
++    // onCurve //
++    //---------//
++    /**
++     * Report where a curve really passes at this skeleton point, when the point lies on a
++     * staff line the curve runs along.
++     * <p>
++     * The skeleton is computed on the image with its staff lines. Where a curve runs along a
++     * staff line close enough to merge with it (a long flat tie just above or below a staff,
++     * sagging along its outer line; a tie over a head in a space, along the line above), each
++     * vertical run holds both: the line, and the curve sticking out of it on one side. The
++     * skeleton point lies in the middle of the run, a pixel or two off the curve towards the
++     * line, and such a stretch is flatter than the curve: a side circle through it bends the
++     * wrong way, or misses the points beyond it. The curve's middle is half a line thickness
++     * inside the run's outer end.
++     *
++     * @param p the skeleton point
++     * @return p itself, or the point on the curve
++     */
++    private Point onCurve (Point p)
++    {
++        Point q = onCurvePoints.get(p);
++
++        if (q == null) {
++            q = p;
++
++            final Run run = verticalRuns.getRunAt(p.x, p.y);
++            final Staff staff = (run != null) ? sheet.getStaffManager().getClosestStaff(p) : null;
++
++            if ((staff != null) && !staff.isTablature()) {
++                final LineInfo line = staff.getClosestStaffLine(p);
++                final double ly = line.yAt((double) p.x);
++                final double half = line.getThickness() / 2;
++
++                if ((ly >= run.getStart()) && (ly <= run.getStop())) {
++                    final double above = (ly - half) - run.getStart();
++                    final double below = run.getStop() - (ly + half);
++
++                    if ((above >= params.minStickOut) && (below < params.minStickOut)) {
++                        q = new Point(p.x, (int) Math.round(run.getStart() + half));
++                    } else if ((below >= params.minStickOut) && (above < params.minStickOut)) {
++                        q = new Point(p.x, (int) Math.round(run.getStop() - half));
++                    }
++                }
++            }
++
++            onCurvePoints.put(new Point(p), q);
++        }
++
++        return q;
++    }
++
+     //------------//
+     // pruneClump //
+     //------------//
+@@ -1033,6 +1193,37 @@ public class SlursBuilder
+         }
+     }
+ 
++    //------------//
++    // sidePoints //
++    //------------//
++    /**
++     * Report the points to measure a side model on: as the side model is defined by points
++     * moved back onto the curve where it runs along a staff line (see {@link #onCurve(Point)}),
++     * so are the points measured, unless the side is the whole slur (its model is then the
++     * global one, fitted on the skeleton points).
++     *
++     * @param slur    the slur
++     * @param reverse the side
++     * @return the points to measure
++     */
++    private List<Point> sidePoints (SlurInfo slur,
++                                    boolean reverse)
++    {
++        final List<Point> points = slur.getSidePoints(reverse);
++
++        if (slur.getSideModel(reverse) == slur.getModel()) {
++            return points;
++        }
++
++        final List<Point> out = new ArrayList<>(points.size());
++
++        for (Point p : points) {
++            out.add(onCurve(p));
++        }
++
++        return out;
++    }
++
+     //------//
+     // weed //
+     //------//
+@@ -1106,6 +1297,18 @@ public class SlursBuilder
+                 0.5,
+                 "Minimum arc length for starting a slur build");
+ 
++        private final Scale.Fraction minStickOut = new Scale.Fraction(
++                0.1,
++                "Minimum height of a curve out of a staff line it runs along");
++
++        private final Scale.Fraction maxFlatSagitta = new Scale.Fraction(
++                0.07,
++                "Maximum sagitta of a slur side too flat for its bending direction to count");
++
++        private final Scale.Fraction minBareLength = new Scale.Fraction(
++                1.0,
++                "Minimum length of a bare staff line piece a flat slur side may not take");
++
+         private final Scale.Fraction maxStaffLineDy = new Scale.Fraction(
+                 0.2,
+                 "Vertical distance to closest staff line to detect tangency");
+@@ -1215,6 +1418,12 @@ public class SlursBuilder
+ 
+         final double maxStaffLineDy;
+ 
++        final double minStickOut;
++
++        final double maxFlatSagitta;
++
++        final int minBareLength;
++
+         final double maxIncidence;
+ 
+         final double maxSlurDistance;
+@@ -1264,6 +1473,9 @@ public class SlursBuilder
+             arcCheckLength = scale.toPixels(constants.arcCheckLength);
+             arcMinSeedLength = scale.toPixels(constants.arcMinSeedLength);
+             maxStaffLineDy = scale.toPixelsDouble(constants.maxStaffLineDy);
++            minStickOut = scale.toPixelsDouble(constants.minStickOut);
++            maxFlatSagitta = scale.toPixelsDouble(constants.maxFlatSagitta);
++            minBareLength = scale.toPixels(constants.minBareLength);
+             maxIncidence = toRadians(constants.maxIncidence.getValue());
+             maxSlurDistance = scale.toPixelsDouble(constants.maxSlurDistance);
+             maxExtDistance = scale.toPixelsDouble(constants.maxExtDistance);
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/SlurInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/SlurInter.java
+index ba9b4d7df..b1f0da0af 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/SlurInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/SlurInter.java
+@@ -581,6 +581,22 @@ public class SlurInter
+             }
+         }
+ 
++        if (result && !isManual()) {
++            // Two ties into the same notes of a chord: one of them may belong to other heads
++            final SlurInter twin = twinOf(h1, h2);
++            final HeadInter[] pair = (twin != null) ? tieAlternativePair(systemHeadChords) : null;
++
++            if (pair != null) {
++                // Move this one when the twin has nowhere else to go, else the one farther away
++                final HeadInter[] twinPair = twin.tieAlternativePair(systemHeadChords);
++
++                if ((twinPair == null) || (endsDistance(h1, h2) > twin.endsDistance(h1, h2))) {
++                    relink(LEFT, pair[0]);
++                    relink(RIGHT, pair[1]);
++                }
++            }
++        }
++
+         setTie(result);
+ 
+         if (isVip()) {
+@@ -1139,6 +1155,142 @@ public class SlurInter
+         sig.getSystem().getSheet().getStub().setModified(true);
+     }
+ 
++    //-------//
++    // altDy //
++    //-------//
++    /**
++     * Tell whether a head lies right at the curve end on the provided side, on the provided
++     * staff, and report its vertical distance to that end.
++     * <p>
++     * Right at the end: a small abscissa gap to the curve end (or a small overlap), its center on
++     * the concave side of the curve close to the end, or slightly beyond it.
++     *
++     * @param side  the curve side
++     * @param alt   the head
++     * @param staff the staff of the head linked on that side
++     * @return the absolute ordinate difference, or null if the head is not right at the end
++     */
++    private Double altDy (HorizontalSide side,
++                          HeadInter alt,
++                          Staff staff)
++    {
++        if (alt.getStaff() != staff) {
++            return null;
++        }
++
++        final double il = staff.getSpecificInterline();
++        final Point2D end = (side == LEFT) ? curve.getP1() : curve.getP2();
++
++        // Abscissa: the head lies just beyond the curve end
++        final Rectangle box = alt.getBounds();
++        final double dx = (side == RIGHT) ? box.x - end.getX() : end.getX() - (box.x + box.width);
++
++        if ((dx < -constants.maxTieAltOverlap.getValue() * il)
++                || (dx > constants.maxTieAltDx.getValue() * il)) {
++            return null;
++        }
++
++        // Ordinate: on the concave side of the curve, close to the curve end
++        final Point2D center = alt.getCenter2D();
++        final double dy = above ? (center.getY() - end.getY()) : (end.getY() - center.getY());
++
++        if ((dy < -constants.maxTieAltBeyond.getValue() * il)
++                || (dy > constants.maxTieAltDy.getValue() * il)) {
++            return null;
++        }
++
++        return Math.abs(dy);
++    }
++
++    //--------------//
++    // endsDistance //
++    //--------------//
++    /**
++     * Report how far, vertically, the curve ends lie from the centers of the provided heads.
++     *
++     * @param h1 the left head
++     * @param h2 the right head
++     * @return the sum of both vertical distances
++     */
++    private double endsDistance (HeadInter h1,
++                                 HeadInter h2)
++    {
++        return Math.abs(curve.getY1() - h1.getCenter2D().getY()) + Math.abs(
++                curve.getY2() - h2.getCenter2D().getY());
++    }
++
++    //--------------------//
++    // tieAlternativePair //
++    //--------------------//
++    /**
++     * Look for another pair of heads, one right at each end of this curve, that it can tie.
++     * <p>
++     * The ties of a whole-note chord tied over the barline run along the staff lines, one above
++     * the other; two of them can be linked to the same two heads, the ones nearest both curve
++     * ends. The other tie belongs to another pair of heads, right at its ends (as
++     * {@link #tieAlternative} sees them), tie-compatible, not the end of another tie.
++     *
++     * @param systemHeadChords system head chords
++     * @return the pair (left, right) nearest the curve ends, or null
++     */
++    private HeadInter[] tieAlternativePair (List<Inter> systemHeadChords)
++    {
++        final HeadInter h1 = getHead(LEFT);
++        final HeadInter h2 = getHead(RIGHT);
++        HeadInter[] best = null;
++        double bestDy = Double.MAX_VALUE;
++
++        for (Inter i1 : sig.inters(HeadInter.class)) {
++            final HeadInter l = (HeadInter) i1;
++            final Double dy1 = (l != h1) ? altDy(LEFT, l, h1.getStaff()) : null;
++
++            if ((dy1 == null) || isTieEnd(l, LEFT)) {
++                continue;
++            }
++
++            for (Inter i2 : sig.inters(HeadInter.class)) {
++                final HeadInter r = (HeadInter) i2;
++                final Double dy2 = (r != h2) ? altDy(RIGHT, r, h2.getStaff()) : null;
++
++                if ((dy2 == null) || isTieEnd(r, RIGHT) || !areTieCompatible(l, r)) {
++                    continue;
++                }
++
++                if (((dy1 + dy2) < bestDy) && isSpaceClear(l, r, systemHeadChords, true)) {
++                    bestDy = dy1 + dy2;
++                    best = new HeadInter[]
++                    { l, r };
++                }
++            }
++        }
++
++        return best;
++    }
++
++    //--------//
++    // twinOf //
++    //--------//
++    /**
++     * Report another curve, if any, linking the same two heads as this one.
++     *
++     * @param h1 the left head
++     * @param h2 the right head
++     * @return the other curve, or null
++     */
++    private SlurInter twinOf (HeadInter h1,
++                              HeadInter h2)
++    {
++        for (Relation rel : sig.getRelations(h1, SlurHeadRelation.class)) {
++            final SlurInter other = (SlurInter) sig.getOppositeInter(h1, rel);
++
++            if ((other != this) && (other.getHead(LEFT) == h1) && (other.getHead(RIGHT) == h2)) {
++                return other;
++            }
++        }
++
++        return null;
++    }
++
+     //----------------//
+     // tieAlternative //
+     //----------------//
+@@ -1170,34 +1322,14 @@ public class SlurInter
+         }
+ 
+         final Staff staff = head.getStaff();
+-        final double il = staff.getSpecificInterline();
+-        final Point2D end = (side == LEFT) ? curve.getP1() : curve.getP2();
+         HeadInter best = null;
+         double bestDy = Double.MAX_VALUE;
+ 
+         for (Inter inter : sig.inters(HeadInter.class)) {
+             final HeadInter alt = (HeadInter) inter;
++            final Double dy = (alt != head) ? altDy(side, alt, staff) : null;
+ 
+-            if ((alt == head) || (alt.getStaff() != staff)) {
+-                continue;
+-            }
+-
+-            // Abscissa: the head lies just beyond the curve end
+-            final Rectangle box = alt.getBounds();
+-            final double dx = (side == RIGHT) ? box.x - end.getX()
+-                    : end.getX() - (box.x + box.width);
+-
+-            if ((dx < -constants.maxTieAltOverlap.getValue() * il)
+-                    || (dx > constants.maxTieAltDx.getValue() * il)) {
+-                continue;
+-            }
+-
+-            // Ordinate: on the concave side of the curve, close to the curve end
+-            final Point2D center = alt.getCenter2D();
+-            final double dy = above ? (center.getY() - end.getY()) : (end.getY() - center.getY());
+-
+-            if ((dy < -constants.maxTieAltBeyond.getValue() * il)
+-                    || (dy > constants.maxTieAltDy.getValue() * il)) {
++            if (dy == null) {
+                 continue;
+             }
+ 
+@@ -1208,8 +1340,8 @@ public class SlurInter
+                 continue;
+             }
+ 
+-            if (Math.abs(dy) < bestDy) {
+-                bestDy = Math.abs(dy);
++            if (dy < bestDy) {
++                bestDy = dy;
+                 best = alt;
+             }
+         }
+-- 
+2.43.0
+

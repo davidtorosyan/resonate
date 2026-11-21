@@ -471,11 +471,95 @@ has fewer dots than heads whatever the order:
 - Songbird 121: a dotted chord with a second (heads on both sides of the stem), read as two voices.
 With 0016 the seven chords of the first three items are the only ones in the nine songs dotted on exactly half their
 heads, and all seven are dotted in print; `countDots` rounds the half down (`Math.rint(0.5)` = 0, the dot removed).
+`0017` — **Ties that run along a staff line; two ties linked to the same notes.** The accuracy loop's round 2 still
+found ties lost (56 findings, 53 audible); 38 of them inside a system, where 0014 had changed nothing. A debug build
+logging, for watch boxes around every finding, each skeleton arc (shape, ends), each slur seed's extensions on both
+sides (and why `addArc` refused one), what `weed` kept or purged, each candidate's grade or reason, and ClumpPruner's
+choice, showed that most of them are **long flat ties lying along a staff line**: a whole note or a dotted half
+tied to the next note, the tie just above the top line or below the bottom line (Goodbye Yellow Brick Road's and
+The Longest Time's left hands, Yellow Submarine's right hand on C♯5 and F♯4, Too Sweet's whole-note chords, Piano
+Man's voice in bar 71), or along a line inside the staff. Close enough to merge with the line, the tie's arcs were
+all in the skeleton, but no slur was made of them, so no curve appeared at any step:
+- The skeleton is computed on the image *with* its staff lines. Where the tie touches a line, each vertical run
+  holds both, and the skeleton runs in the middle of the run, a pixel or two off the tie towards the line, joined to
+  the line at both ends: the tie is cut into a free middle arc, merged stretches (`LINE` or `STAFF_ARC` arcs) and,
+  beyond the line crossing, its free ends.
+- Joining a merged stretch to the middle arc gave a side model (the circle through three points of the last six
+  interlines) that bends the other way than the slur by a fraction of a pixel — the side of a long flat tie is
+  nearly straight — and `addArc` refused the extension (`ccw`): Goodbye Yellow Brick Road 15, 17, 23, The Longest
+  Time 50, 52 (whose tie hugs the line its whole length).
+- Where the extension was taken, the side model through the shifted points missed the points beyond, and `weed`
+  dropped the candidate (side distance over 0.1 interline: Yellow Submarine 1, 1.95 px for 1.70).
+- The middle arc alone ends two or more interlines short of the heads, so ClumpPruner linked no head (`selected
+  null`).
+
+Now (`SlursBuilder`, `SlurInfo`):
+- `onCurve`: where the run holding a staff line sticks out of it on one side only, by 0.1 interline or more, the
+  curve's middle is half a line thickness inside the run's outer end. `SlurInfo.computeSideModel` defines a side
+  model by its three points moved there, and `computeImpacts` measures a side model on its points moved there too
+  (`sidePoints`). Global models (and a slur no longer than a side, whose side model is the global one) stay on the
+  skeleton points: moving every point made pieces of staff line merged with something look like curves (Wichita
+  12's voice tie came out twice, bar 32's F4 tie went to the D4), and leaving merged points out of
+  the fits did the same (Wichita 32–33: a stretch of the D5 line took the B4 tie's arcs).
+- `addArc` lets an extension through when the new side model bends against the slur but is flat over its side
+  (sagitta ≤ 0.07 interline: `isFlat`), unless the arc added is a piece of bare staff line — one interline or more,
+  4 points in 5 on a line with nothing sticking out (`isAlongLine`): without that guard a short tie's left extension
+  ran along the line for 400 px and the purge of shorter candidates (`purgeShortests`) dropped the tie (Killing
+  46–47's F♯4).
+
+Ties of a chord tied over the barline lie one above the other along the lines, and two of them could be linked to
+the same two heads, the ones nearest both curve ends (Too Sweet's [D4 G4 B♭4 D5] whole notes: D5 tied twice, B♭4
+not at all — 5 bars on engine 15 already, more once the ties above are found; Piano Man's accordion [A3 C4 F4] in
+151; Stumblin' In 5's [C4 E4 A4]). `SlurInter.checkStaffTie` now looks, when another curve links the very same two
+heads (`twinOf`), for another pair right at this curve's ends (`tieAlternativePair`: each as `tieAlternative` sees
+one head — `altDy`, now shared —, tie-compatible, not the end of another tie, the space between clear) and moves
+the curve there; when both twins could move, the one whose ends lie farther from the heads (`endsDistance`).
+
+A/B, native, engine 15 (0001–0015) vs + 0017, the owner's nine songs (the trace on, as the browser runs it), every
+changed bar checked against the PDF's 300-dpi rendering (the clean build and the debug build it came from, run
+apart, gave the same tie changes):
+
+| song | tie pairs | bars changed | what |
+|---|---|---|---|
+| Too Sweet | 102 → 144 | 52 + 3 | the right hand's whole-note chords tied over the barline (17–22, 41–46, 49–54, 65–70, 81–86, 89–94, 97–102, 107–110, 113–118; 67–68 over the line break), the twin ties on D5 (41, 43, 81, 83, 89, 91, 93, 113, 115) moved to B♭4; the voice's slurs 67 (G4 → B♭4) and 119–120 (D5 → B♭4) as printed |
+| Goodbye Yellow Brick Road | 144 → 160 | 26 | left hand 15, 17–18, 23, 32–33 (and the voice 32–33), 52–53, 60, 68, 77, 88–89, 103–105, 133–137; the accidentals they carry: E♭3 33, D♭2/D♭3 89, E♭1/E♭2 104–105, D♭3 134, E♭3 136–137; the voice's phrase slurs 31–33, 74–76 |
+| Yellow Submarine | 52 → 65 | 25 | voice C♯5 17, G♯4 31, C♯5 49, 57; right hand C♯5 1, 17, 25, F♯4 3, 51; left hand C♯3 7, 17, 23, 55; 59: the half at the line break on the F♯4, not on C♯4 (still a slur) |
+| The Longest Time | 2 → 7 | 10 | left hand B♭2 50–51, C3 52–53, E♭3 56–57, C3 60–61, B♭2 64–65 |
+| Piano Man | 85 → 89 | 8 | voice C5 71–72; accordion [A3 C4 F4] 151–152 (twin moved), C5 185–186; the voice's slur 211–212 from the tied B4 |
+| Wichita Lineman | 73 → 76 | 4 | voice D5 19–20; right hand A4 and F♯4 11–12 (the continuation F♯4, was F4) |
+| Hey, Little Songbird | 81 → 83 | 2 | right hand C4 42, 57 (half note into the beat-3 eighth) |
+| Killing Me Softly | 183 → 184 | 2 | right hand B3 40–41 |
+| Stumblin' In | 244 → 245 | 1 | right hand 5: the twin tie on C4 moved to E4 |
+
+Other bars changed only by dots that differ between any two runs of engine 15 (0016 makes them deterministic):
+Killing 20, Stumblin' In 17, 55, 59, Piano Man's accordion 168, Songbird 32, Yellow Submarine 64. No regression:
+every changed note checked against the print.
+
+Round 2's tie findings, before → after: within a system 38 → 12 (24 fixed here, 2 more — Yellow Submarine's right
+hand 23 and 55 — by `restoreTies`' rule 2, which now reaches a tune note held over an inner voice); across a break
+8 → 8 (Yellow Submarine 59–60's right-hand half now on the right head); into or out of endings 6 → 6; the accidentals
+4 → 2 (Goodbye Yellow Brick Road 33 here, Killing 40–41 by `restoreTies`' new rule 5). Not fixed:
+- ties along a line still not assembled: The Longest Time 54 and Piano Man 219–220 (the extension through the
+  merged stretch fails the side distance by a hair, 1.85 / 2.21 px for 1.70), Yellow Submarine 11 (2.40 px measured
+  on the moved points), Goodbye Yellow Brick Road 34 (the tie's ends merge into a staff-line arc longer than five
+  interlines, classified `IRRELEVANT`: the middle arc ends 34 px from each head, the link area reaches 2 interlines);
+- a tie whose ends lie *on* a staff line inside the staff (Yellow Submarine's right-hand G♯4 23, 31, 55, along the
+  B4 line; 23 and 55 now tied by `restoreTies`' rule 2, 31 not — the tune is alone in its strike there): its end
+  parts are purged as staff line (`purgeStaffLines`) and the middle arc stops 25–36 px short of the heads;
+- no curve at all: Wichita 19's ties between 16th chords (≈ 20 px), Songbird 47 (into a triplet) and 76–77, Goodbye
+  Yellow Brick Road 96–97 (an eighth on ledger lines tied over the barline, its D♭ lost with it), Piano Man's
+  accordion 164, 165, 167 (its G4 held under changing chords: no curve for 164→165);
+- across breaks: one half or both never found (Goodbye Yellow Brick Road 73–74 — the first half is there, as a slur
+  —, 95–96, Songbird 68–69, 77–78, Wichita 27), Piano Man 202–203 (both halves connected, the right one on A4: a
+  slur), Piano Man 132 (after a dropped fill box);
+- into or out of endings (Killing 40 ×2, Stumblin' In 60, 77, 78, Wichita 30): a tie-in or tie-out arc with no head
+  on one side. Sing and Play strike a note again after a jump anyway; the accidental a tie-in carries is
+  `restoreTies`' rule 5.
+
 `0018` — **A chord dotted on half its heads is dotted.** Rounding the half up instead (`Math.floor(mean + 0.5)`), on
 top of 0016: on the nine songs it changes exactly those seven chords — Piano Man 100, 191, 192, 202 and Yellow
 Submarine 3 (both chords), 4 (with the rest of the bar, both hands, half a beat later) — all as printed, and nothing
-else. (Numbered after the ties' 0017, which was being written at the same time; renumbered at the release if needed.)
-
+else. 
 `build.sh` applies the patches with `git am --keep-cr`: the upstream sources are CRLF.
 
 ## StripVolatile (applied to every jar)
