@@ -59,7 +59,7 @@ patterns: 8 small notes, 11 navigation marks, 12 dots, 13 flags, 14 melisma syll
 - **Flaky dots:** 5 bars that got worse are chord dots the engine assigns differently from run to run (9 bars flip across 14 builds).
 - **Triage:** scratchpad `acc/triage15.md` (with `triage15/` tools).
 - **Round 2's P1 patterns, in progress:**
-  - 1. stacked chord dots lost, nondeterministically (20 findings): engine agent, worktree `aud-dots` (branch r2-dots, from the engine-15 release in `relwork/audiveris`), patch 0016.
+  - 1. stacked chord dots lost, nondeterministically (20 findings): **done** — patches 0016 (a chord's dots checked top down; the engine's exports are now the same run to run) and 0018 (a chord dotted on half its heads is dotted), committed (d91b1df), not built. 20 → 1 left (Songbird 121) + 1 new (Songbird 43's G2). Branch `r2-dots-half` in `aud-dots`, install `inst-dots-half`, run `acc/h1` = the base for what follows.
   - 2. ties still lost, mostly within a system (56): engine agent, worktree `aud-ties` (branch r2-ties), patch 0017, plus any restoreTies case.
-  - 3. cue-size heads (66): next, once one of the two is done (the CPU is shared).
+  - 3. cue-size heads (66) + 8 grace notes: engine agent, worktree `aud-cue` (branch r2-cue from r2-dots-half): the `smallHeads` switch A/B first, then a patch 0019 if merges persist.
 - **Later:** the P2s (flags, Piano Man's LH octaves, navigation marks, melisma syllables, grace notes).
