@@ -400,6 +400,25 @@ Check:
 - jank A3/A5.
 - Device: the Piano at home on the iPad.
 
+### Phase 5 — as built (2026-11-21; not bumped or deployed yet)
+
+- **5.1 `public/takerhythm.js`:** `metricOf`, `rhythmOf`, `phraseRhythm`, `feltBeat`, `meterAt`, `measureAt`, moved out of sing.js unchanged but for their inputs. They take explicit arguments: `metricOf(score, notes, lines, qToT)`; `rhythmOf({ s, v, cal, stopAt, settings, take, score, notes, lines, qToT, tapped, songPhrases })`, where `tapped` is `useMap && tmap` and `songPhrases()` is the song's phrases while guiding, asked only for a free take, as before. It imports rhythm.js and `PRACTICE`. sing.js keeps wrappers: `meterAt`, `measureAt`, `feltBeat`, `metricOf()` and `rhythmOf(s, v, cal, stopAt, settings)`. Its rhythm.js import is down to `makeFeatures`, `findClicks`, `tolOn`. Checked: a diff of the moved block against HEAD's shows only the arguments (and `P.PRACTICE` → `PRACTICE`; `phraseRhythm`'s unused `per` dropped).
+  - The copies went. rhythmharness.mjs `metricFor` builds a one-meter score (4/4, or 6/8 for `div: 3`) and calls the real `metricOf`. guidedverdicts.mjs's `phraseRhythms` (its "reference for the integrator") is gone: `round()` builds the session and the take as `startSing(part)` / `finishSing` would and calls the real `rhythmOf`, then prOf's `{ ...phrase, notes }`.
+  - **Numbers.** rhythmcases.mjs: every printed line identical (42 PASS). practicesim.mjs: identical. guidedverdicts.mjs: **the copy had drifted**, in three ways:
+    1. `cover`: the real code takes one span (first note → last note's end, lead-shifted); the copy took the notes' covers weighted by length. 99 → 100% (on time, breathy first syllable), 98 → 99% (a run's 2nd phrase). No verdict changed.
+    2. A phrase's `obs[].li` is its index in the span (0, 1) in the real code, the song's phrase index (1, 2) in the copy. Nothing reads it (timeVerdict filters by scope, coach by `j`).
+    3. **The counting slip after a quiet rest inside a run** (v76's review, in sing.js since): the copy never had it. A run's 2nd phrase now has a lag: 0.00 beats on time, 1.00 a beat late. "run: 2nd phrase a beat late" was `try` "Let the beat lead" (rushing) on the copy and is now `slip` "Count in — “as” a beat sooner": the documented rule (CLAUDE.md, Guided practice → Verdicts). The check "lag only on the span's first phrase" encoded the copy's rule. It is now "an entry lag on the first phrase and after the rest, both on time", plus one new check that the late 2nd phrase is a slip with "a beat sooner". 26 + 1 checks pass where 27 did (28 in all).
+- **5.2:** `tapQ = () => feltBeat(meterAt(entryIdx)).q`. `unitGlyph` gained 𝅘𝅥𝅯 (0.25) and ♪. (0.75), so 12/16 reads "♪. = 120" rather than falling back to ♩. taptiming.cjs (now on lib/check.cjs and lib/paths.cjs; its screenshot goes to SHOTS) taps every 0.5 s, timed in the page, on four fixtures. Two of them are new in tools/fixtures/sing/: three8 (3/8) and twelve16 (12/16).
+  - pickup8 (4/4): ♩ = 120, ♩=120. six8 (6/8): ♩. = 120, ♩=180. Both are the same before and after, as is the default song (3/4).
+  - three8: ♪ = 120, ♩=60. On HEAD's build it read ♩. = 120, ♩=180.
+  - twelve16: ♪. = 120, ♩=90. HEAD: ♩ = 120, ♩=30.
+  - On HEAD's build the four new 3/8 and 12/16 checks fail (15 of 19 pass); here all 19 pass.
+- **5.3:** trace.js keeps `STEPS`. readerstate.js imports it and exports it again; omr.js imports it with `createTrace` and re-exports it (importer.js still takes it from omr.js). The tools' own lists stay: tracecheck.mjs is the trace grammar's independent check, importcontract.mjs the contract's.
+- **5.4:** shell/pianoview.js copies play.js's `acStuck`. A `stuck` flag: `fresh()` replaces a stuck context too. A new `wake(a, how)` races the resume against 1.5 s; a "tap" (a key's lift) still pending then marks the context stuck, a "press" never. The press and the lift's resume go through it; the first-tap unlock is unchanged, as Play's `unlockPlay`. `resonateDebug().piano.stuck`. Nothing else in the sound path changed.
+  - stuckctx.cjs (now on lib/check.cjs) has a Piano case: the shell at home on an iPad, its Piano on its own. A tap sounds. Then the context is suspended and its resume never settles from then on (a context whose resume once hung stays dead, as on iOS; Sing's case behaves the same with it). The next tap is silent and the context is marked stuck. The tap after that sounds on a new context.
+  - On HEAD's build that last tap is silent on the same dead context (2 of 5 Piano checks fail). Here all 10 pass, Sing's included.
+- **Checks:** fast tier 17 PASS. rhythmcases, guidedverdicts, practicesim compared above. taptiming 19/19, stuckctx 10/10. tracejs, tracecheck ×3, importcontract PASS; reader.cjs greensleeves and greensleeves3-real 97/97 each. Not confirmed (the job was stopped before it reported them): guided.cjs BLEED=1, rhythmpage, review, countin, timingcases, shellmods, jank A3/A5 and the full main run — run them before the review.
+
 ## Phase 6 — Docs restructure (no release)
 
 See "Docs restructure" below. Do it after Phases 1–5, so the docs describe the code as it ends up.
