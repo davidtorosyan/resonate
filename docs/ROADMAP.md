@@ -14,12 +14,13 @@ live in CLAUDE.md ("UI principles").
 - [x] The connector broken by v91's logging (every signed-in POST 400): fixed, function version 8 (docs/CONNECTOR.md "Incident").
 - [ ] ▶ D round 1 release, **v93**:
   - Done: engine 15 (patches 0011–0015, jars built, ENGINE / ENGINE_N 15, committed) and the clean-ups (de820b7).
+  - Done: the clean-up review. 13 confirmed (2 important: a tie across a key change rewriting the held pitch; the Full score losing its endings under a sparse top part); the findings are in scratchpad `review-cleanups-findings.md`.
+  - Done: libcore, songlib, tiecases, jobstore, shell all pass with engine 15.
+  - Running: a fixing agent for the 13 findings (one check each, the owner's 9 songs diffed against the PDFs).
   - Next:
-    1. Resume the clean-up review (workflow `review-cleanups`, run wf_80e7f4b4-d6b; the owner had to stop it).
-    2. Fix what it confirms.
-    3. Run libcore, songlib, tiecases, jobstore and shell.
-    4. Bump to 93 and deploy.
-    5. The owner presses **Reconvert all** ("v10 → v15" badges).
+    1. Bump to 93 and deploy.
+    2. The owner presses **Reconvert all** ("v10 → v15" badges).
+  - In parallel: round 2's picture pairs from the engine-15 exports (scratchpad `acc/pairs15/`, `pairs15.sh`).
 - [ ] The connector: redeploy resonate.ts for b07e5f0's "📡 at the top of Resonate" wording (minor; batch it with the next function change).
 - [ ] C: tech debt. docs/CUTOVER.md "Left for cleanup C" (the old pages, away.js, tuner.html + app.js, etc.), dead code, and an audit (a workflow).
 - [ ] D round 2. Compare again (tools/accuracy/pairs.cjs on engine-15 conversions; the native `acc/r15` exports work before the owner reconverts). Then:
