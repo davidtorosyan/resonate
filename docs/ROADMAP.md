@@ -16,7 +16,7 @@ live in CLAUDE.md ("UI principles").
   - Engine 15 (patches 0011–0015), the clean-ups (de820b7), and the review's 13 fixes (75b3f4e).
   - Deployed. The owner presses **Reconvert all** (songs show "v10 → v15").
 - [x] The connector's 📡 wording: moved into E2. The button's icon changes there, so the hint text (resonate.ts, coaching.ts) changes once, with one redeploy.
-- [ ] ▶ C: tech debt. docs/CUTOVER.md "Left for cleanup C" (the old pages, away.js, tuner.html + app.js, etc.), dead code, and an audit (a workflow).
+- [ ] ▶ C: tech debt. Planning: workflow `cleanup-plan` (run wf_3a98ebea-375; four read-only lenses — dead code, the old pages / the shell's mounting, duplication, tests + docs) writes docs/CLEANUP.md, a phased plan; then the phases, one at a time, with their checks. docs/CUTOVER.md "Left for cleanup C" (the old pages, away.js, tuner.html + app.js, etc.), dead code, and an audit (a workflow).
 - [ ] D round 2. Compare again (tools/accuracy/pairs.cjs on engine-15 conversions; the native `acc/r15` exports work before the owner reconverts). Then:
   - pattern 4: cue-size second voices (Stumblin' In's duet, Too Sweet's thirds), which need cue-head detection;
   - the P2 patterns: 8 small notes, 10 key flats at a system start, 11 navigation marks, 12 dots, 13 flags, 14 melisma syllables.
