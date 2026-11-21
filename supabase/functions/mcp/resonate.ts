@@ -218,8 +218,8 @@ async function statusData(sb: Sb) {
   return {
     devices,
     remote_device: remote ? remote.name : null,
-    hint: remote ? (remote.online ? null : `${remote.name} has 📡 Remote on but isn't in front right now (closed, in the background or asleep) — commands wait until it is.`)
-      : "No device has 📡 Remote on — ask the user to tap 📡 at the top of Resonate on the device they're using.",
+    hint: remote ? (remote.online ? null : `${remote.name} has its AI button on but isn't in front right now (closed, in the background or asleep) — commands wait until it is.`)
+      : "No device has its AI button on — ask the user to tap the AI button at the top of Resonate on the device they're using.",
     live_take: lt && takeStatus(lt) === "live" ? takeHead(lt) : null,
     ...st,
     capabilities: capabilitiesBrief(),
@@ -247,8 +247,8 @@ export async function startCoaching(sb: Sb) {
   return ok({ playbook: PLAYBOOK, now: { ...st, song, voice_profiles: profiles, recent_takes: (takes.data || []).map((t) => ({ ...takeHead(t as Json), headline: (t as Json).headline ?? null })) } });
 }
 
-// An action of the catalogue (catalog.ts), sent to the device with 📡 Remote on. The input is the
-// tool call's fields plus its args object; only the parameters the action takes go to the page.
+// An action of the catalogue (catalog.ts), sent to the device whose AI button is on. The input is
+// the tool call's fields plus its args object; only the parameters the action takes go to the page.
 export async function control(sb: Sb, input: Json, by = "Assistant") {
   const found = findAction(input.action);
   const scoreAct = found ? !!found.entry.score : String(input.action ?? "").startsWith("score_");
@@ -262,7 +262,7 @@ export async function control(sb: Sb, input: Json, by = "Assistant") {
   const ignored = checked.ignored.length ? { ignored_params: checked.ignored } : {};
   const { data: devs } = await sb.from("devices").select("id,name,remote,seen_at,state").eq("remote", true).limit(1);
   const d = devs?.[0] as Json | undefined;
-  if (!d) return no("No device has 📡 Remote on. Ask the user to tap 📡 at the top of Resonate on the device they're using.");
+  if (!d) return no("No device has its AI button on. Ask the user to tap the AI button at the top of Resonate on the device they're using.");
   const clean: Json = { ...checked.args, by };
   const st = await settings(sb);
   if (action === "sing") {
@@ -482,7 +482,7 @@ export async function getScoreView(sb: Sb) {
   const head: Json = {
     devices,
     score_open_on: shown.map((d) => d.name),
-    hint: shown.length ? null : "No device shows the Score right now (Resonate's Score). control_resonate score_open {song} opens it on the 📡 device.",
+    hint: shown.length ? null : "No device shows the Score right now (Resonate's Score). control_resonate score_open {song} opens it on the device whose AI button is on.",
   };
   if (!f) return okData({ ...head, highlight: null, how: HOW_TO_HIGHLIGHT });
   const d = (f.data as Json) || {};

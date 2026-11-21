@@ -104,6 +104,7 @@
   - change a tool's input schema or annotations;
   - remove or rename an action, query or parameter (keep the old one working, as an alias if it has to change);
   - rely on edited `instructions` or tool descriptions: those reach ChatGPT only after a Refresh, and Claude's apps only after a re-add.
+- **Rewording is fine** (a description's or the instructions' text, not its schema or annotations), as long as nothing depends on the new words reaching a client: say the same in the live answers (hints, errors, the playbook, `catalog.ts`'s `about` / `how`). A client with the old copy then reads the old words beside the new ones, which must still make sense together (2026-11-21: 📡 Remote → the AI button).
 - **The coaching playbook (`coaching.ts`) is live** (it's part of a tool answer) and can change at any time.
 - **Checks:**
   - `node --experimental-strip-types tools/mcpcatalog.mjs` runs offline and is in `regress.sh`.
@@ -141,13 +142,24 @@
 - The real `build()` was driven through the SDK's own `createMcpHandler` under Node with a fake Supabase client. `initialize` and `server/discover` give version `2026-11-20` and `listChanged: false`. `tools/list` has 15 tools and `ttlMs: 0`. `control_resonate` sends exactly the checked parameters, and `sing` still gets its `delay` / `prev_take`. `read_resonate`, the errors and the `get_status` brief all work.
 - `mcpcatalog.mjs` passes 18 of 18 checks.
 
+## What changed (2026-11-21, E2: the AI button)
+
+The device switch the assistant acts through is no longer 📡: it's the **AI button** at the top of Resonate (the letters A I, lit and pulsing while on), and it shows only once an assistant has connected to the account (`assistant_activity` has a row — the first tool call writes it, and its Realtime event shows the button at once). The connector's words follow; no tool, schema, annotation, action or query changed.
+- **Live (every client, from the deploy):**
+  - `resonate.ts`: `get_status`'s `hint` ("No device has its AI button on — ask the user to tap the AI button at the top of Resonate…", "<name> has its AI button on but isn't in front…"), `control_resonate`'s refusal with no such device, `get_score_view`'s hint. (The earlier undeployed change b07e5f0, "at the top of Resonate", is in these.)
+  - `coaching.ts` (the playbook): "(its AI button on)", the first-turn hint lines, the failure line ("No device has its AI button on", "Remote control is off" → "Tap the AI button at the top of Resonate.").
+  - `catalog.ts`: `QUERIES.status.about`, `capabilitiesData().how`; `VERSION` 2026-11-21 with a `CHANGES` line (shown by `get_capabilities`).
+- **Snapshot (reaches a client only after Refresh / re-add; nothing depends on it):** `index.ts`'s descriptions of `get_status` and `control_resonate` ("which one has its AI button on", "on the device whose AI button is on"). A client with the old copy reads "📡 Remote" there and "the AI button" in the answers; the answers are what it tells the user.
+- **Unchanged:** the page's own refusal "Remote control is off on this device." (it names the state, not the button; the playbook still maps it).
+- **Tests:** `tools/mcp1.cjs`'s no-device refusal now expects "AI button on" (it fails against the function until this is deployed). mcp1 / mcp2 wait for `#remote-btn` on sing.html / play.html: it now shows only with an `assistant_activity` row, which their own tool calls before that point write (the test user has one already).
+
 ## Deploy (the integrator)
 
-With the Supabase connector's `deploy_edge_function`: name `mcp`, `verify_jwt: false`, `import_map_path: "deno.json"`. Include the files `index.ts`, `resonate.ts`, `coaching.ts`, **`catalog.ts` (new)**, `deno.json` and `deno.lock`.
+With the Supabase connector's `deploy_edge_function`: name `mcp`, `verify_jwt: false`, `import_map_path: "deno.json"`. Include the files `index.ts`, `resonate.ts`, `coaching.ts`, `catalog.ts`, `deno.json` and `deno.lock` (all six, every time).
 
 Then — **always, before calling it done** — make one real signed-in call: a local run proves nothing about the edge runtime.
 1. Run `tools/mcp1.cjs` and `tools/mcp2.cjs` (live, test user) — or, quicker, call a Resonate tool from a session that has the connector (list_songs, get_score_xml).
-2. Check the function's logs for `mcp tools/list … v=2026-11-20`.
+2. Check the function's logs for `mcp tools/list … v=2026-11-21` (the version `catalog.ts` says).
 
 ## The owner, once
 

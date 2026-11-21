@@ -9,9 +9,10 @@
 // Rules: never remove or rename an entry or a parameter (old chats and old snapshots still send
 // them); add, then bump VERSION and add a line to CHANGES. No imports: node can test this file.
 
-export const VERSION = "2026-11-20";
+export const VERSION = "2026-11-21";
 export const CHANGES: { version: string; note: string }[] = [
   { version: "2026-11-20", note: "get_capabilities and read_resonate; control_resonate takes any action listed by get_capabilities, its parameters as fields or inside args." },
+  { version: "2026-11-21", note: "The device switch is the AI button at the top of Resonate (it was 📡 Remote), shown once an assistant has connected; answers and the playbook name it." },
 ];
 
 export type Param = {
@@ -54,7 +55,7 @@ export const ACTIONS = {
 } satisfies Record<string, Entry>;
 
 export const QUERIES = {
-  status: { tool: "get_status", about: "What Resonate is doing: devices (📡 Remote, in front, what each shows), a live take, the start delay." },
+  status: { tool: "get_status", about: "What Resonate is doing: devices (whose AI button is on, in front, what each shows), a live take, the start delay." },
   coaching: { tool: "start_vocal_coaching", about: "The coaching playbook and what Resonate shows now." },
   songs: { tool: "list_songs", about: "Every song (My songs and samples), with when each was last sung." },
   song: { tool: "get_song", about: "A song's melody as Resonate reads it: key, tempo, meter, range, every lyric line with its notes.", params: { song: { ...song, required: true } } },
@@ -142,7 +143,7 @@ const render = (book: Record<string, Entry>) => Object.fromEntries(Object.entrie
 export function capabilitiesData() {
   return {
     version: VERSION,
-    how: "control_resonate {action, …params} acts on the device with 📡 Remote on; read_resonate {what, …params} reads. Give parameters as fields or inside args. This list grows over time without the tools changing: when the user wants something your other tools don't cover, look here.",
+    how: "control_resonate {action, …params} acts on the device whose AI button is on; read_resonate {what, …params} reads. Give parameters as fields or inside args. This list grows over time without the tools changing: when the user wants something your other tools don't cover, look here.",
     control_resonate: render(ACTION_BOOK),
     read_resonate: render(QUERY_BOOK),
     changes: CHANGES.slice(-5),

@@ -2,8 +2,9 @@
 //  1 an assistant connects the way ChatGPT/Claude do: dynamic client registration → authorize →
 //    the consent page (served from this checkout at the Site URL's address) → sign in → Allow →
 //    code → token (PKCE) → the MCP server answers; its token can't write the app's data
-//  2 the Sing page shares the song it opens; 📡 Remote on → control_resonate opens a song, sets
-//    a key, plays Listen, stops; with 📡 off it's refused
+//  2 the Sing page shares the song it opens; the AI button on → control_resonate opens a song,
+//    sets a key, plays Listen, stops; with it off it's refused (the button shows only once an
+//    assistant has connected: this run's own tool calls before part 2 write assistant_activity)
 //  3 a take started from the assistant: get_live_lines returns lines while it's sung; at the end
 //    get_take has every line final and the page's review
 const { chromium } = require('playwright');
@@ -108,13 +109,13 @@ async function tool(token, name, args = {}) {
   r = await fetch(`${SB}/rest/v1/coach_takes`, { method: 'POST', headers: H, body: JSON.stringify({ id: 'x', song_id: 'y', status: 'done', started_at: new Date().toISOString() }) });
   check(r.status >= 400, `no writes to takes (${r.status})`);
   r = await fetch(`${SB}/rest/v1/devices`, { method: 'POST', headers: H, body: JSON.stringify({ id: 'evil', remote: true }) });
-  check(r.status >= 400, `can't switch 📡 on itself (${r.status})`);
+  check(r.status >= 400, `can't switch the AI button on itself (${r.status})`);
   const noRemote = await tool(T, 'control_resonate', { action: 'stop' });
-  check(noRemote.error && /Remote on/.test(noRemote.raw), `control with no 📡 device: refused (${noRemote.raw.slice(0, 90)})`);
+  check(noRemote.error && /AI button on/.test(noRemote.raw), `control with no AI-button device: refused (${noRemote.raw.slice(0, 90)})`);
   const app = await fetch(MCP, { method: 'POST', headers: { Authorization: `Bearer ${(await (await fetch(`${SB}/auth/v1/token?grant_type=password`, { method: 'POST', headers: { apikey: KEY, 'content-type': 'application/json' }, body: JSON.stringify({ email: EMAIL, password: PW }) })).json()).access_token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' });
   check(app.status === 403, `an app session (no client_id) is refused (${app.status})`);
 
-  // --- 2: the Sing page, 📡, control ---
+  // --- 2: the Sing page, the AI button, control ---
   const D = await b.newContext({ viewport: { width: 390, height: 844 } });
   await D.addInitScript(singer);
   const dp = await D.newPage();
@@ -131,7 +132,7 @@ async function tool(token, name, args = {}) {
   await dp.click('#remote-btn');
   await dp.waitForFunction(() => document.getElementById('remote-btn').dataset.on === 'true', null, { timeout: 10000 });
   const st = await tool(T, 'get_status');
-  check(st.data?.remote_device && st.data.devices.some((d) => d.remote_on && d.online), `get_status: 📡 on, online (${st.data?.remote_device})`);
+  check(st.data?.remote_device && st.data.devices.some((d) => d.remote_on && d.online), `get_status: the AI button on, online (${st.data?.remote_device})`);
   check(st.data?.start_delay_s === 4 && !('standing_instructions' in (st.data || {})) && /judge/i.test(st.data?.reminder || ''), `get_status: start delay ${st.data?.start_delay_s}, the coaching reminder, no standing instructions`);
   const coach = await tool(T, 'start_vocal_coaching');
   const csrc = fs.readFileSync('/home/user/resonate/supabase/functions/mcp/coaching.ts', 'utf8');
@@ -139,10 +140,10 @@ async function tool(token, name, args = {}) {
   check(coach.data?.playbook === lit('PLAYBOOK') && coach.data?.reminder === lit('REMINDER'), `the deployed playbook and reminder are the repo's, exactly (${(coach.data?.playbook || '').length} / ${lit('PLAYBOOK').length} chars)`);
   check(!coach.error && (coach.data?.playbook || '').length > 3000 && /control_resonate/.test(coach.data.playbook) && /get_take/.test(coach.data.playbook) && coach.data.now?.remote_device === st.data.remote_device && coach.data.now?.devices?.length && Array.isArray(coach.data.now?.voice_profiles) && Array.isArray(coach.data.now?.recent_takes) && coach.data.reminder,
     `start_vocal_coaching: the playbook (${(coach.data?.playbook || '').length} chars) and now (${JSON.stringify({ remote: coach.data?.now?.remote_device, showing: coach.data?.now?.devices?.[0]?.showing?.song?.title, takes: coach.data?.now?.recent_takes?.length })})`);
-  // The assistant's chip by 📡 (its registered name; the dot lit just after a call)
+  // The assistant's chip by the AI button (its registered name; the dot lit just after a call)
   await dp.waitForFunction(() => !document.getElementById('assistant-chip').hidden, null, { timeout: 10000 }).catch(() => {});
   const chip = await dp.evaluate(() => { const c = document.getElementById('assistant-chip'); return { hidden: c.hidden, text: c.textContent, active: c.dataset.active }; });
-  check(!chip.hidden && /Resonate test assistant/.test(chip.text) && chip.active === 'true', `the assistant's chip by 📡 (${JSON.stringify(chip)})`);
+  check(!chip.hidden && /Resonate test assistant/.test(chip.text) && chip.active === 'true', `the assistant's chip by the AI button (${JSON.stringify(chip)})`);
   let c = await tool(T, 'control_resonate', { action: 'set_key', semitones: 2 });
   check(!c.error && await dp.evaluate(() => document.getElementById('key-select').value) === '2', `set_key +2 (${c.raw.slice(0, 120)})`);
   c = await tool(T, 'control_resonate', { action: 'listen', line: 2 });
@@ -201,11 +202,11 @@ async function tool(token, name, args = {}) {
   const pg = await tool(T, 'get_progress', { song: 'amazing' });
   check(!pg.error && Array.isArray(pg.data?.takes), `get_progress (${pg.data?.takes?.length} takes)`);
 
-  // 📡 off: refused again
+  // The AI button off: refused again
   await dp.click('#remote-btn');
   await dp.waitForFunction(() => document.getElementById('remote-btn').dataset.on === 'false', null, { timeout: 10000 });
   c = await tool(T, 'control_resonate', { action: 'stop' });
-  check(c.error, '📡 off → control refused');
+  check(c.error, 'the AI button off → control refused');
 
   // --- the Assistants page: URL, the connected assistant, devices; Remove ends the connection ---
   await dp.goto(LOCAL + 'assistants.html');
