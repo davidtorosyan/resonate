@@ -2,7 +2,7 @@
 // (a WebAssembly JVM) inside a Web Worker (omr-worker.js), with OCR by the
 // WebAssembly build of Tesseract (ocr-engine.js) in the same worker.
 //
-//   const omr = await import('./omr/omr.js?v=94');
+//   const omr = await import('./omr/omr.js?v=95');
 //   const { mxls, title, log } = await omr.convertPdf(file, { onProgress, onEvent });
 //
 // Each conversion runs in a new worker (Audiveris keeps global state per Java runtime), so a page
@@ -10,8 +10,8 @@
 //
 // See omr/README.md for how the pieces are built and licensed.
 
-import { renderPdf, buildTiff, placeholder } from './pdfprep.js?v=94';
-import { createTrace, EXPORT_LOST } from './trace.js?v=94';
+import { renderPdf, buildTiff, placeholder } from './pdfprep.js?v=95';
+import { createTrace, EXPORT_LOST, STEPS } from './trace.js?v=95';
 
 const BASE = new URL('.', import.meta.url).href;          // .../omr/
 
@@ -42,9 +42,8 @@ const JARS = [
   'jsr305-3.0.2.jar', 'angus-activation-2.0.2.jar', 'jakarta.activation-api-2.1.3.jar', 'txw2-4.0.5.jar', 'istack-commons-runtime-4.1.2.jar',
 ];
 
-// Audiveris sheet steps, in order (for progress reporting).
-export const STEPS = ['LOAD', 'BINARY', 'SCALE', 'GRID', 'HEADERS', 'STEM_SEEDS', 'BEAMS', 'LEDGERS', 'HEADS',
-  'STEMS', 'REDUCTION', 'CUE_BEAMS', 'TEXTS', 'MEASURES', 'CHORDS', 'CURVES', 'SYMBOLS', 'LINKS', 'RHYTHMS', 'PAGE'];
+// Audiveris sheet steps, in order (for progress reporting): trace.js's list.
+export { STEPS };
 
 // --- Progress from Audiveris's log lines (when there's no trace) ----------------------
 // Lines look like:  INFO  [killing#3]   null 0    | HEADS   — a one-page book has no "#N":
@@ -209,7 +208,7 @@ export async function convertPdf(input, opts = {}) {
     onProgress?.({ phase: 'recognize', sheet, sheets: sheetCount, page: pageOf(sheet), step: name, fraction: done / (sheetCount * STEPS.length) });
   };
   const classpath = JARS.map((j) => `/app${new URL(`lib/${j}`, BASE).pathname}`).join(':');
-  const worker = new Worker(`${BASE}omr-worker.js?v=94`);
+  const worker = new Worker(`${BASE}omr-worker.js?v=95`);
   const stop = () => worker.terminate();
   signal?.addEventListener('abort', stop);
   try {
