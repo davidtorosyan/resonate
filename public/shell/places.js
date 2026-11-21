@@ -9,7 +9,7 @@
 // Their scripts look their elements up in the sheet first (window.resonateRecord / resonateVoice /
 // resonateAssistants .root — sing.html has a #play and a #status, play.html a #strip).
 import { scopeCss } from "./scopecss.js?v=93";
-import { ic, openOverlay, closeOverlay, overlayOpen } from "./chrome.js?v=93";
+import { ic, openOverlay, closeOverlay, overlayOpen, staleShell } from "./chrome.js?v=93";
 import { reduced } from "./motion.js?v=93";
 
 const $ = (id) => document.getElementById(id);
@@ -27,7 +27,14 @@ const PLACES = {
   assistants: { page: "assistants.html", title: "Assistants", hook: "resonateAssistants", scope: "asst", mic: false, body: true, extra: [],
     load: () => import("../assistants.js?v=93") },
 };
-export const placeOf = (href) => Object.keys(PLACES).find((k) => PLACES[k].page === String(href || "").replace(/^\.\//, "").split(/[?#]/)[0]) || null;
+// A link's place: the shell's own address for it (./?open=voice), or — for one more release — its
+// old page (voice.html).
+export function placeOf(href) {
+  const h = String(href || "").replace(/^\.\//, "");
+  const m = /^(?:index\.html)?\?(?:[^#]*&)?open=([a-z]+)(?:[&#]|$)/.exec(h);
+  const name = m ? m[1] : Object.keys(PLACES).find((k) => PLACES[k].page === h.split(/[?#]/)[0]);
+  return name && Object.hasOwn(PLACES, name) ? name : null;
+}
 
 // The shell's frame for a page (after its scoped CSS: higher specificity, so it wins).
 const CSS = `
@@ -63,6 +70,7 @@ export function mountPlaces({ onBefore = () => {}, onLoad = () => {}, onClose = 
       const res = await fetch(`${P.page}?v=${encodeURIComponent(v)}`);
       if (!res.ok) throw new Error(`${P.title} didn't load (${res.status})`);
       const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+      if (staleShell(doc, name)) return new Promise(() => {}); // (another version: reloading)
       if (!$("place-css")) {
         const st = document.createElement("style");
         st.id = "place-css";

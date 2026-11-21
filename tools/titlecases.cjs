@@ -4,7 +4,7 @@ const { chromium } = require('playwright'); const fs = require('fs');
   let fails = 0;
   const check = (label, got, want) => { const good = got === want; if (!good) fails++; console.log(`${good ? 'PASS' : 'FAIL'} ${label}: ${JSON.stringify(got)}${good ? '' : ` (want ${JSON.stringify(want)})`}`); };
   p.on('pageerror', (e) => { fails++; console.log('FAIL page error', e.message); });
-  await p.goto('http://localhost:8097/resonate/sing.html'); await p.waitForTimeout(300);
+  await p.goto('http://localhost:8097/resonate/tools.html'); await p.waitForTimeout(300);
   // pdfTitle on synthetic pages (Musicnotes template + others)
   const L = (text, size) => ({ text, size });
   const cases = {

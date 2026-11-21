@@ -480,10 +480,10 @@ const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
     d = await D(page);
     ok(d.step === 0 && Math.abs(d.sp - auto0) < 1e-6 && (await page.evaluate(() => localStorage.getItem("resonate.play.zoom"))) === null, `Z7 + : back to the default (${d.sp})`);
     // the full score has its own steps; a stale absolute size ("16", v79's first form) is ignored
-    await page.evaluate(() => { localStorage.setItem("resonate.play.zoom", "16"); localStorage.setItem("resonate.play.size", "16"); });
+    await page.evaluate(() => { localStorage.setItem("resonate.play.zoom", "16"); });
     await page.reload(); await ready(page);
     d = await D(page);
-    ok(d.step === 0 && Math.abs(d.sp - auto0) < 1e-6 && (await page.evaluate(() => localStorage.getItem("resonate.play.size"))) === null, `Z8 a stale "16" ignored, v78's pref removed (${d.sp})`);
+    ok(d.step === 0 && Math.abs(d.sp - auto0) < 1e-6, `Z8 a stale "16" ignored (${d.sp})`);
     // the most steps: + to the cap disables +, − to 5 px disables −
     for (let i = 0; i < 12; i++) { if (await page.isDisabled("#bigger")) break; await page.tap("#bigger"); await sleep(350); }
     d = await D(page);

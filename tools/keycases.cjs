@@ -74,7 +74,7 @@ const cases = {
   const b = await chromium.launch(); const p = await b.newPage();
   let fails = 0;
   p.on('pageerror', (e) => { fails++; console.log('FAIL page error', e.message); });
-  await p.goto('http://localhost:8097/resonate/sing.html'); await p.waitForTimeout(300);
+  await p.goto('http://localhost:8097/resonate/tools.html'); await p.waitForTimeout(300);
   for (const [name, xml] of Object.entries(cases)) {
     const r = await p.evaluate(async (xml) => {
       const { fixOmrScore } = await import('/resonate/omr/fixscore.js?' + Math.random());

@@ -50,7 +50,7 @@ const SP = '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a9323
   const sessions = await p.evaluate(() => window.__notes.filter((x) => !x.endsWith('NaN')));
   console.log(JSON.stringify(await p.evaluate(() => window.__notes))); ok(sessions.every((x) => x.startsWith('playback')), 'listen notes play in the playback session');
   await p.click('#sing'); await p.waitForTimeout(1500);
-  st = await p.evaluate(() => ({ bar: !document.getElementById('loopbar').hidden, sess: window.resonateDebug().session, pct: document.getElementById('score-pct').textContent, sing: document.getElementById('sing').textContent }));
+  st = await p.evaluate(() => ({ bar: !document.getElementById('loopbar').hidden, sess: window.resonateDebug().session, sing: document.getElementById('sing').textContent }));
   console.log('stopped:', JSON.stringify(st));
   const back = await p.evaluate(() => window.resonateDebug().take);
   ok(!st.bar && !st.sess && back.endT === songTake && !back.part && /again/.test(st.sing), 'Stop: loop gone, the whole-song take is back');

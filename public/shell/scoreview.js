@@ -9,6 +9,7 @@
 // tells it when the region changed size (resize — keep: the Piano came or went, what's shown stays),
 // and play.js's own ResizeObserver catches the rest (a rotation).
 import { scopeCss } from "./scopecss.js?v=93";
+import { staleShell } from "./chrome.js?v=93";
 
 const $ = (id) => document.getElementById(id);
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
@@ -62,6 +63,7 @@ export function mountScore({ version, hooks, onLoad = () => {} }) {
       const res = await fetch(`play.html?v=${encodeURIComponent(version.replace(/^v/, ""))}`);
       if (!res.ok) throw new Error(`The Score didn't load (${res.status})`);
       const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+      if (staleShell(doc, "score")) return new Promise(() => {}); // (another version: reloading)
       const style = document.createElement("style");
       style.id = "play-css";
       style.textContent = scopeCss(doc.querySelector("style")?.textContent || "", { root: ".score-root", scope: ".play-scope" }) + OVERRIDES;

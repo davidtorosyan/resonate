@@ -1,4 +1,5 @@
-// WebKitGTK: songs saved the old way (no index), then open the Sing page: does My songs list them?
+// WebKitGTK: songs saved the old way (no index), then the library on a page again (tools.html: no
+// page of its own runs): does listSongs list them — the index rebuilt from the database?
 const W = 'http://127.0.0.1:4444';
 const j = async (method, path, body) => (await fetch(W + path, { method, headers: { 'content-type': 'application/json' }, body: body && JSON.stringify(body) })).json();
 const s = await j('POST', '/session', { capabilities: { alwaysMatch: { browserName: 'MiniBrowser',
@@ -6,7 +7,7 @@ const s = await j('POST', '/session', { capabilities: { alwaysMatch: { browserNa
 const sid = s.value.sessionId;
 await j('POST', `/session/${sid}/timeouts`, { script: 120000 });
 const run = async (script) => (await j('POST', `/session/${sid}/execute/async`, { script, args: [] })).value;
-const url = 'http://localhost:8097/resonate/sing.html';
+const url = 'http://localhost:8097/resonate/tools.html';
 await j('POST', `/session/${sid}/url`, { url });
 await new Promise((r) => setTimeout(r, 3000));
 console.log('at:', JSON.stringify(await run(`arguments[arguments.length - 1](location.href + ' secure=' + isSecureContext)`)));
@@ -24,9 +25,8 @@ await j('POST', `/session/${sid}/url`, { url });
 await new Promise((r) => setTimeout(r, 4000));
 console.log('list:', JSON.stringify(await run(`const done = arguments[arguments.length - 1];
   (async () => {
-    const opts = [...document.querySelectorAll('#my-songs option')].map((o) => o.textContent);
     let lib = null, err = null;
     try { const L = await import('/resonate/library.js'); lib = (await L.listSongs()).map((s) => s.title); } catch (e) { err = String(e && e.stack || e); }
-    done({ opts, lib, err, status: document.getElementById('status').textContent, msg: document.getElementById('song-msg').textContent, ua: navigator.userAgent.slice(-40) });
+    done({ lib, err, ua: navigator.userAgent.slice(-40) });
   })();`)));
 await j('DELETE', `/session/${sid}`);

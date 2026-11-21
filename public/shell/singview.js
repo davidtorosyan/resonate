@@ -9,6 +9,7 @@
 // in Sing parks the tuner and stops the Score first (beforeSound), synchronously, so Sing's handler
 // finds no live track and sets its own audio session.
 import { scopeCss } from "./scopecss.js?v=93";
+import { staleShell, pageOpen } from "./chrome.js?v=93";
 
 const $ = (id) => document.getElementById(id);
 // Controls in Sing that can't start sound or a mic: a touch there leaves the tuner listening.
@@ -65,6 +66,7 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
     const res = await fetch(`sing.html?v=${encodeURIComponent(version.replace(/^v/, ""))}`);
     if (!res.ok) throw new Error(`Sing didn't load (${res.status})`);
     const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+    if (staleShell(doc, pageOpen() ? "sing" : null)) return new Promise(() => {}); // (another version: reloading — 📡 at home loads Sing hidden)
     const style = document.createElement("style");
     style.id = "sing-css";
     style.textContent = scopeCss(doc.querySelector("style")?.textContent || "", { root: ".sing-root", scope: ".sing-scope", main: ".s-main" }) + OVERRIDES;

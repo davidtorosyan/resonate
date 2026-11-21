@@ -211,7 +211,7 @@ const after = (log, marker) => log.slice(Math.max(0, log.indexOf(marker)));
       await s.waitForTimeout(2500);
       const pill = await s.evaluate(() => { const a = document.getElementById('import-pill'); return a ? [a.textContent, a.getAttribute('href')] : null; });
       // (tab A reads — it holds the engine's lock: ⟳, not paused; counted as the Reader: PDF page 3 of 4)
-      ok(pill && /⟳ PDF → Song 3\/4/.test(pill[0]) && pill[1] === 'pdf-import.html', `the Sing page's pill: ${JSON.stringify(pill)}`);
+      ok(pill && /⟳ PDF → Song 3\/4/.test(pill[0]) && pill[1] === './?open=import', `the Sing page's pill: ${JSON.stringify(pill)}`);
       await s.screenshot({ path: `${OUT}/sing-pill.png` }).catch(() => {});
       const q = await ctx.newPage(); watch(q, 'b');
       await q.goto(`${BASE}/resonate/pdf-import.html`);

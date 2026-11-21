@@ -153,9 +153,8 @@ const SP = '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a9323
   await p.tap('#sing'); await p.waitForTimeout(15000); await p.tap('#sing'); await p.waitForTimeout(1500);
   if (!(await p.$('#review[hidden]'))) await p.tap('#rv-close');
   const states = await p.evaluate(() => window.__states.filter((x) => x.note !== '–'));
-  const pct = (await p.textContent('#score-pct'));
   const off = states.filter((x) => x.st === 'off');
-  console.log('13 take', pct, 'voiced readout frames', states.length, 'off', off.length, off.slice(0, 6).map((x) => `${x.t.toFixed(2)} ${x.note} ${x.vs}`).join(' | '));
+  console.log('13 take', 'voiced readout frames', states.length, 'off', off.length, off.slice(0, 6).map((x) => `${x.t.toFixed(2)} ${x.note} ${x.vs}`).join(' | '));
   ok(states.length > 100 && off.length / states.length < 0.05, 'exact singing: readout red < 5% of the time');
   await p.evaluate(() => clearInterval(window.__follow));
   // 14. Layout on a short phone (390×664) after a take with Pitch on: chips stay above the footer.

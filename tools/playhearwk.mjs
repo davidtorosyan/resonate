@@ -52,17 +52,16 @@ try {
   // ▶: only the right hand; the left hand never lit, on the page or the keyboard
   await click("#play");
   ok(await waitFor("const x = window.resonateDebug().play.playback; return x.state === 'playing' && x.scheduled.length > 3;", 15000), "▶ playing");
-  let hushSeen = 0, lhKey = 0, lhLit = 0, lit = 0;
+  let lhKey = 0, lhLit = 0, lit = 0;
   for (let i = 0; i < 16; i++) {
     await sleep(150);
-    const x = await ex("const p = window.resonateDebug().play, x = p.playback; return { hush: x.hushEls.length, keys: x.strip.map((k) => k.hand), lh: x.litEls.filter((id) => p.facts[id]?.part === 'P2').length, lit: x.litEls.length };");
-    if (x.hush) hushSeen++;
+    const x = await ex("const p = window.resonateDebug().play, x = p.playback; return { keys: x.strip.map((k) => k.hand), lh: x.litEls.filter((id) => p.facts[id]?.part === 'P2').length, lit: x.litEls.length };");
     lhLit += x.lh;
     lit += x.lit;
     if (x.keys.includes("lh")) lhKey++;
   }
   let parts = await struckParts();
-  ok(parts.length > 0 && parts.every((p) => p.startsWith("P1|")) && hushSeen === 0 && lhLit === 0 && lit > 0 && lhKey === 0, `only the right hand struck (${parts.length}) and lit (${lit}), the left hand never lit (${hushSeen} .hush samples, ${lhLit} .play), never on the keyboard (${lhKey})`);
+  ok(parts.length > 0 && parts.every((p) => p.startsWith("P1|")) && lhLit === 0 && lit > 0 && lhKey === 0, `only the right hand struck (${parts.length}) and lit (${lit}), the left hand never lit (${lhLit} .play), never on the keyboard (${lhKey})`);
   // unmute while playing: the left hand struck again
   const tu = await ex("return window.resonateDebug().play.playback.now");
   await click('#hear button[data-key="P2"]');
@@ -71,7 +70,7 @@ try {
   ok(after.includes("P2") && after.includes("P1"), `LH unmuted while playing: struck again (${after.filter((x) => x === "P2").length} LH, ${after.filter((x) => x === "P1").length} RH)`);
   await click("#play");
   await sleep(300);
-  ok(await ex("const x = window.resonateDebug().play.playback; return x.state === 'idle' && !x.litEls.length && !x.hushEls.length;"), "■: idle, nothing lit");
+  ok(await ex("const x = window.resonateDebug().play.playback; return x.state === 'idle' && !x.litEls.length;"), "■: idle, nothing lit");
   // the score-pvg fixture's Full score: Voice / Piano / Guitar
   const xml = fs.readFileSync(FIX, "utf8");
   const id = await exa(`const done = arguments[arguments.length - 1]; import("./library.js?v=79").then((L) => L.addSong("score-pvg", arguments[0], { source: "file" })).then(done, (e) => done("ERR " + e));`, [xml]);

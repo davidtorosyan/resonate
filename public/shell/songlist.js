@@ -14,7 +14,7 @@ import { spaceChanged } from "../nav.js?v=93";
 import { forgetSong } from "../forget.js?v=93";
 import { titleFromFileName } from "../omr/importer.js?v=93";
 import { ENGINE_N } from "../omr/engine.js?v=93";
-import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=93";
+import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen } from "./chrome.js?v=93";
 
 const SONG_KEY = "resonate.sing.song";
 const $ = (id) => document.getElementById(id);
@@ -27,12 +27,11 @@ function setOpenSong(id, { newSong = false } = {}) {
     if (newSong) localStorage.removeItem("resonate.sing.verse"); // (as Sing's import)
   } catch {}
 }
-let opener = null; // (boot.js: the song in place — Sing, the Score; opts { sing, score }: shown for it)
+let opener = null; // (boot.js: the song in place — Sing, the Score; opts { sing, score }: shown for it — set before any UI exists)
 export const setOpener = (fn) => { opener = fn; };
 export function openSong(id, opts = {}) {
   setOpenSong(id);
-  if (opener) opener(id, opts);
-  else go("sing.html");
+  opener?.(id, opts);
 }
 
 const age = (t) => {

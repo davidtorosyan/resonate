@@ -57,9 +57,6 @@ function getOrCreateCerts() {
 
 const app = express();
 app.use(express.static("public"));
-app.get("/api/hello", (req, res) => {
-  res.json({ message: "Hello from Resonate!", time: new Date().toISOString() });
-});
 
 createHttpServer(app).listen(HTTP_PORT, HOST);
 const { cert, key } = getOrCreateCerts();

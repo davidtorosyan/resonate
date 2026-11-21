@@ -86,7 +86,7 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     if (reader) return reader;
     reader = mountReader(host, {
       minimized, onStop: stopImport,
-      links: { sing: "sing.html", play: "play.html" },
+      links: { sing: "./?open=sing", play: "./?open=score" },
       onMinimize: () => { if (overlayOpen("tray")) closeOverlay(); sheet.hidden = true; renderMini(); },
       onExpand: () => {
         sheet.hidden = false;

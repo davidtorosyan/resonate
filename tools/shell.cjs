@@ -162,7 +162,7 @@ async function runSize(sz) {
   // --- the account menu, signed out ----------------------------------------------------------------
   await p.click('#avatar');
   ok(await shown(p, '#acct') && /Everything works signed out/.test(await p.textContent('#acct')) && /Sign in/.test(await p.textContent('#acct')), 'account menu (signed out): Sign in, "Everything works signed out"');
-  ok(!(await p.$('#acct a[href="assistants.html"]')) && !!(await p.$('#acct a[href="voice.html"]')) && !!(await p.$('#acct a[href="tools.html"]')), 'signed out: Voice, Tools; no Assistants');
+  ok(!(await p.$('#acct a[href="./?open=assistants"]')) && !!(await p.$('#acct a[href="./?open=voice"]')) && !!(await p.$('#acct a[href="tools.html"]')), 'signed out: Voice, Tools; no Assistants');
   ok((await p.textContent('#acct .foot')).includes((await p.textContent('#version')).trim()), 'version line in the menu');
   const am = await rect(p, '#acct');
   if (sz.w >= 700) ok(Math.abs(am.w - 380) < 2 && am.y < 120, `tablet: a 380 px popover under the avatar (${am.w}×${Math.round(am.h)} at y ${Math.round(am.y)})`);
@@ -241,7 +241,7 @@ async function runSize(sz) {
   ok(await p.$eval('#avatar .face', (e) => e.textContent) === 'D' && !(await p.$eval('#avatar', (e) => e.hasAttribute('data-out'))), 'signed in: the email\'s initial');
   await p.click('#avatar');
   const txt = await p.textContent('#acct');
-  ok(/dave@mail\.com/.test(txt) && !!(await p.$('#acct a[href="assistants.html"]')) && !!(await p.$('#acct a[href="account.html"]')) && !!(await p.$('#acct a[href="voice.html"]')) && !!(await p.$('#acct a[href="tools.html"]')),
+  ok(/dave@mail\.com/.test(txt) && !!(await p.$('#acct a[href="./?open=assistants"]')) && !!(await p.$('#acct a[href="account.html"]')) && !!(await p.$('#acct a[href="./?open=voice"]')) && !!(await p.$('#acct a[href="tools.html"]')),
     'menu: email, Voice, Assistants, Tools, Account');
   ok(await p.$eval('#sync-row', (e) => e.getAttribute('aria-checked')) === 'false', 'Sync this device: off (resonate.sync.off)');
   await shot(p, sz, 'account-menu');
@@ -249,7 +249,7 @@ async function runSize(sz) {
   ok(await p.evaluate(() => localStorage.getItem('resonate.sync.off')) === null && await p.$eval('#sync-row', (e) => e.getAttribute('aria-checked')) === 'true', 'the switch turns it on (the pref removed)');
   await p.click('#sync-row');
   ok(await p.evaluate(() => localStorage.getItem('resonate.sync.off')) === '1', 'and off again (the pref set)');
-  await p.click('#acct a[href="voice.html"]'); // (v87: in place — shellplaces.cjs checks the places themselves)
+  await p.click('#acct a[href="./?open=voice"]'); // (v87: in place — shellplaces.cjs checks the places themselves)
   await p.waitForSelector('#place-voice', { state: 'visible', timeout: 5000 }).catch(() => {});
   ok(/index\.html/.test(p.url()) && await p.isVisible('#place-voice'), 'Voice → in place (still index.html)');
   await closeCtx(ctx);

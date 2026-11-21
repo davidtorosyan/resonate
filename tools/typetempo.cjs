@@ -7,7 +7,7 @@ const { chromium } = require('playwright');
   let answer = '174';
   p.on('dialog', (d) => (d.type() === 'prompt' ? d.accept(answer) : d.accept()));
   await p.goto('http://localhost:8097/resonate/sing.html'); await p.waitForTimeout(1500);
-  await p.evaluate(() => { localStorage.removeItem('resonate.sing.timing'); localStorage.setItem('resonate.sing.rate', '1'); });
+  await p.evaluate(() => { localStorage.removeItem('resonate.sing.timing'); });
   await p.reload(); await p.waitForTimeout(1500);
   const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
   const state = () => p.evaluate(() => ({ label: document.getElementById('tempo-select').selectedOptions[0].textContent, sum: document.getElementById('summary').textContent, msg: document.getElementById('song-msg').textContent, d1: window.resonateDebug().notes[1].t - window.resonateDebug().notes[0].t, q1: window.resonateDebug().notes[1].q - window.resonateDebug().notes[0].q }));

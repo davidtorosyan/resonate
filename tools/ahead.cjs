@@ -8,7 +8,7 @@ const fs = require('fs');
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   const fails = [];
   const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) fails.push(what); };
-  // 125%: the tempo is per song since v71 (resonate.sing.rate, the old global one, is deleted on load).
+  // 125%: the tempo is per song since v71 (resonate.sing.rates).
   const AT125 = { 'resonate.sing.song': 'amazing-grace', 'resonate.sing.rates': JSON.stringify({ 'amazing-grace': 1.25 }) };
   const page = async (store = {}) => {
     const ctx = await b.newContext({ viewport: { width: 390, height: 844 } });

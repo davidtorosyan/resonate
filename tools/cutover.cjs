@@ -19,6 +19,10 @@
 //      fallback link replaces the leaving page; without resonate.redirect an automated
 //      browser stays on sing.html; email links (an error, a token) at the root and on sing.html
 //      reach account.html
+//   G  a stale shell (cleanup C 3.2): sing.html / play.html / voice.html fetched with another badge (v0)
+//      → the shell reloads into ./?open=sing / score / voice before mounting it (no sing.js / play.js /
+//      voice.js asked for, nothing mounted as it leaves), and lands there; the second time within 10 min
+//      it mounts (no loop); not while something is under way; a matching badge mounts in place (F too)
 //   node -r ./harness/noshots.cjs cutover.cjs      (BASE=http://localhost:8097/resonate/; ONLY=iphone; PARTS=N,E)
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -27,7 +31,7 @@ const BASE = process.env.BASE || 'http://localhost:8097/resonate/';
 const ROOT_PATH = new URL(BASE).pathname; // '/resonate/'
 const FX = '/home/user/tools/fixtures';
 const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
-const PARTS = process.env.PARTS ? new Set(process.env.PARTS.split(',')) : null; // (R,S,L,B,N,F,E: their groups)
+const PARTS = process.env.PARTS ? new Set(process.env.PARTS.split(',')) : null; // (R,S,L,B,N,F,E,G: their groups)
 
 let passes = 0, fails = 0;
 const ok = (c, msg) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${msg}`); if (c) passes++; else fails++; return c; };
@@ -386,6 +390,79 @@ async function inert(sz) {
   await closeCtx(ctx, `${sz.n} inert`);
 }
 
+// --- G: a stale shell reloads instead of mixing versions ------------------------------------------
+// (the page fetched for a mount — sing.html, play.html or voice.html: `page` — answered with badge v0
+// while ctx.stale; what the shell had mounted as it left: sessionStorage __shellLeave)
+async function staleCtx(sz, page, seed) {
+  const ctx = await context(sz, { seed });
+  ctx.stale = true;
+  await ctx.route((u) => u.pathname.endsWith(`/${page}`), async (r) => {
+    const res = await r.fetch();
+    const body = await res.text();
+    r.fulfill({ response: res, body: ctx.stale ? body.replace(/(<span id="version"[^>]*>)v\d+(<\/span>)/, '$1v0$2') : body });
+  });
+  await ctx.addInitScript(() => {
+    if (!/\/resonate\/(index\.html)?$/.test(location.pathname)) return;
+    addEventListener('pagehide', () => {
+      try {
+        sessionStorage.setItem('__shellLeave', JSON.stringify({ sing: !!document.getElementById('sing-css'), score: !!document.getElementById('play-css'),
+          place: !!document.querySelector('#places > .sheet'), url: location.pathname + location.search }));
+      } catch {}
+    });
+  });
+  return ctx;
+}
+const docReqs = (ctx, t0, re) => ctx.reqs.filter((q) => q.at >= t0 && re.test(new URL(q.url).pathname + new URL(q.url).search));
+async function stale(sz) {
+  const K = { sing: ['sing.html', /\/sing\.js/], score: ['play.html', /\/play\.js/], voice: ['voice.html', /\/voice\.js/] };
+  for (const what of ['sing', 'score', 'voice']) {
+    const [page, script] = K[what];
+    const ctx = await staleCtx(sz, page, { 'resonate.sing.song': 'amazing-grace' });
+    const p = await ctx.newPage();
+    const t0 = Date.now();
+    // sing: Next-up (opens with Sing); score: the address (the Score shown for the song); voice: a link to its place
+    await p.goto(BASE + (what === 'score' ? '?open=score' : ''));
+    await p.waitForFunction(() => window.resonateDebug?.().tuner, null, { timeout: 15000 });
+    if (what === 'sing') { await p.waitForTimeout(300); await p.tap('#nextup'); }
+    if (what === 'voice') { await p.waitForTimeout(300); await p.evaluate(() => { const a = document.createElement('a'); a.href = './?open=voice'; document.body.append(a); a.click(); a.remove(); }); }
+    const d = what === 'voice' ? await until(p, (x) => x.place?.open === 'voice' && x.place.loaded.includes('voice') && p.loads > 1, 20000)
+      : await until(p, (x) => x.song?.open && (what === 'sing' ? x.song.loaded : x.song.scoreLoaded) && !x.song.moving && p.loads > 1, 30000);
+    await p.waitForTimeout(1500);
+    const fetched = docReqs(ctx, t0, new RegExp(`/${page.replace('.', '\\.')}\\?v=`))[0]?.at ?? Infinity;
+    const reload = docReqs(ctx, fetched, new RegExp(`^/resonate/\\?open=${what}$`));
+    const early = ctx.reqs.filter((q) => q.at >= fetched && q.at < (reload[0]?.at ?? Infinity) && script.test(q.url)).map((q) => q.url.split('/').pop());
+    const left = await p.evaluate(() => JSON.parse(sessionStorage.getItem('__shellLeave') || 'null'));
+    ok(fetched < Infinity && reload.length === 1 && p.loads === 2,
+      `${sz.n} G: ${page} with another badge → one reload into ./?open=${what} (${reload.length} reloads, ${p.loads} loads)`);
+    ok(!early.length && !!left && !left[what === 'voice' ? 'place' : what], `${sz.n} G: … before mounting it (${early.join(', ') || 'no script asked for'}; as it left: ${JSON.stringify(left)})`);
+    const there = what === 'voice' ? d?.place?.open === 'voice' : !!d?.song?.open && d.song.state?.song === 'amazing-grace' && d.song.set[what];
+    const stamp = await p.evaluate(() => sessionStorage.getItem('resonate.shell.stale'));
+    ok(there && !!stamp && atRoot(p) && !/open=/.test(p.url()), `${sz.n} G: … lands there: the second try within 10 min mounts it, no loop (${what === 'voice' ? d?.place?.open : JSON.stringify(d?.song?.set)}, ${p.url().split('/').slice(3).join('/')})`);
+    await closeCtx(ctx, `${sz.n} stale ${what}`);
+  }
+  // not while something is under way; a matching badge mounts in place
+  for (const how of ['busy', 'same']) {
+    const ctx = await staleCtx(sz, 'voice.html', {});
+    ctx.stale = how === 'busy';
+    const p = await ctx.newPage();
+    await p.goto(BASE);
+    await p.waitForFunction(() => window.resonateDebug?.().tuner, null, { timeout: 15000 });
+    await p.waitForTimeout(300);
+    const t0 = Date.now();
+    await p.evaluate((busy) => {
+      if (busy) window.resonateBusy = () => true;
+      const a = document.createElement('a'); a.href = './?open=voice'; document.body.append(a); a.click(); a.remove();
+    }, how === 'busy');
+    const d = await until(p, (x) => x.place?.open === 'voice' && x.place.loaded.includes('voice'), 15000);
+    await p.waitForTimeout(800);
+    const stamp = await p.evaluate(() => sessionStorage.getItem('resonate.shell.stale'));
+    const reloads = docReqs(ctx, t0, /^\/resonate\/\?open=/).length;
+    ok(d?.place?.open === 'voice' && p.loads === 1 && !reloads && !stamp,
+      `${sz.n} G: ${how === 'busy' ? 'another badge while something is under way' : 'a matching badge'}: Voice mounted in place, no reload (${d?.place?.open}; loads ${p.loads}, reloads ${reloads}, stamp ${stamp})`);
+    await closeCtx(ctx, `${sz.n} stale ${how}`);
+  }
+}
+
 // --- E: the escapes ----------------------------------------------------------------------------------
 async function escapes(sz) {
   {
@@ -469,6 +546,7 @@ async function escapes(sz) {
     if (part('N')) await leaving(sz);
     if (part('F')) await inert(sz);
     if (part('E')) await escapes(sz);
+    if (part('G')) await stale(sz);
   }
   await browser.close();
   console.log(`\n${passes} passed, ${fails} failed`);

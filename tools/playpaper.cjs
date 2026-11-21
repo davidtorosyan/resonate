@@ -185,15 +185,13 @@ async function partS(browser) {
 async function partZ(browser) {
   console.log("== Z − / +, prefs, spreads");
   const errors = [];
-  // the old prefs go on load; − / + steps from the default
+  // the old prefs (v77–78's sizes) are ignored; − / + steps from the default
   {
     const { ctx, page } = await newPage(browser, 820, 1180, errors, true, () => {
       if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("resonate.play.size", "16"); localStorage.setItem("resonate.play.size.score", "14"); }
     });
     let d = await D(page);
     const auto = 820 / PAPER;
-    const old = await page.evaluate(() => [localStorage.getItem("resonate.play.size"), localStorage.getItem("resonate.play.size.score")]);
-    ok(old[0] === null && old[1] === null, `Z the v77–78 size prefs removed (${old})`);
     ok(d.sizeAuto && Math.abs(d.sp - auto) < 0.01, `Z a v78 device with 16 saved starts at the default (${d.sp})`);
     const pg0 = d.pages;
     await page.click("#smaller");

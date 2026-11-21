@@ -51,13 +51,13 @@ const SP = '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a9323
   const sheet = () => p.evaluate(() => ({ open: !document.getElementById('review').hidden, headline: document.getElementById('rv-headline').textContent,
     wins: [...document.querySelectorAll('#rv-wins li')].map((e) => e.textContent), tip: document.getElementById('rv-tip').hidden ? '' : document.getElementById('rv-tip').textContent,
     work: [...document.querySelectorAll('#rv-work .rv-line')].map((e) => e.innerText.replace(/\n+/g, ' / ')), all: document.querySelectorAll('#rv-lines .rv-line').length,
-    text: document.querySelector('#review .sheet').innerText, summary: document.getElementById('summary')?.textContent || '', pct: document.getElementById('score-pct')?.textContent || '',
+    text: document.querySelector('#review .sheet').innerText, summary: document.getElementById('summary')?.textContent || '',
     rhythm: (() => { const r = window.resonateDebug().take.rhythm; return r && { cal: r.calibrated, lead: r.lead, obs: r.obs.map((o) => o.kind) }; })() }));
   let r = await sheet();
   console.log('take 1:', JSON.stringify(r, null, 1));
   ok(r.open && r.work.length >= 3, 'review opens after the take with lines to work on');
   ok(r.work.some((w) => /aim for/.test(w)) && r.work.some((w) => /Sing out on/.test(w)) && r.work.some((w) => /Closer to the mic/.test(w)), 'next steps: the note to aim for, sing out, closer to the mic');
-  ok(!/\d\s*%/.test(r.text + r.summary + r.pct) && !/GOOD|MISSED|▼/.test(r.text + r.summary), 'no scores, counts or ▼ anywhere');
+  ok(!/\d\s*%/.test(r.text + r.summary) && !/GOOD|MISSED|▼/.test(r.text + r.summary), 'no scores, counts or ▼ anywhere');
   ok(r.rhythm && !r.rhythm.cal && !r.rhythm.obs.some((k) => k === 'behind' || k === 'ahead') && !/behind|ahead/.test(r.tip), 'no click in the mic (headphones-like): no claim about being behind overall');
   await p.screenshot({ path: SP + 'review1.png' });
   // Play a line: You, then Melody.

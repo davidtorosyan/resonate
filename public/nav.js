@@ -63,9 +63,7 @@ const ENGINE_LOCK = "resonate-omr-engine";
 let pillGen = 0;
 async function importPill() {
   const gen = ++pillGen;
-  // (both draw the import themselves: the shell — the root since v92, <html data-shell>; shell.html
-  // for a shell from before, still open somewhere)
-  if (document.documentElement.hasAttribute("data-shell") || /(pdf-import|shell)\.html$/.test(location.pathname)) return;
+  if (/pdf-import\.html$/.test(location.pathname)) return; // (it draws the import itself)
   let f = null;
   try { f = JSON.parse(localStorage.getItem(IMPORT_FLAG) || "null"); } catch {}
   const here = f && (f.db ? f.db === activeDb() : f.space === activeSpace());
@@ -76,7 +74,7 @@ async function importPill() {
   if (!here || Date.now() - (f.at || 0) > 14 * 864e5) return;
   const a = document.createElement("a");
   a.id = "import-pill";
-  a.href = "pdf-import.html";
+  a.href = "./?open=import"; // (the shell: its tray resumes the import, shown)
   const count = f.page && f.pages ? ` ${f.page}/${f.pages}` : "";
   a.textContent = `${running ? "⟳" : "⏸"} PDF → Song${count}`;
   a.setAttribute("aria-label", `PDF → Song${running ? "" : ", paused"}${f.page && f.pages ? `, page ${f.page} of ${f.pages}` : ""}: ${running ? "show" : "continue"}`);
@@ -114,7 +112,11 @@ const placeSoon = () => {
   if (placeTimer || !document.getElementById("import-pill")) return;
   placeTimer = setTimeout(() => { placeTimer = null; const a = document.getElementById("import-pill"); if (a) placePill(a); }, 400);
 };
-importPill();
-new MutationObserver(placeSoon).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden"] });
-window.addEventListener("storage", (e) => { if (e.key === IMPORT_FLAG || e.key === null) importPill(); });
-window.addEventListener("resize", () => { const a = document.getElementById("import-pill"); if (a) placePill(a); });
+// (Not on the shell — the root since v92, <html data-shell>: it draws the import itself, its tray.
+// Nothing is wired there: every `hidden` change on the shell would run placeSoon.)
+if (!document.documentElement.hasAttribute("data-shell")) {
+  importPill();
+  new MutationObserver(placeSoon).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden"] });
+  window.addEventListener("storage", (e) => { if (e.key === IMPORT_FLAG || e.key === null) importPill(); });
+  window.addEventListener("resize", () => { const a = document.getElementById("import-pill"); if (a) placePill(a); });
+}

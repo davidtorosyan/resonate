@@ -40,7 +40,6 @@ const mySongsEl = $("my-songs");
 const dropEl = $("drop");
 const lyricNowEl = $("lyric-now");
 const lyricNextEl = $("lyric-next");
-const scorePctEl = $("score-pct");
 const summaryEl = $("summary");
 const playbarEl = $("playbar");
 const playBtn = $("play");
@@ -67,9 +66,7 @@ const K = {
   legacyXml: "resonate.sing.customXml",   // pre-library single custom song (migrated)
   legacyName: "resonate.sing.customName",
   verse: "resonate.sing.verse",
-  legacyTranspose: "resonate.sing.transpose", // pre-v31: one transposition for every song
   keys: "resonate.sing.keys",                  // { songId: semitones }
-  rate: "resonate.sing.rate",                  // (pre-v71: one tempo % for every song — migrated to rates)
   rates: "resonate.sing.rates",                // { songId: tempo × } — per song since v71 (1 isn't stored)
   guide: "resonate.sing.guide",
   playMode: "resonate.sing.playMode",
@@ -347,7 +344,7 @@ const pctOut = (f) => `${Math.round(f * 100) || "<1"}%`;
 // written → as sung, and the comfortable range ("C3–F4 → A2–D4 · Dave C3–E4 ✓").
 function showFitMsg() {
   const r = profile?.range;
-  if (!r && typeof transpose === "string") return showMsg("", "info", { href: "voice.html", text: "Set your range" });
+  if (!r && typeof transpose === "string") return showMsg("", "info", { href: "./?open=voice", text: "Set your range" });
   const moved = shifts.some((x) => x);
   if (!notes.length || (!r && !moved)) return showMsg("");
   const written = notesForVerse(score, verseSelect.value || score.verses[0] || "1");
@@ -459,7 +456,8 @@ function setScore(sc, stored = null) {
   minor = guessMinor(sc);
   const savedKey = readKeys()[songId];
   transpose = typeof savedKey === "string" && savedKey.startsWith("fit") ? savedKey : Number(savedKey) || 0;
-  // v32's single "Fit" choice becomes the option it picked.
+  // "fit" (Fit my range… chosen while the profile had no range — and v32's single "Fit") becomes
+  // the option it picks once there is one.
   const range = activeProfile()?.range;
   if (transpose === "fit" && range) {
     const best = fitToRange(sc.notes, range);
@@ -3102,7 +3100,6 @@ document.addEventListener("keydown", (e) => {
 
 function renderSummary() {
   if (!take || take.endT === null) {
-    scorePctEl.textContent = "";
     summaryEl.textContent = score
       ? `${score.title.toUpperCase()} · ${meterAt(entryIdx).join("/")} · ${useMap && tmap ? `TAPPED TIMING ♩≈${Math.round(60 / (tmap.avg / rate))}` : `♩=${Math.round(score.tempo * rate)}${score.tempoFromScore ? "" : " (default)"}`}${notes.length ? ` · ${lowest().name}–${highest().name}` : ""}`
       : "";
@@ -3110,7 +3107,6 @@ function renderSummary() {
   }
   // After a take: the song's facts, plus the octave it was sung in — no counts or score.
   const graded = take.grades.filter((g) => g && g.status !== "unsung");
-  scorePctEl.textContent = "";
   if (!graded.length) { summaryEl.textContent = "NO NOTES SUNG"; return; }
   let t = `${score.title.toUpperCase()} · ${lowest().name}–${highest().name}`;
   if (take.octave) t += take.octave < 0 ? " · SUNG 8VB" : " · SUNG 8VA";
@@ -3839,21 +3835,6 @@ if (!navigator.mediaDevices?.getUserMedia) {
       store(K.legacyName, null);
     } catch (err) { console.warn("couldn't migrate saved song", err); }
   }
-  const legacyT = Number(recall(K.legacyTranspose));
-  if (legacyT && savedSong) {
-    const keys = readKeys();
-    if (!(savedSong in keys)) keys[savedSong] = legacyT;
-    store(K.keys, JSON.stringify(keys));
-  }
-  store(K.legacyTranspose, null);
-  // The tempo % was one for every song before v71: it becomes the song open last's.
-  const legacyRate = Number(recall(K.rate));
-  if (legacyRate && legacyRate !== 1 && savedSong) {
-    const rates = readRates();
-    if (!(savedSong in rates)) rates[savedSong] = legacyRate;
-    store(K.rates, JSON.stringify(rates));
-  }
-  store(K.rate, null);
   await refreshLibrary();
   // A PDF only (not converted yet — Play or the shell opened it last): Amazing Grace here, the
   // saved choice kept for them. A song that can't be read: Amazing Grace too.

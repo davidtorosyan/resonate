@@ -37,10 +37,10 @@ export function mountAccount({ version }) {
       <div class="acct-head"><span class="face ${user ? "" : "out"}">${user ? esc((user.email[0] || "?").toUpperCase()) : ic("person")}</span>
         <div class="who-w"><div class="who">${user ? esc(user.email) : "Not signed in"}</div>${user ? "" : `<div class="cl">Everything works signed out</div>`}</div></div>
       ${user ? "" : `<div class="signin"><a class="primary" href="account.html" data-nav>Sign in</a></div>`}
-      <div class="group">${row("voice.html", lead("voice", "l-voice"), voice)}</div>
+      <div class="group">${row("./?open=voice", lead("voice", "l-voice"), voice)}</div>
       ${user ? `<div class="group">
         ${synced ? `<button class="prow" type="button" id="sync-row" role="switch" aria-checked="${!syncOff()}">${lead("cloud", "l-cloud")}<span class="pl">Sync this device</span><span class="switch"></span></button>` : ""}
-        ${row("assistants.html", lead("spark", "l-spark"), `<span class="pl">Assistants</span>`)}
+        ${row("./?open=assistants", lead("spark", "l-spark"), `<span class="pl">Assistants</span>`)}
       </div>` : ""}
       <div class="group">
         ${row("tools.html", lead("tools", "l-plain"), `<span class="pl">Tools</span>`)}

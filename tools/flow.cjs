@@ -3,7 +3,7 @@ const { chromium } = require('playwright'); const fs = require('fs');
 (async () => {
   const b = await chromium.launch(); const p = await b.newPage();
   p.on('pageerror', (e) => console.log('ERR', e.message));
-  await p.goto('http://localhost:8097/resonate/sing.html'); await p.waitForTimeout(300);
+  await p.goto('http://localhost:8097/resonate/tools.html'); await p.waitForTimeout(300);
   const xml = fs.readFileSync(process.argv[2], 'utf8');
   console.log(await p.evaluate(async (xml) => {
     const { parseMusicXml, notesForVerse, lyricLines } = await import('/resonate/musicxml.js?' + Math.random());

@@ -35,9 +35,9 @@ const OFFSET = Number(process.env.OFFSET ?? -0.15), NOISE = (process.env.NOISE |
   }, { OFFSET, NOISE });
   await p.goto('http://localhost:8097/resonate/sing.html'); await p.waitForTimeout(1500);
   await p.click('#sing'); await p.waitForTimeout(19000); await p.click('#sing'); await p.waitForTimeout(1500);
-  const r = await p.evaluate(() => ({ pct: document.getElementById('score-pct').textContent, sum: document.getElementById('summary').textContent,
+  const r = await p.evaluate(() => ({ sum: document.getElementById('summary').textContent,
     g: window.resonateDebug().take.grades.map((g) => g ? g.status[0] + (g.shift !== undefined ? Math.round(g.shift * 100) : '') : '-').join(' ') }));
-  console.log(`offset ${OFFSET} noise [${NOISE}]:`, r.pct, '|', r.sum, '\n  ', r.g);
+  console.log(`offset ${OFFSET} noise [${NOISE}]:`, r.sum, '\n  ', r.g);
   if (errs.length) console.log('errors', errs);
   await p.screenshot({ path: '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/gradeearly.png' });
   await b.close();

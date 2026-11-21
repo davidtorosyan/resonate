@@ -52,7 +52,7 @@ const cases = {
 (async () => {
   const b = await chromium.launch(); const p = await b.newPage();
   p.on('pageerror', (e) => console.log('ERR', e.message));
-  await p.goto('http://localhost:8097/resonate/sing.html'); await p.waitForTimeout(300);
+  await p.goto('http://localhost:8097/resonate/tools.html'); await p.waitForTimeout(300);
   for (const [name, ms] of Object.entries(cases)) {
     const r = await p.evaluate(async (xml) => {
       const { parseMusicXml } = await import('/resonate/musicxml.js?' + Math.random());

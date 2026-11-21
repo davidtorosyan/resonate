@@ -388,35 +388,32 @@ const near = (a, b) => Math.abs(a.sec - b.sec) < 0.002 && a.midi === b.midi;
     await chip(page, "P1");
     await page.tap("#play");
     await until(page, () => window.resonateDebug().play.playback.lit.length > 0);
-    let samples = 0, bad = 0, hushSeen = 0, voiceKey = 0, voicePlay = 0;
+    let samples = 0, bad = 0, voiceKey = 0, voicePlay = 0;
     const t0 = Date.now();
     while (Date.now() - t0 < 6000) {
       const s = await page.evaluate(() => {
         const p = window.resonateDebug().play, x = p.playback;
         const shown = new Set([...document.querySelectorAll("#stage .page g.note")].map((g) => g.id));
-        const hush = new Set(x.hushed), heard = x.lit.filter((id) => !hush.has(id));
+        const heard = x.lit;
         return {
           keys: x.strip.map((k) => k.midi).sort((a, b) => a - b), hands: x.strip.map((k) => k.hand),
           want: [...new Set(heard.map((id) => p.facts[id]?.midi))].sort((a, b) => a - b),
-          playEls: x.litEls.slice().sort(), hushEls: x.hushEls.slice().sort(),
-          wantPlay: heard.filter((id) => shown.has(id)).sort(), wantHush: x.hushed.filter((id) => shown.has(id)).sort(),
-          hushParts: x.hushed.map((id) => p.facts[id]?.part),
+          playEls: x.litEls.slice().sort(), wantPlay: heard.filter((id) => shown.has(id)).sort(),
           voiceLit: x.litEls.filter((id) => p.facts[id]?.part === "P1").length,
         };
       });
       samples++;
-      if (JSON.stringify(s.keys) !== JSON.stringify(s.want) || JSON.stringify(s.playEls) !== JSON.stringify(s.wantPlay) || JSON.stringify(s.hushEls) !== JSON.stringify(s.wantHush)) { bad++; if (bad < 4) info("E off:", JSON.stringify(s)); }
-      if (s.hushEls.length || s.wantHush.length) hushSeen++;
+      if (JSON.stringify(s.keys) !== JSON.stringify(s.want) || JSON.stringify(s.playEls) !== JSON.stringify(s.wantPlay)) { bad++; if (bad < 4) info("E off:", JSON.stringify(s)); }
       voicePlay += s.voiceLit;
       if (s.hands.includes("voice")) voiceKey++;
       if (samples === 10) await page.screenshot({ path: path.join(SHOTS, "E-muted-unlit.png") });
       await sleep(120);
     }
     await page.tap("#play"); await sleep(200);
-    ok(bad <= 1 && samples > 15, `E the keyboard = the heard lit notes' keys, .play = heard, .hush = muted (${samples} samples, ${bad} off — a frame between two reads)`);
-    ok(hushSeen === 0 && voicePlay === 0 && voiceKey === 0, `E the muted voice never lit on the page (${hushSeen} samples with .hush, ${voicePlay} voice notes .play), never on the keyboard (${voiceKey})`);
+    ok(bad <= 1 && samples > 15, `E the keyboard = the heard lit notes' keys, .play = heard (${samples} samples, ${bad} off — a frame between two reads)`);
+    ok(voicePlay === 0 && voiceKey === 0, `E the muted voice never lit on the page (${voicePlay} voice notes .play), never on the keyboard (${voiceKey})`);
     const st = await PBD(page);
-    ok(st.litEls.length === 0 && st.hushEls.length === 0 && st.strip.length === 0, `E ■: nothing lit (${st.litEls.length} ${st.hushEls.length} ${st.strip.length})`);
+    ok(st.litEls.length === 0 && st.strip.length === 0, `E ■: nothing lit (${st.litEls.length} ${st.strip.length})`);
     // the lighter look: a muted head's colour and its pill's
     await ctx.close();
   }

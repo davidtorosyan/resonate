@@ -15,7 +15,7 @@
 //      back to it) — the rect sampled every 50 ms changes at most once, at that turn, sliding, and
 //      only off the bands; a press while playing doesn't move it; ⟳ two rounds: never moves; the page
 //      played from its first bar with the keyboard off (chips in the controls): one place throughout
-//   M  muted parts: Killing's Full score, the voice muted — no voice note ever lit (.play or .hush),
+//   M  muted parts: Killing's Full score, the voice muted — no voice note ever lit (litEls),
 //      the piano's lit; Both with LH muted: no LH note lit
 //   K  the keyboard: a key pressed strikes in its own pointerdown (peekLog), lit while held, two
 //      fingers two keys, the same key again damps the old note, the lift lets go (unlit), the bubble
@@ -409,22 +409,20 @@ function checkScene(tag, sc) {
     await page.tap('#hear button[data-key="P1"]'); await sleep(200);
     await page.tap("#play");
     await until(page, () => window.resonateDebug().play.playback.litEls.length > 0);
-    let samples = 0, voiceLit = 0, hush = 0, piano = 0;
+    let samples = 0, voiceLit = 0, piano = 0;
     const t0 = Date.now();
     while (Date.now() - t0 < 5000) {
       const s = await page.evaluate(() => {
         const p = window.resonateDebug().play, x = p.playback;
-        const lit = [...document.querySelectorAll("#stage .page g.note.play, #stage .page g.note.hush")];
-        return { parts: lit.map((g) => p.facts[g.id]?.part), hush: document.querySelectorAll("#stage .page .hush").length, words: [...document.querySelectorAll("#stage .page g.note.play > g.verse")].length };
+        return { parts: x.litEls.map((id) => p.facts[id]?.part), words: [...document.querySelectorAll("#stage .page g.note.play > g.verse")].length };
       });
       samples++;
       voiceLit += s.parts.filter((x) => x === "P1").length;
       piano += s.parts.filter((x) => x !== "P1").length ? 1 : 0;
-      hush += s.hush;
       await sleep(100);
     }
     await page.tap("#play"); await sleep(200);
-    ok(samples > 20 && voiceLit === 0 && hush === 0 && piano > samples / 2, `M Full score, the voice muted: no voice note lit in ${samples} samples (${voiceLit}), nothing .hush (${hush}), the piano lit in ${piano}`);
+    ok(samples > 20 && voiceLit === 0 && piano > samples / 2, `M Full score, the voice muted: no voice note lit in ${samples} samples (${voiceLit}), the piano lit in ${piano}`);
     await page.tap('#hear button[data-key="P1"]'); await sleep(200);
     // Both, LH muted
     await page.selectOption("#hands", "both"); await ready(page, null, "both"); await sleep(300);

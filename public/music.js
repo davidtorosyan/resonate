@@ -9,10 +9,6 @@ export function noteName(midi, flats = false) {
   return `${names[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`;
 }
 
-export function midiToFreq(m) {
-  return 440 * 2 ** ((m - 69) / 12);
-}
-
 export function freqToMidi(f) {
   return 69 + 12 * Math.log2(f / 440);
 }

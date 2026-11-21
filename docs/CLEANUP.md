@@ -206,6 +206,22 @@ Tests: taptiming.cjs and typetempo.cjs set `resonate.sing.rate`; drop those line
 
 **Size:** about −250 lines.
 
+### Phase 2 — as built (2026-11-21, with Phase 3 in one release; not bumped or deployed yet)
+
+- **2.1:** all six went: `midiToFreq`, readerstate's `currentStep` / `currentSystem` / `isPerSystem` / `pitchText`, `isFresh`, `pdfAgain`.
+- **2.2:**
+  - `#score-pct`'s JS and CSS are gone.
+  - The `<span>` stays, now `hidden`. Without its `:empty` rule, an empty flex item would add the row's gap before the summary.
+  - Play's `hushed` / `hushEls` are gone. playhear E, playchords M and playhearwk still check "muted is never lit", through `litEls` (and the keyboard's keys).
+- **2.3:** On `<html data-shell>`, nav.js wires nothing for the pill. Its path test is `pdf-import.html` alone.
+- **2.4:**
+  - Removed: the global transpose and tempo moves, `OLD_SIZE_KEYS`, their `K` entries and the two DATA_KEYS names.
+  - taptiming and typetempo no longer set `resonate.sing.rate`.
+  - playbackfixes Z8 and playpaper Z expected v78's size prefs to be removed. Now they only check that the prefs are ignored.
+  - **Kept: sing.js's "fit" conversion (the plan's 461–470).** It isn't only v32's. "Fit my range…" (value `"fit"`) is still what Sing stores when it is chosen without a voice range, and this code turns it into the best fit once a range exists. Checked: keys `{song: "fit"}` + a profile range → −13 on load. Without it the menu would stay on "Fit my range…" after the range test. Its comment says so now.
+- **2.5:** play.js's local `sleepAudio` is `stopAwake` now; load.png and `/api/hello` are gone.
+- **Checks:** playxmlsame PASS, importfixes M/O/X PASS (O updated for 3.1), cutover R (no pill at the root) PASS, shell.cjs PASS.
+
 ## Phase 3 — Links name places; a stale shell reloads instead of mixing versions (one release)
 
 **3.1 Links point at `./?open=<place>`**
@@ -252,6 +268,31 @@ titlecases.cjs:5 (in regress), keycases.cjs:75, repeatcases.cjs:55, flow.cjs:6 a
 - The tuner's range ribbon → Voice in place.
 - A converted song's "Sing it" / "Play it".
 - A tab left open across the deploy reloads into Sing when Sing is opened.
+
+### Phase 3 — as built (2026-11-21)
+
+- **3.1:**
+  - Every link in the plan's list names its place: `./?open=record|voice|assistants`, `./?open=sing|score` for the Reader's and the tray's defaults, `./?open=import` for nav.js's pill.
+  - `placeOf` reads `?open=` (own keys of PLACES only), and the old file names for one more release.
+  - songlist's fallback is gone (and its `go` import).
+  - Tests: shell.cjs and shellplaces select `#acct a[href="./?open=voice|assistants"]`; reader.cjs expects the two new defaults.
+  - importfixes O: the pill now opens the shell's tray, shown. pdf-import.html, reached from a link, still keeps the minimized pref for a reload.
+  - importresume `tabs` (IMPORT_E2E only): the pill's href.
+  - cutover L and songlib passed unchanged.
+  - **"Fit my range… goes to voice.html":** not reproduced at v93's code in Chromium (iPad and iPhone sizes) or in WebKitGTK. The capture handler already opened `voice.html` in place. With the link named `./?open=voice`, even an uncaught tap lands on Voice in the shell. ROADMAP keeps it as a device check.
+- **3.2:**
+  - `staleShell(doc, open)` in shell/chrome.js is called right after DOMParser in singview, scoreview and places. It compares `#version`, checks `resonateBusy`, and keeps a sessionStorage `resonate.shell.stale` stamp for 10 min.
+  - Sing loaded hidden for 📡 at home (no song page open) reloads to `./`.
+  - cutover G (iPhone and iPad, 16 checks each):
+    - sing.html (Next-up), play.html (`?open=score`) and voice.html (a link) are each served with badge v0;
+    - each gives one reload into `./?open=…`, with no sing.js / play.js / voice.js asked for before it and nothing mounted as the page left;
+    - each lands there, mounted on the second try;
+    - another badge while busy: no reload; a matching badge: no reload.
+- **3.3:** titlecases, keycases, repeatcases and flow load tools.html. So does libcheck.mjs, which drops its `#my-songs` read and checks `listSongs` alone.
+- **synclib 9b (sync.js):**
+  - The cause: a pulled delete applied while the space changed under it removed the song, but left its queue entry and jobs, which belonged to the other space by then. It also wasn't recorded, because `saveMeta` never writes into another space. On the next pass in that space, `noteChanges` took the song's absence for a delete of its own and stamped it with now. take1's "ours is newer" then passed the cloud's tombstone over for good. (It passed only when the push's dropped-write path happened to refetch it.)
+  - The fix, in take1: a song's tombstone met by a delete of ours that hasn't gone up is applied anyway. Both are the same change, so nothing is sent. apply's delete is idempotent: no song to remove, the queue and jobs cleared, `gone` said.
+  - `node synclib.mjs`: 12 of 12 runs PASS (the old sync.js: 5 of 10 FAIL).
 
 ## Phase 4 — The old Tuner goes (one release)
 

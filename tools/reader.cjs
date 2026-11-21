@@ -154,7 +154,7 @@ async function browser() {
     await p.screenshot({ path: `${OUT}/${v.name}-end.png` });
     const maxLong = Math.max(0, ...end.long);
     ok(errs.length === 0, `${v.name}: no page errors or warnings ${errs.slice(0, 3).join(' | ')}`);
-    ok(end.st.phase === 'done' && end.done && end.links.length === 2 && end.links[0][1] === 'sing.html', `${v.name}: done → “${end.title}”, Sing it / Play it (${end.st.phase}, block ${end.done}, ${JSON.stringify(end.links)})`);
+    ok(end.st.phase === 'done' && end.done && end.links.length === 2 && end.links[0][1] === './?open=sing' && end.links[1][1] === './?open=score', `${v.name}: done → “${end.title}”, Sing it / Play it (${end.st.phase}, block ${end.done}, ${JSON.stringify(end.links)})`);
     ok(end.thumbs.length && end.thumbs.every((s) => s === 'done' || s === 'skip'), `${v.name}: every page in the rail ✓ or skipped (${end.thumbs.join(',')})`);
     ok(end.overflow <= 0 && end.page.right <= v.width && end.card.right <= v.width, `${v.name}: no sideways scroll; page ${Math.round(end.page.width)}×${Math.round(end.page.height)} fits`);
     ok(end.anims === 0, `${v.name}: done → nothing left breathing or spinning`);

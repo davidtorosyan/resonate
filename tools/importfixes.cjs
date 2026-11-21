@@ -466,14 +466,21 @@ async function crash(p) {
     }
     if (want('O')) {
       await p.evaluate(() => localStorage.setItem('resonate.import.min', '1'));
+      // (the pill names the shell's place for the import since cleanup C 3.1: ./?open=import — the tray
+      // resumes it, shown; pdf-import.html, Tools' PDF → Song, keeps the minimized pref for a reload)
+      const href = await p.getAttribute('#import-pill', 'href');
       await p.click('#import-pill');
-      await p.waitForURL(/pdf-import/);
+      await p.waitForURL((u) => u.pathname === '/resonate/');
+      let d0 = null;
+      for (let i = 0; i < 40 && d0?.mode !== 'open'; i++) { await p.waitForTimeout(250); d0 = await p.evaluate(() => window.resonateDebug?.().import || null).catch(() => null); }
+      await p.goto(BASE + '/resonate/pdf-import.html');
       await p.waitForTimeout(1500);
       const d1 = await dbg(p);
       await p.reload();
       await p.waitForTimeout(1500);
       const d2 = await dbg(p);
-      ok('O', d1.mode === 'open' && d2.mode === 'min', `from the pill: Reader ${d1.mode}; a reload: ${d2.mode} (the singer's minimized pref)`);
+      ok('O', href === './?open=import' && d0?.mode === 'open' && d1.mode === 'open' && d2.mode === 'min',
+        `from the pill (${href}): the shell's Reader ${d0?.mode}; pdf-import.html from a link: ${d1.mode}; a reload: ${d2.mode} (the singer's minimized pref)`);
     }
     await ctx.close();
   }

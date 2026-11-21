@@ -52,9 +52,6 @@ const K = {
   timing: "resonate.sing.timing", // Sing's: { songId: { bpm (a tempo typed or tapped for the song), … } } — read only
   index: "resonate.songs.index", // My songs' index (library.js: [{ id, k, … }]) — read only, before the library answers (pdfHint)
 };
-// v77–78's size prefs: a size chosen then (on a tablet 16 was the default) would hide the
-// printed-page default — removed, so every device starts at it.
-const OLD_SIZE_KEYS = ["resonate.play.size", "resonate.play.size.score"];
 // The default on a tablet and a desktop: the printed page's density — PAPER staff spaces across
 // the page (margins in), as many bars a system as the printed piano/vocal sheets. Calibrated on the
 // owner's five converted songs against their own printed system breaks (Audiveris keeps them:
@@ -146,7 +143,6 @@ function savedSize(kind) {
   const key = kind === "score" ? K.zoomScore : K.zoom, v = recall(key);
   return { key, step: /^[+-][1-8]$/.test(v || "") ? Number(v) : 0 };
 }
-for (const k of OLD_SIZE_KEYS) keep(k, null);
 
 const S = {
   gen: 0,           // bumped by every song open / hands switch: a newer one wins
@@ -1328,7 +1324,7 @@ const awake = { a: null, src: null, timer: 0, at: 0 };
 function keepAwake(a) {
   if (!a || a.state === "closed" || document.visibilityState !== "visible") return;
   if (awake.a !== a || !awake.src) {
-    sleepAudio();
+    stopAwake();
     const nodes = [];
     try { keepAlive(a, nodes); } catch {}
     awake.a = a;
@@ -1341,9 +1337,9 @@ function keepAwake(a) {
 function quiet() {
   awake.timer = 0;
   if (PB.state !== "idle" || PB.starting || peeks.some((pk) => pk.held)) { awake.timer = setTimeout(quiet, AWAKE); return; }
-  sleepAudio();
+  stopAwake();
 }
-function sleepAudio() {
+function stopAwake() {
   clearTimeout(awake.timer);
   awake.timer = 0;
   try { awake.src?.stop(); } catch {}
@@ -3563,7 +3559,7 @@ function dropWake() {
 const SLEEP_TC = 0.002;
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") { lastTick = performance.now(); dropWake(); holdWake(); }
-  else { clearPeek(true, SLEEP_TC); stopPlay(false, SLEEP_TC); sleepAudio(); sleepCtx(); saveState(); }
+  else { clearPeek(true, SLEEP_TC); stopPlay(false, SLEEP_TC); stopAwake(); sleepCtx(); saveState(); }
 });
 // (the session "auto" while asleep, as when the page is left: iOS keeps the audio route up for a
 // "playback" page)
@@ -3578,7 +3574,7 @@ function sleepCtx() {
 window.addEventListener("pagehide", () => {
   clearPeek(true);
   stopPlay();
-  sleepAudio();
+  stopAwake();
   if (pdf.on) pdfOff();
   saveState();
   dropWake();
@@ -3867,12 +3863,6 @@ function selectBars(mi0, mi1) {
   setSel(inside[0], inside[inside.length - 1]);
   return true;
 }
-// 📄 again after a change on the score, so it shows (and borders) what's in focus now.
-async function pdfAgain() {
-  if (!pdf.on) return;
-  pdfOff();
-  await pdfOn();
-}
 const SCORE_ACTIONS = ["score_open", "score_view", "score_go", "score_select", "score_play", "score_stop", "score_pdf", "score_state"];
 async function scoreRun(action, a = {}) {
   const done = (extra = {}) => ({ ok: true, ...extra, score: scoreState() });
@@ -4053,7 +4043,6 @@ function playDebug() {
     items: PB.tr ? PB.tr.items.map((x) => ({ id: x.id, midi: x.midi, sec: x.sec, dur: x.dur, hold: x.hold, sound: x.sound, k: x.k, n: x.n, ...(x.muted ? { muted: true } : {}) })) : [],
     scheduled: PB.log.map((x) => ({ ...x })),
     lit: [...PB.lit.keys()], litEls: [...stage.querySelectorAll(".page g.note.play")].map((g) => g.id),
-    hushed: [...PB.lit].filter(([, c]) => c === "hush").map(([id]) => id), hushEls: [...stage.querySelectorAll(".page g.note.hush")].map((g) => g.id),
     // what ▶ plays: the view's chips (key, label, hand, heard), the muted keys, where the chips are
     hear: {
       groups: (S.P ? hearGroups() : []).map((g) => ({ key: g.key, label: g.label, hand: g.hand, heard: !mutedKeys().has(g.key) })),

@@ -336,12 +336,12 @@ export function mountTuner(root, { onState = () => {} } = {}) {
 
 export const tunerHtml = () => `
   <button class="tmic" type="button" aria-pressed="false"><span class="b"></span><span class="tl">Start</span></button>
-  <a class="ribbon-wrap" href="voice.html" hidden></a>
+  <a class="ribbon-wrap" href="./?open=voice" hidden></a>
   <div class="gauge"></div>
   <div class="note-text" aria-live="off">—</div>
   <div class="cents"></div>
   <div class="cbar" aria-hidden="true"><b></b><i hidden></i></div>
   <span class="tword"></span>
   <div class="tmsg" role="status" hidden></div>
-  <div class="level">${ic("level")}<div class="bar"><i></i><div class="ticks">${"<b></b>".repeat(9)}</div></div><span class="n mono" hidden>—</span><a class="cal" href="voice.html" aria-label="Mic level (voice profile)">${ic("sliders")}</a></div>
+  <div class="level">${ic("level")}<div class="bar"><i></i><div class="ticks">${"<b></b>".repeat(9)}</div></div><span class="n mono" hidden>—</span><a class="cal" href="./?open=voice" aria-label="Mic level (voice profile)">${ic("sliders")}</a></div>
   <div class="scope"><canvas></canvas></div>`;

@@ -452,11 +452,17 @@ async function apply(sb, row, meta, changed, uid) {
 
 // A row from the cloud: applied unless ours is the same change or a newer one (still to go up).
 // false: stop pulling here (tried again next pass — skipping it could make what follows wrong).
+// A song's delete met by a delete of ours not sent yet is applied all the same (the same change:
+// nothing to send): a delete pulled while the space changed under it took the song out but not its
+// conversion (the queue and the jobs were the other space's then) and wasn't recorded — the meta is
+// never written into another space —, so the next pass here took the song's absence for a delete of
+// its own, stamped now, and passed the cloud's over for good (tools/synclib.mjs 9b).
 async function take1(sb, row, meta, changed, uid) {
   const key = `${row.kind}:${row.id}`;
   const m = meta.items[key];
   if (!validId(row.id)) return true;
-  if (m && Date.parse(row.modified_at) <= m.m) {
+  const bothGone = row.kind === "song" && row.deleted && m?.del && !m.up;
+  if (m && Date.parse(row.modified_at) <= m.m && !bothGone) {
     // Ours is newer — but a history is merged all the same: what goes up must hold the cloud's
     // entries too (they may be on no other device any more).
     const field = row.id.slice(row.id.lastIndexOf("|") + 1);

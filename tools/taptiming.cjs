@@ -8,7 +8,7 @@ const SP = '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a9323
   const errs = []; p.on('pageerror', (e) => errs.push(e.message));
   p.on('dialog', (d) => d.accept());
   await p.goto('http://localhost:8097/resonate/sing.html'); await p.waitForTimeout(1500);
-  await p.evaluate(() => { localStorage.removeItem('resonate.sing.timing'); localStorage.setItem('resonate.sing.rate', '1'); });
+  await p.evaluate(() => { localStorage.removeItem('resonate.sing.timing'); });
   await p.reload(); await p.waitForTimeout(1500);
   const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
   const opts = () => p.evaluate(() => [...document.querySelectorAll('#tempo-select option')].map((o) => `${o.value}=${o.textContent}`));

@@ -6,7 +6,7 @@
 // its CSS injected once, colours and sizes as custom properties on .rd.
 //
 //   import { mount } from './omr/reader.js?v=93';
-//   const reader = mount(el, { onMinimize, onExpand, onStop, minimized, links: { sing: 'sing.html', play: 'play.html' } });
+//   const reader = mount(el, { onMinimize, onExpand, onStop, minimized, links: { sing: './?open=sing', play: './?open=score' } });
 //     (onStop: a ✕ in the card's top bar; a second tap — "Stop?" — within 3 s calls it; hidden at done
 //     and while reader.canStop(false))
 //   reader.push(event)    // a live event (the contract in readerstate.js)
@@ -253,7 +253,7 @@ const MIN_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 8l6 6 
 // ---------------------------------------------------------------------------------------------
 export function mount(host, opts = {}) {
   injectCss();
-  const links = { sing: 'sing.html', play: 'play.html', ...(opts.links || {}) };
+  const links = { sing: './?open=sing', play: './?open=score', ...(opts.links || {}) };
   const root = document.createElement('div');
   root.className = 'rd';
   root.dataset.phase = 'idle';

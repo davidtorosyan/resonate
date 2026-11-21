@@ -249,8 +249,8 @@ async function voice(sz) {
   ok(!d?.place.voice?.run && await p.evaluate(() => document.querySelector('#place-voice #test').hidden), `${sz.n}: … and the range test stopped`);
   // Again from the account menu; a change to the range reaches the tuner when it closes.
   await tap(p, sz, '#avatar');
-  await p.waitForSelector('#acct a[href="voice.html"]', { state: 'visible' });
-  await tap(p, sz, '#acct a[href="voice.html"]');
+  await p.waitForSelector('#acct a[href="./?open=voice"]', { state: 'visible' });
+  await tap(p, sz, '#acct a[href="./?open=voice"]');
   await settled(p, 'voice');
   ok(!!(await sheet(p, 'voice')) && !p.navs.length && (await dbg(p)).overlay === 'place-voice', `${sz.n}: the account menu's Voice opens it in place (the menu gives way)`);
   await tap(p, sz, '#place-voice .stepper[data-k="comfortHigh"] button:last-child');
@@ -285,8 +285,8 @@ async function remote(sz) {
   ok(ctx.net.log.some((l) => /POST devices/.test(l)), `${sz.n}: the device's heartbeat went (devices)`);
   // Assistants from the account menu: in place.
   await tap(p, sz, '#avatar');
-  await p.waitForSelector('#acct a[href="assistants.html"]', { state: 'visible' });
-  await tap(p, sz, '#acct a[href="assistants.html"]');
+  await p.waitForSelector('#acct a[href="./?open=assistants"]', { state: 'visible' });
+  await tap(p, sz, '#acct a[href="./?open=assistants"]');
   await settled(p, 'assistants');
   await p.waitForFunction(() => !document.querySelector('#place-assistants #v-connect')?.hidden, null, { timeout: 8000 }).catch(() => {});
   const s = await sheet(p, 'assistants');
