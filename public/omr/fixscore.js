@@ -772,10 +772,10 @@ function markTupletGroups(doc, changes) {
 //      time and length (Musicnotes P/V/G: the piano's right hand doubles the tune; repeated block
 //      chords holding the tied pitch are accompaniment, struck again; where the piano strikes a
 //      different chord — Killing bar 7, F♯ then F♯/A — it re-strikes, as printed); a note held
-//      there over another voice of its staff striking in its own rhythm (notes of other lengths
-//      start with it: no strike) is tied to what its own voice plays next, the voice's tied-to note
-//      again for as long (Yellow Submarine's right hand, the tune's dotted halves over inner
-//      dotted-quarter chords: bars 1, 3, 11, 23, 25, 51, 55);
+//      there, alone in its voice, over shorter notes another voice of its staff strikes with it
+//      (no strike) is tied to what its own voice plays next, alone, the voice's tied-to note again
+//      for as long (Yellow Submarine's right hand, the tune's dotted halves over inner
+//      dotted-quarter chords: bars 1, 3, 23, 25, 51, 55 on engine 15's export);
 //   3. a strike tied on some notes is tied on all of them when the next strike is the same notes
 //      again — except another voice under them going on in a voice of its own for as long again:
 //      struck again (Yellow Submarine bar 13, the inner dotted quarters under the tune's tied D♯4;
