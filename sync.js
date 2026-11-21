@@ -22,11 +22,11 @@
 // pages' "resonate:data" events (debounced), when the page becomes visible, and every 2 minutes
 // while it's open — one at a time across tabs (Web Locks).
 
-import { supabase, savedUser } from "./auth.js?v=93";
-import { activeSpace, SYNC_META } from "./space.js?v=93";
-import { listSongs, getSong, putSong, replaceSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, countClips, listTakes, getTake, putTake, removeTake, persistent, dbGen, isMusicXml } from "./library.js?v=93";
-import { dropFromQueue } from "./omr/queue.js?v=93";
-import { deleteJobsFor } from "./omr/jobs.js?v=93";
+import { supabase, savedUser } from "./auth.js?v=94";
+import { activeSpace, SYNC_META } from "./space.js?v=94";
+import { listSongs, getSong, putSong, replaceSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, countClips, listTakes, getTake, putTake, removeTake, persistent, dbGen, isMusicXml } from "./library.js?v=94";
+import { dropFromQueue } from "./omr/queue.js?v=94";
+import { deleteJobsFor } from "./omr/jobs.js?v=94";
 
 export const SONG_LIMIT = 20; // (the server's: 20261120010000_sync_limits_20.sql — applied before this ships)
 const FILE_LIMIT = 10 * 1024 * 1024;
@@ -452,11 +452,19 @@ async function apply(sb, row, meta, changed, uid) {
 
 // A row from the cloud: applied unless ours is the same change or a newer one (still to go up).
 // false: stop pulling here (tried again next pass — skipping it could make what follows wrong).
+// A song's delete met by a delete of ours not sent yet is applied all the same: a delete pulled
+// while the space changed under it took the song out but not its conversion (the queue and the jobs
+// were the other space's then) and wasn't recorded — the meta is never written into another space —,
+// so the next pass here took the song's absence for a delete of its own, stamped now, and passed the
+// cloud's over for good (tools/synclib.mjs 9b). Ours, when later, still goes up: the cloud's earlier
+// stamp in its place would let a change made between the two (another device's, not sent yet) bring
+// the song back everywhere (synclib 13).
 async function take1(sb, row, meta, changed, uid) {
   const key = `${row.kind}:${row.id}`;
   const m = meta.items[key];
   if (!validId(row.id)) return true;
-  if (m && Date.parse(row.modified_at) <= m.m) {
+  const bothGone = row.kind === "song" && row.deleted && m?.del && !m.up;
+  if (m && Date.parse(row.modified_at) <= m.m && !bothGone) {
     // Ours is newer — but a history is merged all the same: what goes up must hold the cloud's
     // entries too (they may be on no other device any more).
     const field = row.id.slice(row.id.lastIndexOf("|") + 1);
@@ -471,7 +479,11 @@ async function take1(sb, row, meta, changed, uid) {
     }
     return true;
   }
-  try { await apply(sb, row, meta, changed, uid); return true; }
+  try {
+    await apply(sb, row, meta, changed, uid);
+    if (bothGone && Date.parse(row.modified_at) < m.m && meta.items[key]?.del) meta.items[key] = m;
+    return true;
+  }
   catch (err) {
     console.warn("sync: couldn't apply", key, err);
     return !!err.permanent; // a broken row is passed by; anything else is tried again

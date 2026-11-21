@@ -20,14 +20,14 @@
 // alone, on its PDF — on every device, unsaved, whatever opened it (Next-up, the Reader's links, an
 // assistant): no Sing toggle, the Score's ▶ stays in its bar (hidden: nothing to play), the Piano as
 // saved (its keyboard under the PDF, the Score's). Converted (reload), the saved modules come back.
-import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=93";
-import { mountSing } from "./singview.js?v=93";
-import { mountScore } from "./scoreview.js?v=93";
-import { mountPiano, rangeOf } from "./pianoview.js?v=93";
-import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=93";
-import { loadSong, songInfo } from "../catalog.js?v=93";
-import { parseMusicXml } from "../musicxml.js?v=93";
-import { titleOf } from "./songlist.js?v=93";
+import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=94";
+import { mountSing } from "./singview.js?v=94";
+import { mountScore } from "./scoreview.js?v=94";
+import { mountPiano, rangeOf } from "./pianoview.js?v=94";
+import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=94";
+import { loadSong, songInfo } from "../catalog.js?v=94";
+import { parseMusicXml } from "../musicxml.js?v=94";
+import { titleOf } from "./songlist.js?v=94";
 
 const $ = (id) => document.getElementById(id);
 const PREF = "resonate.shell.modules"; // { phone | tablet | desktop: ["sing", "score", "piano"] } — this device's
@@ -461,6 +461,9 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     get mods() { return { ...mods }; },
     sing,
     busy: () => !!(sing.busy() || score.state()?.busy || closing || switching),
+    // (what sounds — Sing's take, loop, playback or get-ready, the Score's ▶ — without the change
+    // under way: chrome.js staleShell)
+    soundBusy: () => !!(sing.busy() || sing.state()?.busy || score.state()?.busy),
     debug: () => {
       const st = sing.state(), sc = score.state();
       return { open: isOpen, loaded: sing.loaded, scoreLoaded: score.loaded, title, drop: dropped, form: app.dataset.form || "full", tin: app.dataset.tin,

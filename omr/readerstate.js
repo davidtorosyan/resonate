@@ -245,11 +245,8 @@ export const currentPage = (st) => {
   if (st.phase === 'pages') return pageList(st).at(-1)?.page ?? null;
   return null;
 };
-export const currentStep = (st) => st.cur.step;
-export const currentSystem = (st) => st.cur.sys;
 export const stepLabel = (step) => STEP_INFO[step]?.[0] ?? (step ? step.toLowerCase() : '');
 export const stepGlyph = (step) => STEP_INFO[step]?.[1] ?? '·';
-export const isPerSystem = (step) => PER_SYSTEM.has(step);
 
 // The page the Reader shows and how: 'paper' (the printed page: while pages are found, the engine
 // starts, and a sheet's LOAD), 'engine' (black & white from BINARY on, the engine's view),
@@ -440,11 +437,6 @@ export function noteType(dur) {
     if (Math.abs(v - d * 1.75) < 1e-9) return [name, 2];
   }
   return null;
-}
-export function pitchText(n) {
-  if (!n?.step) return '';
-  const acc = { 2: '𝄪', 1: '♯', 0: '', '-1': '♭', '-2': '𝄫' }[n.alter || 0] ?? '';
-  return `${n.step}${acc}${n.oct ?? ''}`;
 }
 
 // Measure numbers as the export writes them (Audiveris Score.getMeasureIdOffset): a note's `m` is

@@ -30,7 +30,6 @@ export const DATA_KEYS = [
   "resonate.sing.verse",
   "resonate.sing.keys",       // per song: key
   "resonate.sing.rates",      // per song: tempo %
-  "resonate.sing.rate",       // (the old global tempo %)
   "resonate.sing.timing",     // per song: tapped timing / own tempo
   "resonate.sing.history",    // per song: takes' summaries
   "resonate.sing.practice",   // per song: guided practice marks (practice.js; device only until v1.1)
@@ -40,7 +39,7 @@ export const DATA_KEYS = [
   "resonate.convert",         // songs waiting to be converted, one after another (omr/queue.js)
   "resonate.profiles",        // voice profiles
   "resonate.volCal",          // the Tuner's calibration before profiles
-  "resonate.sing.customXml", "resonate.sing.customName", "resonate.sing.transpose", // (legacy)
+  "resonate.sing.customXml", "resonate.sing.customName", // (legacy)
 ];
 
 function read() {
@@ -73,7 +72,6 @@ export function dbName() {
   if (s.db.anon !== before) write(s);
   return n;
 }
-export const isFresh = () => !read(); // no space was ever set up on this device
 // The active space's database name, read only (dbName may pick the signed-out space a new one).
 export function activeDb() {
   const s = read();
@@ -202,7 +200,7 @@ export async function leave(uid) {
   if (db) {
     await deleteDbs(db);
     // An unfinished PDF → Song import of this account (its PDF, the engine's book) goes with it.
-    try { await (await import("./omr/jobs.js?v=93")).deleteJobsOf(db); } catch {}
+    try { await (await import("./omr/jobs.js?v=94")).deleteJobsOf(db); } catch {}
   }
   return true;
 }

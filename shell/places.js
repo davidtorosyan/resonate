@@ -8,9 +8,9 @@
 // when the page is hidden on its own (record.js / voice.js visibilitychange, as on their pages).
 // Their scripts look their elements up in the sheet first (window.resonateRecord / resonateVoice /
 // resonateAssistants .root — sing.html has a #play and a #status, play.html a #strip).
-import { scopeCss } from "./scopecss.js?v=93";
-import { ic, openOverlay, closeOverlay, overlayOpen } from "./chrome.js?v=93";
-import { reduced } from "./motion.js?v=93";
+import { scopeCss } from "./scopecss.js?v=94";
+import { ic, openOverlay, closeOverlay, overlayOpen, staleShell, pageOpen } from "./chrome.js?v=94";
+import { reduced } from "./motion.js?v=94";
 
 const $ = (id) => document.getElementById(id);
 const PROFILES = "resonate.profiles";
@@ -21,13 +21,20 @@ const readProfiles = () => { try { return localStorage.getItem(PROFILES); } catc
 // around it — Record lays its page out to the height, the others scroll)
 const PLACES = {
   record: { page: "record.html", title: "Record", hook: "resonateRecord", scope: "rec", mic: true, body: false, extra: ["footer"],
-    load: () => import("../record.js?v=93") },
+    load: () => import("../record.js?v=94") },
   voice: { page: "voice.html", title: "Voice", hook: "resonateVoice", scope: "voice", mic: true, body: true, extra: ["#test"],
-    load: () => import("../voice.js?v=93") },
+    load: () => import("../voice.js?v=94") },
   assistants: { page: "assistants.html", title: "Assistants", hook: "resonateAssistants", scope: "asst", mic: false, body: true, extra: [],
-    load: () => import("../assistants.js?v=93") },
+    load: () => import("../assistants.js?v=94") },
 };
-export const placeOf = (href) => Object.keys(PLACES).find((k) => PLACES[k].page === String(href || "").replace(/^\.\//, "").split(/[?#]/)[0]) || null;
+// A link's place: the shell's own address for it (./?open=voice), or — for one more release — its
+// old page (voice.html).
+export function placeOf(href) {
+  const h = String(href || "").replace(/^\.\//, "");
+  const m = /^(?:index\.html)?\?(?:[^#]*&)?open=([a-z]+)(?:[&#]|$)/.exec(h);
+  const name = m ? m[1] : Object.keys(PLACES).find((k) => PLACES[k].page === h.split(/[?#]/)[0]);
+  return name && Object.hasOwn(PLACES, name) ? name : null;
+}
 
 // The shell's frame for a page (after its scoped CSS: higher specificity, so it wins).
 const CSS = `
@@ -63,6 +70,9 @@ export function mountPlaces({ onBefore = () => {}, onLoad = () => {}, onClose = 
       const res = await fetch(`${P.page}?v=${encodeURIComponent(v)}`);
       if (!res.ok) throw new Error(`${P.title} didn't load (${res.status})`);
       const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+      // (another version: reloading — not with a song open: the address can't carry the song and the
+      // place both, and the song would be gone; mounted in place then, as before)
+      if (!pageOpen() && staleShell(doc, name)) return new Promise(() => {});
       if (!$("place-css")) {
         const st = document.createElement("style");
         st.id = "place-css";

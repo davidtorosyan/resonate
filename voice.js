@@ -5,10 +5,10 @@
 // then does the same going up. The lowest and highest notes held are your limits; the
 // comfortable range starts a few notes inside them and can be adjusted by hand.
 
-import { openMic, createReader, FFT_SIZE } from "./pitch.js?v=93";
-import { loadPiano, holdPiano, ownContext, sleepAudio } from "./piano.js?v=93";
-import { noteName, median } from "./music.js?v=93";
-import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=93";
+import { openMic, createReader, FFT_SIZE } from "./pitch.js?v=94";
+import { loadPiano, holdPiano, ownContext, sleepAudio } from "./piano.js?v=94";
+import { noteName, median } from "./music.js?v=94";
+import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=94";
 
 // (In the one-page shell this page is mounted in a sheet: its own elements first — the Score has a
 // #strip too. On voice.html resonateVoice isn't set: the document.)
@@ -33,7 +33,7 @@ const ON_CENTS = 50;
 const SMOOTH_MS = 120;     // pitch = median of the last voiced frames
 const ANCHOR_MS = 1200;    // a steady comfortable note this long starts the test
 const PAUSE_MS = 700;      // ✓ / ✗ shown between notes
-const VOL_HOLD_MS = 2000, VOL_MIN_DB = -50; // as the Tuner's calibration (app.js)
+const VOL_HOLD_MS = 2000, VOL_MIN_DB = -50; // as the old Tuner's calibration (its gear)
 
 // Typical ranges (limits, comfortable), for starting without a test.
 const PRESETS = {

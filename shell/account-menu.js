@@ -2,11 +2,11 @@
 // out; read from the saved session, the sign-in library is never loaded here) and its menu: a sheet
 // on a phone, a popover under the avatar on a tablet. Sign in, password and sign out stay on
 // account.html (its Sign out order: sync, warn, stop the sync, leave, sign out).
-import { savedUser } from "../auth.js?v=93";
-import { activeSpace } from "../space.js?v=93";
-import { activeProfile } from "../profiles.js?v=93";
-import { SHARPS } from "../music.js?v=93";
-import { ic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=93";
+import { savedUser } from "../auth.js?v=94";
+import { activeSpace } from "../space.js?v=94";
+import { activeProfile } from "../profiles.js?v=94";
+import { SHARPS } from "../music.js?v=94";
+import { ic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=94";
 
 const SYNC_OFF = "resonate.sync.off"; // (sync.js OFF_KEY, as account.js: this device doesn't sync)
 const $ = (id) => document.getElementById(id);
@@ -37,10 +37,10 @@ export function mountAccount({ version }) {
       <div class="acct-head"><span class="face ${user ? "" : "out"}">${user ? esc((user.email[0] || "?").toUpperCase()) : ic("person")}</span>
         <div class="who-w"><div class="who">${user ? esc(user.email) : "Not signed in"}</div>${user ? "" : `<div class="cl">Everything works signed out</div>`}</div></div>
       ${user ? "" : `<div class="signin"><a class="primary" href="account.html" data-nav>Sign in</a></div>`}
-      <div class="group">${row("voice.html", lead("voice", "l-voice"), voice)}</div>
+      <div class="group">${row("./?open=voice", lead("voice", "l-voice"), voice)}</div>
       ${user ? `<div class="group">
         ${synced ? `<button class="prow" type="button" id="sync-row" role="switch" aria-checked="${!syncOff()}">${lead("cloud", "l-cloud")}<span class="pl">Sync this device</span><span class="switch"></span></button>` : ""}
-        ${row("assistants.html", lead("spark", "l-spark"), `<span class="pl">Assistants</span>`)}
+        ${row("./?open=assistants", lead("spark", "l-spark"), `<span class="pl">Assistants</span>`)}
       </div>` : ""}
       <div class="group">
         ${row("tools.html", lead("tools", "l-plain"), `<span class="pl">Tools</span>`)}
@@ -56,7 +56,7 @@ export function mountAccount({ version }) {
       const on = sw.getAttribute("aria-checked") !== "true";
       try { on ? localStorage.removeItem(SYNC_OFF) : localStorage.setItem(SYNC_OFF, "1"); } catch {}
       sw.setAttribute("aria-checked", String(on));
-      if (on) import("../sync.js?v=93").then((m) => { if (!m.syncOff()) { m.start(); m.syncNow(); } }).catch((err) => console.warn("sync", err));
+      if (on) import("../sync.js?v=94").then((m) => { if (!m.syncOff()) { m.start(); m.syncNow(); } }).catch((err) => console.warn("sync", err));
     }
   });
 

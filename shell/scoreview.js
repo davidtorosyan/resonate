@@ -8,7 +8,8 @@
 // play.js's own open (resonatePlay.open). play.js lays the music out to its stage's box; the shell
 // tells it when the region changed size (resize — keep: the Piano came or went, what's shown stays),
 // and play.js's own ResizeObserver catches the rest (a rotation).
-import { scopeCss } from "./scopecss.js?v=93";
+import { scopeCss } from "./scopecss.js?v=94";
+import { staleShell } from "./chrome.js?v=94";
 
 const $ = (id) => document.getElementById(id);
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
@@ -62,6 +63,7 @@ export function mountScore({ version, hooks, onLoad = () => {} }) {
       const res = await fetch(`play.html?v=${encodeURIComponent(version.replace(/^v/, ""))}`);
       if (!res.ok) throw new Error(`The Score didn't load (${res.status})`);
       const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+      if (staleShell(doc, "score")) return new Promise(() => {}); // (another version: reloading)
       const style = document.createElement("style");
       style.id = "play-css";
       style.textContent = scopeCss(doc.querySelector("style")?.textContent || "", { root: ".score-root", scope: ".play-scope" }) + OVERRIDES;
@@ -79,7 +81,7 @@ export function mountScore({ version, hooks, onLoad = () => {} }) {
       await mount();
       window.resonatePlay = Object.assign(window.resonatePlay || {}, hooks, { region: true, playBtn: el.play });
       window.resonatePlay.keysOn = false; // (play.js's own docked keyboard stays off: the Piano's is the one — play.html's own 🎹 setting untouched)
-      await import("../play.js?v=93");
+      await import("../play.js?v=94");
       P = window.resonatePlay;
       playDebug = window.resonateDebug;
       P.debug = playDebug; // (tests: Play's own resonateDebug, as on play.html)

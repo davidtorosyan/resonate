@@ -1,7 +1,7 @@
 // Voice profiles: a name, a volume calibration and a measured vocal range, in
-// localStorage. The Voice page (voice.html) edits them, the Tuner (app.js, a classic
-// script that reads the same key directly) uses the active one's volume calibration,
-// and Sing fits songs to the active one's range.
+// localStorage. The Voice page (voice.html) edits them, the tuner (shell/tuner.js) uses
+// the active one's volume calibration and range, and Sing fits songs to the active one's
+// range.
 //
 //   { active: id | null,
 //     list: [{ id, name,

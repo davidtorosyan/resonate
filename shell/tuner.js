@@ -1,15 +1,15 @@
 // The full tuner (home): the voice profile's range, a ±50¢ arc, the note, cents, level and the
-// waveform. Detection is today's Tuner's (app.js): pitch.js's YIN with the same gates, and its
-// locked-note logic — a long median for the cents, a short one that re-locks the shown note
+// waveform. Detection is the old Tuner's (app.js, gone in cleanup C phase 4: this is its port):
+// pitch.js's YIN with the same gates, and its locked-note logic — a long median for the cents, a short one that re-locks the shown note
 // after it stays > 50¢ off for 250 ms. Nothing opens the mic until Start.
 // Forms (REDESIGN §5): "full" (home, and the drop over a song), "strip" (a phone with a song open)
 // and "docked" (a tablet / desktop with a song open) — one DOM, laid out by data-form; the small
 // forms carry their own mic button (.tmic) and a state word: "parked · tap to listen" while a song
 // is open and the mic is off, "take" / "paused" while the song holds the sound (setHold).
-import { openMic, createYin, MIN_RMS, MIN_CLARITY, MIN_FREQ, MAX_FREQ, FFT_SIZE } from "../pitch.js?v=93";
-import { SHARPS } from "../music.js?v=93";
-import { activeProfile } from "../profiles.js?v=93";
-import { ic } from "./chrome.js?v=93";
+import { openMic, createYin, MIN_RMS, MIN_CLARITY, MIN_FREQ, MAX_FREQ, FFT_SIZE } from "../pitch.js?v=94";
+import { SHARPS } from "../music.js?v=94";
+import { activeProfile } from "../profiles.js?v=94";
+import { ic } from "./chrome.js?v=94";
 
 const PITCH_WINDOW_MS = 1500; // long window: the cents number and needle
 const SWITCH_WINDOW_MS = 300; // short window: is the singer still on the shown note?
@@ -37,7 +37,7 @@ export function mountTuner(root, { onState = () => {} } = {}) {
   function readProfile() {
     const prof = activeProfile();
     let cal = prof ? prof.vol : null;
-    if (!prof) { try { cal = JSON.parse(localStorage.getItem("resonate.volCal")); } catch {} } // (the Tuner's, before profiles)
+    if (!prof) { try { cal = JSON.parse(localStorage.getItem("resonate.volCal")); } catch {} } // (the old Tuner's, before profiles)
     calibrated = !!(cal && typeof cal.floor === "number" && typeof cal.ceiling === "number" && cal.ceiling > cal.floor);
     floor = calibrated ? cal.floor : VOL_FLOOR_DEFAULT;
     ceil = calibrated ? cal.ceiling : VOL_CEIL_DEFAULT;
@@ -120,7 +120,7 @@ export function mountTuner(root, { onState = () => {} } = {}) {
     root.dataset.hold = hold || "";
   }
 
-  // --- the locked note (app.js updatePitchDisplay) -------------------------------------------
+  // --- the locked note (the old Tuner's updatePitchDisplay) -----------------------------------
   const median = (a) => { const s = [...a].sort((x, y) => x - y), n = s.length; return n % 2 ? s[n >> 1] : (s[n / 2 - 1] + s[n / 2]) / 2; };
   const longMidi = () => (hist.length < 5 ? null : median(hist.map((p) => p.midi)));
   function shortMidi(now) {
@@ -248,7 +248,7 @@ export function mountTuner(root, { onState = () => {} } = {}) {
     drawScope();
   }
 
-  // --- Start / Stop (app.js start/stop: iOS's audio session, the watchdog, startGen) ---------------
+  // --- Start / Stop (the old Tuner's: iOS's audio session, the watchdog, startGen) -----------------
   async function start() {
     if (state === "listening" || state === "starting") return;
     const g = ++gen;
@@ -336,12 +336,12 @@ export function mountTuner(root, { onState = () => {} } = {}) {
 
 export const tunerHtml = () => `
   <button class="tmic" type="button" aria-pressed="false"><span class="b"></span><span class="tl">Start</span></button>
-  <a class="ribbon-wrap" href="voice.html" hidden></a>
+  <a class="ribbon-wrap" href="./?open=voice" hidden></a>
   <div class="gauge"></div>
   <div class="note-text" aria-live="off">—</div>
   <div class="cents"></div>
   <div class="cbar" aria-hidden="true"><b></b><i hidden></i></div>
   <span class="tword"></span>
   <div class="tmsg" role="status" hidden></div>
-  <div class="level">${ic("level")}<div class="bar"><i></i><div class="ticks">${"<b></b>".repeat(9)}</div></div><span class="n mono" hidden>—</span><a class="cal" href="voice.html" aria-label="Mic level (voice profile)">${ic("sliders")}</a></div>
+  <div class="level">${ic("level")}<div class="bar"><i></i><div class="ticks">${"<b></b>".repeat(9)}</div></div><span class="n mono" hidden>—</span><a class="cal" href="./?open=voice" aria-label="Mic level (voice profile)">${ic("sliders")}</a></div>
   <div class="scope"><canvas></canvas></div>`;

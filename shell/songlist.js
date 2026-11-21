@@ -7,32 +7,31 @@
 // them all. The conversions run one after another in the tray (tray.js: its queue), each row says
 // what its song is and where it is: "PDF only · 2d", "PDF · 2d" (converted), "queued", "converting
 // 3/7" — and, only when a newer engine would read it again, a quiet "v9 → v10" beside that.
-import { listSongs, addSong, addPdfSong, listPdfIds } from "../library.js?v=93";
-import { SAMPLES, songInfo } from "../catalog.js?v=93";
-import { readScoreFile, parseMusicXml } from "../musicxml.js?v=93";
-import { spaceChanged } from "../nav.js?v=93";
-import { forgetSong } from "../forget.js?v=93";
-import { titleFromFileName } from "../omr/importer.js?v=93";
-import { ENGINE_N } from "../omr/engine.js?v=93";
-import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=93";
+import { listSongs, addSong, addPdfSong, listPdfIds } from "../library.js?v=94";
+import { SAMPLES, songInfo } from "../catalog.js?v=94";
+import { readScoreFile, parseMusicXml } from "../musicxml.js?v=94";
+import { spaceChanged } from "../nav.js?v=94";
+import { forgetSong } from "../forget.js?v=94";
+import { titleFromFileName } from "../omr/importer.js?v=94";
+import { ENGINE_N } from "../omr/engine.js?v=94";
+import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen } from "./chrome.js?v=94";
 
 const SONG_KEY = "resonate.sing.song";
 const $ = (id) => document.getElementById(id);
 const openSongId = () => { try { return localStorage.getItem(SONG_KEY); } catch { return null; } };
 // (DATA_KEYS: not written after another tab switched whose data this device shows — as sing.js store)
-function setOpenSong(id, { newSong = false } = {}) {
+export function setOpenSong(id, { newSong = false } = {}) {
   if (spaceChanged()) return;
   try {
     localStorage.setItem(SONG_KEY, id);
     if (newSong) localStorage.removeItem("resonate.sing.verse"); // (as Sing's import)
   } catch {}
 }
-let opener = null; // (boot.js: the song in place — Sing, the Score; opts { sing, score }: shown for it)
+let opener = null; // (boot.js: the song in place — Sing, the Score; opts { sing, score }: shown for it — set before any UI exists)
 export const setOpener = (fn) => { opener = fn; };
 export function openSong(id, opts = {}) {
   setOpenSong(id);
-  if (opener) opener(id, opts);
-  else go("sing.html");
+  opener?.(id, opts);
 }
 
 const age = (t) => {

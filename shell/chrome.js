@@ -98,6 +98,29 @@ export function closePage() {
 }
 export const pageOpen = () => page?.name || null;
 
+// A shell opened before a deploy (the iPad on the music desk, a Home Screen app brought back) that
+// mounts Sing, the Score or a place for the first time gets that page's new markup — GitHub Pages
+// ignores ?v= — and would run the new modules under the old shell. Its badge says so: then the
+// shell reloads into the same state (boot.js reopens it from the address: open = sing, score, a
+// place; none: home) — not while something is under way, and at most once in 10 minutes (an
+// index.html still cached must not loop: then it mounts as before). → true: leaving.
+// Under way (boot.js setUnderWay): an import, Sing or the Score sounding, an assistant's command
+// running — not the shell's own module change or song switch that mounts the page (it stopped
+// what sounded first), which resonateBusy counts for nav.js's reload.
+const STALE = "resonate.shell.stale";
+let underWay = () => !!window.resonateBusy?.();
+export const setUnderWay = (fn) => { underWay = fn; };
+export function staleShell(doc, open) {
+  const theirs = doc.getElementById("version")?.textContent.trim(), mine = document.getElementById("version")?.textContent.trim();
+  if (!theirs || !mine || theirs === mine || underWay()) return false;
+  try {
+    if (Date.now() - (Number(sessionStorage.getItem(STALE)) || 0) < 600e3) return false;
+    sessionStorage.setItem(STALE, String(Date.now()));
+  } catch { return false; } // (with nothing to remember it by, it could loop)
+  location.replace(open ? `./?open=${open}` : "./");
+  return true;
+}
+
 scrim.addEventListener("click", () => closeOverlay());
 
 // --- a sheet with a handle: drag it down to close ----------------------------------------------

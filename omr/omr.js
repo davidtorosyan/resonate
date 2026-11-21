@@ -2,7 +2,7 @@
 // (a WebAssembly JVM) inside a Web Worker (omr-worker.js), with OCR by the
 // WebAssembly build of Tesseract (ocr-engine.js) in the same worker.
 //
-//   const omr = await import('./omr/omr.js?v=93');
+//   const omr = await import('./omr/omr.js?v=94');
 //   const { mxls, title, log } = await omr.convertPdf(file, { onProgress, onEvent });
 //
 // Each conversion runs in a new worker (Audiveris keeps global state per Java runtime), so a page
@@ -10,8 +10,8 @@
 //
 // See omr/README.md for how the pieces are built and licensed.
 
-import { renderPdf, buildTiff, placeholder } from './pdfprep.js?v=93';
-import { createTrace, EXPORT_LOST } from './trace.js?v=93';
+import { renderPdf, buildTiff, placeholder } from './pdfprep.js?v=94';
+import { createTrace, EXPORT_LOST } from './trace.js?v=94';
 
 const BASE = new URL('.', import.meta.url).href;          // .../omr/
 
@@ -19,7 +19,7 @@ const BASE = new URL('.', import.meta.url).href;          // .../omr/
 // audiveris.jar's SHA-256 — tools/jobstore.mjs checks them) and the CheerpJ version. A stored book is
 // continued only by the same engine; another one starts the import over from the stored PDF.
 // Change it with lib/ (not with the version badge).
-export const ENGINE = '816cc6c-ffd097d7-cj4.2';
+export const ENGINE = '7a5b6b4-530e89ee-cj4.2';
 
 // The engine's Web Lock: one conversion per browser at a time (CheerpJ's files are one database per
 // site). Held by the page for a whole import (importer.js), or by convertPdf itself.
@@ -209,7 +209,7 @@ export async function convertPdf(input, opts = {}) {
     onProgress?.({ phase: 'recognize', sheet, sheets: sheetCount, page: pageOf(sheet), step: name, fraction: done / (sheetCount * STEPS.length) });
   };
   const classpath = JARS.map((j) => `/app${new URL(`lib/${j}`, BASE).pathname}`).join(':');
-  const worker = new Worker(`${BASE}omr-worker.js?v=93`);
+  const worker = new Worker(`${BASE}omr-worker.js?v=94`);
   const stop = () => worker.terminate();
   signal?.addEventListener('abort', stop);
   try {

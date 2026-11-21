@@ -4,19 +4,19 @@
 // as soon as it's added, converted in the background (one song after another: the Reader tray); the
 // avatar (top right) opens the account menu. nav.js ran first, so whose data the device shows is
 // settled before anything here reads it.
-import { spaceChanged, handing } from "../nav.js?v=93";
-import { mountTuner, tunerHtml } from "./tuner.js?v=93";
-import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=93";
-import { mountSongView } from "./songview.js?v=93";
-import { mountTray } from "./tray.js?v=93";
-import { mountAccount } from "./account-menu.js?v=93";
-import { ic, fic, device, overlayOpen } from "./chrome.js?v=93";
-import { fadeIn } from "./motion.js?v=93";
-import { mountPlaces } from "./places.js?v=93";
-import { mountRemote } from "./remote.js?v=93";
-import { songInfo } from "../catalog.js?v=93";
-import { readFlag } from "../omr/jobs.js?v=93";
-import { activeSpace, activeDb } from "../space.js?v=93";
+import { spaceChanged, handing } from "../nav.js?v=94";
+import { mountTuner, tunerHtml } from "./tuner.js?v=94";
+import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=94";
+import { mountSongView } from "./songview.js?v=94";
+import { mountTray } from "./tray.js?v=94";
+import { mountAccount } from "./account-menu.js?v=94";
+import { ic, fic, device, overlayOpen, setUnderWay } from "./chrome.js?v=94";
+import { fadeIn } from "./motion.js?v=94";
+import { mountPlaces } from "./places.js?v=94";
+import { mountRemote } from "./remote.js?v=94";
+import { songInfo } from "../catalog.js?v=94";
+import { readFlag } from "../omr/jobs.js?v=94";
+import { activeSpace, activeDb } from "../space.js?v=94";
 
 // An email link at the root, handed to account.html (nav.js): nothing here starts. (nav.js waits
 // forever then, which holds this module back in Chromium — not in WebKit, which runs a module whose
@@ -98,6 +98,9 @@ places = mountPlaces({
 });
 remoteHome = mountRemote({ sing: song.sing, song, places });
 hooks();
+// A stale shell's reload (chrome.js staleShell) waits for these — not for the module change or the
+// song switch that mounts the page (song.busy() counts those: nav.js's reload waits for them too).
+setUnderWay(() => tray.busy() || song.soundBusy() || remoteHome.busy());
 
 // Test hook: read a PDF from a URL (?pdf=…) without the picker; else continue an unfinished import
 // — shown when the address asked for it (pdf-import.html, its pill on the old pages), else folded.
