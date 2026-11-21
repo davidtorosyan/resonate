@@ -11,7 +11,7 @@
 // See omr/README.md for how the pieces are built and licensed.
 
 import { renderPdf, buildTiff, placeholder } from './pdfprep.js?v=94';
-import { createTrace, EXPORT_LOST } from './trace.js?v=94';
+import { createTrace, EXPORT_LOST, STEPS } from './trace.js?v=94';
 
 const BASE = new URL('.', import.meta.url).href;          // .../omr/
 
@@ -42,9 +42,8 @@ const JARS = [
   'jsr305-3.0.2.jar', 'angus-activation-2.0.2.jar', 'jakarta.activation-api-2.1.3.jar', 'txw2-4.0.5.jar', 'istack-commons-runtime-4.1.2.jar',
 ];
 
-// Audiveris sheet steps, in order (for progress reporting).
-export const STEPS = ['LOAD', 'BINARY', 'SCALE', 'GRID', 'HEADERS', 'STEM_SEEDS', 'BEAMS', 'LEDGERS', 'HEADS',
-  'STEMS', 'REDUCTION', 'CUE_BEAMS', 'TEXTS', 'MEASURES', 'CHORDS', 'CURVES', 'SYMBOLS', 'LINKS', 'RHYTHMS', 'PAGE'];
+// Audiveris sheet steps, in order (for progress reporting): trace.js's list.
+export { STEPS };
 
 // --- Progress from Audiveris's log lines (when there's no trace) ----------------------
 // Lines look like:  INFO  [killing#3]   null 0    | HEADS   — a one-page book has no "#N":

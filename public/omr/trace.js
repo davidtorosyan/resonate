@@ -15,6 +15,7 @@
 //   (n chord m staff voice t dur head… [lyric…] | r chord m staff voice t dur x,y) · S s ms · F s STEP reason
 // Nothing is invented: a record that doesn't parse is skipped (counted in `bad`).
 
+// Audiveris's sheet steps, in order — the one list (readerstate.js imports it, omr.js re-exports it).
 export const STEPS = ['LOAD', 'BINARY', 'SCALE', 'GRID', 'HEADERS', 'STEM_SEEDS', 'BEAMS', 'LEDGERS', 'HEADS',
   'STEMS', 'REDUCTION', 'CUE_BEAMS', 'TEXTS', 'MEASURES', 'CHORDS', 'CURVES', 'SYMBOLS', 'LINKS', 'RHYTHMS', 'PAGE'];
 const KINDS = new Set(['head', 'stem', 'beam', 'ledger', 'rest', 'clef', 'key', 'time', 'bar', 'slur', 'tie', 'acc',

@@ -26,8 +26,9 @@
 // the importer, never invented — every selector copes with their absence.
 // tools/importcontract.mjs checks a run's events against this (fields, types, order).
 
-export const STEPS = ['LOAD', 'BINARY', 'SCALE', 'GRID', 'HEADERS', 'STEM_SEEDS', 'BEAMS', 'LEDGERS', 'HEADS',
-  'STEMS', 'REDUCTION', 'CUE_BEAMS', 'TEXTS', 'MEASURES', 'CHORDS', 'CURVES', 'SYMBOLS', 'LINKS', 'RHYTHMS', 'PAGE'];
+// Audiveris's sheet steps, in order: trace.js's list (one list — trace.js rejects a step it doesn't know).
+import { STEPS } from './trace.js?v=94';
+export { STEPS };
 // Audiveris walks the systems one after another in these (AbstractSystemStep); the others work on
 // the whole sheet at once.
 export const PER_SYSTEM = new Set(['HEADERS', 'STEM_SEEDS', 'BEAMS', 'LEDGERS', 'HEADS', 'STEMS', 'REDUCTION',

@@ -12,7 +12,7 @@
 // is hidden), the piano decoded on it once the keyboard first shows (warm), the first tap anywhere
 // resumes it (the session left alone), a press sets "playback" and strikes in its own pointerdown
 // when the context runs and the piano is in — else as soon as it can (iOS: at the lift, which
-// resumes it; a context replaced after an interruption re-arms the first-tap resume), for
+// resumes it; a context replaced after an interruption, or a tap's resume that hung, re-arms the first-tap resume), for
 // LIFT_PLAY, or not at all LATE ms after the lift. Before anything sounds the tuner parks (iOS plays
 // quietly while a page has the mic open) and Sing stops — its 🎤 Pitch mic closed until the keys
 // are quiet (one sound at a time); a tuner that was
@@ -48,7 +48,7 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
   hearBox.style.display = "none";
   el.insertBefore(hearBox, kbEl);
   el.style.columnGap = "8px";
-  let ac = null, gate = null, shown = false, range = [48, 83];
+  let ac = null, stuck = false, gate = null, shown = false, range = [48, 83];
   let linked = false, scoreLit = new Map(), scoreRange = null, ownLit = new Map(); // (linked: the Score's keys; own: its own presses)
   const held = new Set(); // the keys down: { midi, h (holdPiano), a, t0, end, lift, dead, cap, ts }
   const sounding = new Set(); // every press whose note may still sound or start (a lifted one waiting for the context too)
@@ -75,15 +75,27 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
   }
 
   // --- the context ----------------------------------------------------------------------------
+  // (closed, interrupted, or stuck — a tap's resume that never settled, iOS: replaced, as Play's)
   function fresh() {
-    if (!ac || ac.state === "closed" || ac.state === "interrupted") {
+    if (ac?.state === "running") stuck = false;
+    if (!ac || ac.state === "closed" || ac.state === "interrupted" || stuck) {
       if (ac && ac.state !== "closed") ac.close().catch(() => {});
       ac = ownContext(new (window.AudioContext || window.webkitAudioContext)());
+      stuck = false;
       gate = null;
       try { pianoBus(ac, BUS); primeHold(ac); } catch {}
       arm(); // (a new context: the next tap anywhere resumes it too)
     }
     return ac;
+  }
+  // how: "press" (a touch-down: iOS starts audio only at the lift, so a long hold isn't stuck) or
+  // "tap" (a lift: a resume still pending after 1.5 s marks the context stuck — the next touch
+  // starts over with a new one). As play.js getCtx.
+  function wake(a, how) {
+    if (a.state === "running") return;
+    Promise.race([a.resume().catch(() => {}), sleep(1500)]).then(() => {
+      if (a === ac) stuck = how !== "press" && a.state !== "running";
+    });
   }
   function warm() { // (the session untouched: making a context and decoding on it changes nothing)
     try { loadPiano(fresh()).catch(() => {}); } catch (err) { console.info("piano: audio", err?.message); }
@@ -123,7 +135,7 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
     beforeSound();
     try { if (navigator.audioSession && navigator.audioSession.type !== "playback") setSession("playback"); } catch {}
     const a = fresh();
-    if (a.state !== "running") a.resume().catch(() => {});
+    wake(a, "press");
     const k = { midi, h: null, a: null, t0: 0, end: Infinity, lift: 0, dead: false, cap: 0, ts: e.timeStamp };
     const piano = a.state === "running" ? pianoNow(a) : null;
     if (piano) strike(k, a, piano);
@@ -167,7 +179,7 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
   // couldn't start, a new one after an interruption, is resumed now and the press sounds at the lift)
   function lift(k, tap = false) {
     if (!k || k.dead || k.lift) return;
-    if (tap && (!ac || ac.state !== "running")) fresh().resume().catch(() => {});
+    if (tap && (!ac || ac.state !== "running")) wake(fresh(), "tap");
     clearTimeout(k.cap);
     k.lift = performance.now();
     if (k.h) { const at = Math.max(k.a.currentTime, k.t0 + MIN_PRESS); k.h.release(at); k.end = at; k.dead = true; setTimeout(() => sounding.delete(k), 1500); }
@@ -262,7 +274,7 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
     held: () => held.size,
     debug: () => ({ shown, linked, range: linked && scoreRange ? [...scoreRange] : [...range], own: [...range], held: [...held].map((k) => k.midi), lit: linked && scoreRange ? [...scoreLit.keys()] : litKeys.slice(),
       litHands: linked && scoreRange ? [...scoreLit].map(([m, L]) => [m, L.hand]) : litKeys.map((m) => [m, m >= 60 ? "rh" : "lh"]), chips: hearBox.querySelectorAll("button[data-key]").length,
-      fingers: kb.held(), log: log.slice(), ctx: ac?.state || null,
+      fingers: kb.held(), log: log.slice(), ctx: ac?.state || null, stuck,
       awake: !!awake.src, reopenAt, draws: kb.draws, rect: shown ? (({ left, top, width, height }) => ({ left, top, width, height }))(el.getBoundingClientRect()) : null }),
   };
 }
