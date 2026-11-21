@@ -35,3 +35,12 @@ Its P1 patterns and where each stands:
 Next, once those land: one engine release. Renumber the patches, run a combined A/B on all 9 songs, build.sh, bump `ENGINE` +
 `ENGINE_N`, run the browser e2e, one review, deploy. Then the owner runs Reconvert all, and round 2 (the triage's P2
 patterns: 8 small notes, 11 navigation marks, 12 dots, 13 flags, 14 melisma syllables) runs on the new conversions.
+
+### Round 1 as built (2026-11-21)
+- Engine 15 = patches 0011–0015 (keys, whole notes, ledgers, ties, phantom heads), built by build.sh
+  (ENGINE 816cc6c-ffd097d7-cj4.2, ENGINE_N 15). The combined native run (scratchpad `acc/r15/`) equals the sum of the
+  patches' own runs: n14→r15 matches b13→heads3, and heads3→r15 matches b13→n14 (bar counts, a dot of noise).
+- Clean-ups (de820b7): restoreTies pairs notes and carries accidentals, the tuplet run skips a tied-in note, a duet
+  partner's own staff in the Full score.
+- Left for round 2: pattern 4 (cue-size second voices: Stumblin' In's duet, Too Sweet's thirds — needs cue-head
+  detection), the P2/P3 patterns. Round 2 starts from the owner's songs reconverted with engine 15.
