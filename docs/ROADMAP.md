@@ -6,20 +6,54 @@ live in CLAUDE.md ("UI principles").
 
 ## Where things stand (2026-11-20)
 
-**Work queue (the owner, 2026-11-20 16:17 UTC — no push to main before 17:17 UTC; conversions running on the iPad). Kept up to date as items land, so a fresh session can resume:**
-- [x] A1 Songs sheet on a phone can't be dismissed (the handle at the top doesn't drag down).
-- [x] A2 The song list is reachable twice (the top-left song pill drops down the list, and Songs bottom right): one way only; the title still shown.
-- [x] A3 Turning the Piano on with the Score shown re-lays the score out (the notes on screen are gone); Sing only makes it smaller. Piano must behave like Sing.
-- [x] A4 Two ▶ when a stretch is picked (the big one and the stretch controls' small one).
-- [x] A5 Piano then Score from home: the Score arrives "with its own piano". Piano and Score are linked but independent — one keyboard, the Piano module's.
-- [x] A6 (deployed 17:2x UTC; the owner presses Refresh once — docs/CONNECTOR.md) The assistant connector: new tools needed deleting and re-adding the ChatGPT plugin. Find a way (versioning / discovery / refresh) so it never has to happen again.
-- [x] A7 Song rows: "engine 10" as the subtitle is confusing — show the engine (as a version, "v10") only when it matters (an older engine), not as the main fact.
-- [x] A8 The converting tile changes width and pushes the ▶ beside it around.
-- [x] B  Make the one-pager the site (the root is the shell; the old pages retired). Built for v92 (docs/CUTOVER.md "As built"): `index.html` is the shell, `shell.html` a stub, the old Tuner `tuner.html`; sing / play / record / voice / assistants / pdf-import.html land in the shell in their state (`away.js`); account, consent, audio test, Tools stay real pages. The owner checks the Home Screen app after the deploy (swipe it away, reopen).
-- [ ] C  Tech debt: cleanup / re-architecture / dead code, after B.
-- [ ] D  Engine accuracy loop: compare every converted song with its PDF, bar by bar; reproduce discrepancies natively, patch, bump ENGINE_N, repeat until none.
+**Work queue: the owner's order, kept up to date so a fresh session can resume.** Work top to bottom. "On deck" (the 2026-11-20 list) comes before the 2026-11-21 list. A step marked ▶ is the one in progress. Its state and the next action are written beside it.
 
-**Live:** v90 — the song library, PDF first (docs/LIBRARY.md): Songs → Add → PDF stores the PDF at once (usable in the Score's PDF view with the keyboard); ⋯ → Convert / Reconvert / Delete; Convert all / Reconvert all run one at a time in the background (resumable, the screen kept on); each song shows the engine that made it (engine 10 = patch 0010); 20 songs in the cloud (migration applied). v89's engine patch 0010 (shared rests) is live — songs converted before need Reconvert (Killing: `smwjzgji3o3zs`). v83–87's one-page redesign is a preview (Tools → New Resonate); nothing from v87–90 has been tried on a real iPhone or iPad yet.
+*On deck (2026-11-20):*
+- [x] A1–A8: the shell's jank list (v91). A6: the connector's tool list is frozen (docs/CONNECTOR.md).
+- [x] B: the one-pager is the site (v92, docs/CUTOVER.md).
+- [x] The connector broken by v91's logging (every signed-in POST 400): fixed, function version 8 (docs/CONNECTOR.md "Incident").
+- [ ] ▶ D round 1 release, **v93**:
+  - Done: engine 15 (patches 0011–0015, jars built, ENGINE / ENGINE_N 15, committed) and the clean-ups (de820b7).
+  - Next:
+    1. Resume the clean-up review (workflow `review-cleanups`, run wf_80e7f4b4-d6b; the owner had to stop it).
+    2. Fix what it confirms.
+    3. Run libcore, songlib, tiecases, jobstore and shell.
+    4. Bump to 93 and deploy.
+    5. The owner presses **Reconvert all** ("v10 → v15" badges).
+- [ ] The connector: redeploy resonate.ts for b07e5f0's "📡 at the top of Resonate" wording (minor; batch it with the next function change).
+- [ ] C: tech debt. docs/CUTOVER.md "Left for cleanup C" (the old pages, away.js, tuner.html + app.js, etc.), dead code, and an audit (a workflow).
+- [ ] D round 2. Compare again (tools/accuracy/pairs.cjs on engine-15 conversions; the native `acc/r15` exports work before the owner reconverts). Then:
+  - pattern 4: cue-size second voices (Stumblin' In's duet, Too Sweet's thirds), which need cue-head detection;
+  - the P2 patterns: 8 small notes, 10 key flats at a system start, 11 navigation marks, 12 dots, 13 flags, 14 melisma syllables.
+  - Repeat until none. Pipeline and status: docs/ACCURACY.md.
+
+*Then (the owner, 2026-11-21), in this order:*
+- [ ] E1 Opening a score defaults to the **Full score**, not Both (when the song offers one; the song's saved view still wins).
+- [ ] E2 The 📡 remote button:
+  - shown only once an assistant has been connected to the account (`assistant_activity` has a row);
+  - an icon that reads "AI" (not a satellite dish);
+  - still one switch per device (several devices may have Resonate open).
+- [ ] E3 Highlights for assistants at **note / beat resolution**. A drag already picks onsets (written time [q0, end)), but `score_focus` names whole measures and sends whole bars. Send the exact span: its first and last notes, beat positions and only the notes inside, plus the measures for context. Also select a single note (a long-press or a tap-and-hold?).
+- [ ] E4 Voice calibration too deaf for the iPad on the piano stand: it didn't pick the owner up at all. Look at the dB floor (calibration counts dB above −50; the tuner's `MIN_RMS` 0.012) and make it more generous or adaptive, per device.
+- [ ] E5 Volume calibration **per device** under one voice profile:
+  - the range (notes) stays one per profile, the volume one per device (the device id exists: `resonate.device`);
+  - devices can be renamed, signed out too.
+- [ ] E6 Score bookmarks / notes: mark bars or phrases (a label, maybe a note) to remember what was practised, beyond "where you left off". Listed in the Score; kept per song (synced later).
+- [ ] E7 **Piano fingering**:
+  - Look at existing work first: PianoPlayer (Musy), Parncutt-style cost models, Nakamura's HMM / PIG dataset, dynamic programming over hand positions.
+  - Run it locally as a step after a conversion (like a clean-up: stored with the song, rerun when the algorithm changes).
+  - Hand + finger per note, readable by assistants (a read_resonate query, catalog.ts).
+  - Shown on the Score's keyboard with modes: off / finger numbers / a ghost hand.
+  - Example to catch: a G3 + B4 the right hand can't span, so two hands.
+- [ ] E8 **Singing, redone around the ear** (big; a design doc first, docs/EAR.md, then iterate with the owner):
+  - Hide the time-series lane and per-note colours from the singer (keep the data for the assistant).
+  - Pick a short phrase. ▶ hear it whenever you like, then sing it on your own time (no forced listen → your-turn timing). Press done.
+  - Two counts: **beats on** (close or on the money) and **notes hit**, generous. The total isn't shown until all are right ("all of them").
+  - A **rhythm exercise**: the phrase with a metronome, then snap along with the metronome while singing; done → the beats count.
+  - A **notes exercise**: the phrase's lowest / highest (and other) notes, ▶ to hear, hold to match (like the range test), then the phrase again.
+  - Everything trains listening: sounds, not visuals, short phrases. The owner's new direction updates the "no scoreboard counts" principle: counts to beat, never a grade or a %.
+
+**Live:** v92 (2026-11-20). The one-page shell is the site; the old pages land in it; engine 10. The connector's edge function is version 8. On the branch, not live yet: engine 15 and the clean-ups (v93, D round 1 above).
 
 **Next:** whatever the owner highlights next (highlight in the Score → `get_score_view` in a Claude chat → fix the engine or a clean-up → Reconvert). Open from v90: the MCP server doesn't know PDF-only songs (`get_song` says "open it once"; needs a resonate.ts change + redeploy); songs converted before v90 read "engine ≤9" even when v89 made them; Killing's piano bars 31, 32, 62 still have a voice short of its bar.
 
