@@ -44,3 +44,9 @@ patterns: 8 small notes, 11 navigation marks, 12 dots, 13 flags, 14 melisma syll
   partner's own staff in the Full score.
 - Left for round 2: pattern 4 (cue-size second voices: Stumblin' In's duet, Too Sweet's thirds — needs cue-head
   detection), the P2/P3 patterns. Round 2 starts from the owner's songs reconverted with engine 15.
+
+## Round 2 (2026-11-21, engine 15)
+- Pairs: scratchpad `acc/pairs15/` (from the native engine-15 exports `acc/r15/`; script `pairs15.sh`; 246 systems; the
+  clean-ups as of de820b7).
+- Comparison + triage against round 1: workflow script `accuracy-review-r2.js` (session workflows folder), run
+  wf_a9cfed85-67b. Resume it with `resumeFromRunId` and the same args if it's stopped. The triage goes to `acc/triage15.md`.
