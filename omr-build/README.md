@@ -559,7 +559,94 @@ hand 23 and 55 — by `restoreTies`' rule 2, which now reaches a tune note held 
 `0018` — **A chord dotted on half its heads is dotted.** Rounding the half up instead (`Math.floor(mean + 0.5)`), on
 top of 0016: on the nine songs it changes exactly those seven chords — Piano Man 100, 191, 192, 202 and Yellow
 Submarine 3 (both chords), 4 (with the rest of the bar, both hands, half a beat later) — all as printed, and nothing
-else. 
+else.
+
+`0019` — **A cue-size second voice on the main voice's stem.** Round 2's pattern 3 (66 findings, 62 audible, in four
+songs): Too Sweet's vocal line carries a harmony in cue-size heads on the tune's own stems, a third (sometimes a
+fourth) above it — on ledger lines over the staff —, and Stumblin' In's voice staff is a duet whose second voice is
+cue-size heads on the tune's stems, a third to a sixth below. Every such chord came out as one wrong head, often on
+the step between ([G5 + cue B♭5] → an A5 half, [D5 + cue F5] → E♭5), quarters read as halves, bars overfull, the cue
+notes lost (and once a half-note "triplet" that the clean-ups made of a 6-beat bar).
+
+What happens (the 0009 trace and a debug build making the heads in a watch box VIP; Too Sweet bar 49, Stumblin' In
+bar 32):
+- With the small heads switch off (the web's setting, as upstream's default) small heads are never candidates. The
+  void template matched across the pair — its ring's top on one head, its bottom on the other, the ledger between
+  blanked as in 0015 (grade 0.24–0.28) — and that head, the only one at the stem's end, got the stem. The real head
+  (a black G5, 0.79), its stem seed going on past it to the cue head, was "not an end" for `HeadLinker.linkSides`,
+  got no stem and was removed at REDUCTION (`checkHeadHasStem`).
+- `-constant org.audiveris.omr.sheet.ProcessingSwitches.smallHeads=true` alone (A/B on the nine songs, the 0016 +
+  0018 build with and without it) is much worse: small heads are then looked for everywhere, and the curl of a
+  quarter rest is a small black head with its zigzag for a stem — 286 quarter rests lost (Piano Man 187, Songbird 28,
+  Killing 21…), 692 bars changed, 378 small chords; a small template matches inside a normal black head (Too Sweet
+  49's G5 read as small); `SigReducer` doesn't let small and standard heads share a stem, so one of the pair goes
+  (Too Sweet's voice bars 49–55 and 96–111 came out empty or rests only); a stem whose first head is small is a
+  grace stem for `StemInter.isGraceStem` and refuses a standard flag; and a small head is exported as a grace note
+  (`SmallChordInter`, outside the voices) — a timed cue note isn't in Audiveris's model. It did bring grace notes
+  (17 over the nine songs: Piano Man 2, Songbird 21, Too Sweet 28 and 79…), with the rest of the damage.
+
+Now, with the switch off, small heads are *cue partners* only (`ShapeSet.smallHeadsArePartners`):
+- HEADS (`NoteHeadsBuilder`): on each stem seed the small black and void templates are tried with the standard
+  ones (`seedShapes`; not in the range scan, not on a drum staff). After the staff's purges, `selectCuePartners`
+  keeps a small head only beside a standard head of the same kind (black / void) on the same seed and side, 2 to 5
+  steps away (a third to a sixth: the nine songs' cue partners are 2, 3 and 5 away; an octave let a left hand's low
+  octave head below the staff read as a cue, Piano Man 43–49), of grade 0.4 or more; the small head itself 0.45 or
+  more (true cue heads 0.48–0.80, the lowest on a staff line; false ones, a seventh away, 0.45–0.48), and no
+  standard head at its pitch or a step away overlapping it with 0.75 of its grade or more (a small template inside
+  or beside a real head: every head of a chord drew one). A partner kept removes the weak standard heads on it, a
+  step from it or matched across the pair (the void ring). Small seed heads are not competitors for the range scan,
+  so the standard heads found are the ones found before.
+- STEMS: small heads are linked like stem heads (`getStemHeadsLinked` in `StemsRetriever`), also on a standard
+  beam (`BeamLinker`, `HeadLinker`).
+- REDUCTION: no exclusion between small and standard heads on one stem, nor between small heads and standard
+  beams.
+- CHORDS: a stem holding a standard head makes a standard chord, the cue head its member (`ChordsBuilder`); a
+  standard chord is told by its class (`Measure.getStandardHeadChords` read the first member); a grace stem is one
+  with no standard head (`isGraceStem` read the first head: the eighths' flags were refused); a slur from a cue head
+  names no grace chord (`HeadChordInter.getGraceChord` cast its chord: the export threw on Too Sweet's voice).
+- Export (`PartwiseBuilder`): the cue head is a `<note>` with `<cue/>` and `<type size="cue">`, written after the
+  chord's standard notes (`exportOrder`: a chord's first note, which carries its lyrics, directions and timing, is
+  never a cue), with no `<tie>` element (MusicXML's cue notes have none; `<tied>` stays). A small chord is a grace
+  note as before; the trace marks a grace by the chord's class too.
+
+A/B, native, 0001–0016 + 0018 (`h1`) vs + 0019, the owner's nine songs, every changed bar checked against the PDF:
+
+| song | bars changed | what |
+|---|---|---|
+| Too Sweet | 24 | the voice's harmony: 48, 96 (D5 + cue F5, F5 + cue A5 quarters; was an E♭5 half), 49, 97, 105 (G5 + cue B♭5 dotted quarter, B♭5 + cue D6 eighth, G5 + cue B♭5 half; was an A5 dotted half and a 3-note half chord), 51, 99, 107 (D5 + F5, F5 + B♭5, D5 + F5), 53, 55, 101, 103, 109, 111 (C5 + E♭5, D5 + F5, B♭4 + D5; was a B♭4/D5 dotted half and an E♭5), 50, 52, 54, 98, 100, 102, 104, 106, 108, 110 (quarter chords a third apart after a rest; were halves), the eighths' flags found again, every bar 4 beats; 104 is no longer a 6-beat bar (the clean-ups' half-note triplet there is gone) — as printed. System 27 (101–104) comes out an octave high in both builds (a treble 8va clef read there, which the clean-ups' stray-8va rule moves back) |
+| Stumblin' In | 9 + 3 | the duet's cue voice: 32–35 (D4 + cue B3, C4 + A3, B3 + G3 eighths; were a C4 quarter, a B3 half, an A3 half, 4¼-beat bars, syllables on the wrong verse), 73–75 (G4 + cue B3, A4 + C4, B4 + D4: a sixth below; were D4/G4 half chords), 76 and 78 (the G4 + cue B3 the bar starts with; were rests only) — as printed; right hand 34: the F♯3 of a tied chord now tied (as printed, A3 still not); right hand 42: two of three ties over the barline lost (B3, D4; `restoreTies` puts them back); 40: the voice's three syllables lost (below) |
+| the other seven | 0 | MusicXML byte-identical (encoding date aside) |
+
+With 0017 applied first (0001–0019): the same Too Sweet and Stumblin' In bars change, identically, and 0017's own
+(its right-hand ties) stay as they are — the two patches touch different files and different staves.
+
+The HEADS step takes the same time (Piano Man 39.4 → 40.0 s, Too Sweet 31.1 → 30.7 s, native); the trace's
+pitched heads still equal the export's.
+
+The lyrics around Stumblin' In's cue bars move, though the inters there don't: the OCR image (`TextsCleaner`) now
+erases the cue heads, and Tesseract's page layout changes with it. Before, the unrecognised cue heads below bars
+34–35 were read as a lyric line of their own, so the verse lines under them were numbered 2 and 3 and the chorus
+line of bar 36, printed between them, 3 (the clean-ups fold a sparse verse 3 into verse 1); now that line is gone,
+the chorus line is verse 2 and bar 34's second verse verse 3 — Sing's verse 1 has no words in bar 36 (5 syllables)
+and still mixed ones in 34. Bar 40's lyric line, under the next system but one, lost its first three words (the
+image there is identical; the OCR of the page isn't). Bar 32's two verses are right now (were swapped, with junk)
+and bar 33 has its syllables.
+
+Round 2's pattern 3, 66 findings → 13: the merged heads 52 → 3 (Stumblin' In 20 ×2 and 21: a normal-size third on
+ledger lines in the piano, [A3 C4 E4] → [B3 E4], not cue heads), the missing cue notes 14 → 10. Not fixed:
+- cue notes in a voice of their own, with their own stems: The Longest Time's verse-2 pickups and rhythm (20, 44,
+  60, 62), Wichita Lineman's verse-2 voice (9, a cue unison beside the tune's C5s), Stumblin' In 18 (a second voice,
+  normal size). A small head with no standard partner on its stem is still dropped: Audiveris can only make such a
+  chord a grace note, outside the voices and the bar's time;
+- grace notes (pattern 8): not looked for (only the switch does, with the damage above). `crossHeads` and
+  `implicitTuplets` were tried the same way and help no more: `crossHeads` reads Piano Man 191's x-heads (as
+  printed) but adds notes or splits voices wrongly in seven songs (Too Sweet 18 bars, Songbird 12, Killing's right
+  hand 13, Goodbye Yellow Brick Road 83 and 89, Yellow Submarine 66, Wichita 9, Piano Man 2 and 192 — its grace
+  note read as a quarter); `implicitTuplets` doesn't
+  fix Songbird 83's duplets and puts dropped chords after the barline (Too Sweet 13 bars, Songbird 43, 90, 149,
+  Piano Man 42, 203, Goodbye Yellow Brick Road 83–84, Yellow Submarine 10, 53; Killing 31's eighths made a
+  triplet).
+
 `build.sh` applies the patches with `git am --keep-cr`: the upstream sources are CRLF.
 
 ## StripVolatile (applied to every jar)

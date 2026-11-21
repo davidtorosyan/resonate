@@ -1,0 +1,718 @@
+From 4c32fa177e0f94e7192595dd70378b753530ca02 Mon Sep 17 00:00:00 2001
+From: build <build@localhost>
+Date: Sat, 21 Nov 2026 16:21:54 +0000
+Subject: [PATCH] Read a cue-size second voice on the main voice's stem as cue
+ notes of its chord
+
+A vocal line printed with a second singer's part in cue-size heads on the
+tune's own stems (a harmony a third or a fourth above, a duet's lower voice a
+third to a sixth below) came out as one wrong head per chord. With the small
+heads switch off, small heads are never candidates; the void template
+matched across the two heads (its ring's top on one, its bottom on the other,
+the ledger between blanked) and that head between was the only one at the
+stem's end, so the real head, its stem seed going on past it, was not an end
+and went: [G5 + cue Bb5] read as an A5 half, quarters as halves, bars
+overfull, the cue notes lost. Turning the switch on is worse: small heads are
+then looked for everywhere (the curl of every quarter rest is one, a small
+template fits inside a normal black head), a stem may not hold small and
+standard heads together, a stem whose first head is small refuses a standard
+flag, and a small head is exported as a grace note.
+
+With the switch off, small heads are now cue partners only:
+- HEADS: on each stem seed the small black and void templates are tried with
+  the standard ones. A small head is kept only beside a standard head of the
+  same kind on the same seed and side, 2 to 5 steps away, with a grade of
+  0.45 or more, and no standard head at its pitch or a step away overlapping
+  it with 0.75 of its grade or more (a small template inside or beside a real
+  head). A kept one removes the weak standard heads on it or matched across
+  the pair. Small seed heads are not competitors for the range scan.
+- STEMS / REDUCTION: small heads are linked to stems and standard beams, and
+  are not excluded by standard heads or standard beams on their stem.
+- CHORDS: a stem with a standard head makes a standard chord, the cue head
+  its member; a standard chord is told by its class, a grace stem by having
+  no standard head (the flag is found again), a slur from a cue head names
+  no grace chord.
+- Export: the cue head is a <note> with <cue/> and <type size="cue">, after
+  the chord's standard notes, with no <tie> element (<tied> stays).
+
+On the owner's nine songs: Too Sweet 24 bars and Stumblin' In 9 bars of the
+vocal line as printed (the merged heads, durations and cue notes of 49 of the
+52 merged-head findings and 4 of the 14 missing-cue ones); the other seven
+songs' MusicXML byte-identical; the HEADS step's time unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ETLv1P36qBemBoAsvF94d2
+---
+ .../org/audiveris/omr/glyph/ShapeSet.java     |  39 ++++
+ .../audiveris/omr/score/PartwiseBuilder.java  |  56 ++++-
+ .../omr/sheet/note/ChordsBuilder.java         |  11 +
+ .../omr/sheet/note/NoteHeadsBuilder.java      | 200 +++++++++++++++++-
+ .../audiveris/omr/sheet/rhythm/Measure.java   |   3 +-
+ .../audiveris/omr/sheet/stem/BeamLinker.java  |   4 +-
+ .../audiveris/omr/sheet/stem/HeadLinker.java  |   5 +-
+ .../omr/sheet/stem/StemsRetriever.java        |   6 +-
+ .../org/audiveris/omr/sig/SigReducer.java     |  10 +-
+ .../omr/sig/inter/HeadChordInter.java         |   6 +-
+ .../audiveris/omr/sig/inter/StemInter.java    |  14 +-
+ .../org/audiveris/omr/text/web/WebTrace.java  |   3 +-
+ 12 files changed, 334 insertions(+), 23 deletions(-)
+
+diff --git a/app/src/main/java/org/audiveris/omr/glyph/ShapeSet.java b/app/src/main/java/org/audiveris/omr/glyph/ShapeSet.java
+index cd2dedfb0..5e8f96fa8 100644
+--- a/app/src/main/java/org/audiveris/omr/glyph/ShapeSet.java
++++ b/app/src/main/java/org/audiveris/omr/glyph/ShapeSet.java
+@@ -1098,6 +1098,45 @@ public class ShapeSet
+         return EnumSet.copyOf(getProcessedShapes(sheet, StemHeads));
+     }
+ 
++    //--------------------//
++    // getStemHeadsLinked //
++    //--------------------//
++    /**
++     * Report the stem-related heads to link to stems in the provided sheet: the stem template
++     * notes, plus the small oval heads (with the small heads switch off, those only exist as cue
++     * partners of standard heads on their stems).
++     *
++     * @param sheet provided sheet
++     * @return the head shapes to link
++     */
++    public static EnumSet<Shape> getStemHeadsLinked (Sheet sheet)
++    {
++        final EnumSet<Shape> set = getTemplateNotesStem(sheet);
++        set.add(NOTEHEAD_BLACK_SMALL);
++        set.add(NOTEHEAD_VOID_SMALL);
++
++        return set;
++    }
++
++    //-----------------------//
++    // smallHeadsArePartners //
++    //-----------------------//
++    /**
++     * Tell whether the small heads of the provided sheet are cue partners only.
++     * <p>
++     * With the small heads switch off, small heads are not looked for as such: NoteHeadsBuilder
++     * keeps one only as the partner of a standard head on the same stem (a cue-size second voice
++     * printed on the main voice's stem). Such a head belongs to the standard chord, on its stem
++     * and beams.
++     *
++     * @param sheet the sheet at hand
++     * @return true if small heads are cue partners only
++     */
++    public static boolean smallHeadsArePartners (Sheet sheet)
++    {
++        return !sheet.getStub().getProcessingSwitches().getValue(ProcessingSwitch.smallHeads);
++    }
++
+     //----------//
+     // shapesOf //
+     //----------//
+diff --git a/app/src/main/java/org/audiveris/omr/score/PartwiseBuilder.java b/app/src/main/java/org/audiveris/omr/score/PartwiseBuilder.java
+index 080c09150..428532b77 100644
+--- a/app/src/main/java/org/audiveris/omr/score/PartwiseBuilder.java
++++ b/app/src/main/java/org/audiveris/omr/score/PartwiseBuilder.java
+@@ -204,6 +204,7 @@ import org.audiveris.proxymusic.StartStopDiscontinue;
+ import org.audiveris.proxymusic.Stem;
+ import org.audiveris.proxymusic.StemValue;
+ import org.audiveris.proxymusic.Step;
++import org.audiveris.proxymusic.SymbolSize;
+ import org.audiveris.proxymusic.Supports;
+ import org.audiveris.proxymusic.SystemLayout;
+ import org.audiveris.proxymusic.SystemMargins;
+@@ -1382,6 +1383,41 @@ public class PartwiseBuilder
+                         : factory.createTechnicalUpBow(placement));
+     }
+ 
++    //-------------//
++    // exportOrder //
++    //-------------//
++    /**
++     * The notes of a chord in export order: the standard heads first, then the cue partners
++     * (small heads on a standard chord's stem), so that a chord's first note is never a cue.
++     *
++     * @param chord the chord at hand
++     * @return its notes, standard ones first
++     */
++    private static List<Inter> exportOrder (AbstractChordInter chord)
++    {
++        final List<Inter> notes = new ArrayList<>(chord.getNotes());
++
++        if (chord instanceof SmallChordInter) {
++            return notes;
++        }
++
++        final List<Inter> ordered = new ArrayList<>(notes.size());
++
++        for (Inter n : notes) {
++            if (!n.getShape().isSmallHead()) {
++                ordered.add(n);
++            }
++        }
++
++        for (Inter n : notes) {
++            if (n.getShape().isSmallHead()) {
++                ordered.add(n);
++            }
++        }
++
++        return ordered;
++    }
++
+     //--------------//
+     // processChord //
+     //--------------//
+@@ -1389,7 +1425,7 @@ public class PartwiseBuilder
+     {
+         checkOctaveShift(chord, LEFT); // Check for octave shift start
+ 
+-        for (Inter inter : chord.getNotes()) {
++        for (Inter inter : exportOrder(chord)) {
+             processNote((AbstractNoteInter) inter);
+         }
+ 
+@@ -2252,7 +2288,7 @@ public class PartwiseBuilder
+             final SIGraph sig = note.getSig();
+             final Staff staff = note.getStaff();
+             final AbstractChordInter chord = note.getChord();
+-            final boolean isFirstInChord = chord.getNotes().indexOf(note) == 0;
++            final boolean isFirstInChord = exportOrder(chord).indexOf(note) == 0;
+ 
+             current.note = note;
+             current.pmNote = factory.createNote();
+@@ -2316,8 +2352,9 @@ public class PartwiseBuilder
+                 final HeadChordInter headChord = (HeadChordInter) chord;
+ 
+                 if (!current.measure.isDummy()) {
+-                    // Grace?
+-                    if (isFirstInChord && note.getShape().isSmallHead()) {
++                    // Grace? (A small head in a standard chord is a cue note: below)
++                    if (isFirstInChord && note.getShape().isSmallHead()
++                            && (chord instanceof SmallChordInter)) {
+                         Grace grace = factory.createGrace();
+                         current.pmNote.setGrace(grace);
+ 
+@@ -2493,6 +2530,12 @@ public class PartwiseBuilder
+                     NoteType noteType = factory.createNoteType();
+                     noteType.setValue(getNoteTypeName(note));
+                     current.pmNote.setType(noteType);
++
++                    // Cue partner: a small head on a standard chord's stem
++                    if (note.getShape().isSmallHead() && !(chord instanceof SmallChordInter)) {
++                        current.pmNote.setCue(new Empty());
++                        noteType.setSize(SymbolSize.CUE);
++                    }
+                 }
+             }
+ 
+@@ -3097,7 +3140,10 @@ public class PartwiseBuilder
+                 // Tie element
+                 Tie tie = factory.createTie();
+                 tie.setType(isStart ? StartStop.START : StartStop.STOP);
+-                current.pmNote.getTie().add(tie);
++
++                if (current.pmNote.getCue() == null) { // (A cue note has no tie element)
++                    current.pmNote.getTie().add(tie);
++                }
+ 
+                 // Tied element (no number needed, no bezier info, no continuation point)
+                 Tied tied = factory.createTied();
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/note/ChordsBuilder.java b/app/src/main/java/org/audiveris/omr/sheet/note/ChordsBuilder.java
+index b25974b01..966d07210 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/note/ChordsBuilder.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/note/ChordsBuilder.java
+@@ -321,7 +321,18 @@ public class ChordsBuilder
+                 chord.addMember(head);
+             } else {
+                 // Create a brand-new stem-based chord
++                // (Small only if no standard head is on the stem: a cue partner joins its
++                // standard head's chord)
+                 boolean isSmall = head.getShape().isSmallHead();
++
++                if (isSmall) {
++                    for (HeadInter h : stem.getHeads()) {
++                        if (!h.getShape().isSmallHead()) {
++                            isSmall = false;
++                            break;
++                        }
++                    }
++                }
+                 chord = isSmall ? new SmallChordInter(null) : new HeadChordInter(null);
+                 sig.addVertex(chord);
+                 chord.setStem(stem);
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/note/NoteHeadsBuilder.java b/app/src/main/java/org/audiveris/omr/sheet/note/NoteHeadsBuilder.java
+index 77124df8e..1fc056781 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/note/NoteHeadsBuilder.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/note/NoteHeadsBuilder.java
+@@ -52,6 +52,7 @@ import org.audiveris.omr.score.DrumSet;
+ import org.audiveris.omr.score.DrumSet.DrumInstrument;
+ import org.audiveris.omr.sheet.Part;
+ import org.audiveris.omr.sheet.Picture;
++import org.audiveris.omr.sheet.ProcessingSwitch;
+ import org.audiveris.omr.sheet.Scale;
+ import org.audiveris.omr.sheet.Sheet;
+ import org.audiveris.omr.sheet.Staff;
+@@ -94,6 +95,7 @@ import java.util.ArrayList;
+ import java.util.Collection;
+ import java.util.Collections;
+ import java.util.EnumSet;
++import java.util.HashMap;
+ import java.util.Iterator;
+ import java.util.List;
+ import java.util.Map;
+@@ -146,6 +148,11 @@ public class NoteHeadsBuilder
+             Shape.TREMOLO_3,
+             Shape.VERTICAL_SERIF);
+ 
++    /** Small head shapes looked for beside a standard head on its stem (cue partners). */
++    private static final Set<Shape> CUE_SHAPES = EnumSet.of(
++            Shape.NOTEHEAD_BLACK_SMALL,
++            Shape.NOTEHEAD_VOID_SMALL);
++
+     /** Shapes handled by template matching. */
+     private static final Set<Shape> MATCHED_SHAPES = EnumSet.noneOf(Shape.class);
+     static {
+@@ -216,6 +223,16 @@ public class NoteHeadsBuilder
+     /** Max template half width. */
+     private final int templateHalf;
+ 
++    /**
++     * Small heads not looked for everywhere (small heads switch off): look for them only on a
++     * stem seed, and keep them only as the partner of a standard head on that seed (a cue-size
++     * second voice printed on the main voice's stem).
++     */
++    private final boolean cuePartners;
++
++    /** The stem seed and side each seed-based head was found on (cue partners only). */
++    private final Map<HeadInter, SeedSide> seedSides = new HashMap<>();
++
+     // Debug
+     private final Perf seedsPerf = new Perf();
+ 
+@@ -260,6 +277,8 @@ public class NoteHeadsBuilder
+         sheetTemplateNotesAll = ShapeSet.getTemplateNotesAll(sheet);
+         sheetTemplateNotesStem = ShapeSet.getTemplateNotesStem(sheet);
+         sheetTemplateNotesHollow = ShapeSet.getTemplateNotesHollow(sheet);
++        cuePartners = !sheet.getStub().getProcessingSwitches().getValue(
++                ProcessingSwitch.smallHeads);
+ 
+         params = new Parameters(scale);
+ 
+@@ -358,7 +377,12 @@ public class NoteHeadsBuilder
+             ch.addAll(processStaff(staff, true));
+ 
+             // Consider seed-based heads as special competitors for abscissa-based notes
+-            systemCompetitors.addAll(ch);
++            // (not the small ones, still to be checked as cue partners)
++            for (HeadInter head : ch) {
++                if (!head.getShape().isSmallHead() || !cuePartners) {
++                    systemCompetitors.add(head);
++                }
++            }
+             Collections.sort(systemCompetitors, Inters.byOrdinate);
+ 
+             // Second, process abscissa-based notes for the staff
+@@ -392,6 +416,12 @@ public class NoteHeadsBuilder
+                 logger.debug("Staff#{} {} overlaps", staff.getId(), overlaps);
+             }
+ 
++            // Cue-size partners of standard heads
++            if (cuePartners) {
++                selectCuePartners(ch);
++                ch.removeIf(Inter::isRemoved);
++            }
++
+             // Purge tally of discarded heads
+             tally.purgeRemovedHeads();
+ 
+@@ -1034,6 +1064,112 @@ public class NoteHeadsBuilder
+         return h2;
+     }
+ 
++    //-------------------//
++    // selectCuePartners //
++    //-------------------//
++    /**
++     * Keep a small head found on a stem seed only as the partner of a standard head on the same
++     * seed and side, a third to a sixth away: a cue-size note printed on the main voice's stem
++     * (a second singer's part in a vocal line).
++     * <p>
++     * A small head is removed when it has no such partner, when it is weak, or when a standard head
++     * at its pitch or a step away overlaps it with a comparable grade (the small template matched
++     * inside or beside a real head). A small head kept removes the weak standard heads that overlap
++     * it: matched across the pair (a void ring whose top and bottom are the two heads, the ledger
++     * between blanked) or right on the small head.
++     *
++     * @param heads the heads created for the staff at hand
++     */
++    private void selectCuePartners (List<HeadInter> heads)
++    {
++        final int maxDp = constants.maxCuePartnerDeltaPitch.getValue();
++        final double minCueGrade = constants.minCueGrade.getValue();
++        final double ratio = constants.minInsideRatio.getValue();
++
++        for (HeadInter small : heads) {
++            if (small.isRemoved() || !small.getShape().isSmallHead()) {
++                continue;
++            }
++
++            final SeedSide ss = seedSides.get(small);
++            final int ps = small.getIntegerPitch();
++            final Rectangle box = small.getBounds();
++            HeadInter partner = null;
++            HeadInter conflict = null;
++
++            for (HeadInter head : heads) {
++                if ((head == small) || head.isRemoved() || head.getShape().isSmallHead()) {
++                    continue;
++                }
++
++                final int dp = Math.abs(head.getIntegerPitch() - ps);
++
++                if ((dp <= 1) && head.getBounds().intersects(box)
++                        && (head.getGrade() >= ratio * small.getGrade())) {
++                    conflict = head;
++                }
++
++                final SeedSide hs = seedSides.get(head);
++
++                if ((ss != null) && (hs != null) && (hs.seed == ss.seed)
++                        && (hs.anchor == ss.anchor) && (dp >= 2) && (dp <= maxDp)
++                        && (head.getGrade() >= Grades.goodInterGrade)
++                        && (isVoid(head.getShape()) == isVoid(small.getShape()))) {
++                    if ((partner == null) || (head.getGrade() > partner.getGrade())) {
++                        partner = head;
++                    }
++                }
++            }
++
++            final boolean keep = (partner != null) && (conflict == null)
++                    && (small.getGrade() >= minCueGrade);
++
++            if (small.isVip() || logger.isDebugEnabled()) {
++                logger.info("{} cue head {} partner:{} conflict:{}", keep ? "Keeping" : "Dropping",
++                        small, partner, conflict);
++            }
++
++            if (!keep) {
++                small.remove();
++                continue;
++            }
++
++            // Weak standard heads overlapping the cue head (on it or a step away), or matched
++            // across the pair (between the two heads)
++            final int pp = partner.getIntegerPitch();
++
++            for (HeadInter head : heads) {
++                if ((head == partner) || head.isRemoved() || head.getShape().isSmallHead()) {
++                    continue;
++                }
++
++                final int ph = head.getIntegerPitch();
++                final boolean onCue = (Math.abs(ph - ps) <= 1) && head.getBounds().intersects(box);
++                final boolean across = ((ph - ps) * (ph - pp) < 0) && (head.getGrade() < ratio
++                        * small.getGrade()) && (head.getBounds().intersects(box) || head
++                                .getBounds().intersects(partner.getBounds()));
++
++                if (!onCue && !across) {
++                    continue;
++                }
++
++                if (head.isVip() || logger.isDebugEnabled()) {
++                    logger.info("Removing {} beside cue head {}", head, small);
++                }
++
++                head.remove();
++            }
++        }
++    }
++
++    //--------//
++    // isVoid //
++    //--------//
++    private static boolean isVoid (Shape shape)
++    {
++        return (shape == Shape.NOTEHEAD_VOID) || (shape == Shape.NOTEHEAD_VOID_SMALL);
++    }
++
+     //---------------//
+     // purgeOverlaps //
+     //---------------//
+@@ -1276,6 +1412,19 @@ public class NoteHeadsBuilder
+         private final Constant.Ratio minHoleWhiteRatio = new Constant.Ratio(
+                 0.2,
+                 "Minimum ratio of hole white pixel to reassign Black to Void");
++
++        private final Constant.Integer maxCuePartnerDeltaPitch = new Constant.Integer(
++                "pitch",
++                5,
++                "Maximum pitch distance between a cue head and its standard partner on a stem");
++
++        private final Constant.Ratio minCueGrade = new Constant.Ratio(
++                0.45,
++                "Minimum grade of a cue head beside a standard partner");
++
++        private final Constant.Ratio minInsideRatio = new Constant.Ratio(
++                0.75,
++                "Standard head grade (over the small one's) that makes a small head inside it go");
+     }
+ 
+     //---------------//
+@@ -2062,6 +2211,27 @@ public class NoteHeadsBuilder
+             return heads;
+         }
+ 
++        //------------//
++        // seedShapes //
++        //------------//
++        /**
++         * The shapes tried on a stem seed: the stem heads, plus the small ones when looking for
++         * cue partners (not on a drum staff).
++         *
++         * @return the shapes to try
++         */
++        private Set<Shape> seedShapes ()
++        {
++            if (!cuePartners || line.getStaff().isDrum()) {
++                return scannerTemplateNotesStem;
++            }
++
++            final EnumSet<Shape> shapes = EnumSet.copyOf(scannerTemplateNotesStem);
++            shapes.addAll(CUE_SHAPES);
++
++            return shapes;
++        }
++
+         //-------------//
+         // lookupSeeds //
+         //-------------//
+@@ -2102,7 +2272,7 @@ public class NoteHeadsBuilder
+                     // For each stem side and for each possible shape,
+                     // keep the best match (if acceptable) among all locations tried.
+                     ShapeLoop:
+-                    for (Shape shape : scannerTemplateNotesStem) {
++                    for (Shape shape : seedShapes()) {
+                         PixelDistance bestLoc = null;
+ 
+                         // Brute force: explore the whole rectangle around (x0, y0)
+@@ -2162,6 +2332,14 @@ public class NoteHeadsBuilder
+                         sig.addVertex(head);
+                         heads.add(head);
+ 
++                        if (cuePartners) {
++                            seedSides.put(head, new SeedSide(seed, anchor));
++
++                            if (shape.isSmallHead()) {
++                                continue; // Kept out of the seed-head distance tally
++                            }
++                        }
++
+                         if (head.getGrade() < Grades.goodInterGrade) {
+                             continue;
+                         }
+@@ -2244,4 +2422,22 @@ public class NoteHeadsBuilder
+             return line.yAt(x);
+         }
+     }
++
++    //----------//
++    // SeedSide //
++    //----------//
++    /** The stem seed and the side of it a head was found on. */
++    private static class SeedSide
++    {
++        final Glyph seed;
++
++        final Anchor anchor;
++
++        SeedSide (Glyph seed,
++                  Anchor anchor)
++        {
++            this.seed = seed;
++            this.anchor = anchor;
++        }
++    }
+ }
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/rhythm/Measure.java b/app/src/main/java/org/audiveris/omr/sheet/rhythm/Measure.java
+index 36caaae55..cfd0cb436 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/rhythm/Measure.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/rhythm/Measure.java
+@@ -1455,7 +1455,8 @@ public class Measure
+             final HeadChordInter headChord = it.next();
+             final List<Inter> notes = headChord.getMembers();
+ 
+-            if (notes.isEmpty() || notes.get(0).getShape().isSmallHead()) {
++            // (A standard chord may hold cue partners: small heads on its stem)
++            if (notes.isEmpty() || (headChord instanceof SmallChordInter)) {
+                 it.remove();
+             }
+         }
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/stem/BeamLinker.java b/app/src/main/java/org/audiveris/omr/sheet/stem/BeamLinker.java
+index 442b7079a..b2e7eb40c 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/stem/BeamLinker.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/stem/BeamLinker.java
+@@ -1340,7 +1340,9 @@ public class BeamLinker
+                     final Shape headShape = head.getShape();
+ 
+                     // Small heads may not be allowed on standard beams
+-                    if (!allowSmallHeadOnStandardBeam()) {
++                    // (A cue partner shares its standard head's stem and beams)
++                    if (!allowSmallHeadOnStandardBeam() && !ShapeSet.smallHeadsArePartners(system
++                            .getSheet())) {
+                         if (headShape.isSmallHead() && !beam.isSmall()) {
+                             if (beam.isVip() || head.isVip()) {
+                                 logger.info("VIP no size match between {} and {}", beam, head);
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/stem/HeadLinker.java b/app/src/main/java/org/audiveris/omr/sheet/stem/HeadLinker.java
+index 2f6876a76..4a3652d5d 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/stem/HeadLinker.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/stem/HeadLinker.java
+@@ -26,6 +26,7 @@ import org.audiveris.omr.glyph.GlyphGroup;
+ import org.audiveris.omr.glyph.Glyphs;
+ import org.audiveris.omr.glyph.Grades;
+ import org.audiveris.omr.glyph.Shape;
++import org.audiveris.omr.glyph.ShapeSet;
+ import org.audiveris.omr.glyph.dynamic.SectionCompound;
+ import org.audiveris.omr.image.ImageUtil;
+ import org.audiveris.omr.lag.DynamicSection;
+@@ -994,7 +995,9 @@ public class HeadLinker
+ 
+                             // TODO: perhaps intersecting theoLine is too strict?
+                             if (median.intersectsLine(theoLine)) {
+-                                if (head.getShape().isSmallHead()) {
++                                if (head.getShape().isSmallHead() && !ShapeSet
++                                        .smallHeadsArePartners(head.getSig().getSystem()
++                                                .getSheet())) {
+                                     // Exclude beam, stop just before group
+                                     AbstractBeamInter b = (AbstractBeamInter) beams.get(0);
+                                     final Line2D border = b.getBorder(vSide.opposite());
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/stem/StemsRetriever.java b/app/src/main/java/org/audiveris/omr/sheet/stem/StemsRetriever.java
+index 2eab05a8d..1cfce6fc3 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/stem/StemsRetriever.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/stem/StemsRetriever.java
+@@ -616,7 +616,7 @@ public class StemsRetriever
+ 
+         // The abscissa-sorted head interpretations for this system
+         watch.start("Heads linkers");
+-        systemHeads = sig.inters(ShapeSet.getTemplateNotesStem(system.getSheet()));
++        systemHeads = sig.inters(ShapeSet.getStemHeadsLinked(system.getSheet()));
+         Collections.sort(systemHeads, Inters.byAbscissa);
+ 
+         for (Inter h : systemHeads) {
+@@ -673,7 +673,7 @@ public class StemsRetriever
+ 
+         // Heads second
+         watch.start("Heads linking phase 1");
+-        systemHeads = sig.inters(ShapeSet.getTemplateNotesStem(system.getSheet()));
++        systemHeads = sig.inters(ShapeSet.getStemHeadsLinked(system.getSheet()));
+         Collections.sort(systemHeads, Inters.byReverseGrade);
+         final List<HeadInter> unlinkedHeads = new ArrayList<>();
+ 
+@@ -1022,7 +1022,7 @@ public class StemsRetriever
+         ///final Integer typicalBeamGap;
+         /** The abscissa-sorted head interpretations for this system. */
+         final List<Inter> systemHeads = sig.inters(
+-                ShapeSet.getTemplateNotesStem(system.getSheet()));
++                ShapeSet.getStemHeadsLinked(system.getSheet()));
+ 
+         public Finalizer ()
+         {
+diff --git a/app/src/main/java/org/audiveris/omr/sig/SigReducer.java b/app/src/main/java/org/audiveris/omr/sig/SigReducer.java
+index a5e6c99bc..a832c3f80 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/SigReducer.java
++++ b/app/src/main/java/org/audiveris/omr/sig/SigReducer.java
+@@ -304,7 +304,10 @@ public class SigReducer
+                     }
+                 }
+             }
+-            exclude(smallHeads, stdHeads, INCOMPATIBLE);
++            // (Unless small heads are cue partners: on their standard head's stem)
++            if (!ShapeSet.smallHeadsArePartners(system.getSheet())) {
++                exclude(smallHeads, stdHeads, INCOMPATIBLE);
++            }
+ 
+             // Mutual head exclusion between shapes with different DURATION
+             // Mutual head support within shapes with same DURATION
+@@ -358,8 +361,9 @@ public class SigReducer
+                         }
+                     }
+                 } else {
+-                    // Standard beams may exclude small (oval) heads
+-                    if (!BeamLinker.allowSmallHeadOnStandardBeam()) {
++                    // Standard beams may exclude small (oval) heads (not cue partners)
++                    if (!BeamLinker.allowSmallHeadOnStandardBeam() && !ShapeSet
++                            .smallHeadsArePartners(system.getSheet())) {
+                         for (Shape small : ShapeSet.HeadsOvalSmall) {
+                             final Set<Inter> smallHeadSet = heads.get(small);
+ 
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/HeadChordInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/HeadChordInter.java
+index 27907baa3..38f2e5925 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/HeadChordInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/HeadChordInter.java
+@@ -349,8 +349,10 @@ public class HeadChordInter
+                 SlurInter slur = (SlurInter) sig.getOppositeInter(interNote, rel);
+                 HeadInter head = slur.getHead(HorizontalSide.LEFT);
+ 
+-                if ((head != null) && head.getShape().isSmallHead()) {
+-                    return (SmallChordInter) head.getChord();
++                // (A cue partner's chord is a standard chord, not a grace)
++                if ((head != null) && head.getShape().isSmallHead()
++                        && (head.getChord() instanceof SmallChordInter small)) {
++                    return small;
+                 }
+             }
+         }
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/StemInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/StemInter.java
+index 35b2c9574..318e48b87 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/StemInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/StemInter.java
+@@ -663,17 +663,23 @@ public class StemInter
+      */
+     public boolean isGraceStem ()
+     {
++        boolean small = false;
++
+         if (!isRemoved()) {
+             for (Relation rel : sig.getRelations(this, HeadStemRelation.class)) {
+                 Shape headShape = sig.getOppositeInter(this, rel).getShape();
+ 
+-                // First head tested is enough.
+-                return (headShape == Shape.NOTEHEAD_BLACK_SMALL)
+-                        || (headShape == Shape.NOTEHEAD_VOID_SMALL);
++                // A standard head makes it a standard stem (it may hold cue partners too)
++                if ((headShape == Shape.NOTEHEAD_BLACK_SMALL)
++                        || (headShape == Shape.NOTEHEAD_VOID_SMALL)) {
++                    small = true;
++                } else {
++                    return false;
++                }
+             }
+         }
+ 
+-        return false;
++        return small;
+     }
+ 
+     //-----------------//
+diff --git a/app/src/main/java/org/audiveris/omr/text/web/WebTrace.java b/app/src/main/java/org/audiveris/omr/text/web/WebTrace.java
+index 1fe71bbaf..584e9a65a 100644
+--- a/app/src/main/java/org/audiveris/omr/text/web/WebTrace.java
++++ b/app/src/main/java/org/audiveris/omr/text/web/WebTrace.java
+@@ -67,6 +67,7 @@ import org.audiveris.omr.sig.inter.OctaveShiftInter;
+ import org.audiveris.omr.sig.inter.RestInter;
+ import org.audiveris.omr.sig.inter.SentenceInter;
+ import org.audiveris.omr.sig.inter.SlurInter;
++import org.audiveris.omr.sig.inter.SmallChordInter;
+ import org.audiveris.omr.sig.inter.StaffBarlineInter;
+ import org.audiveris.omr.sig.inter.StemInter;
+ import org.audiveris.omr.sig.inter.TimeCustomInter;
+@@ -885,7 +886,7 @@ public final class WebTrace
+ 
+         if (rest && chord.isMeasureRest()) {
+             dur = "M";
+-        } else if (!rest && firstNote.getShape().isSmallHead()) {
++        } else if (!rest && (chord instanceof SmallChordInter)) { // (not a cue partner's chord)
+             dur = "g";
+         } else {
+             final Rational d = chord.getDuration();
+-- 
+2.43.0
+
