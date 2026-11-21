@@ -126,7 +126,9 @@ for (const [label, T, o] of [['1 beat late', T96, {}], ['1 beat late ♩=60', T6
   check('run: an entry lag on the first phrase and after the rest, both on time', [0, 1].every((p) => R.rs[p].lag !== null && Math.abs(R.rs[p].lag) < 0.25 * R.beat), R.rs.map((r) => r.lag).join(' '));
   check('run: no take-scope tries in a run', R.rs.every((r) => r.takeObs.length === 0));
   check('run: both pass', R.verdicts.every((v) => v.tv.v === 'pass' && v.uv.v === 'pass'), R.verdicts.map((v) => `${v.tv.v}/${v.uv.v}`).join(' '));
-  check('run: phrase observations carry the phrase index', R.obs.filter((o) => o.scope !== 'take').every((o) => o.li === ITS.i || o.li === AS.i));
+  // (each phrase's own observations — phraseRhythm keys them by the phrase's place in the span, 0, 1, …;
+  // the take's are keyed by lyric line and checked nowhere here)
+  check('run: each phrase observation carries its phrase index in the span', R.rs.every((r, p) => r.obs.length > 0 && r.obs.filter((o) => o.scope !== 'take').every((o) => o.li === p)), R.rs.map((r) => r.obs.map((o) => `${o.kind}@${o.li}`).join(',')).join(' | '));
 }
 { // the second phrase of a run sung a beat late: a late-in with count → a slip on that phrase
   const R = round(T96, [ITS, AS], { stage: 'song', sung: (ns, beat) => ns.map((n, k) => (k >= 5 ? { ...n, t: n.t + beat } : n)) });
