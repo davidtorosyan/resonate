@@ -80,6 +80,7 @@ async function partA(browser) {
     ["synth-voice", "/__fx/synth-voice.musicxml"], ["amazing-grace", BASE + "songs/amazing-grace.musicxml"], ["synth-pvg", "/__fx/synth-pvg.musicxml"],
     ["synth-longest", "/__fx/synth-longest.musicxml"], ["score-pvg", "/__fx/score-pvg.musicxml"], ["score-duet", "/__fx/score-duet.musicxml"], ["score-duet-partner", "/__fx/score-duet-partner.musicxml"],
     ["score-guitar", "/__fx/score-guitar.musicxml"], ["score-tunein", "/__fx/score-tunein.musicxml"],
+    ["score-duet-spurious", "/__fx/score-duet-spurious.musicxml"], ["score-partner-rit", "/__fx/score-partner-rit.musicxml"], ["score-voice-partner", "/__fx/score-voice-partner.musicxml"],
     ...OWNER.map((n) => [n, "/__scores/" + encodeURIComponent(n + ".musicxml")]),
   ];
   const R = {};
@@ -113,6 +114,7 @@ async function partA(browser) {
       const pg = document.getElementById("pg");
       const sys = [], marks = [], verseN = new Set();
       let endings = 0, empty = 0, drawn = 0, dividers = 0, keepers = 0, keepBad = 0, noClef = 0;
+      const keepIds = [];
       const floor = { top: 0, topBad: [], low: 0, lowBad: [] };
       const lowSet = new Set(sc.low);
       for (let p = 1; p <= tk.getPageCount(); p++) {
@@ -134,7 +136,7 @@ async function partA(browser) {
         // chord got the name
         const dd = names.decorate(pg, P.facts, { low: sc.low });
         // (invisible place-keepers: a resting staff with a mark stays in its system — never named)
-        for (const g of pg.querySelectorAll("g.note[visibility=hidden]")) { if (/^keep-/.test(g.id) && !g.querySelector(".nn")) keepers++; else keepBad++; }
+        for (const g of pg.querySelectorAll("g.note[visibility=hidden]")) { if (/^keep-/.test(g.id) && !g.querySelector(".nn")) { keepers++; keepIds.push(g.id); } else keepBad++; }
         const live = dd.items.filter((it) => it.w);
         const rule = live.filter((it) => { const f = it.fact; return it.ledgers >= 2 || f.acc === "printed" || f.acc === "carried" || f.nat; });
         if (live.length && rule.length < 0.15 * live.length) {
@@ -160,7 +162,7 @@ async function partA(browser) {
         }
       }
       // system-start clefs on every staff (a hidden clef as the keeper had blanked them)
-      Object.assign(out, { pitched: v.pitched, drawn, sys, marks, empty, endingsDrawn: endings, dividers, verseN: [...verseN], floor, keepers, keepBad, noClef });
+      Object.assign(out, { pitched: v.pitched, drawn, sys, marks, empty, endingsDrawn: endings, dividers, verseN: [...verseN], floor, keepers, keepIds, keepBad, noClef });
       // the LH view's floor: the bass note (v78; it was the top note, the LH being the first staff)
       if (P.views.lh) {
         const lv = prep.buildView(P.doc, P.views.lh);
@@ -195,6 +197,7 @@ async function partA(browser) {
   // ---- offered / not, and the parts
   const want = {
     "synth-voice": null, "amazing-grace": "P1,P2", "synth-pvg": "P1,P2", "synth-longest": "P1", "score-pvg": "P1,P2,P3", "score-duet": "P2,P3", "score-duet-partner": "P1,P2,P3", "score-guitar": "P1,P2", "score-tunein": "P1",
+    "score-duet-spurious": "P4,P2,P3", "score-partner-rit": "P1,P2,P3", "score-voice-partner": "P1,P2",
     killing: "P1,P2", wichita: "P1,P2", pianoman: "P1,P2,P3", songbird: "P1,P2,P3", longest: "P1",
   };
   for (const [name, r] of Object.entries(R)) {
@@ -212,12 +215,13 @@ async function partA(browser) {
     const homes = new Set([...(ww.staff != null ? [ww.part + "|" + ww.staff] : Array.from({ length: staves(ww.part) }, (_, i) => ww.part + "|" + (i + 1))), ...(ww.also || []).flatMap((pid) => Array.from({ length: staves(pid) }, (_, i) => pid + "|" + (i + 1)))]);
     const home = ww.part + "|" + (ww.staff ?? ww.tune?.staff ?? 1);
     ok(r.lyricHome.includes(home) && r.lyricHome.every((h) => homes.has(h)), `${tag}: words on ${r.lyricHome} (want ${home}, within ${[...homes]})`);
-    // the first system shows every staff; a grand staff never loses a hand; condensing only from 3 staves
+    // the first system shows every staff; a grand staff never loses a hand; condensing from 3 staves,
+    // or with a sparse part (a partner's staff shown only where she sings)
     let n0 = 0; const grand = [];
     for (const pid of r.plan.parts) { const st = r.parts.find((p) => p.id === pid).staves; if (st > 1) grand.push(Array.from({ length: st }, (_, i) => String(n0 + i + 1))); n0 += st; }
     ok(r.sys[0].length === n0, `${tag}: first system ${r.sys[0]} of ${n0} staves`);
     ok(r.sys.every((sy) => grand.every((g) => g.every((x) => sy.includes(x)) || g.every((x) => !sy.includes(x)))), `${tag}: a grand staff split: ${r.sys.join(" ")}`);
-    ok(r.plan.condense === n0 >= 3 && (r.plan.condense || r.sys.every((sy) => sy.length === n0)), `${tag}: condense ${r.plan.condense} (${n0} staves) ${r.sys.slice(0, 8).join(" ")}`);
+    ok(r.plan.condense === (n0 >= 3 || !!r.plan.sparse) && (r.plan.condense || r.sys.every((sy) => sy.length === n0)), `${tag}: condense ${r.plan.condense} (${n0} staves${r.plan.sparse ? ", sparse " + r.plan.sparse : ""}) ${r.sys.slice(0, 8).join(" ")}`);
     ok(!r.dividers, `${tag}: ${r.dividers} system dividers`);
     ok(!r.keepBad, `${tag}: ${r.keepBad} hidden notes that aren't place-keepers (or named)`);
     ok(r.noClef === 0, `${tag}: ${r.noClef} system starts without a clef`);
@@ -250,6 +254,28 @@ async function partA(browser) {
     ok(dp.plan.sparse.join() === "P1" && dp.plan.sung.join() === "P1,P2" && dp.lyricHome.includes("P1|1") && dp.lyricHome.includes("P2|1"), `A score-duet-partner: P1 sung, sparse (${JSON.stringify({ sparse: dp.plan.sparse, sung: dp.plan.sung, home: dp.lyricHome })})`);
     ok(withP1 >= 2 && withP1 <= 3 && withP1 < dp.sys.length, `A score-duet-partner: P1 in ${withP1} of ${dp.sys.length} systems (${dp.sys.join(" ")})`);
     ok(dp.marks.some((m) => /D\.S\. al Fine/.test(m)) && dp.endingsDrawn >= 2, `A score-duet-partner: the road map still drawn (${dp.marks.join(" | ")}; endings ${dp.endingsDrawn})`);
+  }
+  // (the review of de820b7) F9: the partner's own staff on top of the view, the road map's home
+  // dropped above it — its endings still drawn, from the duet that took them
+  const sp9 = R["score-duet-spurious"];
+  if (sp9?.plan) {
+    const withP4 = sp9.sys.filter((sy) => sy.includes("1")).length;
+    ok(sp9.plan.sparse?.join() === "P4" && sp9.endingsDrawn >= 2 && sp9.marks.some((m) => /D\.S\. al Fine/.test(m)), `A score-duet-spurious: endings ${sp9.endingsDrawn} (want ≥ 2), marks ${sp9.marks.join(" | ")}`);
+    ok(withP4 >= 2 && withP4 <= 3, `A score-duet-spurious: P4 in ${withP4} of ${sp9.sys.length} systems (${sp9.sys.join(" ")})`);
+  }
+  // F11: no piano, a partner's staff over the voice (2 staves): condensed — she shows in the first
+  // system and where she sings, not in every one
+  const vp = R["score-voice-partner"];
+  if (vp?.plan) {
+    const withP1 = vp.sys.filter((sy) => sy.includes("1")).length;
+    ok(vp.plan.condense && vp.plan.sparse?.join() === "P1" && withP1 < vp.sys.length && vp.sys.every((sy) => sy.includes("2")), `A score-voice-partner: P1 in ${withP1} of ${vp.sys.length} systems (${vp.sys.join(" ")}; condense ${vp.plan.condense})`);
+  }
+  // F12: a "rit." on the sparse top part where she rests (an exporter's system text) goes to the
+  // tune with the rest of the road map: no place-keeper pins her empty staff in that system
+  const pr = R["score-partner-rit"];
+  if (pr?.plan) {
+    const withP1 = pr.sys.filter((sy) => sy.includes("1")).length;
+    ok(!pr.keepIds.some((id) => /^keep-P1-/.test(id)) && pr.marks.some((m) => /rit\./.test(m)) && withP1 <= 3, `A score-partner-rit: keepers ${JSON.stringify(pr.keepIds)}, P1 in ${withP1} of ${pr.sys.length} systems (${pr.sys.join(" ")}), rit. drawn ${pr.marks.some((m) => /rit\./.test(m))}`);
   }
   const ag = R["amazing-grace"];
   if (ag?.plan) ok(ag.plan.brace && ag.plan.braced.join() === "P1,P2" && ag.stanzas.length === 1 && !ag.plan.sung.length, `A amazing-grace: braced as Both, verse 1 only (${ag.stanzas})`);
@@ -1020,6 +1046,18 @@ async function partF(browser) {
       ok(!hits.length, `F8 longest ${dev}: ${hits.length} hyphens through a syllable ${hits.slice(0, 6).join(", ")}`);
       await ctx.close();
     }
+  }
+  // ---- F9 (the review of de820b7) a sparse partner's staff shows in a few systems: the two-a-page
+  // fit starts from two systems of the staves most show (3), not of every staff (4) — Songbird's
+  // Full score came out ~11% smaller in landscape
+  {
+    const { ctx, page } = await newPage(browser, 1180, 820, errors);
+    const ids = await seed(page, songList(["score-duet-partner"]));
+    await openSong(page, ids["score-duet-partner"], "score");
+    const d = await D(page);
+    const first = d.fitLog?.[0]?.sp, want = Math.min(d.base, d.H / 70);
+    ok(first != null && first >= want - 0.02, `F9 score-duet-partner air-l: the fit's first size ${first} (two systems of 3 staves: ≥ ${want.toFixed(2)}; of 4: ${(d.H / 85).toFixed(2)}) → ${d.sp} ${d.mode}`);
+    await ctx.close();
   }
   for (const e of errors) ok(false, "F " + e);
 }

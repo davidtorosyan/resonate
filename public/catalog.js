@@ -8,7 +8,10 @@ export const SAMPLES = { "amazing-grace": { title: "Amazing Grace", url: "songs/
 
 // Songs converted from PDF (Audiveris) get the OMR clean-ups again on load, so songs saved by an
 // older version benefit from newer fixes without converting again (the clean-ups leave an
-// already-clean score unchanged). Anything but MusicXML text (a PDF-only song's null) is returned as is.
+// already-clean score unchanged). Only fixes that add reach them: the stored XML is the import's
+// cleaned output, so a tie or change an older version's clean-up wrote stays — a narrowed rule
+// (restoreTies' rule 3 since Nov 20: Yellow Submarine bar 13's inner G♯3/B3) reaches a stored song only
+// through Reconvert. Anything but MusicXML text (a PDF-only song's null) is returned as is.
 export function cleanXml(xml) {
   if (typeof xml !== "string" || !/<software>\s*Audiveris/.test(xml.slice(0, 4000))) return xml;
   try {

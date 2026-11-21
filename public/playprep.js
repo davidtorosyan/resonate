@@ -94,8 +94,10 @@ export function partsOf(doc) {
 // the one staff of it that keeps its words: the tune inside the keyboard part), also (other sung
 // parts that keep theirs), tune { staff, voice } (where its syllables gather) }, sung (the parts
 // that sing, not the keyboard's: the voice's strip colour), braced (the hymn pair braced as Both),
-// sparse (kept parts playing in < 10% of bars: a duet partner's staff — no marks on it) and
-// condense (≥ 3 staves: a staff resting a whole system is left out of it, as printed).
+// sparse (kept parts playing in < 10% of bars: a duet partner's staff — no marks on it), common
+// (the staves most systems show: the sparse parts' left out, for the two-a-page estimate) and
+// condense (≥ 3 staves, or a sparse part kept: a staff resting a whole system is left out of it,
+// as printed).
 export function planViews(doc, parts = partsOf(doc)) {
   const view = (key, o) => ({ key, label: VIEW_LABELS[key], kind: "piano", staff: null, voice: null, brace: false, lyrics: false, staves: 1, ...o });
   const views = {};
@@ -153,8 +155,10 @@ export function planViews(doc, parts = partsOf(doc)) {
       const staves = keep.reduce((s, p) => s + p.staves, 0);
       // (parts kept that play in few bars: a duet partner's staff)
       const sparse = keep.filter((p) => p.id !== mp.id && !live(p)).map((p) => p.id);
+      // (the staves most systems show: a sparse part's appear in a few, condensed out of the rest)
+      const common = keep.filter((p) => !sparse.includes(p.id)).reduce((s, p) => s + p.staves, 0);
       score = view("score", {
-        kind: "score", parts: ids, brace: !!braced, braced, lyrics: true, staves, sung, ...(sparse.length ? { sparse } : {}), condense: staves >= 3,
+        kind: "score", parts: ids, brace: !!braced, braced, lyrics: true, staves, sung, ...(sparse.length ? { sparse, common } : {}), condense: staves >= 3 || sparse.length > 0,
         words: {
           part: mp.id,
           // (the tune inside the keyboard part: its staff's words only, not a stray syllable under
@@ -360,7 +364,10 @@ export function buildView(doc, plan) {
   // and keeps no copy: they'd keep its empty staff in every system with one)
   const sparse = new Set(plan.sparse || []);
   const host = all.find((p) => keep.has(p.getAttribute("id")) && !sparse.has(p.getAttribute("id")));
-  if (all[0] && host && host !== all[0]) copyMarks(d, all[0], host);
+  // (a sparse top part hands on its tempo words in every bar, not only the first: a later "rit."
+  // left on it kept its empty staff in that system)
+  const allTempo = !!all[0] && sparse.has(all[0].getAttribute("id"));
+  if (all[0] && host && host !== all[0]) copyMarks(d, all[0], host, allTempo);
   if (host && host !== all[0] && keep.has(all[0].getAttribute("id"))) dropMarks(all[0]);
   const dropped = all.some((p) => !keep.has(p.getAttribute("id")));
   for (const p of all) if (!keep.has(p.getAttribute("id"))) p.remove();
@@ -368,7 +375,7 @@ export function buildView(doc, plan) {
   // The full score: the road map is the top part's (Verovio reads endings from the first part
   // only; Audiveris writes them there, and reads a piano's 8va lines as endings below).
   if (score) {
-    scoreEndings(d, partsIn(root));
+    scoreEndings(d, partsIn(root), host);
     scoreBarlines(d, partsIn(root));
     // (marks go over the first part that isn't sparse; barlines and endings stay the first part's,
     // the one Verovio reads them from)
@@ -820,8 +827,8 @@ const dirSig = (dir) => kids(dir, "direction-type").map((dt) => [...dt.children]
 // The top part's endings, repeats and marks into the kept part `host` (same measure index):
 // endings and repeats merged into its barlines (its own endings go: from Audiveris they're 8va
 // lines misread), directions copied onto staff 1 at the same moment (an <offset> in the host's
-// divisions).
-function copyMarks(d, top, host) {
+// divisions). allTempo: tempo words in every bar (else only in the first).
+function copyMarks(d, top, host, allTempo = false) {
   const tms = kids(top, "measure"), hms = kids(host, "measure");
   const omr = /audiveris/i.test(d.querySelector("identification > encoding > software")?.textContent || "");
   if (omr || top.querySelector("barline > ending")) for (const e of [...host.querySelectorAll("barline > ending")]) e.remove();
@@ -856,7 +863,7 @@ function copyMarks(d, top, host) {
       else if (name === "note") { if (!kid(el, "chord") && !kid(el, "grace")) pos += num(kid(el, "duration"), 0); }
       else if (name === "direction") {
         // (tempo words only in the first bar, or with a metronome: a voice's own "rit." stays its own)
-        if (!isMark(el, i === 0)) continue;
+        if (!isMark(el, allTempo || i === 0)) continue;
         const sig = dirSig(el);
         if (have.has(sig)) continue;
         have.add(sig);
@@ -877,9 +884,10 @@ function copyMarks(d, top, host) {
   for (const b of [...host.getElementsByTagName("barline")]) if (!b.children.length) b.remove();
 }
 
-// The marks copyMarks hands on, taken off the part they came from.
+// The marks copyMarks hands on, taken off the part they came from (only ever a sparse top part:
+// its tempo words in every bar, as keepMarks counts them).
 function dropMarks(part) {
-  kids(part, "measure").forEach((m, i) => { for (const dir of kids(m, "direction")) if (isMark(dir, i === 0)) dir.remove(); });
+  for (const m of kids(part, "measure")) for (const dir of kids(m, "direction")) if (isMark(dir, true)) dir.remove();
 }
 
 // Verovio's MusicXML import takes a measure's barlines — style, repeats, endings — from the first
@@ -903,12 +911,13 @@ function barlineAt(d, m, loc) {
 // The full score's endings are its top part's: the lower parts' go when the score is from
 // Audiveris (a piano's 8va lines read as endings) or the top part has its own. A file from an
 // exporter with endings written only below the top part (Verovio would draw none) has the first
-// such part's moved to the top.
-function scoreEndings(d, parts) {
+// such part's moved to the top; from Audiveris, the host's (copyMarks put the dropped top part's
+// road map there: a sparse partner's staff on top of the view has none of its own).
+function scoreEndings(d, parts, host) {
   const [top, ...rest] = parts;
   if (!top || !rest.length) return;
   const omr = omrScore(d), own = !!top.querySelector("barline > ending");
-  const from = !omr && !own ? rest.find((p) => p.querySelector("barline > ending")) : null;
+  const from = own ? null : (omr ? [host] : rest).find((p) => p && p !== top && p.querySelector("barline > ending")) || null;
   if (!omr && !own && !from) return;
   if (from) {
     const tms = kids(top, "measure");

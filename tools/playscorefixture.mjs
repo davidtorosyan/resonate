@@ -9,6 +9,10 @@
 //   score-duet.musicxml — Songbird-like: P1 a spurious "Voice" on top (3 notes) holding the road map
 //     (endings, D.S., tempo), P2 the duet on one staff (two voices, his words on line 2), P3 Piano
 //   score-duet-partner.musicxml — the same with P1 the partner's own staff (5 notes, all sung)
+//   score-duet-spurious.musicxml — score-duet with the partner's own staff (4 notes, all sung) as P4,
+//     listed second: the view's top part is sparse and the road map's home (P1) is dropped
+//   score-partner-rit.musicxml — score-duet-partner from MuseScore, a "rit." on P1 where she rests
+//   score-voice-partner.musicxml — no piano: P1 a partner singing 2 bars of 24 (all sung), P2 the voice
 //   score-guitar.musicxml — no piano: P1 Voice + P2 Guitar (plays throughout, 1 stray syllable)
 //   score-tunein.musicxml — one piano part, the tune with words in staff 1, 3 stray syllables in staff 2
 // usage: node playscorefixture.mjs
@@ -132,9 +136,9 @@ function scorePvg() {
 // ---------------------------------------------------------------- score-duet
 // partner: P1 is the duet partner's own staff where the print gives her one (Songbird's Eurydice,
 // two systems of the song) — every note sung, in bars 3 and 18 — the road map still on it
-function scoreDuet({ partner = false } = {}) {
+function scoreDuet({ partner = false, spurious = false, rit = false } = {}) {
   const M = 24;
-  const top = [], duet = [], pn = [];
+  const top = [], duet = [], pn = [], own = [];
   for (let mi = 0; mi < M; mi++) {
     // P1: a spurious top part (3 notes), the road map's home
     let pre = mi === 0 ? attrs() + dir(`<metronome><beat-unit>quarter</beat-unit><per-minute>80</per-minute></metronome>`, `<sound tempo="80"/>`) : "";
@@ -142,9 +146,12 @@ function scoreDuet({ partner = false } = {}) {
     if (mi === 14) pre += barline("left", `<ending number="1" type="start">1.</ending>`);
     if (mi === 15) pre += barline("left", `<ending number="2" type="start">2.</ending>`);
     if (mi === 20) pre += words("D.S. al Fine");
+    if (rit && mi === 11) pre += words("rit.");
     const post = mi === 14 ? barline("right", `<ending number="1" type="stop"/><repeat direction="backward"/>`) : mi === 15 ? barline("right", `<ending number="2" type="discontinue"/>`) : "";
     top.push({ pre, post, notes: mi === 3 ? [{ p: "A4", d: 2, lyric: "la" }, { p: "B4", d: 1, ...(partner ? { lyric: "lo" } : {}) }, { p: "C5", d: 1, ...(partner ? { lyric: "li" } : {}) }]
       : partner && mi === 18 ? [{ p: "E5", d: 2, lyric: "oh" }, { p: "D5", d: 2, lyric: "my" }] : [rest4()] });
+    // (spurious: the partner's own staff as a part of its own, under the spurious top part)
+    own.push({ pre: mi === 0 ? attrs() : "", notes: mi === 3 || mi === 18 ? [{ p: "E5", d: 2, lyric: "oh" }, { p: "D5", d: 2, lyric: "my" }] : [rest4()] });
     // P2: the duet (voice 1 her, voice 2 him, both with words) from bar 4
     const dn = mi < 4 ? [rest4()] : [
       { p: TUNE[mi % 8], d: 2, voice: 1, stem: "up", lyric: W1[mi % 8] }, { p: TUNE[(mi + 1) % 8], d: 2, voice: 1, stem: "up", lyric: W1[(mi + 1) % 8] },
@@ -157,8 +164,9 @@ function scoreDuet({ partner = false } = {}) {
     const lh = [{ p: "C3", d: 4, staff: 2, voice: 5 }];
     pn.push({ pre: (mi === 0 ? attrs({ staves: 2, clefs: [["G", 2], ["F", 4]] }) : "") + (mi === 6 ? barline("left", `<ending number="1" type="start">1.</ending>`) : ""), notes: [...rh, ...lh], post: mi === 6 ? barline("right", `<ending number="1" type="stop"/>`) : "" });
   }
-  return score(partner ? "Synth Duet Partner" : "Synth Duet", "Audiveris 5.11.0", [
+  return score(spurious ? "Synth Duet Spurious" : partner ? "Synth Duet Partner" : "Synth Duet", rit ? "MuseScore 4.4" : "Audiveris 5.11.0", [
     { id: "P1", name: "Voice", xml: part("P1", top) },
+    ...(spurious ? [{ id: "P4", name: "Voice", xml: part("P4", own) }] : []),
     { id: "P2", name: "Voice", xml: part("P2", duet) },
     { id: "P3", name: "Piano", xml: part("P3", pn, 2) },
   ]);
@@ -179,6 +187,20 @@ function scoreGuitar() {
   ]);
 }
 
+// ---------------------------------------------------------------- score-voice-partner (no piano)
+// a partner singing two bars of 24 on a staff of her own over the voice: a Full score of 2 staves
+function scoreVoicePartner() {
+  const M = 24, a = [], v = [];
+  for (let mi = 0; mi < M; mi++) {
+    a.push({ pre: mi === 0 ? attrs() : "", notes: mi === 5 || mi === 18 ? [{ p: "E5", d: 2, lyric: "oh" }, { p: "D5", d: 2, lyric: "my" }] : [rest4()] });
+    v.push({ pre: mi === 0 ? attrs() : "", notes: sung(mi) });
+  }
+  return score("Synth Voice Partner", "Synth", [
+    { id: "P1", name: "Voice", xml: part("P1", a) },
+    { id: "P2", name: "Voice", xml: part("P2", v) },
+  ]);
+}
+
 // ---------------------------------------------------------------- score-tunein (the tune in the piano)
 function scoreTunein() {
   const M = 12, pn = [];
@@ -195,6 +217,9 @@ function scoreTunein() {
 fs.writeFileSync(path.join(OUT, "score-pvg.musicxml"), scorePvg());
 fs.writeFileSync(path.join(OUT, "score-duet.musicxml"), scoreDuet());
 fs.writeFileSync(path.join(OUT, "score-duet-partner.musicxml"), scoreDuet({ partner: true }));
+fs.writeFileSync(path.join(OUT, "score-duet-spurious.musicxml"), scoreDuet({ spurious: true }));
+fs.writeFileSync(path.join(OUT, "score-partner-rit.musicxml"), scoreDuet({ partner: true, rit: true }));
+fs.writeFileSync(path.join(OUT, "score-voice-partner.musicxml"), scoreVoicePartner());
 fs.writeFileSync(path.join(OUT, "score-guitar.musicxml"), scoreGuitar());
 fs.writeFileSync(path.join(OUT, "score-tunein.musicxml"), scoreTunein());
-console.log("wrote score-pvg, score-duet, score-duet-partner, score-guitar, score-tunein to", OUT);
+console.log("wrote score-pvg, score-duet, score-duet-partner, score-duet-spurious, score-partner-rit, score-voice-partner, score-guitar, score-tunein to", OUT);

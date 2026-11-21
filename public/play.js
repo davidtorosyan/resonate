@@ -502,8 +502,10 @@ function tallest(plan) {
   if (plan?.kind !== "score") return 12 * staves;
   return SCORE_SYS + (staves > 3 ? SCORE_EXTRA : SCORE_STAFF) * (staves - 3);
 }
+// (a sparse part's staff shows in a few systems only — condensed out of the rest: two systems of
+// the staves most show, plan.common; tallest keeps every staff, a page must hold the first system)
 function twoNeed(plan) {
-  const staves = plan?.staves || 1;
+  const staves = plan?.common || plan?.staves || 1;
   if (plan?.kind === "score") return 70 + (staves > 3 ? 15 : 8) * (staves - 3);
   return staves > 1 ? 50 : 36;
 }
