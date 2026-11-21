@@ -17,7 +17,7 @@ live in CLAUDE.md ("UI principles").
   - Deployed. The owner presses **Reconvert all** (songs show "v10 → v15").
 - [x] The connector's 📡 wording: moved into E2. The button's icon changes there, so the hint text (resonate.ts, coaching.ts) changes once, with one redeploy.
 - [ ] ▶ C: tech debt — the plan is docs/CLEANUP.md (phases 1–6 are C; 7 and 8 go first in E8 and E7; 9 is optional). Phase 1 (honest checks; no release) is running. Then phases 2–4 as one release, 5, and 6 (docs), each with one review pass.
-- [ ] D round 2. Compare again (tools/accuracy/pairs.cjs on engine-15 conversions; the native `acc/r15` exports work before the owner reconverts). Then:
+- [ ] ▶ D round 2 (in parallel with C: separate code). The comparison is done: 489 → 328 findings, 193 fixed, no regressions (docs/ACCURACY.md "Round 2 results"). Engine agents are on chord dots (0016) and ties (0017); cue heads come next. Compare again (tools/accuracy/pairs.cjs on engine-15 conversions; the native `acc/r15` exports work before the owner reconverts). Then:
   - pattern 4: cue-size second voices (Stumblin' In's duet, Too Sweet's thirds), which need cue-head detection;
   - the P2 patterns: 8 small notes, 10 key flats at a system start, 11 navigation marks, 12 dots, 13 flags, 14 melisma syllables.
   - Repeat until none. Pipeline and status: docs/ACCURACY.md.

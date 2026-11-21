@@ -50,3 +50,13 @@ patterns: 8 small notes, 11 navigation marks, 12 dots, 13 flags, 14 melisma syll
   clean-ups as of de820b7).
 - Comparison + triage against round 1: workflow script `accuracy-review-r2.js` (session workflows folder), run
   wf_a9cfed85-67b. Resume it with `resumeFromRunId` and the same args if it's stopped. The triage goes to `acc/triage15.md`.
+
+### Round 2 results (2026-11-21)
+- **Counts:** 328 findings (211 play wrong), against round 1's 489 (365). 193 of round 1's are fixed: every phantom head, key miss and tie-as-slur, most whole notes and page-turn ties. The patches caused no regression.
+- **Flaky dots:** 5 bars that got worse are chord dots the engine assigns differently from run to run (9 bars flip across 14 builds).
+- **Triage:** scratchpad `acc/triage15.md` (with `triage15/` tools).
+- **Round 2's P1 patterns, in progress:**
+  - 1. stacked chord dots lost, nondeterministically (20 findings): engine agent, worktree `aud-dots` (branch r2-dots, from the engine-15 release in `relwork/audiveris`), patch 0016.
+  - 2. ties still lost, mostly within a system (56): engine agent, worktree `aud-ties` (branch r2-ties), patch 0017, plus any restoreTies case.
+  - 3. cue-size heads (66): next, once one of the two is done (the CPU is shared).
+- **Later:** the P2s (flags, Piano Man's LH octaves, navigation marks, melisma syllables, grace notes).
