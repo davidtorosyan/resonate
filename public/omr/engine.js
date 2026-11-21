@@ -3,4 +3,4 @@
 // say which engine read it and offer to read again the ones an older engine read (docs/LIBRARY.md).
 // Bump it with every engine patch, together with omr.js ENGINE (tools/jobstore.cjs checks both).
 // Its own module, apart from omr.js: the song list reads it without loading the engine's page side.
-export const ENGINE_N = 10;
+export const ENGINE_N = 15;
