@@ -1,14 +1,18 @@
 export const meta = {
-  name: 'accuracy-review-r2',
-  description: 'Round 2: compare every system converted by engine 15 with the PDF (vision), then triage against round 1',
+  name: 'accuracy-review',
+  description: 'An accuracy round: compare every system the engine converted with the PDF (vision), then triage against the round before',
   phases: [{ title: 'Compare' }, { title: 'Triage' }],
 }
 
-// The accuracy loop's comparison + triage (docs/ACCURACY.md, round 2: run wf_a9cfed85-67b), saved from the
-// session's workflows folder; copy it there to run it. args.dir = the pairs folder (pairs-run.sh's
-// $ACC/$PAIRS: <slug>/sNN-{pdf,score}.png, sNN-notes.txt, legend.txt); round 1's triage.md is read from its parent.
-if (!args.dir) throw new Error('args.dir: the pairs folder (e.g. <scratchpad>/acc/pairs15)')
+// The accuracy loop's comparison + triage (docs/ACCURACY.md; round 2 ran it as wf_a9cfed85-67b). Run it with
+// Workflow({ scriptPath: 'tools/accuracy/review-workflow.js', args }). args: dir = the pairs folder (pairs-run.sh's
+// $ACC/$PAIRS: <slug>/sNN-{pdf,score}.png, sNN-notes.txt, legend.txt); counts { slug: systems }; noScore { slug: [systems] };
+// round (e.g. 3); engine (what the conversions are, for the triage: "engine 19 (patches 0011–0019: …)"); prev = the
+// round before's triage file in dir's parent (e.g. triage15.md); out = this round's (e.g. triage19.md).
+if (!args.dir) throw new Error('args.dir: the pairs folder (e.g. <scratchpad>/acc/pairs19)')
 const P = args.dir
+const ROUND = args.round || 2, PREV = args.prev || 'triage.md', OUT = args.out || 'triage15.md'
+const ENGINE = args.engine || 'engine 15 (patches 0011–0015: one-flat keys, stem-less whole-note heads, ledgers by small beams, ties over page turns / to the right head, phantom void heads) plus the clean-ups as of now (restoreTies pairing notes and carrying accidentals)'
 const FIND = { type: 'object', properties: { systems_checked: { type: 'array', items: { type: 'integer' } }, findings: { type: 'array', items: { type: 'object', properties: {
   sys: { type: 'integer' }, bar: { type: 'string', description: 'bar number as in the notes text' }, where: { type: 'string', description: 'part / staff / voice, beat' },
   kind: { type: 'string', enum: ['pitch', 'octave', 'accidental', 'duration', 'rest', 'missing-note', 'extra-note', 'tie', 'voice', 'tuplet', 'grace', 'key', 'clef', 'time', 'barline-repeat-ending', 'navigation', 'octave-line', 'lyric-missing', 'lyric-extra', 'lyric-misplaced', 'measure-missing', 'measure-extra', 'other'] },
@@ -42,7 +46,7 @@ log(`${findings.length} findings from ${all.length} of ${batches.length} batches
 phase('Triage')
 const triage = await agent(`You triage the differences an optical-music-recognition engine (Audiveris 5.11 + Resonate's patches, run on the owner's printed scores) produced against the printed PDFs. Here are all findings from a per-system visual comparison (JSON): ${JSON.stringify(findings)}
 
-Pictures and notes text are in ${P}/<slug>/sNN-{pdf,score}.png / sNN-notes.txt if you need to look (NN = two-digit system). This is ROUND 2: the conversions come from engine 15 (patches 0011–0015: one-flat keys, stem-less whole-note heads, ledgers by small beams, ties over page turns / to the right head, phantom void heads) plus the clean-ups as of now (restoreTies pairing notes and carrying accidentals). Round 1's triage (engine 10) is ${P}/../triage.md — read it, and for every round-1 pattern say fixed / partly / still there (with counts), then list NEW patterns (possible regressions: say so loudly). Context: Resonate's side = the engine's MusicXML + the site's clean-ups (public/omr/fixscore.js: ties restored, keys unified, tuplets, boxed fills dropped, octave clefs…) + Play's drawing (Verovio; Full score view). Repo /home/user/resonate (CLAUDE.md "In-browser OMR" describes every patch 0001–0015 and clean-up).
-Group the findings into PATTERNS (same root cause), e.g. "a rest shared by two voices", "a dotted note read undotted", "an accidental carried across a tie dropped", "lyric line read under the wrong staff", etc. For each pattern: a name; the kind; how many findings and songs; which findings (slug/sys/bar); whether it plays wrong; the likely layer — engine recognition (Audiveris step: HEADS, BEAMS, RHYTHMS, LINKS, TEXTS…), a Resonate clean-up, Play's drawing/prep, or uncertain; the most promising place to fix it; and a priority (impact on singing/playing × frequency × likely fixable). Drop findings you judge to be false positives (say why). Never quote lyrics. Output: a ranked markdown report (patterns first, then dropped findings), and write it also to ${P}/../triage15.md.`, { label: 'triage', phase: 'Triage' })
+Pictures and notes text are in ${P}/<slug>/sNN-{pdf,score}.png / sNN-notes.txt if you need to look (NN = two-digit system). This is ROUND ${ROUND}: the conversions come from ${ENGINE}. The round before's triage is ${P}/../${PREV} — read it, and for every pattern there say fixed / partly / still there (with counts), then list NEW patterns (possible regressions: say so loudly). Context: Resonate's side = the engine's MusicXML + the site's clean-ups (public/omr/fixscore.js: ties restored, keys unified, tuplets, boxed fills dropped, octave clefs…) + Play's drawing (Verovio; Full score view). Repo /home/user/resonate (CLAUDE.md "In-browser OMR" describes every patch and clean-up).
+Group the findings into PATTERNS (same root cause), e.g. "a rest shared by two voices", "a dotted note read undotted", "an accidental carried across a tie dropped", "lyric line read under the wrong staff", etc. For each pattern: a name; the kind; how many findings and songs; which findings (slug/sys/bar); whether it plays wrong; the likely layer — engine recognition (Audiveris step: HEADS, BEAMS, RHYTHMS, LINKS, TEXTS…), a Resonate clean-up, Play's drawing/prep, or uncertain; the most promising place to fix it; and a priority (impact on singing/playing × frequency × likely fixable). Drop findings you judge to be false positives (say why). Never quote lyrics. Output: a ranked markdown report (patterns first, then dropped findings), and write it also to ${P}/../${OUT}.`, { label: 'triage', phase: 'Triage' })
 
 return { batches: batches.length, done: all.length, findings: findings.length, triage }
