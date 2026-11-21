@@ -590,6 +590,13 @@ function markUnmarkedTuplets(doc, changes) {
   const kids = (el, name) => [...el.children].filter((c) => c.nodeName === name);
   const val = (el, name) => { const c = el && kids(el, name)[0]; return c ? Number(c.textContent) : null; };
   const voiceOf = (n) => kids(n, "voice")[0]?.textContent || "1";
+  const tiedIn = (n) => n.querySelector(':scope > tie[type="stop"], :scope > notations > tied[type="stop"]') !== null;
+  const spot = (n) => { const p = kids(n, "pitch")[0]; return p && `${kids(p, "step")[0]?.textContent}${kids(p, "octave")[0]?.textContent}|${kids(n, "staff")[0]?.textContent || "1"}`; };
+  // n tied in from a note of a k:(k-1) tuplet in the bar before (the same run over the barline;
+  // bars go in order, so that bar's run is marked already)
+  const fromTuplet = (n, prev, k) => !!prev && kids(prev, "note").some((p) => spot(p) === spot(n) &&
+    p.querySelector(':scope > tie[type="start"], :scope > notations > tied[type="start"]') &&
+    kids(p, "time-modification").some((tm) => val(tm, "actual-notes") === k && val(tm, "normal-notes") === k - 1));
   for (const part of doc.querySelectorAll("score-partwise > part")) {
     let divisions = 1, beats = 4, beatType = 4;
     const measures = kids(part, "measure");
@@ -615,6 +622,11 @@ function markUnmarkedTuplets(doc, changes) {
           i = j > i ? j : i + 1;
         }
         if (!best) continue;
+        // (a note tied in from before starts none when the run after it still makes one: Songbird
+        // bar 61, B♭4 held over the barline, then the triplet "rest, A♭4, G4" — not a quadruplet
+        // with the held note, as its bars 22, 41, 84 and 119 print, rest first or not — unless it's
+        // held from the bar before's own k:(k−1) run: a quadruplet tied into the next one)
+        if (best[1] - best[0] > 3 && tiedIn(lead[best[0]]) && !fromTuplet(lead[best[0]], measures[mi - 1], best[1] - best[0])) best[0]++;
         const k = best[1] - best[0];
         const run = new Set(lead.slice(best[0], best[1]));
         // Scale every duration of the measure by k; run elements (and their chord notes) get excess*(k-1).
@@ -722,20 +734,37 @@ function markTupletGroups(doc, changes) {
 }
 
 // Ties the engine missed. Audiveris finds a tie as a short curve between two heads; beside a
-// chord's other heads, or cut by a line break, the curve is often lost, read as a slur, or
-// written half (a start with no stop) — Killing Me Softly bar 3: the piano's tied F♯/A chord
-// under "life" had no tie at all, and the B/G chord under "words", tied over the line break,
-// came out as one slur from the G to the next line's B. The voice usually keeps its tie (one
-// head, room around it). Ties are judged on a staff's *strike*: the notes of one part's staff
-// that start at the same moment (any voice — Audiveris numbers a chord's notes into voices
-// loosely), when they all last the same; the next strike is the one starting where they end, or
-// the next bar's first when nothing else on that staff starts later in the bar (at a barline, or
-// a bar the engine left short: Killing bar 6, a tied eighth chord read as 16ths). Three repairs,
-// in order, only where the next strike is the same notes again, carries no syllable (a new word is
-// sung, not tied), no articulation and no grace note before it (struck again), and the first isn't
-// marked short (staccato, a breath):
-//   1. a slur from a strike into the next one is a tie on every note (a slur between identical
-//      chords means nothing else; a tie over a line break comes out this way);
+// chord's other heads, or cut by a line break, the curve is often lost, read as a slur, linked to
+// the wrong head, or written half (a start with no stop) — Killing Me Softly bar 3: the piano's
+// tied F♯/A chord under "life" had no tie at all, and the B/G chord under "words", tied over the
+// line break, came out as one slur from the G to the next line's B. The voice usually keeps its
+// tie (one head, room around it). Ties are judged note by note: a note's continuation is a note
+// of the same staff starting where it ends (or at the next bar's start when nothing else on that
+// staff starts later in the bar: at a barline, or a bar the engine left short — Killing bar 6, a
+// tied eighth chord read as 16ths) at the same staff position (step and octave), with the same
+// alteration or no printed accidental (a tie carries the first note's accidental; a continuation
+// the engine didn't link took the key's — Wichita bar 12, F♯ → F; a printed natural is a change,
+// and so is a key change between the two: an unmarked note there is the new key's, struck again).
+// A note's *strike* is the notes of one part's staff starting at the same moment (any voice —
+// Audiveris numbers a chord's notes into voices loosely) when they all last the same; a second
+// head at a staff position already paired (the engine's phantom beside a real head, on its dot or
+// at a tie's end: Piano Man's accordion chords, Yellow Submarine's octaves) is left out of the
+// comparison and never tied. Repairs, in order, each only where the notes tied into carry no
+// syllable (a new word is sung, not tied), no articulation and no grace note before them (struck
+// again), and the first ones aren't marked short (staccato, a breath):
+//   1. a slur from a note to the next onset of its staff is a tie when (a) that onset is the same
+//      notes again (a slur between identical chords means nothing else; a tie over a line break
+//      comes out this way — a slur within one voice ties no other voice striking again in its
+//      own rhythm, as 3), (b) the slur ends on the note's own continuation, or on that of the
+//      head a step from it (the curve's start on a phantom: Songbird bar 37's [D3 E♭3]), even when
+//      other notes start there (Songbird bar 120's octave tied into a fuller chord, across voices),
+//      or (c) the note is alone in its strike and the slur ends a third or less from its
+//      continuation, its ends level (the curve linked to the next chord's other head: Killing bar
+//      68's G♯3 under the right hand's B3 — a melisma slur to a head a third away climbs with it);
+//      and (d) in a sung part, a slur over the note's continuation (no syllable) to the note after
+//      it is a melisma slur over a tie the engine lost: the tie is added, the slur kept (Piano Man
+//      bar 161; Too Sweet bar 17, the tie's curve linked to the next note — not in a piano part:
+//      Yellow Submarine bar 59's tie, linked to a chord struck twice);
 //   2. a part that plays the sung line (most of its notes carry words), where it doubles it: where
 //      the voice ties a note over, another part's staff striking that note at the same moment, for
 //      the same length, and the same notes again where the voice's tie ends, ties it — when that
@@ -743,16 +772,24 @@ function markTupletGroups(doc, changes) {
 //      time and length (Musicnotes P/V/G: the piano's right hand doubles the tune; repeated block
 //      chords holding the tied pitch are accompaniment, struck again; where the piano strikes a
 //      different chord — Killing bar 7, F♯ then F♯/A — it re-strikes, as printed);
-//   3. a strike tied on some notes is tied on all of them.
-// Known limit: a melody note held over while an inner voice strikes the same notes again on the
-// beat (printed with a tie on one note only) looks like a tie the engine lost on the others.
+//   3. a strike tied on some notes is tied on all of them when the next strike is the same notes
+//      again — except another voice under them going on in a voice of its own for as long again:
+//      struck again (Yellow Submarine bar 13, the inner dotted quarters under the tune's tied D♯4;
+//      Killing bar 62's inner eighth into a half note is held, as printed);
+//   4. every tie carries its accidental: a continuation with no printed accidental takes the
+//      first note's alteration, along the chain (gybr bars 103–105, E♭ → E; the engine doesn't
+//      carry it over a page turn either) — also the engine's own ties, before the rules too.
+// Known limit: an inner voice striking the same notes again under a held melody note, its new
+// notes of another length (printed with a tie on the melody only), looks like a tie lost on it.
 // A tie is written both ways the readers take it: <tie> after <duration> (Sing's parser) and
-// <tied> in <notations> (Verovio), stop before start on a note tied both ways. Idempotent.
-function restoreTies(doc, changes, debug = null) {
+// <tied> in <notations> (Verovio), stop before start on a note tied both ways. The rules go again
+// while a pass changes the score (below), so one call is idempotent.
+function restoreTies(doc, changes, debug = null, { round = 0, where = new Map(), carried = new Map() } = {}) {
+  let dirty = false; // (this pass changed the score)
   const kid = (el, name) => { for (const c of el.children) if (c.nodeName === name) return c; return null; };
   const kids = (el, name) => { const out = []; for (const c of el.children) if (c.nodeName === name) out.push(c); return out; };
   const num = (el, name) => { const c = kid(el, name); return c ? Number(c.textContent) : null; };
-  const STEP = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  const STEP = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }, LETTERS = "CDEFGAB";
   const EPS = 1e-6, Q = 960; // (onsets keyed in 1/960 quarters)
   const key = (q) => Math.round(q * Q);
   const tieTypes = (n) => {
@@ -761,6 +798,7 @@ function restoreTies(doc, changes, debug = null) {
     return out;
   };
   const tiedOn = (n) => tieTypes(n).some((t) => t === "start" || t === "continue");
+  const tiedIn = (n) => tieTypes(n).some((t) => t === "stop" || t === "continue");
   // marks on a note: any articulation (struck again), and the ones that part it from what follows
   const SHORT = new Set(["staccato", "staccatissimo", "spiccato", "breath-mark", "caesura"]);
   const marksOf = (n) => {
@@ -770,11 +808,12 @@ function restoreTies(doc, changes, debug = null) {
   };
 
   const parts = [...doc.querySelectorAll("score-partwise > part")].map((part) => {
-    const strikes = new Map(); // "mi|staff|onset" → [{ el, midi, d, on, mi, staff, voice, lyric, bar }]
+    const groups = new Map(); // "mi|staff|onset" → [{ el, pos, alter, acc, midi, d, on, mi, staff, voice, lyric, x, bar }]
     const graces = new Set();  // "mi|staff|onset": a grace note before the note starting there
     const last = new Map();    // "mi|staff" → the latest onset anything (a note or a rest) starts at
     const ends = [], notes = [], byBar = [];
     let div = 1, beats = 4, unit = 4;
+    const keys = new Map(); // staff ("" = every staff) → the fifths in effect
     kids(part, "measure").forEach((m, mi) => {
       let pos = 0, prev = 0, max = 0;
       byBar[mi] = [];
@@ -784,6 +823,11 @@ function restoreTies(doc, changes, debug = null) {
           div = num(el, "divisions") || div;
           const t = kid(el, "time");
           if (t && num(t, "beats")) { beats = num(t, "beats"); unit = num(t, "beat-type") || 4; }
+          for (const k of kids(el, "key")) {
+            const f = num(k, "fifths"), st = k.getAttribute("number");
+            if (f == null) continue;
+            if (st) keys.set(st, f); else { keys.clear(); keys.set("", f); }
+          }
         } else if (name === "backup") pos -= (num(el, "duration") || 0) / div;
         else if (name === "forward") pos += (num(el, "duration") || 0) / div;
         else if (name === "note") {
@@ -797,29 +841,34 @@ function restoreTies(doc, changes, debug = null) {
           if (!(last.get(sk) >= on)) last.set(sk, on);
           const p = kid(el, "pitch");
           if (!p) continue;
-          const midi = (num(p, "octave") + 1) * 12 + STEP[kid(p, "step")?.textContent] + Math.round(num(p, "alter") || 0);
-          const n = { el, midi, d, on, mi, staff, voice: kid(el, "voice")?.textContent || "1", lyric: !!kid(el, "lyric"), bar: m };
+          const step = kid(p, "step")?.textContent, oct = num(p, "octave"), alter = Math.round(num(p, "alter") || 0);
+          const x = Number(el.getAttribute("default-x"));
+          const n = {
+            el, step, oct, pos: oct * 7 + LETTERS.indexOf(step), alter, acc: !!kid(el, "accidental"), midi: (oct + 1) * 12 + STEP[step] + alter,
+            d, on, mi, staff, voice: kid(el, "voice")?.textContent || "1", lyric: !!kid(el, "lyric"), x: Number.isFinite(x) ? x : null, bar: m,
+            key: keys.get(staff) ?? keys.get("") ?? 0,
+          };
           const k = `${sk}|${key(on)}`;
-          if (!strikes.has(k)) strikes.set(k, []);
-          strikes.get(k).push(n);
+          if (!groups.has(k)) groups.set(k, []);
+          groups.get(k).push(n);
           notes.push(n);
           byBar[mi].push(n);
         }
       }
       ends[mi] = Math.min(beats * 4 / unit, max || beats * 4 / unit);
     });
-    // a note's strike when all its notes last the same, and the strike where they end
-    const strike = (n) => {
-      const s = strikes.get(`${n.mi}|${n.staff}|${key(n.on)}`);
-      return s && s.every((x) => Math.abs(x.d - n.d) < EPS) ? s : null;
-    };
-    const after = (n) => {
+    const group = (n) => groups.get(`${n.mi}|${n.staff}|${key(n.on)}`);
+    // a note's strike when all its notes last the same; its chord (the notes there as long as it)
+    const strike = (n) => { const s = group(n); return s.every((x) => Math.abs(x.d - n.d) < EPS) ? s : null; };
+    const chord = (n) => group(n).filter((x) => Math.abs(x.d - n.d) < EPS);
+    // the notes of n's staff starting where it ends
+    const next = (n) => {
       const t = n.on + n.d;
       if (t < ends[n.mi] - EPS) {
-        const s = strikes.get(`${n.mi}|${n.staff}|${key(t)}`);
+        const s = groups.get(`${n.mi}|${n.staff}|${key(t)}`);
         if (s || last.get(`${n.mi}|${n.staff}`) > n.on + EPS) return s || null;
       }
-      return strikes.get(`${n.mi + 1}|${n.staff}|0`) || null;
+      return groups.get(`${n.mi + 1}|${n.staff}|0`) || null;
     };
     // the note of the same staff and voice that ends where n starts (in the bar before, at its start)
     const before = (n) => {
@@ -827,24 +876,42 @@ function restoreTies(doc, changes, debug = null) {
       return n.mi > 0 ? byBar[n.mi - 1].find((x) => x.staff === n.staff && x.voice === n.voice && Math.abs(x.on + x.d - ends[n.mi - 1]) < EPS) || null : null;
     };
     const sung = notes.filter((n) => n.lyric).length >= 0.25 * notes.length;
-    return { part, id: part.getAttribute("id"), notes, byBar, graces, strike, after, before, lyric: notes.length > 0 && sung };
+    const inTime = notes.map((n, i) => [n, i]).sort((x, y) => x[0].mi - y[0].mi || x[0].on - y[0].on || x[1] - y[1]).map(([n]) => n);
+    return { part, id: part.getAttribute("id"), notes, inTime, byBar, graces, strike, chord, next, before, lyric: notes.length > 0 && sung };
   });
 
-  const sorted = (s) => s.map((n) => n.midi).sort((a, b) => a - b);
-  const same = (a, b) => { const x = sorted(a), y = sorted(b); return x.length === y.length && x.every((v, i) => v === y[i]); };
-  // a strike and the next, when that's the same notes again, sung on no new syllable, not struck
-  // again (an articulation, a grace note before it) and not parted from it: the pairs to tie
-  const pairsOf = (p, n) => {
-    const a = p.strike(n), b = a && p.after(n);
-    if (!a || !b || !same(a, b) || b.some((x) => x.lyric)) return null;
-    if (b.some((x) => marksOf(x.el).length) || a.some((x) => marksOf(x.el).some((m) => SHORT.has(m)))) return null;
-    if (p.graces.has(`${b[0].mi}|${b[0].staff}|${key(b[0].on)}`)) return null;
-    const left = [...b], pairs = [];
-    for (const x of a) {
-      const i = left.findIndex((y) => y.midi === x.midi && y.voice === x.voice), j = i >= 0 ? i : left.findIndex((y) => y.midi === x.midi);
-      pairs.push([x, left.splice(j, 1)[0]]);
+  // the same note again (a tie carries the first one's accidental; a printed one is a change —
+  // and so is a key change between them: there an unmarked note is the new key's, struck again)
+  const cont = (a, b) => a.pos === b.pos && (a.alter === b.alter || (!b.acc && a.key === b.key));
+  // A's notes paired with their continuations in B (the same voice first), a head nearer its
+  // chord's column before a second one at its staff position; `miss` / `extra`: the notes of A / B
+  // left over, a second head at a staff position already paired in its own group not counted
+  const column = (g) => {
+    const xs = g.map((n) => n.x).filter((x) => x != null).sort((a, b) => a - b);
+    const c = xs.length ? xs[xs.length >> 1] : 0;
+    return [...g].sort((a, b) => Math.abs((a.x ?? c) - c) - Math.abs((b.x ?? c) - c));
+  };
+  const link = (A, B) => {
+    const left = column(B), pairs = [], miss = [];
+    for (const a of column(A)) {
+      let i = left.findIndex((b) => cont(a, b) && b.voice === a.voice);
+      if (i < 0) i = left.findIndex((b) => cont(a, b));
+      if (i < 0) miss.push(a); else pairs.push([a, left.splice(i, 1)[0]]);
     }
-    return { a, b, pairs };
+    const dup = (n, side) => pairs.some((pr) => pr[side] !== n && pr[side].pos === n.pos);
+    return { pairs, miss: miss.filter((n) => !dup(n, 0)), extra: left.filter((n) => !dup(n, 1)) };
+  };
+  const same = (L) => L.pairs.length > 0 && !L.miss.length && !L.extra.length;
+  // a tie's two ends are level; a slur to a head a step or a third away climbs or falls with it
+  // (default-y: tenths from the staff's top line, as Audiveris writes every curve end)
+  const level = (a, b) => !a.hasAttribute("default-y") || !b.hasAttribute("default-y") ||
+    Math.abs(Number(a.getAttribute("default-y")) - Number(b.getAttribute("default-y"))) <= 5;
+  // nothing struck again where the pairs end: no syllable, no articulation, no grace note before
+  // them, and nothing marked short where they start
+  const clear = (p, pairs) => {
+    if (pairs.some(([a, b]) => b.lyric || marksOf(b.el).length || marksOf(a.el).some((m) => SHORT.has(m)))) return false;
+    const b = pairs[0][1];
+    return !p.graces.has(`${b.mi}|${b.staff}|${key(b.on)}`);
   };
   const add = (n, type) => {
     let changed = false;
@@ -855,7 +922,7 @@ function restoreTies(doc, changes, debug = null) {
       // stop before start
       const ref = type === "stop" ? (ties[0] || dur?.nextSibling || null) : ((ties.at(-1) || dur)?.nextSibling || null);
       n.insertBefore(t, ref);
-      changed = true;
+      changed = dirty = true;
     }
     let no = kid(n, "notations");
     const tied = no ? kids(no, "tied") : [];
@@ -868,44 +935,110 @@ function restoreTies(doc, changes, debug = null) {
       td.setAttribute("type", type);
       // (a stop first; a start after the last <tied> there — appended when that's the last child)
       no.insertBefore(td, type === "stop" ? (tied[0] || no.firstChild) : (tied.length ? tied.at(-1).nextSibling : no.firstChild));
-      changed = true;
+      changed = dirty = true;
     }
     return changed;
   };
-  const tieAll = (pairs) => {
+  // a tied-to note with no printed accidental takes the first note's alteration (carried: part id →
+  // bar numbers, over every pass)
+  const carry = (p, a, b) => {
+    if (b.alter === a.alter || b.acc) return;
+    dirty = true;
+    const pitch = kid(b.el, "pitch");
+    let al = kid(pitch, "alter");
+    if (a.alter) {
+      if (!al) { al = doc.createElement("alter"); pitch.insertBefore(al, kid(pitch, "octave")); }
+      al.textContent = String(a.alter);
+    } else if (al) al.remove();
+    b.midi += a.alter - b.alter;
+    b.alter = a.alter;
+    if (!carried.has(p.id)) carried.set(p.id, new Set());
+    carried.get(p.id).add(b.bar.getAttribute("number"));
+  };
+  // (a pair tied already had its accidental carried by carryTies: from the first note tied into it)
+  const tieAll = (p, pairs) => {
     let any = false;
-    for (const [x, y] of pairs) { any = add(x.el, "start") || any; any = add(y.el, "stop") || any; }
+    for (const [x, y] of pairs) {
+      const a = add(x.el, "start"), b = add(y.el, "stop");
+      if (a || b) { any = true; carry(p, x, y); }
+    }
     return any;
   };
-  const NAMES = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
-  const where = new Map(); // part id → bar numbers
-  const mark = (rule, p, t) => {
-    const no = t.a[0].bar.getAttribute("number");
+  const spell = (n) => n.step + (["𝄫", "♭", "", "♯", "𝄪"][n.alter + 2] ?? "") + n.oct;
+  // (where: part id → bar numbers, over every pass)
+  const mark = (rule, p, pairs) => {
+    const [a, b] = pairs[0], no = a.bar.getAttribute("number");
     if (!where.has(p.id)) where.set(p.id, new Set());
     where.get(p.id).add(no);
-    debug?.push(`${rule} ${p.id} m${no}@${t.a[0].on} st${t.a[0].staff} → m${t.b[0].bar.getAttribute("number")}@${t.b[0].on}: ${sorted(t.a).map((m) => NAMES[m % 12] + (Math.floor(m / 12) - 1)).join(" ")}`);
+    debug?.push(`${rule} ${p.id} m${no}@${a.on} st${a.staff} → m${b.bar.getAttribute("number")}@${b.on}: ${pairs.map(([x]) => spell(x)).join(" ")}`);
   };
+  // 4. (also first: the comparisons below see the engine's own ties carried; a continuation takes
+  // one note's accidental — the first tied into it: two tied heads at its position, a phantom's
+  // other alteration beside the real one, would hand it back and forth)
+  const carryTies = () => {
+    for (const p of parts) {
+      const into = new Set();
+      for (const x of p.inTime) {
+        if (!tiedOn(x.el)) continue;
+        const B = p.next(x) || [];
+        const y = B.find((b) => b.pos === x.pos && b.voice === x.voice && tiedIn(b.el)) || B.find((b) => b.pos === x.pos && tiedIn(b.el));
+        if (y && !into.has(y)) { into.add(y); carry(p, x, y); }
+      }
+    }
+  };
+  carryTies();
 
-  // 1. slurs between identical strikes (in time order: a slur may run from a voice written after
-  // <backup> to one written before it)
+  // 1. slurs that are ties (in time order: a slur may run from a voice written after <backup> to
+  // one written before it)
   for (const p of parts) {
-    const open = new Map(); // slur number → { from (note), els }
-    const inTime = p.notes.map((n, i) => [n, i]).sort((x, y) => x[0].mi - y[0].mi || x[0].on - y[0].on || x[1] - y[1]).map(([n]) => n);
-    for (const n of inTime) {
+    // slur number → the slurs open under it [{ from (note), els }]: Audiveris frees a number at a
+    // slur's end in the order it writes the notes (voice by voice, then <backup>), so two voices'
+    // slurs overlapping in time can share one — an end takes its own voice's start, else the latest
+    const open = new Map();
+    for (const n of p.inTime) {
       for (const no of kids(n.el, "notations")) {
         for (const sl of kids(no, "slur")) {
           const k = sl.getAttribute("number") || "1", type = sl.getAttribute("type");
-          if (type === "start") { open.set(k, { from: n, els: [sl] }); continue; }
-          const o = open.get(k);
-          if (!o) continue;
+          if (!open.has(k)) open.set(k, []);
+          const list = open.get(k);
+          if (type === "start") { list.push({ from: n, els: [sl] }); continue; }
+          let i = list.findLastIndex((o) => o.from.voice === n.voice);
+          if (i < 0) i = list.length - 1;
+          if (i < 0) continue;
+          const o = list[i];
           o.els.push(sl);
           if (type !== "stop") continue;
-          open.delete(k);
-          const t = pairsOf(p, o.from);
-          if (!t || !t.b.includes(n)) continue;
+          list.splice(i, 1);
+          const x = o.from, B = p.next(x);
+          if (!B || n.lyric) continue;
+          if (!B.includes(n)) {
+            // (d) a sung line's slur over the note's own continuation to the note after it — held over
+            // a barline (Piano Man), or the curve starting past halfway to the continuation: a tie's
+            // curve linked on (Too Sweet); a melisma slur from the note's own head over a repeat in
+            // its bar is sung again
+            const y = p.lyric && n.voice === x.voice && !tiedOn(x.el) && B.find((b) => cont(x, b) && b.voice === x.voice);
+            const s0 = o.els[0], sx = s0.hasAttribute("default-x") && x.x != null ? x.x + Number(s0.getAttribute("default-x")) : NaN;
+            const held = y && (y.mi !== x.mi || (y.x != null && sx > (x.x + y.x) / 2));
+            if (held && (p.next(y) || []).includes(n) && clear(p, [[x, y]]) && tieAll(p, [[x, y]])) mark("over", p, [[x, y]]);
+            continue;
+          }
+          const A = p.chord(x), L = link(A, B);
+          let pairs = null;
+          if (same(L)) {
+            // (a) — a slur within one voice doesn't tie another voice striking again in its own
+            // rhythm (as 3: Yellow Submarine's inner dotted quarters); held on, it's tied (Killing bar 28)
+            const yv = L.pairs.find(([a]) => a === x)?.[1].voice ?? x.voice;
+            pairs = n.voice !== x.voice ? L.pairs : L.pairs.filter(([a, b]) => a.voice === x.voice || b.voice === yv || Math.abs(a.d - b.d) > EPS);
+          } else {
+            const hit = L.pairs.find(([, b]) => b === n), own = L.pairs.find(([a]) => a === x);
+            if (hit && (hit[0] === x || (Math.abs(hit[0].pos - x.pos) <= 1 && hit[0].voice === x.voice))) pairs = [hit]; // (b)
+            else if (!hit && own && !L.miss.length && L.pairs.length === 1 && Math.abs(n.pos - own[1].pos) <= 2 && level(o.els[0], sl)) pairs = [own]; // (c)
+          }
+          if (!pairs || !clear(p, pairs)) continue;
           for (const s of o.els) { const par = s.parentElement; s.remove(); if (par && !par.children.length) par.remove(); }
-          tieAll(t.pairs);
-          mark("slur", p, t);
+          dirty = true;
+          tieAll(p, pairs);
+          mark("slur", p, pairs);
         }
       }
     }
@@ -915,11 +1048,11 @@ function restoreTies(doc, changes, debug = null) {
   for (const v of parts.filter((p) => p.lyric)) {
     for (const n of v.notes) {
       if (!tiedOn(n.el)) continue;
-      const to = v.after(n);
-      const m = to && to.find((x) => x.midi === n.midi);
+      const to = v.next(n);
+      const m = to && (to.find((x) => cont(n, x) && x.voice === n.voice) || to.find((x) => cont(n, x)));
       if (!m) continue;
       // the voice's note before the tie, else (a rest before it) the one after the tied-to note
-      const lead = v.before(n) || (v.after(m) || []).find((x) => x.voice === m.voice) || null;
+      const lead = v.before(n) || (v.next(m) || []).find((x) => x.voice === m.voice) || null;
       if (!lead) continue;
       for (const p of parts) {
         if (p === v) continue;
@@ -927,9 +1060,12 @@ function restoreTies(doc, changes, debug = null) {
         if (!doubled(lead)) continue;
         for (const c of p.byBar[n.mi] || []) {
           if (c.midi !== n.midi || Math.abs(c.on - n.on) > EPS || Math.abs(c.d - n.d) > EPS || tiedOn(c.el)) continue;
-          const t = pairsOf(p, c);
-          if (!t || t.b[0].mi !== m.mi || Math.abs(t.b[0].on - m.on) > EPS) continue;
-          if (tieAll(t.pairs.filter(([x]) => x === c))) mark("dbl", p, t);
+          const A = p.strike(c), B = A && p.next(c);
+          if (!B || B[0].mi !== m.mi || Math.abs(B[0].on - m.on) > EPS) continue;
+          const L = link(A, B);
+          if (!same(L) || !clear(p, L.pairs)) continue;
+          const mine = L.pairs.filter(([x]) => x === c);
+          if (tieAll(p, mine)) mark("dbl", p, mine);
         }
       }
     }
@@ -940,14 +1076,27 @@ function restoreTies(doc, changes, debug = null) {
     const seen = new Set();
     for (const n of p.notes) {
       if (!tiedOn(n.el)) continue;
-      const t = pairsOf(p, n);
-      if (!t || seen.has(t.a)) continue;
-      seen.add(t.a);
-      if (t.a.length > 1 && tieAll(t.pairs)) mark("chord", p, t);
+      const A = p.strike(n), B = A && p.next(n);
+      if (!B || seen.has(A)) continue;
+      seen.add(A);
+      const L = link(A, B);
+      if (!same(L) || L.pairs.length < 2 || !clear(p, L.pairs)) continue;
+      // (another voice under the tied notes, going on in a voice of its own for as long again, is
+      // struck again: Yellow Submarine's inner dotted quarters; held on — Killing bar 62's eighth
+      // into a half — or joining the tied notes' chord, it's tied)
+      const tv = new Set(), yv = new Set();
+      for (const [a, b] of L.pairs) if (tiedOn(a.el)) { tv.add(a.voice); yv.add(b.voice); }
+      if (L.pairs.some(([a, b]) => !tv.has(a.voice) && !yv.has(b.voice) && Math.abs(a.d - b.d) < EPS)) continue;
+      if (tieAll(p, L.pairs)) mark("chord", p, L.pairs);
     }
   }
 
+  carryTies();
+  // (a tie rule 3 completes, an accidental it or the closing carry hands on, can make what rules
+  // 1–2 judged before match: again until a pass changes nothing — four at most)
+  if (dirty && round < 3) return restoreTies(doc, changes, debug, { round: round + 1, where, carried });
   for (const [id, bars] of where) changes.push(`part ${id}: ties restored (m${[...bars].join(", m")})`);
+  for (const [id, bars] of carried) changes.push(`part ${id}: accidentals carried over ties (m${[...bars].join(", m")})`);
 }
 
 function setDivisions(doc, measure, value) {

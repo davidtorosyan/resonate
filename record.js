@@ -2,10 +2,10 @@
 // notes you sang, and play it back (your voice and/or the notes on piano).
 // Song-based scoring lives on the Sing page (sing.js).
 
-import { noteName as nameOf, BLACK, median, centsLabel } from "./music.js?v=92";
-import { openMic, ANALYSIS_LAG } from "./pitch.js?v=92";
-import { startCapture, playVoice } from "./capture.js?v=92";
-import { loadPiano, pianoReady, playPiano, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=92";
+import { noteName as nameOf, BLACK, median, centsLabel } from "./music.js?v=93";
+import { openMic, ANALYSIS_LAG } from "./pitch.js?v=93";
+import { startCapture, playVoice } from "./capture.js?v=93";
+import { loadPiano, pianoReady, playPiano, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=93";
 
 // (In the one-page shell this page is mounted in a sheet: its own elements first — sing.html has a
 // #play and a #status too. On record.html resonateRecord isn't set: the document.)
