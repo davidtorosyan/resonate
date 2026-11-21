@@ -23,6 +23,7 @@
 // usage: node playback.cjs   (BASE=http://localhost:8097/resonate/, PLAY_SCORES=<dir of the owner's
 //   converted .musicxml — never copied into the repo>, ONLY=G,P,O,L,S,I, SHOTS=<dir>)
 const { chromium } = require("playwright");
+const { AG_BOTH } = require("./lib/both.cjs");
 const fs = require("fs");
 const path = require("path");
 const { pdfmini } = require("./pdfmini.cjs");
@@ -78,6 +79,7 @@ async function newPage(browser, w, h, errors, { touch = true, before = null, gat
   await ctx.addInitScript(INIT);
   if (gate) await ctx.addInitScript(GATE);
   if (before) await ctx.addInitScript(before);
+  await ctx.addInitScript(AG_BOTH); // (Amazing Grace in Both, as these checks were written: E1 opens the Full score)
   const page = await ctx.newPage();
   page.on("pageerror", (e) => errors.push("pageerror " + e.message));
   page.on("console", (m) => { const t = m.text(); if (m.type() === "error") errors.push("console.error " + t.slice(0, 200)); else if (m.type() === "warning" && /^(song|music engine|loadData|pdf|piano|play)\b/.test(t)) errors.push("console.warn " + t.slice(0, 200)); });

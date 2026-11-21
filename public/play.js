@@ -153,6 +153,7 @@ const S = {
   P: null,          // prepare(): { doc, parts, views, facts }
   waiting: false,   // the view waits for the stage to get a size
   view: "both",
+  byDefault: false, // the view is the song's default (none chosen for it): a Full score that can't draw gives way to Both
   built: new Map(), // view key → buildView() result (its XML is what Verovio loads)
   v: null,          // the shown view's buildView()
   loaded: null,     // the buildView() result Verovio holds
@@ -389,7 +390,10 @@ async function open(id) {
     S.t.prep = ms(t1);
   } catch (err) { return fail("song", err); }
   const views = S.P.views;
-  S.view = S.st.view in views ? S.st.view : "both";
+  // (the view chosen for this song last, else the Full score — the tune with its words over the
+  // piano, as printed — when the song has one, else Both)
+  S.view = S.st.view in views ? S.st.view : "score" in views ? "score" : "both";
+  S.byDefault = !(S.st.view in views);
   handsSel.replaceChildren(...Object.keys(views).map((k) => new Option(VIEW_LABELS[k] || k, k)));
   handsSel.value = S.view;
   handsSel.hidden = Object.keys(views).length < 2;
@@ -437,7 +441,7 @@ async function loadView(gen) {
       const t = performance.now();
       v = buildView(S.P.doc, S.P.views[S.view]);
       S.t.build = ms(t);
-    } catch (err) { return fail("song", err); }
+    } catch (err) { return viewFailed(err); }
     S.built.set(S.view, v);
   }
   S.v = v;
@@ -476,8 +480,19 @@ async function loadView(gen) {
   } catch (err) { console.warn("loadData", err); }
   S.t.data = ms(t);
   S.loaded = ok ? v : null;
-  if (!ok || !tk.getPageCount()) return fail("song");
-  placed(settle(L));
+  if (!ok || !tk.getPageCount()) return viewFailed();
+  return placed(settle(L));
+}
+// A view that doesn't draw: the song says so — unless it's the Full score a song opened at by
+// default (no view chosen for it), which gives way to Both, the view songs opened at before.
+function viewFailed(err) {
+  if (S.byDefault && S.view !== "both" && S.P?.views.both) {
+    if (err) console.warn("view", err);
+    S.byDefault = false;
+    S.view = handsSel.value = "both";
+    return loadView(S.gen);
+  }
+  return fail("song", err);
 }
 
 // The shown view's size pref: S.step (steps from the default; 0: the default).
@@ -692,7 +707,7 @@ function placed(L) {
   S.page = Math.max(1, Math.min(S.pages, p));
   // (a score Verovio loads but draws nothing of — notes kept, no staff on the page: say so, not
   // blank paper with "1 / 1")
-  if (S.v?.pitched && !/<g [^>]*class="staff[" ]/.test(svgOf(S.page))) return fail("song");
+  if (S.v?.pitched && !/<g [^>]*class="staff[" ]/.test(svgOf(S.page))) return viewFailed();
   showMsg("");
   S.ready = true;
   S.failed = null;
@@ -1105,6 +1120,7 @@ async function changeView(v) {
   const gen = ++S.gen;
   handsSel.value = v;
   S.view = v;
+  S.byDefault = false;
   clearPeek();
   stopPlay(); // (the stretch picked stays: it's a stretch of the song, drawn again in this view)
   S.ready = false;

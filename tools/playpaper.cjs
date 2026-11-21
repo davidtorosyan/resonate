@@ -16,6 +16,7 @@
 //   converted .musicxml — never copied into the repo>, ONLY=S,K,Z,T,N, DEVS=air-p,…, SHOTS=<dir>,
 //   SURVEY=1)
 const { chromium } = require("playwright");
+const { AG_BOTH } = require("./lib/both.cjs");
 const fs = require("fs");
 const path = require("path");
 const { pdfmini } = require("./pdfmini.cjs");
@@ -182,13 +183,19 @@ async function partS(browser) {
 // ---------------------------------------------------------------------------------------------
 // Z: − / +, prefs, spreads, phone, desktop
 
+// (Z is the piano views' sizes, resonate.play.zoom: Amazing Grace in Both — AG_BOTH, lib/both.cjs; E1
+// opens a song with no view chosen in the Full score, whose size is its own)
+
 async function partZ(browser) {
   console.log("== Z − / +, prefs, spreads");
   const errors = [];
   // the old prefs (v77–78's sizes) are ignored; − / + steps from the default
   {
     const { ctx, page } = await newPage(browser, 820, 1180, errors, true, () => {
-      if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("resonate.play.size", "16"); localStorage.setItem("resonate.play.size.score", "14"); }
+      if (!sessionStorage.getItem("seeded")) {
+        sessionStorage.setItem("seeded", "1"); localStorage.setItem("resonate.play.size", "16"); localStorage.setItem("resonate.play.size.score", "14");
+        localStorage.setItem("resonate.play", JSON.stringify({ "amazing-grace": { view: "both" } })); // (Both, as AG_BOTH)
+      }
     });
     let d = await D(page);
     const auto = 820 / PAPER;
@@ -222,7 +229,7 @@ async function partZ(browser) {
   }
   // + / − from the default, the mini and a 13"
   for (const [w, h] of [[744, 1133], [1024, 1366]]) {
-    const { ctx, page } = await newPage(browser, w, h, errors);
+    const { ctx, page } = await newPage(browser, w, h, errors, true, AG_BOTH);
     let d = await D(page);
     const base = d.sp;
     await page.click("#bigger"); await ready(page); d = await D(page);
@@ -260,15 +267,15 @@ async function partZ(browser) {
   }
   // a phone: 9.5 as before (+/− steps from it); a desktop: 9.5–12.5
   {
-    const { ctx, page } = await newPage(browser, 390, 844, errors);
+    const { ctx, page } = await newPage(browser, 390, 844, errors, true, AG_BOTH);
     let d = await D(page);
-    ok(d.device === "phone" && d.sp === 9.5, `Z a phone: ${d.device} ${d.sp}`);
+    ok(d.device === "phone" && d.sp === 9.5 && d.view === "both", `Z a phone: ${d.device} ${d.sp} (${d.view})`);
     await page.click("#smaller"); await ready(page); d = await D(page);
     ok(Math.abs(d.sp - 9.5 / STEP) < 0.01, `Z a phone: − → ${d.sp}`);
     await ctx.close();
   }
   for (const [w, h] of [[1440, 900], [1100, 760], [900, 700]]) {
-    const { ctx, page } = await newPage(browser, w, h, errors, false);
+    const { ctx, page } = await newPage(browser, w, h, errors, false, AG_BOTH);
     const d = await D(page);
     const want = Math.min(12.5, Math.max(9.5, d.W / PAPER));
     ok(d.device === "desktop" && Math.abs(d.base - want) < 0.01, `Z desktop ${w}x${h}: base ${d.base} (want ${want}), sp ${d.sp}`);

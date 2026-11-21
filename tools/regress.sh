@@ -103,12 +103,13 @@ if [ "$TIER" = main ]; then
   run sleep 900 env SHOTS=0 node sleep.cjs        # every page asleep when hidden: contexts, sources, tracks, the session
 
   # ---- Play (the owner's converted scores only with PLAY_SCORES) ------------------------------------------
-  # play (8 sizes), playheaders, playfixes, playscore (the Full score), playpaper (the printed density),
+  # play (8 sizes), playheaders, playfixes, playscore (the Full score), playopen (the view a song opens in: E1),
+  # playpaper (the printed density),
   # playback (▶), playbackfixes, playpeekstaff, playpress (a press sounds at once), playkeys (the docked
   # keyboard), playhear (what ▶ plays), playv80fixes, playchords, tiecases (fixscore's restoreTies).
   run playunit 600 node playunit.cjs              # playprep / the note facts on every fixture
   run playxmlsame 600 node playxmlsame.cjs        # every view's MusicXML byte-identical to HEAD's playprep
-  for t in play playheaders playfixes playscore playpaper playback playbackfixes playpeekstaff playpress playkeys playhear playv80fixes playchords tiecases; do
+  for t in play playheaders playfixes playscore playopen playpaper playback playbackfixes playpeekstaff playpress playkeys playhear playv80fixes playchords tiecases; do
     run "$t" 1800 node "$t.cjs"
   done
   run playpdf 1200 env SHOTS=0 node playpdf.cjs   # 📄: the bars on the PDF, zoom and pan, the focus border

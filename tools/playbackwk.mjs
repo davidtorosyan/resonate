@@ -28,8 +28,15 @@ const click = async (css) => { const e = await find(css); const id = e && Object
 const exa = async (script) => (await j("POST", `/session/${sid}/execute/async`, { script, args: [] })).value;
 const pb = () => ex(`const x = window.resonateDebug().play.playback; return { state: x.state, kind: x.kind, starting: x.starting, n: x.scheduled.length, rounds: [...new Set(x.scheduled.map((e) => e.round))], len: x.len, span: x.span, lit: x.lit.length, litEls: x.litEls.length, strip: x.strip.length, bands: x.bands.length, selbar: x.selbar, audio: window.resonateDebug().play.audio, tempo: x.tempo };`);
 const waitFor = async (script, ms = 15000) => { const t0 = Date.now(); for (;;) { if (await ex(script)) return true; if (Date.now() - t0 > ms) return false; await sleep(150); } };
+// (Amazing Grace in Both, as these checks were written — E1 opens a song with no view chosen in its
+// Full score: chosen from another page of the site, as Play writes its own record when it's left)
+const agBoth = async () => {
+  await j("POST", `/session/${sid}/url`, { url: ROOT + "resonate/tools.html" });
+  await ex(`const all = JSON.parse(localStorage.getItem("resonate.play") || "{}"); all["amazing-grace"] = { ...(all["amazing-grace"] || {}), view: "both" }; localStorage.setItem("resonate.play", JSON.stringify(all)); return 1`);
+};
 try {
   await j("POST", `/session/${sid}/window/rect`, { width: 1024, height: 1300 }).catch(() => {});
+  await agBoth();
   await j("POST", `/session/${sid}/url`, { url: ROOT + "tmp/playback-wk.html" });
   ok(await waitFor("const d = window.resonateDebug && window.resonateDebug().play; return !!(d && d.ready);", 40000), "ready on Amazing Grace");
   console.log("UA", await ex("return navigator.userAgent"));

@@ -47,8 +47,8 @@ try {
   const xml = fs.readFileSync(path.join(FIX, "synth-pvg.musicxml"), "utf8");
   const id = await seed("synth-pvg", xml, pdfmini(3).toString("base64"));
   ok(/^s/.test(id), `seeded ${id}`);
-  // the chip: 3 practice days at All
-  await ex(`localStorage.setItem("resonate.play", JSON.stringify({ [arguments[0]]: { days: { n: 3, ask: 3 } } })); return 1;`, [id]);
+  // the chip: 3 practice days at All (in Both, as written: E1 opens a song with no view chosen in its Full score)
+  await ex(`localStorage.setItem("resonate.play", JSON.stringify({ [arguments[0]]: { view: "both", days: { n: 3, ask: 3 } } })); return 1;`, [id]);
   d = await load(BASE + "play.html");
   ok(d && d.ready && d.song === id, "synth-pvg open");
   const offer = await ex(`return { shown: !document.getElementById("offer").hidden, text: document.getElementById("offer").textContent }`);

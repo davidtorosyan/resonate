@@ -492,7 +492,7 @@ Where this differs from the sections above, this wins.
 
 ## As built (v78): Full score
 
-The owner asked for "the vocal melody along with both hands on the same view — basically like the original sheet music". The **Full score** view is the tune's staff with its words over the piano's grand staff, first in the view menu (fullest to smallest: Full score, Both hands, Right hand, Left hand, Melody). A song with no saved view still opens in Both; the choice is kept per song in `resonate.play[id].view`.
+The owner asked for "the vocal melody along with both hands on the same view — basically like the original sheet music". The **Full score** view is the tune's staff with its words over the piano's grand staff, first in the view menu (fullest to smallest: Full score, Both hands, Right hand, Left hand, Melody). A song with no saved view opens in the Full score when it has one, else in Both (E1, 2026-11-21; Both until then); the choice is kept per song in `resonate.play[id].view` and wins over that default. A Full score opened by default that doesn't draw gives way to Both (`viewFailed`).
 
 **Which songs, which parts** (`planViews`)
 - Offered when the tune (`pickMelody`) has words and the view shows more than Both: more parts, or the words Both leaves out (the tune inside the piano; a hymn). Never for a voice-only song (Both is already the tune with its words).

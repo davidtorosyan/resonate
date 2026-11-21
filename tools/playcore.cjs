@@ -87,7 +87,8 @@ async function layoutChecks(page, tag) {
     await page.reload();
     await waitReady(page, "amazing-grace");
     let d = await dbg(page);
-    ok(d.counts.rendered > 0 && d.view === "both", `${w}x${h} AG: rendered ${d.counts.rendered}`);
+    // (E1: a song with no view chosen for it opens in the Full score, when it has one)
+    ok(d.counts.rendered > 0 && d.view === "score", `${w}x${h} AG: the Full score, rendered ${d.counts.rendered} (${d.view})`);
     const lay = await layoutChecks(page, `${w}x${h} AG`);
     console.log(`${w}x${h}: bar ${lay.bar}px stage ${lay.stage} pages ${JSON.stringify(lay.pages)} size ${d.size} sp ${d.sp.toFixed(1)} scale ${d.scale} spread ${d.spread} pages ${d.pages} t ${JSON.stringify(d.t)}`);
     await page.screenshot({ path: path.join(SHOTS, `core-${w}x${h}-ag.png`) });
@@ -128,10 +129,15 @@ async function layoutChecks(page, tag) {
     ok(!("sGONE123" in st0) && "amazing-grace" in st0, `prune: stale entry gone, sample kept (${Object.keys(st0)})`);
     let d = await dbg(page);
     ok(d.pages >= 4 && d.page === 1, `synth-pvg opens at page 1 of ${d.pages}`);
-    // (v78: the Full score first; a song with no saved view still opens in Both)
-    ok(JSON.stringify(d.views) === JSON.stringify(["score", "both", "rh", "lh", "melody"]) && d.view === "both", `views ${d.views}, open in ${d.view}`);
+    // (v78: the Full score first; E1: a song with no saved view opens in it)
+    ok(JSON.stringify(d.views) === JSON.stringify(["score", "both", "rh", "lh", "melody"]) && d.view === "score", `views ${d.views}, open in ${d.view}`);
     const handsOpts = await page.evaluate(() => [...document.querySelectorAll("#hands option")].map((o) => o.textContent));
     ok(handsOpts.join("|") === "Full score|Both hands|Right hand|Left hand|Melody", `hands labels ${handsOpts}`);
+    // (what follows is Both's: its "+4" — the piano views' size — and its pages)
+    await page.selectOption("#hands", "both");
+    await waitReady(page);
+    d = await dbg(page);
+    ok(d.view === "both" && d.pages >= 4 && d.page === 1, `Both chosen: page 1 of ${d.pages}`);
     const pg = () => page.evaluate(() => window.resonateDebug().play.page);
     const key = async (k, want) => { await page.keyboard.press(k); await page.waitForTimeout(30); const p = await pg(); ok(p === want, `${k} → page ${p} (want ${want})`); };
     await key("ArrowLeft", 1); // (no wrap at the start)
@@ -308,7 +314,8 @@ async function layoutChecks(page, tag) {
     await waitReady(page, "amazing-grace");
     const ids = await seed(page, list.filter((x) => x.name === "synth-pvg" || x.name === "pianoman"));
     const big = ids.pianoman || ids["synth-pvg"];
-    await page.evaluate((id) => { localStorage.setItem("resonate.play.zoom", "-8"); localStorage.setItem("resonate.sing.song", id); }, big);
+    // (Both: the piano views' size, "-8"; E1 would open the Full score)
+    await page.evaluate((id) => { localStorage.setItem("resonate.play.zoom", "-8"); localStorage.setItem("resonate.sing.song", id); localStorage.setItem("resonate.play", JSON.stringify({ [id]: { view: "both" } })); }, big);
     await page.reload();
     await waitReady(page, big);
     let d = await dbg(page);

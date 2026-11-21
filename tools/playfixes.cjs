@@ -22,6 +22,7 @@
 //      transposing view) · the engine loads after a failed download · the landscape size a step
 // usage: node playfixes.cjs   (BASE=http://localhost:8097/resonate/, PLAY_SCORES=<dir>, ONLY=U,P1,…)
 const { chromium } = require("playwright");
+const { AG_BOTH, chooseBoth } = require("./lib/both.cjs");
 const fs = require("fs");
 const path = require("path");
 const { pdfmini } = require("./pdfmini.cjs");
@@ -553,6 +554,7 @@ async function boot(page) {
   const newPage = async (w, h, errors, init) => {
     const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true, isMobile: true });
     if (init) await ctx.addInitScript(init);
+    await ctx.addInitScript(AG_BOTH); // (Amazing Grace in Both, as these checks were written: E1 opens the Full score)
     const page = await ctx.newPage();
     page.on("pageerror", (e) => errors.push("pageerror " + e.message));
     page.on("console", (m) => { if (m.type() === "error") errors.push("console " + m.text()); });
@@ -586,6 +588,7 @@ async function boot(page) {
     await ready(page, "amazing-grace");
     const ids = await seed(page, [{ name: "synth-pvg", xml: pvg }, { name: "synth-longest", xml: read(path.join(FIX, "synth-longest.musicxml")) }]);
     const P = ids["synth-pvg"], L = ids["synth-longest"];
+    await chooseBoth(page, [P, L]); // (Both, its "+4" below: E1 opens a song in its Full score)
     await page.evaluate(() => localStorage.setItem("resonate.play.zoom", "+4")); // (pages to turn: four steps over the default, ~16)
     await openSong(page, P);
     let d = await D(page);

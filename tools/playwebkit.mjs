@@ -30,8 +30,15 @@ const waitReady = async (view) => {
   for (let i = 0; i < 160; i++) { d = await dbg(); if (d && (d.failed || (d.ready && (!view || d.view === view)))) break; await sleep(250); }
   return d;
 };
+// (Amazing Grace in Both, as these checks were written — E1 opens a song with no view chosen in its
+// Full score: chosen from another page of the site, as Play writes its own record when it's left)
+const agBoth = async () => {
+  await j("POST", `/session/${sid}/url`, { url: ROOT + "resonate/tools.html" });
+  await ex(`const all = JSON.parse(localStorage.getItem("resonate.play") || "{}"); all["amazing-grace"] = { ...(all["amazing-grace"] || {}), view: "both" }; localStorage.setItem("resonate.play", JSON.stringify(all)); return 1`);
+};
 try {
   await j("POST", `/session/${sid}/window/rect`, { width: 1024, height: 1300 }).catch(() => {});
+  await agBoth();
   await j("POST", `/session/${sid}/url`, { url: ROOT + "tmp/play-wk.html" });
   let d = await waitReady();
   console.log("UA", await ex("return navigator.userAgent"));

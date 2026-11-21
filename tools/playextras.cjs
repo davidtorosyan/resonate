@@ -3,6 +3,7 @@
 // usage: node playextras.cjs   (BASE=http://localhost:8097/resonate/, SHOTS=<dir>,
 //   PLAY_PDFS=<dir with a scanned (JBIG2) PDF, e.g. the owner's Songbird — never committed>)
 const { chromium } = require("playwright");
+const { AG_BOTH, chooseBoth } = require("./lib/both.cjs");
 const fs = require("fs");
 const path = require("path");
 const { pdfmini } = require("./pdfmini.cjs");
@@ -50,6 +51,7 @@ const GATE = () => {
 async function newPage(browser, w, h, errors, { gate = false, clock = null } = {}) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true, isMobile: true, deviceScaleFactor: 1 });
   if (gate) await ctx.addInitScript(GATE);
+  await ctx.addInitScript(AG_BOTH); // (Amazing Grace in Both, as these checks were written: E1 opens the Full score)
   const page = await ctx.newPage();
   if (clock) await page.clock.install({ time: clock });
   page.on("pageerror", (e) => errors.push(`pageerror ${e.message}`));
@@ -112,6 +114,7 @@ const peekState = (page) => page.evaluate(() => ({
     await page.goto(BASE + "play.html");
     await waitReady(page, "amazing-grace");
     const ids = await seed(page, [{ name: "synth-pvg", xml: FIXT["synth-pvg"], source: "file" }]);
+    await chooseBoth(page, ids["synth-pvg"]); // (Both: E1 opens a song in its Full score)
     await openSong(page, ids["synth-pvg"]);
     await page.click("#names"); await page.click("#names");
     ok((await dbg(page)).names === "off", "names Off");
@@ -354,6 +357,7 @@ const peekState = (page) => page.evaluate(() => ({
     await waitReady(page, "amazing-grace");
     const ids = await seed(page, [{ name: "synth-pvg", xml: FIXT["synth-pvg"], source: "file" }]);
     const S = ids["synth-pvg"];
+    await chooseBoth(page, S); // (Both, its "+4": E1 opens a song in its Full score)
     await page.evaluate(() => localStorage.setItem("resonate.play.zoom", "+4")); // (pages to turn on each day)
     await openSong(page, S);
     const stored = () => page.evaluate((id) => (JSON.parse(localStorage.getItem("resonate.play") || "{}")[id] || {}).days || null, S);

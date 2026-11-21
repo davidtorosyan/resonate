@@ -368,11 +368,15 @@ async function partB(browser) {
   {
     const { ctx, page } = await newPage(browser, 820, 1180, errors);
     const ids = await seed(page, songList(["score-pvg", "synth-voice", "synth-pvg"]));
+    // (synth-pvg: Both chosen for it — "another song keeps its own view", below)
+    await page.evaluate((id) => { const all = JSON.parse(localStorage.getItem("resonate.play") || "{}"); all[id] = { view: "both" }; localStorage.setItem("resonate.play", JSON.stringify(all)); }, ids["synth-pvg"]);
     await openSong(page, ids["score-pvg"]);
     let d = await D(page);
     const opts = await page.evaluate(() => [...document.querySelectorAll("#hands option")].map((o) => o.value + "=" + o.textContent));
     ok(opts.join("|") === "score=Full score|both=Both hands|rh=Right hand|lh=Left hand|melody=Melody", `B1 menu ${opts.join("|")}`);
-    ok(d.view === "both", `B1 a song with no saved view opens in Both (${d.view})`);
+    ok(d.view === "score", `B1 a song with no saved view opens in the Full score (E1; ${d.view})`);
+    // (chosen: Both, then the Full score again — kept per song, below)
+    await setView(page, "both");
     await setView(page, "score");
     d = await D(page);
     ok(d.view === "score" && d.counts.rendered > 0, `B1 Full score shown (${d.counts.rendered} heads)`);
@@ -614,7 +618,7 @@ async function partC() {
     await j("POST", `/session/${sid}/refresh`, {});
     let d = await waitReady(id);
     console.log("   UA", await ex("return navigator.userAgent"));
-    ok(d && d.ready && d.view === "both" && d.views[0] === "score", `C opens in Both, Full score first in the menu (${d?.view}, ${d?.views})`);
+    ok(d && d.ready && d.view === "score" && d.views[0] === "score", `C opens in the Full score (E1), first in the menu (${d?.view}, ${d?.views})`);
     await ex(`const h = document.getElementById("hands"); h.value = "score"; h.dispatchEvent(new Event("change", { bubbles: true })); return 1`);
     d = await waitReady(id, "score");
     ok(d && d.ready && d.view === "score", `C Full score shown (${d?.view})`);
