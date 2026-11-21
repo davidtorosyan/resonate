@@ -12,15 +12,9 @@ live in CLAUDE.md ("UI principles").
 - [x] A1–A8: the shell's jank list (v91). A6: the connector's tool list is frozen (docs/CONNECTOR.md).
 - [x] B: the one-pager is the site (v92, docs/CUTOVER.md).
 - [x] The connector broken by v91's logging (every signed-in POST 400): fixed, function version 8 (docs/CONNECTOR.md "Incident").
-- [ ] ▶ D round 1 release, **v93**:
-  - Done: engine 15 (patches 0011–0015, jars built, ENGINE / ENGINE_N 15, committed) and the clean-ups (de820b7).
-  - Done: the clean-up review. 13 confirmed (2 important: a tie across a key change rewriting the held pitch; the Full score losing its endings under a sparse top part); the findings are in scratchpad `review-cleanups-findings.md`.
-  - Done: libcore, songlib, tiecases, jobstore, shell all pass with engine 15.
-  - Running: a fixing agent for the 13 findings (one check each, the owner's 9 songs diffed against the PDFs).
-  - Next:
-    1. Bump to 93 and deploy.
-    2. The owner presses **Reconvert all** ("v10 → v15" badges).
-  - In parallel: round 2's picture pairs from the engine-15 exports (scratchpad `acc/pairs15/`, `pairs15.sh`).
+- [x] D round 1 release, **v93** (2026-11-21):
+  - Engine 15 (patches 0011–0015), the clean-ups (de820b7), and the review's 13 fixes (75b3f4e).
+  - Deployed. The owner presses **Reconvert all** (songs show "v10 → v15").
 - [ ] The connector: redeploy resonate.ts for b07e5f0's "📡 at the top of Resonate" wording (minor; batch it with the next function change).
 - [ ] C: tech debt. docs/CUTOVER.md "Left for cleanup C" (the old pages, away.js, tuner.html + app.js, etc.), dead code, and an audit (a workflow).
 - [ ] D round 2. Compare again (tools/accuracy/pairs.cjs on engine-15 conversions; the native `acc/r15` exports work before the owner reconverts). Then:
@@ -54,7 +48,7 @@ live in CLAUDE.md ("UI principles").
   - A **notes exercise**: the phrase's lowest / highest (and other) notes, ▶ to hear, hold to match (like the range test), then the phrase again.
   - Everything trains listening: sounds, not visuals, short phrases. The owner's new direction updates the "no scoreboard counts" principle: counts to beat, never a grade or a %.
 
-**Live:** v92 (2026-11-20). The one-page shell is the site; the old pages land in it; engine 10. The connector's edge function is version 8. On the branch, not live yet: engine 15 and the clean-ups (v93, D round 1 above).
+**Live:** v93 (2026-11-21): engine 15 and the clean-ups (D round 1). The one-page shell is the site (v92). The connector's edge function is version 8.
 
 **Next:** whatever the owner highlights next (highlight in the Score → `get_score_view` in a Claude chat → fix the engine or a clean-up → Reconvert). Open from v90: the MCP server doesn't know PDF-only songs (`get_song` says "open it once"; needs a resonate.ts change + redeploy); songs converted before v90 read "engine ≤9" even when v89 made them; Killing's piano bars 31, 32, 62 still have a voice short of its bar.
 
