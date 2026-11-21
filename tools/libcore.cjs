@@ -178,7 +178,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++
   ok(r.pdfA.name === 'Wichita_Lineman_-_F_Major_-_MN0305807.pdf' && r.pdfA.bytes === 9, 'its PDF stored with the file name');
   ok(r.entryA.k === 'pdf' && !('eng' in r.entryA) && !('fail' in r.entryA), 'index: k pdf');
   ok(r.entries.f.k === 'xml' && !('eng' in r.entries.f), 'index: k xml');
-  ok(r.entries.c.k === 'conv' && r.entries.c.eng === 10, 'index: k conv eng 10');
+  ok(r.entries.c.k === 'conv' && r.entries.c.eng === r.engineN, 'index: k conv, eng = this engine');
   ok(r.entries.o.k === 'conv' && r.entries.o.eng === 0, 'index: k conv eng 0 (before v90)');
   ok(r.dupEngine, 'same MusicXML again: the engine added to the old copy');
   ok(r.rebuiltK && r.rebuiltOld.eng === 0, 'a v89 index (no k) is rebuilt');
@@ -191,7 +191,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++
   ok(r.pdfKept, 'PDF kept through replace');
   ok(r.cleanNull && r.songXmlNull, 'cleanXml / songXml with null');
   ok(r.loadPdf.xml === null && r.loadPdf.pdfOnly === true && r.loadPdf.engine === null && r.loadPdf.title === 'Wichita Lineman' && r.loadPdf.source === 'pdf', 'loadSong PDF-only');
-  ok(r.loadConv.pdfOnly === false && r.loadConv.engine === 10 && r.loadConv.xml === 'string', 'loadSong converted: engine 10');
+  ok(r.loadConv.pdfOnly === false && r.loadConv.engine === r.engineN && r.loadConv.xml === 'string', 'loadSong converted: this engine');
   ok(r.loadSample.pdfOnly === false && r.loadSample.engine === null && r.loadSample.source === 'sample', 'loadSong sample');
   ok(r.info.sample.k === 'sample' && r.info.none === null && r.info.empty === null && r.info.pdf.k === 'pdf', 'songInfo');
   ok(r.choiceK === 'pdf', 'songChoices mine carries k');
@@ -216,7 +216,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++
   ok(r.forgetSample === false, 'forgetSong refuses a sample');
   ok(r.delOther === 1 && r.jobsLeft === 0, 'deleteJobsFor');
   ok(JSON.stringify(r.titles) === JSON.stringify(['Wichita Lineman', 'Killing Me Softly', 'Scanned Document 2', 'Song', 'IMG 0042']), 'titleFromFileName ' + JSON.stringify(r.titles));
-  ok(r.hold && r.engineN === 15, 'holdWake, ENGINE_N');
+  ok(r.hold && r.engineN === Number(/ENGINE_N = (\d+)/.exec(require('fs').readFileSync(require('path').join(__dirname, '../public/omr/engine.js'), 'utf8'))[1]), 'holdWake, ENGINE_N');
   ok(!errs.length, 'no page errors ' + JSON.stringify(errs.slice(0, 3)));
   if (fails && !process.env.VERBOSE) console.log(JSON.stringify(r).slice(0, 4000));
   await browser.close();

@@ -18,6 +18,8 @@
 //   node songlib.cjs                         (http://localhost:8097; screenshots into SHOTS)
 //   ONLY=add,remote,queue,open,convert,fail,look,fixes node songlib.cjs   (FIX=1,2,… picks fixes)
 //   SHOTS=0 node songlib.cjs                 (no screenshots; or node -r ./harness/noshots.cjs)
+// This build's engine (public/omr/engine.js ENGINE_N): a song converted by it shows no badge.
+const EN_NOW = Number(/ENGINE_N = (\d+)/.exec(require('fs').readFileSync(require('path').join(__dirname, '../public/omr/engine.js'), 'utf8'))[1]);
 const { chromium } = require('playwright');
 const fs = require('fs');
 const os = require('os');
@@ -249,7 +251,7 @@ async function add() {
   ok(!/Convert all|Reconvert all|Converting/.test(await text(p, '#songs-body .sec')), `header: nothing to convert (${await text(p, '#songs-body .sec')})`);
   ok(await p.evaluate(() => localStorage.getItem('resonate.convert')) === null, 'the queue key removed');
   const titles = await p.evaluate(async () => { const v = document.getElementById('version').textContent.trim().replace(/^v/, ''); return (await (await import(`./library.js?v=${v}`)).listSongs()).map((s) => [s.title, s.k, s.eng]); });
-  ok(titles.length === 2 && titles.every(([, k, e]) => k === 'conv' && e === 10), `stored: ${JSON.stringify(titles)}`);
+  ok(titles.length === 2 && titles.every(([, k, e]) => k === 'conv' && e === EN_NOW), `stored: ${JSON.stringify(titles)}`);
   ok(await p.evaluate(() => localStorage.getItem('resonate.sing.song')) === 'amazing-grace', 'the open song pointer untouched by the conversions');
   // the done row, at home
   if (await shown(p, '#songs')) await p.keyboard.press('Escape');
@@ -300,7 +302,7 @@ async function remote() {
   console.log('\n=== remote (iPhone): open_song / sing on a PDF only, Convert while open, Reconvert, Stop');
   const ctx = await context(IPHONE, { seed: { 'resonate.sing.song': 'amazing-grace' } });
   const p = await home(ctx);
-  const [a, b] = await seed(p, [{ pdf: true, name: 'Wichita_Lineman.pdf', title: 'Wichita Lineman' }, { xml: true, title: 'Piano Man', source: 'pdf', engine: 10 }]);
+  const [a, b] = await seed(p, [{ pdf: true, name: 'Wichita_Lineman.pdf', title: 'Wichita Lineman' }, { xml: true, title: 'Piano Man', source: 'pdf', engine: EN_NOW }]);
   const run = (action, args) => p.evaluate(async ({ action, args }) => {
     const v = document.getElementById('version').textContent.trim().replace(/^v/, '');
     const { remote } = await import(`./assist.js?v=${v}`);
@@ -336,7 +338,7 @@ async function remote() {
   await p.click('#imp-done .x').catch(() => {});
   // Reconvert a song this engine read already: forced (not passed by)
   await openSongs(p);
-  ok(/^PDF · /.test(await rowFact(p, b)) && (await rowEng(p, b)) === '', `the engine-10 row: "${await rowFact(p, b)}", no badge`);
+  ok(/^PDF · /.test(await rowFact(p, b)) && (await rowEng(p, b)) === '', `this engine's row: "${await rowFact(p, b)}", no badge`);
   ok(!/Reconvert all/.test(await text(p, '#songs-body .sec')), 'no Reconvert all (nothing older)');
   await openMenu(p, b);
   const items = await p.$$eval('#row-menu .prow', (x) => x.map((e) => e.textContent.trim()));
@@ -400,7 +402,7 @@ async function queue() {
   d = await until(p, (x) => x.import.result, 40000);
   ok(d?.import.result?.batch === 2, `batch result: 2 converted (${JSON.stringify(d?.import.result)})`);
   const list = await p.evaluate(async () => { const v = document.getElementById('version').textContent.trim().replace(/^v/, ''); return (await import(`./library.js?v=${v}`)).listSongs(); });
-  ok(list.length === 2 && list.every((s) => s.k === 'conv' && s.eng === 10), `two songs left, both converted (${list.map((s) => `${s.title}:${s.k}:${s.eng}`).join(' ')})`);
+  ok(list.length === 2 && list.every((s) => s.k === 'conv' && s.eng === EN_NOW), `two songs left, both converted (${list.map((s) => `${s.title}:${s.k}:${s.eng}`).join(' ')})`);
   const jobs = await p.evaluate(async () => { const v = document.getElementById('version').textContent.trim().replace(/^v/, ''); return (await (await import(`./omr/jobs.js?v=${v}`)).listJobs()).length; });
   ok(jobs === 0 && await p.evaluate(() => localStorage.getItem('resonate.convert')) === null, `no job, no queue left (${jobs})`);
   await closeCtx(ctx, 'queue');
@@ -512,7 +514,7 @@ async function look() {
       { pdf: true, name: 'Wichita_Lineman_-_F_Major_-_MN0305807.pdf', title: 'Wichita Lineman' },
       { pdf: true, name: 'Scan 2.pdf', title: 'Scan 2', fail: true },
       { xml: true, title: 'Killing Me Softly', source: 'pdf' },
-      { xml: true, title: 'Piano Man', source: 'pdf', engine: 10 },
+      { xml: true, title: 'Piano Man', source: 'pdf', engine: EN_NOW },
       { xml: true, title: 'Greensleeves', source: 'file' },
       { xml: true, title: 'Songbird', source: 'pdf', engine: 9 },
     ]);
@@ -744,7 +746,7 @@ async function fixCounts() {
   console.log('\n--- F5 (iPad): the count and a forced Reconvert across a reload');
   const ctx = await context(IPAD, { scenario: 'slow' });
   const p = await home(ctx);
-  const [one, two, x] = await seed(p, [{ pdf: true, name: 'One.pdf', title: 'One' }, { pdf: true, name: 'Two.pdf', title: 'Two' }, { xml: true, title: 'Ten', source: 'pdf', engine: 10 }]);
+  const [one, two, x] = await seed(p, [{ pdf: true, name: 'One.pdf', title: 'One' }, { pdf: true, name: 'Two.pdf', title: 'Two' }, { xml: true, title: 'Ten', source: 'pdf', engine: EN_NOW }]);
   await openSongs(p);
   await p.click('#songs-body [data-act="convert-all"]');
   await until(p, (y) => y.import.song && y.import.jobId, 8000);
