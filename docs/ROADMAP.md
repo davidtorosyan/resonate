@@ -15,8 +15,8 @@ live in CLAUDE.md ("UI principles").
 - [x] D round 1 release, **v93** (2026-11-21):
   - Engine 15 (patches 0011–0015), the clean-ups (de820b7), and the review's 13 fixes (75b3f4e).
   - Deployed. The owner presses **Reconvert all** (songs show "v10 → v15").
-- [ ] The connector: redeploy resonate.ts for b07e5f0's "📡 at the top of Resonate" wording (minor; batch it with the next function change).
-- [ ] C: tech debt. docs/CUTOVER.md "Left for cleanup C" (the old pages, away.js, tuner.html + app.js, etc.), dead code, and an audit (a workflow).
+- [x] The connector's 📡 wording: moved into E2. The button's icon changes there, so the hint text (resonate.ts, coaching.ts) changes once, with one redeploy.
+- [ ] ▶ C: tech debt. docs/CUTOVER.md "Left for cleanup C" (the old pages, away.js, tuner.html + app.js, etc.), dead code, and an audit (a workflow).
 - [ ] D round 2. Compare again (tools/accuracy/pairs.cjs on engine-15 conversions; the native `acc/r15` exports work before the owner reconverts). Then:
   - pattern 4: cue-size second voices (Stumblin' In's duet, Too Sweet's thirds), which need cue-head detection;
   - the P2 patterns: 8 small notes, 10 key flats at a system start, 11 navigation marks, 12 dots, 13 flags, 14 melisma syllables.
@@ -24,7 +24,7 @@ live in CLAUDE.md ("UI principles").
 
 *Then (the owner, 2026-11-21), in this order:*
 - [ ] E1 Opening a score defaults to the **Full score**, not Both (when the song offers one; the song's saved view still wins).
-- [ ] E2 The 📡 remote button:
+- [ ] E2 The 📡 remote button (and the connector's hint text that names it: resonate.ts, coaching.ts — one redeploy):
   - shown only once an assistant has been connected to the account (`assistant_activity` has a row);
   - an icon that reads "AI" (not a satellite dish);
   - still one switch per device (several devices may have Resonate open).
