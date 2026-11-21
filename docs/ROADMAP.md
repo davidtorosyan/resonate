@@ -16,7 +16,7 @@ live in CLAUDE.md ("UI principles").
   - Engine 15 (patches 0011–0015), the clean-ups (de820b7), and the review's 13 fixes (75b3f4e).
   - Deployed. The owner presses **Reconvert all** (songs show "v10 → v15").
 - [x] The connector's 📡 wording: moved into E2. The button's icon changes there, so the hint text (resonate.ts, coaching.ts) changes once, with one redeploy.
-- [ ] ▶ C: tech debt — the plan is docs/CLEANUP.md (phases 1–6 are C; 7 and 8 go first in E8 and E7; 9 is optional). Phase 1 (honest checks; no release) is running. Then phases 2–4 as one release, 5, and 6 (docs), each with one review pass.
+- [ ] ▶ C: tech debt — the plan is docs/CLEANUP.md (phases 1–6 are C; 7 and 8 go first in E8 and E7; 9 is optional). Phase 1 (honest checks) done: 7d8e62f + ef0c335 (main 75 PASS; the fails: two load flakes, jobstore until the engine release bumps `ENGINE_N`). Phases 2–3 (+ synclib 9b's sync.js fix) running as one release; Phase 4 (the old Tuner) waits for the owner's OK, asked 2026-11-21. Then 5, and 6 (docs), each with one review pass.
 - [ ] ▶ D round 2 (in parallel with C: separate code). The comparison is done: 489 → 328 findings, 193 fixed, no regressions (docs/ACCURACY.md "Round 2 results"). Chord dots done (patches 0016 + 0018, committed, not built); engine agents on ties (0017) and cue heads (the `smallHeads` switch, then 0019). Compare again (tools/accuracy/pairs.cjs on engine-15 conversions; the native `acc/r15` exports work before the owner reconverts). Then:
   - pattern 4: cue-size second voices (Stumblin' In's duet, Too Sweet's thirds), which need cue-head detection;
   - the P2 patterns: 8 small notes, 10 key flats at a system start, 11 navigation marks, 12 dots, 13 flags, 14 melisma syllables.
