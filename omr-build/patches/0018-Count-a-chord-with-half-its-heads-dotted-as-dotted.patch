@@ -1,0 +1,48 @@
+From 6e16f8d568a914cc9b35b1be3b05573076e0fc07 Mon Sep 17 00:00:00 2001
+From: build <build@localhost>
+Date: Sat, 21 Nov 2026 07:58:27 +0000
+Subject: [PATCH] Count a chord with half its heads dotted as dotted
+
+AbstractChordInter.countDots takes the mean of its heads' dot counts and
+rounds it with Math.rint, so a chord dotted on exactly half its heads
+(one of two, two of four) gets no dot and the dot it has is removed.
+With the dots of a chord checked top down (the previous patch), the
+owner's nine songs have seven such chords, all dotted in print, each
+missing a dot for another reason: two dots on either side of a ledger
+glued into one glyph (Piano Man 191, 192), a dot printed a space above
+the low note of an octave below three ledgers or never a symbol
+candidate (Piano Man 100, 202), a dot below the staff read by OCR as a
+lyric letter (Yellow Submarine 3, 4). A printed dot is lost far more
+often than one is made up, and the heads of a chord share one duration:
+the half now rounds up (Math.floor(mean + 0.5)).
+
+On the nine songs this changes exactly those seven chords, all as
+printed, and nothing else.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ETLv1P36qBemBoAsvF94d2
+---
+ .../org/audiveris/omr/sig/inter/AbstractChordInter.java    | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/app/src/main/java/org/audiveris/omr/sig/inter/AbstractChordInter.java b/app/src/main/java/org/audiveris/omr/sig/inter/AbstractChordInter.java
+index b4a29a3ec..28d13dae6 100644
+--- a/app/src/main/java/org/audiveris/omr/sig/inter/AbstractChordInter.java
++++ b/app/src/main/java/org/audiveris/omr/sig/inter/AbstractChordInter.java
+@@ -284,7 +284,12 @@ public abstract class AbstractChordInter
+ 
+             double val = pop.getMeanValue();
+             double std = pop.getStandardDeviation();
+-            dotsNumber = (int) Math.rint(val);
++
++            // Half the heads dotted counts as dotted (rint rounded 0.5 down): a printed dot is
++            // lost far more often than one is made up (two dots glued across a ledger into one
++            // glyph, a dot read as a lyric letter, a dot printed beyond reach of its head), and
++            // the heads of a chord share one duration.
++            dotsNumber = (int) Math.floor(val + 0.5);
+ 
+             if (std != 0) {
+                 logger.debug("Inconsistent dots in {}, assumed {}", this, dotsNumber);
+-- 
+2.43.0
+

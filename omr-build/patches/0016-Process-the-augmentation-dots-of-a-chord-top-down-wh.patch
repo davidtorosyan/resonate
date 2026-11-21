@@ -1,0 +1,148 @@
+From d06535232d43972290d47c98fd0c571f64fcc77e Mon Sep 17 00:00:00 2001
+From: build <build@localhost>
+Date: Sat, 21 Nov 2026 07:10:28 +0000
+Subject: [PATCH] Process the augmentation dots of a chord top down, whatever
+ order they were found in
+
+The two dots of a chord whose heads both sit on lines or ledgers (a
+third: G4 B4, B4 D5, C4 E4) are stacked one interline apart at the same
+abscissa. Such a chord came out undotted at random: the same build on
+the same PDF lost its dot in one run and kept it in the next (Killing Me
+Softly bar 20, Stumblin' In 17 and 59, Piano Man's accordion 48 and 168,
+Songbird 32, Yellow Submarine 64), and on some chords in every run
+(Stumblin' In 55, Songbird 27, 43, 48, 78, 79, 127). The rest of the bar
+then came half a beat early.
+
+AugmentationDotInter.lookupHeadLink expects the dots top down ("System
+dots are already in place or they are processed top down"): a dot
+between two heads on lines takes the upper head while it is free, so the
+dot below goes to the lower head. DotFactory.lateDotChecks sorted its
+candidates by abscissa only, and a stack of dots kept the order in which
+SymbolsBuilder had evaluated their glyphs: a glyph cluster is a set from
+JGraphT's connectedSets (a HashSet), its seeds sorted by weight only, and
+a Glyph's hash includes its run table's orientation, an enum whose
+identity hash changes from run to run. Two dots of one weight (every
+pair on a page rendered from vectors) came in hash order; on a scan the
+heavier came first, every run. Bottom up, the lower dot took the upper
+head, the upper dot found no free head within reach, and the chord, one
+head of two dotted, was given no dot (countDots: rint(0.5) = 0).
+
+The candidates are now sorted by columns: left to right, a column being
+the dots whose abscissa range overlaps that of its leftmost dot, each
+column top down. Both orders are total (x, y, width, height), so the
+result no longer depends on the order the glyphs were found in. Top down
+also suits a lower voice whose dots are printed below its line notes:
+the upper dot, between the two heads, takes the upper one.
+
+Between two runs of the build without this, the books' inters differed
+in augmentation dots only; with it, three or four runs of each of the
+owner's nine songs export byte-identical MusicXML, with identical inters
+and dot-head links.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ETLv1P36qBemBoAsvF94d2
+---
+ .../omr/sheet/symbol/DotFactory.java          | 65 +++++++++++++++++--
+ 1 file changed, 58 insertions(+), 7 deletions(-)
+
+diff --git a/app/src/main/java/org/audiveris/omr/sheet/symbol/DotFactory.java b/app/src/main/java/org/audiveris/omr/sheet/symbol/DotFactory.java
+index 876b7f0a8..51a3d2757 100644
+--- a/app/src/main/java/org/audiveris/omr/sheet/symbol/DotFactory.java
++++ b/app/src/main/java/org/audiveris/omr/sheet/symbol/DotFactory.java
+@@ -105,7 +105,7 @@ public class DotFactory
+ 
+     private final SIGraph sig;
+ 
+-    /** Dot candidates. Sorted top down, then left to right. */
++    /** Dot candidates. For late checks: by columns left to right, each column top down. */
+     private final List<Dot> dots = new ArrayList<>();
+ 
+     //~ Constructors -------------------------------------------------------------------------------
+@@ -597,7 +597,7 @@ public class DotFactory
+      */
+     public void lateDotChecks ()
+     {
+-        Collections.sort(dots, Dot.byAbscissa);
++        sortDots();
+ 
+         // Run all late checks
+         lateAugmentationChecks(); // Note-Dot and Note-Dot-Dot configurations
+@@ -660,6 +660,49 @@ public class DotFactory
+         checkStackRepeats();
+     }
+ 
++    //----------//
++    // sortDots //
++    //----------//
++    /**
++     * Sort the dot candidates for the late checks: left to right by columns, a column being
++     * the dots whose abscissa range overlaps the one of its leftmost dot, each column top down.
++     * <p>
++     * The augmentation dots of a chord are stacked in one column, and
++     * {@link AugmentationDotInter#lookupHeadLink} expects them top down: a dot between two heads on
++     * lines takes the upper head while it is free, and the dot below goes to the lower head.
++     * Sorted by abscissa only, a column kept the order in which its glyphs had been evaluated, that
++     * of a hash set of glyphs (the glyph cluster), which changes from run to run: bottom up, the
++     * lower dot of a third on lines took the upper head, the upper dot found no free head, and the
++     * chord, with one head of two dotted, lost its dot.
++     * <p>
++     * Both orders are total (abscissa, ordinate, width, height), so that the result no longer
++     * depends on the order in which the dots were found.
++     */
++    private void sortDots ()
++    {
++        Collections.sort(dots, Dot.byAbscissa);
++
++        final List<Dot> sorted = new ArrayList<>(dots.size());
++
++        for (int i = 0; i < dots.size();) {
++            final Rectangle first = dots.get(i).getBounds();
++            final int xMax = first.x + first.width; // Exclusive
++            int j = i + 1;
++
++            while ((j < dots.size()) && (dots.get(j).getBounds().x < xMax)) {
++                j++;
++            }
++
++            final List<Dot> column = new ArrayList<>(dots.subList(i, j));
++            Collections.sort(column, Dot.byOrdinate);
++            sorted.addAll(column);
++            i = j;
++        }
++
++        dots.clear();
++        dots.addAll(sorted);
++    }
++
+     //~ Inner Classes ------------------------------------------------------------------------------
+ 
+     //-----------//
+@@ -682,12 +725,20 @@ public class DotFactory
+     private abstract static class Dot
+     {
+         /**
+-         * Sorting dots by left abscissa.
++         * Sorting dots by left abscissa, then top ordinate, width, height.
++         */
++        public static final Comparator<Dot> byAbscissa = Comparator.comparingInt(
++                (Dot d) -> d.getBounds().x).thenComparingInt(d -> d.getBounds().y)
++                .thenComparingInt(d -> d.getBounds().width).thenComparingInt(
++                        d -> d.getBounds().height);
++
++        /**
++         * Sorting dots by top ordinate, then left abscissa, width, height.
+          */
+-        public static final Comparator<Dot> byAbscissa = (Dot d1,
+-                                                          Dot d2) -> {
+-            return Integer.compare(d1.getBounds().x, d2.getBounds().x);
+-        };
++        public static final Comparator<Dot> byOrdinate = Comparator.comparingInt(
++                (Dot d) -> d.getBounds().y).thenComparingInt(d -> d.getBounds().x)
++                .thenComparingInt(d -> d.getBounds().width).thenComparingInt(
++                        d -> d.getBounds().height);
+ 
+         public abstract int getAnnotationId ();
+ 
+-- 
+2.43.0
+

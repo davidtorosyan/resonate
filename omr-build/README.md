@@ -400,6 +400,82 @@ heads as members of a normal chord on its stem). Piano Man 42 and 44 (pattern 7'
 across a black head and a ledger head. Also left from pattern 7: Songbird 51, 139 (dotted-half chords with seconds —
 every head candidate deleted in REDUCTION) and Piano Man's left hand in 40–49 (a treble 8va clef read there).
 
+`0016` — **The dots of a chord taken in a random order.** The accuracy loop's round 2 found its top pattern in dotted
+chords exported undotted (20 findings in 5 songs; the rest of the bar then comes half a beat early, and a hand aligned
+with it is split into voices) — and found it random: the same build, run twice on the same PDF, kept a chord's dot in
+one run and lost it in the next (every "dot that comes and goes" in the A/Bs of 0010–0015 above). The chords: a third
+whose heads both sit on lines or ledgers ([G4 B4], [B4 D5], [C4 E4], [E♭4 G4], [A♯3 C♯4]), so their two dots are stacked
+one interline apart at the same abscissa, the lower one in the space between the two heads.
+
+What happens (a debug build that only logs: every stacked pair of dot candidates, the order they are checked in, the
+head each takes, and every chord whose heads are dotted in part; three runs of the 0015 build on the five songs, plus
+the round's own run):
+- `AugmentationDotInter.lookupHeadLink` expects the dots top down ("Assumption: System dots are already in place or
+  they are processed top down"): among the free heads within reach (0.8 interline up or down), a head facing the dot
+  (in its space) wins, else the topmost. Top down, the upper dot takes the upper head and the dot below, finding it
+  taken, the lower one. Bottom up, the lower dot takes the upper head, and the upper dot has no free head within
+  reach.
+- `DotFactory.lateDotChecks` sorted the candidates by abscissa only (a stable sort), so a stack kept the order in
+  which `SymbolsBuilder` had evaluated its glyphs. A glyph cluster is one of JGraphT's `connectedSets()` (a
+  `HashSet`), its seeds sorted by weight only (`GlyphCluster.decompose`), and a `Glyph`'s hash includes its run
+  table's orientation, an enum, whose identity hash changes from run to run (`RunTable.hashCode`:
+  `Objects.hashCode(orientation)`). Two dots of one weight — every pair on a page rendered from vectors — come in hash
+  order: Killing Me Softly bar 20's two 9×9 dots hashed `6dbf98b7` / `6dbf9df6` in one run (the upper one evaluated
+  first: both heads dotted) and `e4994c3b` / `e49946fc` in the next (the lower first: it took B4, the upper dot found
+  nothing). On a scan (Songbird) the weights differ and the heavier dot comes first, every run: Songbird lost the same
+  6 chords' dots in every run.
+- One head of two dotted, `AbstractChordInter.countDots` takes the mean, `Math.rint(0.5)` = 0, removes the dot and the
+  chord is undotted. A chord of three or four heads kept its dot by the majority, with dots on the wrong heads.
+- How often: of the stacked pairs that reach a head, 6–9 of Killing's 13, 11–17 of Stumblin' In's 33, 81–89 of Piano
+  Man's 174, 54–62 of Yellow Submarine's 116 and 65–68 of Songbird's 125 were checked bottom up, a different set in
+  each run; between two runs 2 (Killing) to 120 (Piano Man) dot–head links differed, and the books' inters (kind,
+  shape, pitch, bounds) differed in augmentation dots only.
+
+Now `DotFactory.sortDots`: the candidates go by columns, left to right — a column being the dots whose abscissa range
+overlaps that of its leftmost dot — and each column top down; both orders are total (abscissa, ordinate, width, height),
+so the outcome no longer depends on the order the glyphs were found in (16–88 pairs a song were found bottom up and are
+now checked top down). Top down also suits a lower voice whose dots are printed *below* its line notes (Yellow
+Submarine's right hand, a third on lines under a dotted half): the upper dot, between the two heads, takes the upper
+one, the lowest dot the lower.
+
+**Determinism.** The 0015 build, four runs (the round's `r15` + three): the exported MusicXML differs between runs in
+Killing 20, Stumblin' In 17 and 59, Songbird 32, Piano Man 48 and 168, Yellow Submarine 64 (dotted in some runs, not in
+others). With 0016: four runs of those five songs, three of the other four — byte-identical MusicXML (encoding date
+aside), identical inters and identical dot–head links, every song (links found, one base run → 0016: Killing 136 → 136,
+Stumblin' In 141 → 151, Songbird 420 → 456, Piano Man 649 → 687, Yellow Submarine 423 → 428). The `.omr`'s ids still
+differ between runs (glyphs and inters are numbered in hash order), nothing that is exported.
+
+A/B, native, 0001–0015 (`r15`) vs 0001–0016, the owner's nine songs, every changed bar checked against the PDF:
+
+| song | bars changed | what |
+|---|---|---|
+| Hey, Little Songbird | 6 | the right hand's dotted chords back: [A♭3 C4] dotted quarters 27, 48, 78 and [A♭3 E♭4] + [E♭4 G4] 127, with the rest of the bar half a beat later; [E♭4 G♭4] dotted half 79; [C4 E♭4] dotted half 43 — all as printed. But 43's left-hand G2 on beat 3 is now dropped ("No timeOffset"): the bar's lower right-hand voice (a quarter rest, then E♭3) is misread in both builds (its rest given to the left hand, E♭3 timed on beat 3), and with voice 1 now full the E♭3 lands in the left hand's voice at G2's time |
+| Too Sweet | 6 | 53, 55, 97, 105, 109, 111: the vocal line's harmony in cue-size heads (pattern 4: cue and normal heads merged, the bar's dotted-quarter chord read as a half-note chord, the chords after it misread or missing). Its two printed dots are now both found, so the misread chord is a dotted half: the bar 4 beats long instead of 3 (111: 4 instead of 5, its stray last chord gone). Wrong before and after |
+| Piano Man | 2 | the accordion's dotted halves [G3 C4 E4] 48, [C4 E4] 168 — as printed |
+| Killing Me Softly | 1 | 20 [G4 B4] dotted quarter, the rest of the bar half a beat later — as printed |
+| Stumblin' In | 1 | 55 [B4 D5] dotted quarter, the rest of the bar half a beat later and the left hand in one voice on its beats — as printed |
+| Yellow Submarine | 1 | 64 [A♯3 C♯4] dotted half — as printed |
+| Goodbye Yellow Brick Road, The Longest Time, Wichita Lineman | 0 | byte-identical MusicXML |
+
+Bars the round's run happened to get right and other runs lost (Stumblin' In 17, 59, Songbird 32 in this build's runs,
+Piano Man 101 in earlier builds') are right in every run of 0016. The triage's pattern 1, 20 findings → 8: fixed Killing
+20, Stumblin' In 55 (×2), Piano Man 48, 168, Yellow Submarine 64 (the five "regressions" of round 2), Songbird 27, 43,
+48, 78, 79, 127; one new defect (Songbird 43's G2, above). Chords left undotted, none of them an order problem — each
+has fewer dots than heads whatever the order:
+- Piano Man 191, 192: four-note right-hand chords on ledgers above the staff; the two upper dots, one each side of a
+  ledger, were one glyph with it (9×26 once the ledger was taken out) and never a dot candidate: 2 heads of 4 dotted.
+- Piano Man 100, 202: left-hand [G1 G2] octaves below three ledgers; G1's dot is printed a space above its head in 100
+  (one interline: beyond the 0.8 reach) and, in 202, its glyph is never a symbol candidate: 1 head of 2.
+- Yellow Submarine 3, 4 (×2): the right hand's lower voice [A♯3 C♯4], dots printed below the notes; the lower dot, at
+  the height of the lyric line, is read by OCR as a lyric "o": 1 head of 2.
+- Songbird 121: a dotted chord with a second (heads on both sides of the stem), read as two voices.
+With 0016 the seven chords of the first three items are the only ones in the nine songs dotted on exactly half their
+heads, and all seven are dotted in print; `countDots` rounds the half down (`Math.rint(0.5)` = 0, the dot removed).
+`0018` — **A chord dotted on half its heads is dotted.** Rounding the half up instead (`Math.floor(mean + 0.5)`), on
+top of 0016: on the nine songs it changes exactly those seven chords — Piano Man 100, 191, 192, 202 and Yellow
+Submarine 3 (both chords), 4 (with the rest of the bar, both hands, half a beat later) — all as printed, and nothing
+else. (Numbered after the ties' 0017, which was being written at the same time; renumbered at the release if needed.)
+
 `build.sh` applies the patches with `git am --keep-cr`: the upstream sources are CRLF.
 
 ## StripVolatile (applied to every jar)
