@@ -5,6 +5,9 @@
 //                       clef carried to the next measure
 //   the stray-8va revert  a treble 8va clef among plain ones (a coda sign read as the 8): its notes go down
 //   unifyOctaveClefs    an 8vb bass clef found on some systems spreads to the plain ones
+//   refrainLines        a lyric line on its own between a system's stacked lines (the engine numbered it 2) is
+//                       verse 1; one overlapping another line, one with no line below it, one in another system
+//                       stay (those cases: no change at all)
 //   foldSparseVerses    a lyric line read low (verse 2, a few syllables) folds into verse 1
 //   restoreTempo        a tempo only in the engine's log line; one only in the PDF's text (𝅗𝅥. = 58 → ♩ = 174)
 //   markTupletGroups    a triplet with <time-modification> and no <tuplet> marks gets its start / stop
@@ -16,11 +19,11 @@ const { BASE } = require('./lib/paths.cjs');
 
 // --- a small MusicXML writer ------------------------------------------------------------------------------
 const STEP = 'CDEFGAB';
-// n('G4', dur, { type, lyric: [[n, text]], tm: [3, 2], dot, rest, staff, voice })
+// n('G4', dur, { type, lyric: [[n, text, default-y]], tm: [3, 2], dot, rest, staff, voice, x (default-x) })
 const n = (p, dur, o = {}) => {
   const pitch = o.rest || !p ? '<rest/>' : `<pitch><step>${p[0]}</step><octave>${p.slice(1)}</octave></pitch>`;
-  const lyr = (o.lyric || []).map(([k, t]) => `<lyric number="${k}"><syllabic>single</syllabic><text>${t}</text></lyric>`).join('');
-  return `<note>${pitch}<duration>${dur}</duration><voice>${o.voice || 1}</voice>${o.type ? `<type>${o.type}</type>` : ''}${o.dot ? '<dot/>' : ''}` +
+  const lyr = (o.lyric || []).map(([k, t, y]) => `<lyric number="${k}"${y != null ? ` default-y="${y}"` : ''}><syllabic>single</syllabic><text>${t}</text></lyric>`).join('');
+  return `<note${o.x != null ? ` default-x="${o.x}"` : ''}>${pitch}<duration>${dur}</duration><voice>${o.voice || 1}</voice>${o.type ? `<type>${o.type}</type>` : ''}${o.dot ? '<dot/>' : ''}` +
     `${o.tm ? `<time-modification><actual-notes>${o.tm[0]}</actual-notes><normal-notes>${o.tm[1]}</normal-notes></time-modification>` : ''}${lyr}</note>`;
 };
 const clef = (sign, line, oct = 0) => `<clef><sign>${sign}</sign><line>${line}</line>${oct ? `<clef-octave-change>${oct}</clef-octave-change>` : ''}</clef>`;
@@ -37,8 +40,8 @@ ${parts.map((p) => `<part id="${p.id}">${p.measures.join('')}</part>`).join('\n'
 const sung = (k) => [[1, `la${k}`]];
 
 // --- the cases ----------------------------------------------------------------------------------------------
-// Each: the score, the engine's log and the PDF's tempo, the change's words, and facts read from the result
-// in the page (a function of the parsed document) checked against what the clean-up must do.
+// Each: the score, the engine's log and the PDF's tempo, the change's words (null: no change at all), and facts
+// read from the result in the page (a function of the parsed document) checked against what the clean-up must do.
 const cases = [];
 
 // dropInserts: voice + piano; systems m1–2, m3–4, the box (m5: narrow, 4/4 restated, the voice silent and
@@ -92,6 +95,44 @@ const cases = [];
       [f[1].notes === 'C3 G2' && f[3].notes === 'C3 G2', `the plain systems' notes down an octave (${f[1].notes} / ${f[3].notes})`],
       [f[0].notes === 'C4 G3' && f[2].notes === 'C4 G3', 'the systems that had the 8 untouched'],
     ],
+  });
+}
+
+// refrainLines: a voice in 4/4, four quarters a bar 200 wide; each bar's lines as [number, default-y] (tenths
+// above the staff's top line: −80 the top line, −105 mid-height, −130 the bottom). The engine numbers a system's
+// lines top down, so with a line at mid-height in it the two stacked verses come out 1 and 3 and that line 2.
+{
+  const TOP = [1, -80], MID = [2, -105], LOW = [3, -130];
+  const bar = (k, lines, o = {}) => m(k, (k === 1 ? head(1, 4, 4, clef('G', 2)) : '') +
+    ['G4', 'A4', 'B4', 'C5'].map((p, j) => n(p, 1, { type: 'quarter', x: 20 + 45 * j, lyric: lines.map(([v, y]) => [v, `${['ta', 'ko', 'mi', 're'][j]}${k}${v}`, y]) })).join(''), { width: 200, system: o.system });
+  const facts = (doc) => [...doc.querySelectorAll('measure')].map((x) => [...new Set([...x.querySelectorAll('lyric')].map((l) => l.getAttribute('number')))].sort().join(',')).join(' | ');
+  cases.push({
+    name: 'refrainLines: a line on its own between the stacked verses',
+    xml: score([{ id: 'P1', name: 'Voice', measures: [bar(1, [TOP, LOW]), bar(2, [TOP, LOW]), bar(3, [MID])] }]),
+    words: /refrain lines between stacked verses → verse 1: P1 m3 \(2, 4\)$/,
+    facts,
+    expect: (f) => [[f === '1,3 | 1,3 | 1', `bar 3's line is verse 1, bars 1–2 untouched (${f})`]],
+  });
+  cases.push({
+    name: 'refrainLines: a mid-height line that overlaps the stacked ones',
+    xml: score([{ id: 'P1', name: 'Voice', measures: [bar(1, [TOP, LOW]), bar(2, [TOP, MID, LOW]), bar(3, [MID])] }]),
+    words: null,
+    facts,
+    expect: (f) => [[f === '1,3 | 1,2,3 | 2', `verse 2 stays (${f})`]],
+  });
+  cases.push({
+    name: 'refrainLines: a line with no line below it',
+    xml: score([{ id: 'P1', name: 'Voice', measures: [bar(1, [TOP]), bar(2, [TOP]), bar(3, [MID])] }]),
+    words: null,
+    facts,
+    expect: (f) => [[f === '1 | 1 | 2', `verse 2 stays (${f})`]],
+  });
+  cases.push({
+    name: 'refrainLines: the stacked lines in the system before',
+    xml: score([{ id: 'P1', name: 'Voice', measures: [bar(1, [TOP, LOW]), bar(2, [TOP, LOW]), bar(3, [MID], { system: true })] }]),
+    words: null,
+    facts,
+    expect: (f) => [[f === '1,3 | 1,3 | 2', `verse 2 stays (${f})`]],
   });
 }
 
@@ -178,7 +219,8 @@ const cases = [];
       const doc = new DOMParser().parseFromString(a.xml, 'application/xml');
       return { changes: a.changes, again: again.changes, same: again.xml === a.xml, facts: new Function('doc', `return (${facts})(doc)`)(doc), parsed: !doc.querySelector('parsererror') };
     }, { xml: c.xml, log: c.log || [], tempo: c.tempo || null, facts: c.facts.toString() });
-    ok(r.parsed && r.changes.length === 1 && c.words.test(r.changes[0]), `${c.name}: the one change — ${JSON.stringify(r.changes)}`);
+    if (c.words) ok(r.parsed && r.changes.length === 1 && c.words.test(r.changes[0]), `${c.name}: the one change — ${JSON.stringify(r.changes)}`);
+    else ok(r.parsed && !r.changes.length, `${c.name}: no change${r.changes.length ? ` — ${JSON.stringify(r.changes)}` : ''}`);
     for (const [cond, what] of c.expect(r.facts)) ok(cond, `${c.name}: ${what}`);
     ok(!r.again.length && r.same, `${c.name}: a second run changes nothing${r.again.length ? ` (${JSON.stringify(r.again)})` : ''}`);
   }

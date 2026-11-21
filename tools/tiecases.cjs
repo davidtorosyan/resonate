@@ -305,6 +305,23 @@ const cases = [
     want: { P1: [['m1', 'Bb4', 'start'], ['m1', 'Bb4', 'stop']] }, slurs: 2, changed: true,
   },
   {
+    name: 'F3\'s re-sung bar (the curve from the note\'s own head) inside a longer slur of its voice still open — a tie nests in a slur, a sung line\'s slurs don\'t → the tie added (Too Sweet bar 17)',
+    xml: score([{ id: 'P1', name: 'Voice', measures: [[
+      ['C5', 1, { lyr: 'ta', x: 40, slur: [['start', 2, 12, 6]] }], ['G4', 1, { lyr: 'oh', x: 84, slur: [['start', 1, 4, 10]] }], ['G4', 1, { x: 115 }],
+      ['A4', 2, { x: 148, slur: [['stop', 1, 4, 3]] }], ['B4', 2, { x: 210, slur: [['stop', 2, 10, 4]] }], ['r', 1],
+    ]] }], { key: 0 }),
+    want: { P1: [['m1', 'G4', 'start'], ['m1', 'G4', 'stop']] }, slurs: 4, changed: true,
+  },
+  {
+    name: 'the same, the longer slur open in another voice → a slur, untouched',
+    xml: score([{ id: 'P1', name: 'Voice', measures: [[
+      ['C5', 1, { lyr: 'ta', x: 40 }], ['G4', 1, { lyr: 'oh', x: 84, slur: [['start', 1, 4, 10]] }], ['G4', 1, { x: 115 }],
+      ['A4', 2, { x: 148, slur: [['stop', 1, 4, 3]] }], ['B4', 2, { x: 210 }], ['r', 1], ['back', 8],
+      ['E4', 4, { v: 2, x: 40, slur: [['start', 2, -40, 6]] }], ['F4', 4, { v: 2, x: 148, slur: [['stop', 2, -40, 4]] }],
+    ]] }], { key: 0 }),
+    want: { P1: [] }, slurs: 4, changed: false,
+  },
+  {
     name: 'F4 a chord tie completed (its sharp carried) makes the piano double the voice\'s lead note → its tie too, in one pass',
     xml: score([
       { id: 'P1', name: 'Voice', measures: [[['r', 8]], sung([['F#4', 2, { lyr: 'a', acc: 'sharp' }], ['G4', 2, { lyr: 'b', tie: 'start' }], ['G4', 2, { tie: 'stop' }], ['A4', 2, { lyr: 'c' }]])] },

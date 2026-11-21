@@ -13,6 +13,7 @@ export function fixOmrScore(xml, log = [], { tempo = null } = {}) {
   if (doc.querySelector("parsererror")) return { xml, changes: [] };
   const changes = [];
   dropInserts(doc, changes);
+  refrainLines(doc, changes);
   foldSparseVerses(doc, changes);
   restoreTempo(doc, log, changes, tempo);
   unifyKeySignatures(doc, changes);
@@ -194,6 +195,63 @@ export function joinMovements(xmls) {
     });
   }
   return new XMLSerializer().serializeToString(base);
+}
+
+// A lyric line printed on its own between a verse's stacked lines — a refrain every verse sings,
+// set at mid-height — is numbered by the engine after the lines above it in its system (it numbers
+// a system's lines top down, whatever their extent), so it came out verse 2 or 3 with no verse-1
+// word under those notes (Stumblin' In bar 36). A line of a staff that overlaps no other line of
+// that staff's system horizontally, with a line above it and one below it there, is verse 1.
+function refrainLines(doc, changes) {
+  const kid = (el, name) => { for (const c of el.children) if (c.nodeName === name) return c; return null; };
+  const moved = [];
+  const parts = [...doc.querySelectorAll("score-partwise > part")];
+  const all = parts.map((p) => [...p.children].filter((m) => m.nodeName === "measure"));
+  const start = (i) => i === 0 || all.some((ms) => ms[i]?.querySelector(':scope > print[new-system="yes"], :scope > print[new-page="yes"]'));
+  parts.forEach((part, pi) => {
+    const ms = all[pi];
+    let sys = [];
+    const flush = () => {
+      // lines: "staff|number" → { x0, x1, y: [default-y], els: [lyric], bars }
+      const lines = new Map();
+      let x = 0;
+      for (const m of sys) {
+        const w = Number(m.getAttribute("width"));
+        if (!(w > 0)) return; // no layout: nothing to place the lines by
+        for (const n of m.children) {
+          if (n.nodeName !== "note") continue;
+          const nx = x + Number(n.getAttribute("default-x") || NaN);
+          for (const l of n.children) {
+            if (l.nodeName !== "lyric" || !kid(l, "text")) continue;
+            const y = Number(l.getAttribute("default-y"));
+            if (!Number.isFinite(nx) || !Number.isFinite(y)) return;
+            const key = `${kid(n, "staff")?.textContent || "1"}|${l.getAttribute("number") || "1"}`;
+            if (!lines.has(key)) lines.set(key, { x0: nx, x1: nx, y: [], els: [], bars: new Set() });
+            const L = lines.get(key);
+            L.x0 = Math.min(L.x0, nx); L.x1 = Math.max(L.x1, nx); L.y.push(y); L.els.push(l); L.bars.add(m.getAttribute("number"));
+          }
+        }
+        x += w;
+      }
+      const mid = (ys) => [...ys].sort((a, b) => a - b)[ys.length >> 1];
+      for (const [key, L] of lines) {
+        const [staff, num] = key.split("|");
+        if (num === "1") continue;
+        const others = [...lines].filter(([k]) => k !== key && k.startsWith(staff + "|")).map(([, o]) => o);
+        if (others.some((o) => o.x0 <= L.x1 && L.x0 <= o.x1)) continue;
+        const y = mid(L.y);
+        if (!others.some((o) => mid(o.y) > y) || !others.some((o) => mid(o.y) < y)) continue;
+        for (const l of L.els) l.setAttribute("number", "1");
+        moved.push(`${part.getAttribute("id")} m${[...L.bars].join(",")} (${num}, ${L.els.length})`);
+      }
+    };
+    ms.forEach((m, i) => {
+      if (i > 0 && start(i)) { flush(); sys = []; }
+      sys.push(m);
+    });
+    flush();
+  });
+  if (moved.length) changes.push(`refrain lines between stacked verses → verse 1: ${moved.join("; ")}`);
 }
 
 // Lyric lines that hold only a few syllables are OCR artifacts:
@@ -1033,7 +1091,10 @@ function restoreTies(doc, changes, debug = null, { round = 0, where = new Map(),
             // its bar is sung again
             const y = p.lyric && n.voice === x.voice && !tiedOn(x.el) && B.find((b) => cont(x, b) && b.voice === x.voice);
             const s0 = o.els[0], sx = s0.hasAttribute("default-x") && x.x != null ? x.x + Number(s0.getAttribute("default-x")) : NaN;
-            const held = y && (y.mi !== x.mi || (y.x != null && sx > (x.x + y.x) / 2));
+            // … or the curve lies inside another slur of its voice still open (a sung line's slurs don't
+            // nest; a tie does: Too Sweet bar 17, where the engine's curve now starts on the head)
+            const nested = [...open.values()].some((l) => l.some((q) => q !== o && q.from.voice === x.voice && (q.from.mi < x.mi || (q.from.mi === x.mi && q.from.on <= x.on))));
+            const held = y && (y.mi !== x.mi || (y.x != null && sx > (x.x + y.x) / 2) || nested);
             if (held && (p.next(y) || []).includes(n) && clear(p, [[x, y]]) && tieAll(p, [[x, y]])) mark("over", p, [[x, y]]);
             continue;
           }
