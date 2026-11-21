@@ -20,8 +20,8 @@ live in CLAUDE.md ("UI principles").
 - [ ] D: **parked** (the owner, 2026-11-21: "aggressively put the accuracy checks on the back burner … ship what you have … continue with the other work"). Round 2 shipped as engine 19 in v94 (dots, ties, cue heads: 328 findings, 211 play wrong). Round 3's comparison stopped half way (129 of 246 systems: 48 play wrong, ~0.37 a system vs 0.86) with nothing new critical. Where to pick it up: docs/ACCURACY.md "Round 3".
 
 *Then (the owner, 2026-11-21), in this order:*
-- [ ] ▶ E1 Opening a score defaults to the **Full score**, not Both (when the song offers one; the song's saved view still wins).
-- [ ] E2 The 📡 remote button (and the connector's hint text that names it: resonate.ts, coaching.ts — one redeploy):
+- [ ] ▶ E1 (building, with E2; they ship together as v96) Opening a score defaults to the **Full score**, not Both (when the song offers one; the song's saved view still wins).
+- [ ] ▶ E2 (building) The 📡 remote button (and the connector's hint text that names it: resonate.ts, coaching.ts — one redeploy):
   - shown only once an assistant has been connected to the account (`assistant_activity` has a row);
   - an icon that reads "AI" (not a satellite dish);
   - still one switch per device (several devices may have Resonate open).
