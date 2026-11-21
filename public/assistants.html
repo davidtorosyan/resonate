@@ -38,7 +38,9 @@
       .item .what { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
       .item .name { overflow-wrap: anywhere; }
       .item .sub { font-size: 0.75rem; opacity: 0.6; }
-      .on { color: #c48bff; font-weight: 600; }
+      /* (a device whose AI button is on: the button's mark + "on") */
+      .on { color: #c48bff; font-weight: 600; display: inline-flex; align-items: center; gap: 0.25rem; margin-left: 0.3rem; padding: 0.15rem 0.45rem; border: 1px solid #c48bff; border-radius: 999px; font-size: 0.75rem; line-height: 1; vertical-align: 0.1em; }
+      .on .ai-mark { width: 1.125em; height: 0.9em; display: block; }
       .none { font-size: 0.85rem; opacity: 0.55; }
       .note { font-size: 0.8rem; opacity: 0.6; margin: 0; }
       select:focus { outline: none; border-color: #a64fff; }
@@ -75,7 +77,7 @@
           <li><b>Claude</b>: Settings → Connectors → Add custom connector → paste.</li>
           <li>Sign in to Resonate when it asks, then Allow.</li>
         </ol>
-        <p class="note">Assistants read your songs, takes and coaching (not your recordings). They act only on the device with 📡 Remote on.</p>
+        <p class="note">Assistants read your songs, takes and coaching (not your recordings). They act only on the device whose AI button is on.</p>
       </section>
 
       <section id="v-rules" class="card" hidden>
@@ -95,7 +97,7 @@
       <section id="v-devices" class="card" hidden>
         <h2>Devices</h2>
         <div id="devices" class="list"></div>
-        <p class="note">📡 Remote is switched on at the top of Resonate on the device itself.</p>
+        <p class="note">Each device turns it on with the AI button at the top of Resonate.</p>
       </section>
 
       <div id="msg" role="status"></div>

@@ -1,8 +1,9 @@
 // Sing inside the shell: today's Sing page mounted in place, not rewritten. sing.html's markup is
 // read once (its main content into the song region, Listen / Sing into the dock, its sheets into a
-// layer at the end of the body, 📡 into the top bar — never its page header), its CSS is scoped
-// under .sing-scope (sing.html styles body, header, main, footer… directly), and sing.js is imported
-// once; another song goes through sing.js's own song switch (resonateSing.open → selectSong).
+// layer at the end of the body, its AI button into the top bar — never its page header), its CSS
+// is scoped under .sing-scope (sing.html styles body, header, main, footer… directly), and sing.js
+// is imported once; another song goes through sing.js's own song switch (resonateSing.open →
+// selectSong).
 // Sing's ✕ (remove the song) isn't shown here: the song list's ⋯ deletes (forget.js), and closes the
 // song first — Sing's own would leave the shell on a song that's gone.
 // The song page around it (songview.js) opens and closes it; a touch that can start sound or a mic
@@ -36,6 +37,7 @@ const OVERRIDES = `
 .sing-scope .overlay .sheet { padding-bottom: calc(1rem + var(--sab)); }
 .sing-top { display: inline-flex; align-items: center; gap: 6px; }
 .sing-top .remote-btn { min-height: 44px; min-width: 44px; border-radius: 12px; font-size: 14px; }
+.sing-top .remote-btn .ai-mark { width: 22.5px; height: 18px; margin: 0 auto; }
 @media (max-height: 860px) { .sing-root #chips { max-height: 92px; } }
 `;
 
@@ -66,7 +68,7 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
     const res = await fetch(`sing.html?v=${encodeURIComponent(version.replace(/^v/, ""))}`);
     if (!res.ok) throw new Error(`Sing didn't load (${res.status})`);
     const doc = new DOMParser().parseFromString(await res.text(), "text/html");
-    if (staleShell(doc, pageOpen() ? "sing" : null)) return new Promise(() => {}); // (another version: reloading — 📡 at home loads Sing hidden)
+    if (staleShell(doc, pageOpen() ? "sing" : null)) return new Promise(() => {}); // (another version: reloading — the AI button at home loads Sing hidden)
     const style = document.createElement("style");
     style.id = "sing-css";
     style.textContent = scopeCss(doc.querySelector("style")?.textContent || "", { root: ".sing-root", scope: ".sing-scope", main: ".s-main" }) + OVERRIDES;
@@ -81,7 +83,7 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
     const head = rows[1];
     head.append($("save-song")); // (⤓; ✕ stays in the hidden first row)
     head.append(take("#status"));
-    // 📡 and the assistant's chip: the top bar.
+    // The AI button and the assistant's chip: the top bar.
     top.append(take("#assistant-chip"), take("#remote-btn"));
     // Listen and Sing: the dock (Songs stays at the right).
     const listen = take("#listen"), sing = take("#sing");
@@ -136,7 +138,7 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
     return false;
   }
   const sheetOpen = () => ["getready", "tapalong", "taptempo", "options", "more", "review"].some((id) => { const el = $(id); return el && !el.hidden; });
-  // Shown or not (the region, its dock buttons, 📡): the shell's layout decides.
+  // Shown or not (the region, its dock buttons, the AI button): the shell's layout decides.
   function show(on) {
     region.hidden = !on;
     top.hidden = !on;

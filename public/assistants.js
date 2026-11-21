@@ -1,8 +1,9 @@
 // Assistants (v73): connect ChatGPT / Claude to the account (the MCP server's URL), see and
 // remove connected assistants (Supabase Auth OAuth grants), and the account's devices — which
-// one has 📡 Remote on (switched on only from that device's Sing page; off from here too).
+// one has its AI button on (switched on only on that device, at the top of Resonate; off from here
+// too).
 import { SUPABASE_URL } from "./auth.js?v=95";
-import { ready, device, renameDevice } from "./assist.js?v=95";
+import { ready, device, renameDevice, AI_MARK } from "./assist.js?v=95";
 
 // (In the one-page shell this page is mounted in a sheet: its own elements first — the Voice sheet has
 // a #msg too. On assistants.html resonateAssistants isn't set: the document.)
@@ -88,7 +89,11 @@ async function showDevices() {
   for (const d of data) {
     const name = document.createElement("span");
     name.textContent = d.name || "Device";
-    if (d.remote) name.append(Object.assign(document.createElement("span"), { className: "on", textContent: "  📡 Remote on" }));
+    if (d.remote) { // (the AI button's mark, lit: this device answers the assistant)
+      const on = Object.assign(document.createElement("span"), { className: "on", title: "An assistant can control this device" });
+      on.innerHTML = `${AI_MARK}<span>on</span>`;
+      name.append(" ", on);
+    }
     const sub = `${d.id === me ? "this device · " : ""}${ago(d.seen_at)}${d.state?.song?.title ? ` · ${d.state.song.title}` : ""}`;
     const button = d.remote ? btn("Turn off", async (e) => {
       e.target.disabled = true;

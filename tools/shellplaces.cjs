@@ -2,22 +2,24 @@
 // shell, no navigation, one history entry (Back closes it), the tuner parked before Record / Voice
 // take the mic, a Record take kept when the sheet closes, Voice's range test stopped; the Reader's
 // Sing it / Play it open the new song in place (the scripted worker of shell.cjs / importfixes.cjs);
-// 📡 from home with a signed-in, approved account faked cheaply: the session in localStorage, the
-// REST calls answered by route, sync.js stubbed, the Realtime socket held open and silent — commands
-// go in through assist.js's own remote.handle(), the same path a Realtime command takes; on a stale
-// shell (sing.html / play.html of another badge) a command that mounts Sing or the Score runs in place.
-//   node shellplaces.cjs           (http://localhost:8097/resonate/; SHOTS=dir for the 2 screenshots)
+// the AI button from home with a signed-in, approved account faked cheaply: the session in
+// localStorage, the REST calls answered by route, sync.js stubbed, the Realtime socket held open
+// (its join answered, nothing else unless a test sends a broadcast) — commands go in through
+// assist.js's own remote.handle(), the same path a Realtime command takes; on a stale shell
+// (sing.html / play.html of another badge) a command that mounts Sing or the Score runs in place.
+// The AI button (E2, v96; was 📡): shown only once an assistant has connected to the account
+// (assistant_activity has a row — and live when one does: a Realtime "assistant" event), or while
+// this device's switch is on (also when the check fails); remembered for the account on this device,
+// so a reload shows it before the cloud answers, and checked again; the AI mark, no words — at home,
+// in Sing, on sing.html and play.html, and the Assistants list's device that has it on.
+//   node shellplaces.cjs   (BASE: http://localhost:8097/resonate/; SHOTS=dir for the 2 screenshots, 0: none;
+//                           ONLY=phone,ipad,desktop,gate,pages)
 const { chromium } = require('playwright');
 const fs = require('fs');
+const { ok, done } = require('./lib/check.cjs');
+const { BASE, FIX: FX, SHOTS } = require('./lib/paths.cjs');
 
-const BASE = process.env.BASE || 'http://localhost:8097/resonate/';
-const SHOTS = process.env.SHOTS === '0' ? null : process.env.SHOTS || '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/v87'; // ("0": no screenshots, as shell.cjs)
-const FX = '/home/user/tools/fixtures';
 const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
-if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
-
-let passes = 0, fails = 0;
-const ok = (c, msg) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${msg}`); if (c) passes++; else fails++; return c; };
 
 // --- the scripted worker (shell.cjs) -------------------------------------------------------------
 const b64 = (f) => fs.readFileSync(f).toString('base64');
@@ -72,21 +74,32 @@ let browser;
 // device's switch; net.answers: the commands' answers), sync.js stubbed, Realtime held silent.
 async function context(sz, seed = {}, { cloud = false } = {}) {
   const ctx = await browser.newContext({ viewport: { width: sz.w, height: sz.h }, deviceScaleFactor: 1, permissions: ['microphone'], ...(sz.touch ? { isMobile: true, hasTouch: true } : {}) });
-  ctx.net = { log: [], remote: false, answers: [] };
+  // (assistant: assistant_activity has a row; activityStatus: its answer's status — 500 = the check
+  // fails; hold: a promise the accounts read waits on — the cloud not answered yet; sockets: the
+  // Realtime sockets, to send a broadcast down)
+  ctx.net = { log: [], remote: false, answers: [], assistant: true, activityStatus: 200, hold: null, sockets: [] };
   await ctx.route('**/omr/omr-worker.js*', (r) => r.fulfill({ contentType: 'text/javascript', body: fakeWorker(FULL) }));
   if (cloud) {
     await ctx.route('**/sync.js*', (r) => r.fulfill({ contentType: 'text/javascript', body: 'export const syncOff = () => true; export const start = () => {}; export const stop = async () => {}; export const syncNow = () => {};' }));
-    await ctx.routeWebSocket(/supabase\.co/, (ws) => { ws.onMessage(() => {}); });
+    await ctx.routeWebSocket(/supabase\.co/, (ws) => {
+      const s = { ws, joins: [] };
+      ctx.net.sockets.push(s);
+      ws.onMessage((m) => { try { const j = JSON.parse(String(m)); if (Array.isArray(j) && j[3] === 'phx_join') { s.joins.push(j); ws.send(JSON.stringify([j[0], j[1], j[2], 'phx_reply', { status: 'ok', response: { postgres_changes: [] } }])); } } catch {} });
+    });
     await ctx.route('**/*.supabase.co/**', async (r) => {
       const req = r.request(), u = new URL(req.url()), m = req.method(), path = u.pathname;
       ctx.net.log.push(`${m} ${path.replace('/rest/v1/', '')}`);
       const json = (b, status = 200) => r.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(b) });
       if (m === 'OPTIONS') return r.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
       const body = (() => { try { return req.postDataJSON(); } catch { return null; } })();
-      if (path.endsWith('/rest/v1/accounts')) return json([{ approved: true }]);
+      if (path.endsWith('/rest/v1/accounts')) { if (ctx.net.hold) await ctx.net.hold; return json([{ approved: true }]); }
+      if (path.endsWith('/rest/v1/assistant_activity')) {
+        if (ctx.net.activityStatus !== 200) return json({ message: 'unavailable' }, ctx.net.activityStatus);
+        return json(ctx.net.assistant ? [{ name: 'Claude', logo: null, last_at: new Date(Date.now() - 3600000).toISOString(), last_tool: 'get_status' }] : []);
+      }
       if (path.endsWith('/rest/v1/devices')) {
         if (m === 'POST' && body && 'remote' in body) ctx.net.remote = !!body.remote;
-        return json([{ remote: ctx.net.remote }], m === 'POST' ? 201 : 200);
+        return json([{ id: 'dtest', name: 'Desk', remote: ctx.net.remote, seen_at: new Date().toISOString(), state: null }], m === 'POST' ? 201 : 200);
       }
       if (path.endsWith('/rest/v1/assistant_settings')) return json([{ start_delay_s: 0, review_after_remote: false }]);
       if (path.endsWith('/rest/v1/device_commands') && m === 'PATCH') {
@@ -153,6 +166,31 @@ const sheet = (p, name) => p.evaluate((name) => {
 const settled = (p, name) => p.waitForFunction((name) => { const el = document.getElementById(`place-${name}`); return el && !el.hidden && !el.getAnimations().length; }, name, { timeout: 5000 }).catch(() => {});
 const gone = (p, name) => p.waitForFunction((name) => { const el = document.getElementById(`place-${name}`); return !el || el.hidden; }, name, { timeout: 5000 }).then(() => true, () => false);
 const vis = (p, sel) => p.evaluate((s) => { const e = document.querySelector(s); return !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden'; }, sel);
+// The AI button: shown, lit (data-on, aria-pressed), its words (none), its label and title, and whether
+// its mark is assist.js's AI_MARK (the same markup on every page).
+const LABEL = 'Let an assistant control this device';
+const aiBtn = (p, sel) => p.evaluate(async (sel) => {
+  const e = document.querySelector(sel);
+  if (!e) return null;
+  let mark = false;
+  try {
+    const m = await import(`/resonate/assist.js?v=${document.getElementById('version').textContent.trim().replace(/^v/, '')}`);
+    const t = document.createElement('template');
+    t.innerHTML = m.AI_MARK || '';
+    const svg = e.querySelector('svg');
+    mark = !!m.AI_MARK && !!svg && t.content.firstElementChild?.isEqualNode(svg) && svg.getBoundingClientRect().width > 8;
+  } catch {}
+  return { shown: e.getClientRects().length > 0 && !e.hidden, on: e.dataset.on === 'true', pressed: e.getAttribute('aria-pressed') === 'true', text: e.textContent.trim(), label: e.getAttribute('aria-label'), title: e.title, mark };
+}, sel).catch(() => null);
+const marked = (b) => !!b?.mark && b.text === '' && b.label === LABEL;
+// A Realtime broadcast to the account's topic, down every socket that joined it (as the server's
+// assistant_seen sends one at every tool call an assistant makes).
+function broadcast(ctx, event, payload) {
+  let n = 0;
+  for (const s of ctx.net.sockets) for (const j of s.joins) if (/^realtime:user:/.test(j[2])) { s.ws.send(JSON.stringify([null, null, j[2], 'broadcast', { type: 'broadcast', event, payload }])); n++; }
+  return n;
+}
+const SEEN = (p) => p.evaluate((uid) => { try { return JSON.parse(localStorage.getItem('resonate.remote.seen') || '{}')[uid] || null; } catch { return 'bad'; } }, UID);
 
 // --- Record (a phone): no navigation, the tuner parked, a take kept, Back / ✕ close it -----------
 async function record(sz) {
@@ -162,7 +200,7 @@ async function record(sz) {
   await tap(p, sz, '#main-btn');
   let d = await until(p, (x) => x.tuner.state === 'listening' && x.tuner.live, 8000);
   ok(d?.tuner.live, `${sz.n}: the tuner listens at home`);
-  ok(!(await vis(p, '#home-remote')), `${sz.n}: signed out — no 📡`);
+  ok(!(await vis(p, '#home-remote')), `${sz.n}: signed out — no AI button`);
   // The dock's Record: the sheet, no navigation, the tuner parked in the tap itself.
   const parkedInTap = await p.evaluate(() => { document.getElementById('rec-btn').click(); return !window.__live(); }); // (click() dispatches synchronously)
   ok(parkedInTap, `${sz.n}: Record's tap parks the tuner at once (no live track)`);
@@ -276,12 +314,13 @@ async function voice(sz) {
   await closeCtx(ctx);
 }
 
-// --- Assistants and 📡 from home (a desktop, the account faked) --------------------------------------
+// --- Assistants and the AI button from home (a desktop, the account faked; an assistant connected) ---
 async function remote(sz) {
   const ctx = await context(sz, { 'resonate.auth': JSON.stringify(session()), 'resonate.profiles': JSON.stringify(PROFILE), 'resonate.shell.modules': JSON.stringify({ desktop: ['score', 'piano'] }) }, { cloud: true });
   const p = await home(ctx);
   let d = await until(p, (x) => x.remote?.available, 10000);
-  ok(d?.remote?.available && await vis(p, '#home-remote') && (await p.textContent('#home-remote')).trim() === '📡', `${sz.n}: signed in and approved — 📡 at home (${JSON.stringify(d?.remote)})`);
+  let b = await aiBtn(p, '#home-remote');
+  ok(d?.remote?.available && b?.shown && marked(b) && !b.on && !b.pressed, `${sz.n}: signed in and approved, an assistant connected — the AI button at home, off (${JSON.stringify(d?.remote && { available: d.remote.available, on: d.remote.on })} ${JSON.stringify(b)})`);
   ok(d?.remote?.state.page === 'home' && d.remote.state.song === null && !d.song.loaded, `${sz.n}: the device says home, no song; Sing not loaded`);
   ok(ctx.net.log.some((l) => /POST devices/.test(l)), `${sz.n}: the device's heartbeat went (devices)`);
   // Assistants from the account menu: in place.
@@ -296,10 +335,11 @@ async function remote(sz) {
   ok(await vis(p, '#place-assistants #v-devices'), `${sz.n}: … its Devices card`);
   await p.goBack();
   ok(await gone(p, 'assistants'), `${sz.n}: Back closes it`);
-  // 📡 on from home: Sing mounted, hidden.
+  // On from home: Sing mounted, hidden.
   await tap(p, sz, '#home-remote');
   d = await until(p, (x) => x.remote?.on && x.song.loaded, 15000);
-  ok(d?.remote?.on && (await p.textContent('#home-remote')).includes('Remote on') && await p.getAttribute('#home-remote', 'aria-pressed') === 'true', `${sz.n}: 📡 on (home)`);
+  b = await aiBtn(p, '#home-remote');
+  ok(d?.remote?.on && b?.on && b.pressed && marked(b) && /tap to stop/.test(b.title), `${sz.n}: the AI button on (home): lit, the mark, no words (${JSON.stringify(b)})`);
   ok(d?.song.loaded && !d.song.open && !(await vis(p, '#sing-region')) && d.remote.wrapped && d.remote.inner, `${sz.n}: Sing mounted hidden, its remote hooks inside the shell's`);
   const cmd = (action, args = {}) => p.evaluate(async ({ action, args }) => {
     const m = await import(`/resonate/assist.js?v=${document.getElementById('version').textContent.trim().replace(/^v/, '')}`); // (the page's own module: the badge's version, not a fixed one)
@@ -313,11 +353,12 @@ async function remote(sz) {
   d = await until(p, (x) => x.song.open && x.song.set.sing && !x.song.moving && !x.song.switching, 10000);
   ok(a?.status === 'done' && d?.song.open && d.song.state?.song === 'amazing-grace', `${sz.n}: open_song from home → done, Amazing Grace in place (${a?.status} ${JSON.stringify(a?.result?.song)})`);
   ok(d?.song.set.sing && await vis(p, '#sing-region'), `${sz.n}: … with Sing shown (${JSON.stringify(d?.song.set)})`);
-  ok(!(await vis(p, '#home-remote')) && await vis(p, '#sing-top #remote-btn') && (await p.textContent('#remote-btn')).includes('Remote on'), `${sz.n}: one 📡: Sing's own now, on`);
+  b = await aiBtn(p, '#sing-top #remote-btn');
+  ok(!(await vis(p, '#home-remote')) && b?.shown && b.on && b.pressed && marked(b), `${sz.n}: one AI button: Sing's own now, on, the same mark (${JSON.stringify(b)})`);
   // Home again; a Record sheet open; sing from there: the sheet gives way, the take runs in Sing.
   await tap(p, sz, '#song-close');
   d = await until(p, (x) => !x.song.open && !x.song.moving && !x.song.closing, 8000);
-  ok(!d?.song.open && await vis(p, '#home-remote'), `${sz.n}: the song closed — 📡 at home again`);
+  ok(!d?.song.open && await vis(p, '#home-remote'), `${sz.n}: the song closed — the AI button at home again`);
   await tap(p, sz, '#rec-btn');
   await settled(p, 'record');
   a = await answer(await cmd('sing', { by: 'Claude', delay: 0 }), 25000);
@@ -329,17 +370,18 @@ async function remote(sz) {
   a = await answer(await cmd('stop', { by: 'Claude' }), 15000);
   d = await until(p, (x) => !x.song.state?.take, 10000);
   ok(a?.status === 'done' && !d?.song.state?.take, `${sz.n}: stop → the take ends (${a?.status})`);
-  // 📡 off from Sing's own button: home's follows.
+  // Off from Sing's own button: home's follows.
   await tap(p, sz, '#remote-btn');
   d = await until(p, (x) => !x.remote.on, 5000);
-  ok(!d?.remote.on && !ctx.net.remote, `${sz.n}: Sing's 📡 off — the switch is one (${d?.remote.on})`);
+  ok(!d?.remote.on && !ctx.net.remote, `${sz.n}: Sing's AI button off — the switch is one (${d?.remote.on})`);
   await tap(p, sz, '#song-close');
   await until(p, (x) => !x.song.open && !x.song.moving, 8000);
-  ok((await p.textContent('#home-remote')).trim() === '📡' && await p.getAttribute('#home-remote', 'aria-pressed') === 'false', `${sz.n}: home's 📡 shows it off`);
+  b = await aiBtn(p, '#home-remote');
+  ok(b?.shown && !b.on && !b.pressed && marked(b), `${sz.n}: home's AI button shows it off (an assistant connected: still there)`);
   await closeCtx(ctx);
 }
 
-// --- 📡 on a stale shell (v94 review): a command that mounts Sing or the Score for the first time
+// --- The AI button on a stale shell (v94 review): a command that mounts Sing or the Score for the first time
 // with another badge on sing.html / play.html runs in place (no reload under it: it would stay
 // claimed and never be answered) and is answered; the song a command opens is the open song, so a
 // later reload (the Sing toggle, no command running) reopens that one.
@@ -352,7 +394,7 @@ async function remoteStale(sz) {
   }, { action, args });
   for (const action of ['open_song', 'score_open']) {
     const ctx = await context(sz, { 'resonate.auth': JSON.stringify(session()), 'resonate.sing.song': 'amazing-grace', 'resonate.shell.modules': JSON.stringify({ desktop: ['score', 'piano'] }) }, { cloud: true });
-    ctx.net.remote = true; // (📡 on already: the app opened again — Sing isn't mounted until a command comes)
+    ctx.net.remote = true; // (on already: the app opened again — Sing isn't mounted until a command comes)
     let stale = true;
     await ctx.route((u) => /\/(sing|play)\.html$/.test(u.pathname), async (r) => {
       const res = await r.fetch();
@@ -366,7 +408,7 @@ async function remoteStale(sz) {
       const xml = await (await fetch('songs/amazing-grace.musicxml')).text();
       return lib.addSong('Grace Again', xml.replace(/Amazing [Gg]race/g, 'Grace Again'));
     });
-    ok(d?.remote?.on && !d.song.loaded && !d.song.scoreLoaded, `${sz.n} stale: 📡 on at boot, Sing and the Score not mounted (${JSON.stringify(d?.remote && { on: d.remote.on })})`);
+    ok(d?.remote?.on && !d.song.loaded && !d.song.scoreLoaded, `${sz.n} stale: the AI button on at boot, Sing and the Score not mounted (${JSON.stringify(d?.remote && { on: d.remote.on })})`);
     const want = action === 'open_song' ? 'amazing-grace' : other;
     const id = await cmdIn(p, action, action === 'open_song' ? { song: 'Amazing Grace' } : { song: other });
     const end = Date.now() + 30000;
@@ -391,6 +433,111 @@ async function remoteStale(sz) {
   }
 }
 
+// --- The AI button's gate (a desktop, the account faked): no assistant → none; one connects →
+// there at once (Realtime) and remembered; a reload shows it before the cloud answers; the cloud's
+// no hides it again; a device whose switch is on keeps it (also when the check fails) until it's
+// turned off; the Assistants list marks that device with the same mark.
+async function remoteGate(sz) {
+  const seed = { 'resonate.auth': JSON.stringify(session()), 'resonate.shell.modules': JSON.stringify({ desktop: ['score', 'piano'] }) };
+  const ctx = await context(sz, seed, { cloud: true });
+  ctx.net.assistant = false;
+  const asked = (n = 1) => ctx.net.log.filter((l) => l === 'GET assistant_activity').length >= n;
+  const settle = async (pred, ms = 10000) => { const end = Date.now() + ms; while (Date.now() < end && !pred()) await new Promise((r) => setTimeout(r, 100)); await new Promise((r) => setTimeout(r, 400)); };
+  let p = await home(ctx);
+  await settle(() => asked() && ctx.net.log.some((l) => l === 'POST devices'));
+  let b = await aiBtn(p, '#home-remote');
+  let d = await dbg(p);
+  ok(asked() && b && !b.shown && !d?.remote?.available, `${sz.n} gate: signed in and approved, no assistant has connected — no AI button (${JSON.stringify(b && { shown: b.shown })}, available ${d?.remote?.available}, asked ${asked()})`);
+  ok(await SEEN(p) === null, `${sz.n} gate: … nothing remembered (${JSON.stringify(await SEEN(p))})`);
+  // An assistant's first tool call: the server's "assistant" broadcast → the button, at once.
+  ctx.net.assistant = true;
+  const sent = broadcast(ctx, 'assistant', { name: 'Claude', logo: null, tool: 'get_status', at: new Date().toISOString() });
+  await p.waitForFunction(() => !document.getElementById('home-remote').hidden, null, { timeout: 5000 }).catch(() => {});
+  b = await aiBtn(p, '#home-remote');
+  ok(sent > 0 && b?.shown && marked(b) && !b.on && !b.pressed && b.title === LABEL, `${sz.n} gate: an assistant connects (Realtime) → the AI button at once, off: the mark, no words, its label (${sent} sent; ${JSON.stringify(b)})`);
+  ok((await SEEN(p))?.a === true, `${sz.n} gate: … remembered for the account (${JSON.stringify(await SEEN(p))})`);
+  // A reload: shown before the cloud has answered (the accounts read held), and still after.
+  let release;
+  ctx.net.hold = new Promise((r) => { release = r; });
+  ctx.net.log.length = 0;
+  await p.reload();
+  await p.waitForFunction(() => window.resonateDebug?.().remote, null, { timeout: 10000 }).catch(() => {});
+  await settle(() => ctx.net.log.includes('GET accounts'), 8000);
+  b = await aiBtn(p, '#home-remote');
+  ok(ctx.net.log.includes('GET accounts') && !ctx.net.log.includes('GET assistant_activity') && b?.shown && marked(b), `${sz.n} gate: a reload shows it at once — before the cloud answers (${JSON.stringify(b && { shown: b.shown, mark: b.mark })}; asked: ${ctx.net.log.join(', ')})`);
+  ctx.net.hold = null;
+  release();
+  await settle(() => asked(), 8000);
+  b = await aiBtn(p, '#home-remote');
+  ok(asked() && b?.shown && (await dbg(p))?.remote?.available, `${sz.n} gate: … and after the check (an assistant still there)`);
+  // Remembered, but the cloud says none: hidden and forgotten.
+  ctx.net.assistant = false;
+  ctx.net.log.length = 0;
+  await p.reload();
+  await p.waitForFunction(() => window.resonateDebug?.().remote, null, { timeout: 10000 }).catch(() => {});
+  await settle(() => asked() && ctx.net.log.some((l) => l === 'POST devices'));
+  b = await aiBtn(p, '#home-remote');
+  ok(asked() && !b?.shown && await SEEN(p) === null, `${sz.n} gate: remembered, the check says none → hidden, forgotten (${JSON.stringify(b && { shown: b.shown })}, ${JSON.stringify(await SEEN(p))})`);
+  await p.close();
+  // This device's switch on, no assistant — and the check failing: shown (so it can be turned off).
+  ctx.net.remote = true;
+  ctx.net.activityStatus = 500;
+  ctx.net.log.length = 0;
+  p = await home(ctx);
+  await settle(() => asked() && ctx.net.log.some((l) => l === 'POST devices'));
+  b = await aiBtn(p, '#home-remote');
+  d = await dbg(p);
+  ok(asked() && b?.shown && b.on && b.pressed && marked(b) && d?.remote?.on, `${sz.n} gate: the switch on here, the check failing → shown, lit (${JSON.stringify(b)})`);
+  ok((await SEEN(p))?.on === true, `${sz.n} gate: … remembered on (${JSON.stringify(await SEEN(p))})`);
+  ctx.net.activityStatus = 200;
+  // The Assistants list: this device marked with the same mark, on (the devices read answers this one).
+  await tap(p, sz, '#avatar');
+  await p.waitForSelector('#acct a[href="./?open=assistants"]', { state: 'visible' });
+  await tap(p, sz, '#acct a[href="./?open=assistants"]');
+  await settled(p, 'assistants');
+  await p.waitForFunction(() => document.querySelector('#place-assistants #devices .item'), null, { timeout: 8000 }).catch(() => {});
+  const list = await p.evaluate(async () => {
+    const box = document.querySelector('#place-assistants #devices');
+    const m = await import(`/resonate/assist.js?v=${document.getElementById('version').textContent.trim().replace(/^v/, '')}`);
+    const t = document.createElement('template');
+    t.innerHTML = m.AI_MARK || '';
+    const svg = box?.querySelector('.on svg');
+    return { text: box?.textContent || '', on: box?.querySelector('.on')?.textContent.trim(), mark: !!m.AI_MARK && !!svg && t.content.firstElementChild.isEqualNode(svg), note: document.querySelector('#place-assistants #v-devices .note')?.textContent || '' };
+  });
+  ok(list.mark && list.on === 'on' && !/📡/.test(list.text + list.note) && /AI button/.test(list.note), `${sz.n} gate: Assistants — the device on, marked with the AI mark; its note names the AI button (${JSON.stringify(list)})`);
+  await p.goBack();
+  await gone(p, 'assistants');
+  // Turned off: no assistant, so the button goes (and nothing is remembered).
+  await tap(p, sz, '#home-remote');
+  d = await until(p, (x) => !x.remote.on, 5000);
+  await p.waitForTimeout(300);
+  b = await aiBtn(p, '#home-remote');
+  ok(!d?.remote.on && !ctx.net.remote && !b?.shown && await SEEN(p) === null, `${sz.n} gate: turned off — off in the cloud, and with no assistant the button goes (${JSON.stringify(b && { shown: b.shown })})`);
+  await closeCtx(ctx);
+}
+
+// --- sing.html and play.html (their own AI button, the old pages tests still open): none with no
+// assistant; with one, the same mark, label and title; on, lit.
+async function pages(sz) {
+  for (const [url, ready] of [['sing.html', () => !!window.resonateDebug?.()], ['play.html', () => !!window.resonateDebug?.().play]]) {
+    for (const assistant of [false, true]) {
+      const ctx = await context(sz, { 'resonate.auth': JSON.stringify(session()) }, { cloud: true });
+      ctx.net.assistant = assistant;
+      ctx.net.remote = assistant; // (with an assistant: this device's switch on — lit)
+      const p = await ctx.newPage();
+      await p.goto(BASE + url);
+      await p.waitForFunction(ready, null, { timeout: 30000 }).catch(() => {});
+      const end = Date.now() + 10000;
+      while (Date.now() < end && !(ctx.net.log.includes('GET assistant_activity') && ctx.net.log.includes('POST devices'))) await p.waitForTimeout(100);
+      await p.waitForTimeout(500);
+      const b = await aiBtn(p, '#remote-btn');
+      if (!assistant) ok(b && !b.shown, `${sz.n} ${url}: no assistant — its AI button hidden (${JSON.stringify(b && { shown: b.shown })})`);
+      else ok(b?.shown && marked(b) && b.on && b.pressed, `${sz.n} ${url}: an assistant connected, the switch on — its AI button shown, lit, the mark, no words (${JSON.stringify(b)})`);
+      await closeCtx(ctx);
+    }
+  }
+}
+
 (async () => {
   browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${FX}/shell/a3.wav`] });
   try {
@@ -398,10 +545,11 @@ async function remoteStale(sz) {
     if (!ONLY || ONLY.has('ipad')) await voice(SIZES[1]);
     if (!ONLY || ONLY.has('desktop')) await remote(SIZES[2]);
     if (!ONLY || ONLY.has('desktop')) await remoteStale(SIZES[2]);
+    if (!ONLY || ONLY.has('gate')) await remoteGate(SIZES[2]);
+    if (!ONLY || ONLY.has('pages')) await pages(SIZES[2]);
   } catch (err) {
     ok(false, `crashed: ${err.stack || err}`);
   }
   await browser.close();
-  console.log(`\n${passes} passed, ${fails} failed`);
-  process.exit(fails ? 1 : 0);
+  done();
 })();

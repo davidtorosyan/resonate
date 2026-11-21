@@ -82,10 +82,10 @@ function hooks() { // (sing.js, play.js, record.js… set their own when they lo
     place: places?.debug(), remote: remoteHome?.debug(),
     overlay: document.querySelector("body > .sheet:not([hidden]), #places > .sheet:not([hidden]), .pop:not([hidden])")?.id || (overlayOpen("tuner") ? "tuner" : null),
   });
-  remoteHome?.adopt(); // (Sing just loaded: its 📡 hooks go inside the shell's)
+  remoteHome?.adopt(); // (Sing just loaded: its remote hooks go inside the shell's)
 }
 
-// --- Record, Voice and Assistants in place; 📡 from home ------------------------------------------
+// --- Record, Voice and Assistants in place; the AI button from home -------------------------------
 places = mountPlaces({
   onBefore: () => { tuner.park(); song.stopAll(); }, // (Record and Voice: the mic is theirs)
   onLoad: hooks,

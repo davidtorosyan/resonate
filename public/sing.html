@@ -41,9 +41,11 @@
         border-radius: 999px;
       }
       .header-right { display: flex; align-items: baseline; gap: 0.6rem; }
-      /* 📡 Remote: off = a quiet icon; on = clearly lit (an assistant can act on this page). */
+      /* The AI button (once an assistant has connected): off = a quiet mark; on = clearly lit (an
+         assistant can act on this page). */
       /* (above the sheets and overlays: the switch can always be reached) */
       .remote-btn { position: relative; z-index: 60; font: inherit; font-size: 0.75rem; color: #e8e8f0; background: transparent; border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; padding: 0.15rem 0.5rem; cursor: pointer; opacity: 0.65; touch-action: manipulation; }
+      .remote-btn .ai-mark { display: block; width: 1.5em; height: 1.2em; }
       .remote-btn[data-on="true"] { opacity: 1; background: #a64fff; border-color: #c48bff; box-shadow: 0 0 0 0.2rem rgba(166,79,255,0.25); font-weight: 600; animation: remote-pulse 2.4s ease-in-out infinite; }
       @keyframes remote-pulse { 50% { box-shadow: 0 0 0 0.35rem rgba(166,79,255,0.08); } }
       @media (prefers-reduced-motion: reduce) { .remote-btn[data-on="true"] { animation: none; } }
@@ -402,7 +404,7 @@
         background: linear-gradient(135deg, #ff4f6f, #ff8a4f);
         box-shadow: 0 8px 24px -8px rgba(255,79,111,0.5);
       }
-      /* Headers wrap rather than overflow (a phone, with the Play pill and Sing's 📡). */
+      /* Headers wrap rather than overflow (a phone, with the Play pill and Sing's AI button). */
       header { flex-wrap: wrap; row-gap: 0.4rem; }
       .header-left, .header-right { flex-wrap: wrap; row-gap: 0.3rem; }
       @media (max-width: 420px) { header { column-gap: 0.5rem; } .nav-link, .page-link { padding: 0.2rem 0.42rem; } .header-left { gap: 0.3rem; } .header-right { gap: 0.4rem; } }
@@ -419,7 +421,7 @@
       </div>
       <div class="header-right mono">
         <span id="assistant-chip" class="assistant-chip" hidden></span>
-        <button id="remote-btn" class="remote-btn" type="button" hidden aria-pressed="false">📡</button>
+        <button id="remote-btn" class="remote-btn" type="button" hidden aria-pressed="false" aria-label="Let an assistant control this device" title="Let an assistant control this device"><svg class="ai-mark" viewBox="0 0 20 16" aria-hidden="true" focusable="false"><path d="M1.5 14.5 6.5 1.5l5 13M3.25 10h6.5M13.5 1.5h5M16 1.5v13M13.5 14.5h5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         <span id="version">v95</span>
         <span id="status"></span>
       </div>

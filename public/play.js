@@ -3985,17 +3985,18 @@ window.resonatePlay = Object.assign(window.resonatePlay || {}, {
   forget: (id) => forget(id),
 });
 
-// play.html's 📡: an assistant's commands for the Score reach this page (one device at a time, the
-// same switch as Sing's). Only for a signed-in, approved account with sync on (assist.js); hidden
-// otherwise. (The one-page shell has its own 📡 and routes the Score's commands itself.)
+// play.html's AI button: an assistant's commands for the Score reach this page (one device at a
+// time, the same switch as Sing's). Only for a signed-in, approved account with sync on, once an
+// assistant has connected (assist.js remote.available); hidden otherwise. Its mark is in
+// play.html. (The one-page shell has its own and routes the Score's commands itself.)
 if (!window.resonatePlay.region) {
   const rb = $("remote-btn");
   const showRemote = (on) => {
     if (!rb) return;
     rb.hidden = !remote.available;
     rb.dataset.on = String(!!on);
-    rb.title = on ? "An assistant can control this page — tap to stop" : "Let an assistant control this page";
-    rb.setAttribute("aria-label", on ? "Remote on" : "Remote");
+    rb.title = on ? "An assistant can control this device — tap to stop" : "Let an assistant control this device";
+    rb.setAttribute("aria-label", "Let an assistant control this device");
     rb.setAttribute("aria-pressed", String(!!on));
   };
   rb?.addEventListener("click", () => { rb.disabled = true; remote.set(!remote.on).finally(() => { rb.disabled = false; }); });

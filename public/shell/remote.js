@@ -1,11 +1,13 @@
-// 📡 from home: the Assistants remote (assist.js — on sing.html, the Sing page's 📡) runs in the
-// shell from the start, so an assistant's commands reach this device with no song open. Only for a
-// signed-in, approved account whose data is on this device with sync on (assist.js ready(), as
-// now); the button stays hidden otherwise. Its 📡 is in the top bar while Sing isn't shown (with
-// Sing shown, Sing's own 📡 is there instead: one at a time, the same switch). Sing is mounted —
-// hidden — when 📡 is turned on here or a command arrives, and its own remote hooks (sing.js
-// runRemote) do the work inside the shell's: a command that needs a song opens it in place with
-// Sing shown first (the song open here, else Sing's) — a Record / Voice / Assistants sheet gives way
+// The AI button from home: the Assistants remote (assist.js — on sing.html, the Sing page's own
+// button) runs in the shell from the start, so an assistant's commands reach this device with no
+// song open. The button shows only for a signed-in, approved account whose data is on this device
+// with sync on, once an assistant has connected to the account — or while this device's switch is
+// on (assist.js remote.available; remembered per account, so a reload shows it at once). Its AI
+// button is in the top bar while Sing isn't shown (with Sing shown, Sing's own is there instead:
+// one at a time, the same switch). Sing is mounted — hidden — when the switch is turned on here or
+// a command arrives, and its own remote hooks (sing.js runRemote) do the work inside the shell's: a
+// command that needs a song opens it in place with Sing shown first (the song open here, else
+// Sing's) — a Record / Voice / Assistants sheet gives way
 // — and open_song shows the song Sing opened. The Score's commands (score_*, v88) open the song in
 // place with the Score shown (score_open's song, else the song open, else the one Sing has) — for
 // that song only, the modules pref untouched — and run in play.js (resonatePlay.scoreRun); what the
@@ -13,7 +15,7 @@
 // A PDF not converted yet (v90): open_song opens it with the Score on its PDF (Sing can't open it)
 // and says pdf_only; Sing's commands on one open here are refused; the Score's wait takes its PDF
 // shown for ready (play.js state(): pdfOnly, shown).
-import { remote } from "../assist.js?v=95";
+import { remote, paintRemote } from "../assist.js?v=95";
 import { songChoices } from "../catalog.js?v=95";
 import { setOpenSong } from "./songlist.js?v=95";
 
@@ -28,13 +30,7 @@ export function mountRemote({ sing, song, places }) {
   let running = 0;  // commands under way (a stale shell doesn't reload under one: chrome.js staleShell)
   const singShown = () => song.isOpen && song.mods.sing;
 
-  function show(on) {
-    btn.hidden = !remote.available;
-    btn.dataset.on = String(!!on);
-    btn.textContent = on ? "📡 Remote on" : "📡";
-    btn.title = on ? "An assistant can control this device — tap to stop" : "Let an assistant control this device";
-    btn.setAttribute("aria-pressed", String(!!on));
-  }
+  const show = (on) => paintRemote(btn, on);
   // Sing's hooks, wrapped in the shell's (sing.js starts the remote with its own as it loads).
   function adopt() {
     const h = remote.hooks;
@@ -164,6 +160,6 @@ export function mountRemote({ sing, song, places }) {
   return {
     adopt,
     busy: () => running > 0,
-    debug: () => ({ available: remote.available, on: remote.on, shown: !!btn.getClientRects().length, wrapped: remote.hooks === hooks, inner: !!inner, state: hooks.state() }),
+    debug: () => ({ available: remote.available, cloud: remote.cloud, assistant: remote.assistant, on: remote.on, shown: !!btn.getClientRects().length, wrapped: remote.hooks === hooks, inner: !!inner, state: hooks.state() }),
   };
 }

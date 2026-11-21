@@ -20,7 +20,7 @@ import { activeProfile } from "./profiles.js?v=95";
 import { fitOptions, fitKey, fitToRange } from "./fit.js?v=95";
 import { DATA_KEYS } from "./space.js?v=95";
 import { spaceChanged } from "./nav.js?v=95";
-import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=95";
+import { shareSong, takeStarted, lineDone, takeEnded, remote, paintRemote } from "./assist.js?v=95";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -2571,16 +2571,11 @@ function assistTakeEnded(tk) {
 }
 
 // --- Remote control (assist.js remote) ----------------------------------------------------
-// The 📡 switch in the header: on, an assistant can run these on this page (one device at a
-// time). Lines are numbered from 1 here, as people say them.
+// The AI button in the header (once an assistant has connected: assist.js remote.available): on,
+// an assistant can run these on this page (one device at a time). Lines are numbered from 1 here,
+// as people say them.
 const remoteBtn = $("remote-btn");
-function showRemote(on) {
-  remoteBtn.hidden = !remote.available;
-  remoteBtn.dataset.on = String(!!on);
-  remoteBtn.textContent = on ? "📡 Remote on" : "📡";
-  remoteBtn.title = on ? "An assistant can control this page — tap to stop" : "Let an assistant control this page";
-  remoteBtn.setAttribute("aria-pressed", String(!!on));
-}
+const showRemote = (on) => paintRemote(remoteBtn, on);
 remoteBtn.addEventListener("click", () => { remoteBtn.disabled = true; remote.set(!remote.on).finally(() => { remoteBtn.disabled = false; }); });
 function remoteState() {
   return { page: "sing", song: songId && score ? { id: songId, title: score.title } : null, key: score ? optText(keySelect) : null, tempo: score ? optText(tempoSelect) : null,
@@ -2628,8 +2623,8 @@ function setView(v) {
   updateButtons();
 }
 
-// Which assistant is connected: shown by 📡 for 2 minutes after its last call (the dot pulses
-// for 15 s after one).
+// Which assistant is connected: shown by the AI button for 2 minutes after its last call (the
+// dot pulses for 15 s after one).
 const assistantChip = $("assistant-chip");
 let assistantSeen = null;
 function showAssistant(info) {
