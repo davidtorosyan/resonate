@@ -86,6 +86,6 @@ const SP = '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a9323
   // Reopen via the Review button.
   await p.click('#rv-close'); await p.waitForTimeout(200); await p.click('#review-btn'); await p.waitForTimeout(200);
   ok(!(await p.$('#review[hidden]')), 'Review button reopens it');
-  console.log('errors:', errs);
+  ok(!errs.length, 'no page errors ' + JSON.stringify(errs));
   await b.close();
 })();

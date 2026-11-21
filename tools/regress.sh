@@ -1,123 +1,165 @@
 #!/bin/bash
-# Sing page regression suite with guided practice off; prints one line per test.
-# Then the Play page: play.cjs (spec §8 checks at 8 sizes + bug hunts; the owner's converted scores
-# from PLAY_SCORES when that folder exists — never copied into the repo), playheaders.cjs (every
-# page's header), playfixes.cjs (the checks added with the adversarial review's fixes),
-# playscore.cjs (the Full score view, v78; its WebKit part when WebKitWebDriver is up),
-# playpaper.cjs (v79: the printed-density default, − / +, spreads, turns from ‹ › only),
-# playback.cjs (v79: ▶ — a dragged stretch once / ⟳, from the page in Sing's order, lit notes, auto
-# turns, stops), playbackfixes.cjs (v79: one check per finding of the ▶ / density review round),
-# playpeekstaff.cjs (a press sounds every voice struck on that staff then), playpress.cjs (v80: a press
-# strikes in its own pointerdown, every finger its own strike, keep-awake, the session set once, an
-# iOS-like gate, the lag measured), playkeys.cjs (v80: the keyboard docked under the music — 🎹, its
-# defaults, the music never under it, it never moves or hides), playhear.cjs (v80: what ▶ plays —
-# the chips per view, muted parts not struck, levels, kept per song / view, a change while playing,
-# lit lighter, presses unaffected, the keyboard-off home), playv80fixes.cjs (v80: one check per
-# finding of the v80 review round — a key another finger holds, no keyboard without its button, the
-# PDF drawn once, the dock through a load, the chips leave the keys room, the view menu with 📄, a
-# chip just before a muted note, no page kept by a press), playchords.cjs (v86: chord names under the
-# piano, the stretch's controls steady while ▶ plays, muted parts unlit, the keyboard pressable, asleep
-# in the background; the bar vs a v85 copy at HEAD_BASE), tiecases.cjs (fixscore's
-# restoreTies: ties the engine missed, wrote half or read as slurs)
-# and reader.cjs (PDF → Song's Reader: the reducer on every fixture, 10× replays on an iPhone and an
-# iPad both ways — minimize/expand, hidden tab, resume, reduced motion, long tasks; no screenshots here)
-# and, when WebKitWebDriver is up on :4444 (/home/user/xb), the WebKit smokes (playwebkit.mjs,
-# playbackwk.mjs, playpresswk.mjs, playhearwk.mjs).
-cd /home/user/tools
-for t in loop loopguard review perform playafter lasttake chipkeys taptiming rhythmpage iosgate stuckctx pitchmon ahead countin unlock; do
-  out=$(timeout 600 node -r ./guidedoff.cjs $t.cjs 2>&1); code=$?
-  fails=$(echo "$out" | grep -c "FAIL\|✗")
-  errs=$(echo "$out" | grep -i "errors: \[\]\|no page errors" | head -1)
-  echo "$t exit=$code fails=$fails $(echo "$out" | grep -E 'FAIL|✗' | head -2 | tr '\n' ' ')"
-done
-SCORES=${PLAY_SCORES:-/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/play/scores}
-[ -d "$SCORES" ] || SCORES=""
-for t in play playheaders playfixes playscore playpaper playback playbackfixes playpeekstaff playpress playkeys playhear playv80fixes playchords tiecases; do
-  out=$(PLAY_SCORES="$SCORES" timeout 1800 node $t.cjs 2>&1); code=$?
-  fails=$(echo "$out" | grep -c "^FAIL")
-  echo "$t exit=$code fails=$fails $(echo "$out" | grep -E 'passed' | tail -1) $(echo "$out" | grep -E '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ')"
-done
-for fx in greensleeves greensleeves3-real; do # (synthetic with clean-ups; the real recorded Chromium run)
-  out=$(FX=$fx SHOTS=0 timeout 1200 node reader.cjs 2>&1); code=$?
-  echo "reader $fx exit=$code fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep -E 'passed' | tail -1) $(echo "$out" | grep -E '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ')"
-done
-if curl -s -m 2 http://127.0.0.1:4444/status >/dev/null 2>&1; then
-  for t in playwebkit playbackwk playpresswk playhearwk cutoverwk; do
-    out=$(DISPLAY=:99 timeout 300 node $t.mjs 2>&1); code=$?
-    echo "$t exit=$code fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep -E '^FAIL' | head -2 | tr '\n' ' ')"
-  done
-  out=$(DISPLAY=:99 timeout 900 node readerwk.mjs 2>&1); code=$? # (the Reader in WebKitGTK: three fixtures to the end)
-  echo "readerwk exit=$code fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep -E '^FAIL' | head -2 | tr '\n' ' ')"
-else
-  echo "playwebkit skipped (no WebKitWebDriver on :4444)"
-fi
-# PDF → Song engine trace (patch 0009): the saved native traces of the public-domain test scores parse,
-# and their notes after PAGE match the export (tracecheck.mjs; fixtures/trace/*.trace from
-# -Daudiveris.web.trace=stderr runs).
-for f in fixtures/trace/*.trace; do
-  out=$(timeout 60 node tracecheck.mjs "$f" "${f%.trace}.mxl" --quiet 2>&1); code=$?
-  echo "tracecheck $(basename $f .trace) exit=$code $(echo "$out" | tail -1)"
-done
-# PDF → Song as a resumable job (v81): the trace → events parser (tracejs.mjs, against tracecheck's
-# mapping on the saved traces), the job store + ENGINE id + crash-loop guard (jobstore.cjs), the title
-# rules (titlecases.cjs, now in omr/importer.js); with IMPORT_E2E=1 the real conversions on pdf-import.html
-# (importresume.cjs: full first — it writes the reference MusicXML and fixtures/import/greensleeves3.events.json —
-# then stub1, prep, engine, crash, discard, tabs, again; ~4–8 min each), the Reader watching a real conversion with a
-# reload in the middle on an iPhone and an iPad (importreader.cjs: contract, stages shot, restored at once, minimized
-# kept) and the WebKitGTK smoke (importwk.mjs).
-out=$(timeout 120 node tracejs.mjs 2>&1); echo "tracejs exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | tail -1)"
-out=$(timeout 300 node jobstore.cjs 2>&1); echo "jobstore exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | tr '\n' ' ')"
-out=$(timeout 300 node titlecases.cjs 2>&1); echo "titlecases exit=$? $(echo "$out" | grep -c '"') results $(echo "$out" | grep -i 'err' | head -1)"
-# The event contract (readerstate.js's header) on every recorded real run (importcontract.mjs; the Reader's
-# own replay of the real run is in reader.cjs: fixtures/reader/greensleeves3-real, from importfixture.mjs).
-out=$(timeout 60 node importcontract.mjs 2>&1); echo "importcontract exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ')"
-# The v81 import review round (importfixes.cjs: one check per finding — the failed sheet, the export's lost bars,
-# the all-done resume's export, measure numbers, cut excerpts, reduceAll, the crash-loop guard per stage, files that
-# fail the same way again, a hidden tab, a parked space, Sign out / sign-up / parked flags, another engine's job,
-# the paused pill and its count, the facts row on an iPhone, reveals without SVG animations, the wake lock, the pill
-# under sheets, a PDF kept unstored, ✕ racing a book; no engine — a scripted worker; ~2 min).
-out=$(timeout 900 node importfixes.cjs 2>&1); echo "importfixes exit=$? $(echo "$out" | grep -E '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
-# The PDF-first song library (v90, docs/LIBRARY.md): libcore.cjs (library.js / catalog.js / omr/queue.js /
-# forget.js / jobs.deleteJobsFor / importer.titleFromFileName, holdWake / ENGINE_N in Chromium's IndexedDB),
-# songlib.cjs (the shell: + Add → PDF-only songs at once, the ⋯ menu, Convert / Convert all in list order, the
-# done row, the queue across a reload, deleting a queued / the running / the open song, Stop, Reconvert forced,
-# a PDF only opened on a phone / iPad / desktop, Play's Convert → the Score reloads with notes, the remote's
-# open_song / sing; a scripted worker, ~1 min, no screenshots here), playpdfonly.cjs (Play's PDF-only mode: no
-# Verovio, the keyboard, turns, Convert, scoreState / scoreRun, a broken / missing PDF), singpdf.cjs (Sing
-# refuses a PDF only, the menu, the remote, the boot, ✕ forgets), synclib.mjs (the real sync.js against a fake
-# cloud, offline: PDF-only rows, engine, the v2 rewind, pdf-large, SONG_LIMIT 20).
-out=$(timeout 300 node libcore.cjs 2>&1); echo "libcore exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
-out=$(SHOTS=0 timeout 1200 node songlib.cjs 2>&1); echo "songlib exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
-# The shell's chrome after the owner's jank report (jankchrome.cjs: a sheet's handle / head dragged down closes it,
-# the song's title plain words, the folded conversion's fixed footprint — the ▶ beside it sampled every frame).
-out=$(SHOTS=0 timeout 1500 node jankchrome.cjs 2>&1); echo "jankchrome exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
-# The Score and the Piano after the jank report (jank.cjs: the title opens nothing, the Piano keeps the bars on screen,
-# one ▶ for a stretch, one keyboard — the Piano module's — linked to the Score).
-out=$(SHOTS=0 timeout 1500 node -r ./harness/noshots.cjs jank.cjs 2>&1); echo "jank exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
-# The one-page shell — the site's root since v92 (docs/CUTOVER.md): cutover.cjs (the root is the shell, the shell.html
-# stub, every old page lands in the shell in its state, nothing runs on a page that is leaving, the shell's fetch of the
-# old pages stays inert, the escapes: ?page, email links, an automated browser), then the shell's own suites (shell.cjs
-# five sizes, shellmods.cjs the module sets, shellscore.cjs the Score in place, shellsing.cjs Sing in place,
-# shellplaces.cjs Record / Voice / Assistants in place).
-for t in cutover shell shellmods shellscore shellsing shellplaces; do
-  out=$(SHOTS=0 timeout 1500 node -r ./harness/noshots.cjs $t.cjs 2>&1); code=$?
-  echo "$t exit=$code fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
-done
-for t in playpdfonly singpdf; do
-  out=$(timeout 600 node $t.cjs 2>&1); code=$?
-  echo "$t exit=$code fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
-done
-out=$(timeout 120 node synclib.mjs 2>&1); echo "synclib exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
-# The MCP server's frozen tool list and its live catalogue (docs/CONNECTOR.md; no Deno, no network).
-out=$(timeout 60 node --experimental-strip-types --no-warnings mcpcatalog.mjs 2>&1); echo "mcpcatalog exit=$? fails=$(echo "$out" | grep -c '^FAIL') $(echo "$out" | grep '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
-if [ -n "$IMPORT_E2E" ]; then
-  for sc in full stub1 prep engine crash discard tabs again engineid; do
-    out=$(timeout 3000 node importresume.cjs $sc 2>&1); code=$?
-    echo "importresume $sc exit=$code $(echo "$out" | grep -E '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
-  done
-  out=$(timeout 3600 node importreader.cjs 2>&1); code=$?
-  echo "importreader exit=$code $(echo "$out" | grep -E '^FAIL' | head -2 | cut -c1-200 | tr '\n' ' ') $(echo "$out" | tail -1)"
-  if curl -s -m 2 http://127.0.0.1:4444/status >/dev/null 2>&1; then
-    out=$(DISPLAY=:99 timeout 2400 node importwk.mjs 2>&1); echo "importwk exit=$? $(echo "$out" | grep -E '^FAIL' | head -2 | tr '\n' ' ') $(echo "$out" | tail -1)"
+# Resonate's regression run: one verdict per suite, a table at the end, exit 1 if anything failed.
+#
+#   tools/regress.sh fast    node only, no server (~2 min; npm test in tools/): the analysis modules (grading,
+#                            tapped timing, tempo marks, coaching words, guided practice, rhythm), the engine
+#                            trace, the import event contract, the sync engine against a fake cloud, the MCP
+#                            catalogue, the ?v= stamps (vcheck). Run it before every push.
+#   tools/regress.sh [main]  the fast tier, then the browser suites against the test server (BASE), the
+#                            WebKitGTK smokes when WebKitWebDriver answers on :4444, and with IMPORT_E2E=1 the
+#                            real conversions (~4–8 min each).
+#
+# A suite is PASS / FAIL by its exit code (a timeout, or a line starting "FAIL" under exit 0, is a FAIL too),
+# SKIP when it exits 0 with "SKIP …" as its last line (lib/check.cjs done() when nothing could run), INFO when
+# it only prints what it saw (chipkeys: read, not judged; a crash still fails it). Last, the checkout: a file
+# a suite changed or left in it is a FAIL (compared with how it was before the run).
+#
+# Env: BASE (default http://localhost:8097/resonate/; most suites have it built in), PLAY_SCORES (a folder of
+# the owner's converted scores — never in the repo; empty = those checks skipped), IMPORT_E2E=1, REGRESS_OUT
+# (where each suite's log goes; default a new /tmp/regress-* folder).
+cd "$(dirname "$0")" && cd -P . || exit 2
+TIER=${1:-main}
+case "$TIER" in fast | main) ;; *) echo "usage: tools/regress.sh [fast|main]"; exit 2 ;; esac
+BASE=${BASE:-http://localhost:8097/resonate/}
+export PLAY_SCORES=${PLAY_SCORES:-}
+OUT=${REGRESS_OUT:-$(mktemp -d /tmp/regress-XXXXXX)}
+mkdir -p "$OUT"
+ROWS=() FAILED=0 START=$SECONDS
+
+row() { # row <name> <verdict> <seconds> <note>
+  local note=${4//$'\n'/ }; note=${note:0:160}
+  ROWS+=("$1"$'\t'"$2"$'\t'"$3"$'\t'"$note")
+  [ "$2" = FAIL ] && FAILED=$((FAILED + 1))
+  printf '%-30s %-4s %5ss  %s\n' "$1" "$2" "$3" "$note"
+}
+
+run() { # run [--info] <name> <timeout s> <command …>
+  local info=; [ "$1" = --info ] && { info=1; shift; }
+  local name=$1 limit=$2; shift 2
+  local log="$OUT/${name//[^A-Za-z0-9._-]/_}.log" t0=$SECONDS
+  timeout "$limit" "$@" > "$log" 2>&1
+  local code=$? secs=$((SECONDS - t0)) verdict note
+  local last; last=$(grep -v '^[[:space:]]*$' "$log" | tail -1)
+  local firstfail; firstfail=$(grep -m1 -E '^[[:space:]]*(FAIL|✗)' "$log")
+  if [ $code -eq 124 ]; then verdict=FAIL note="timed out after ${limit} s"
+  elif [ $code -ne 0 ]; then verdict=FAIL note="exit $code: ${firstfail:-$(grep -m1 -E 'Error|error:|Exception' "$log" || echo "$last")}"
+  elif [ -n "$firstfail" ]; then verdict=FAIL note="exit 0, but: $firstfail"
+  elif [[ $last == SKIP* ]]; then verdict=SKIP note=$last
+  elif [ -n "$info" ]; then verdict=INFO note="printed, not judged ($log)"
+  else verdict=PASS note=$last
+  fi
+  row "$name" "$verdict" "$secs" "$note"
+}
+
+# The checkout before the run: what's uncommitted already (and its content) is compared after.
+snapshot() {
+  (cd .. && git status --porcelain --untracked-files=all | while IFS= read -r l; do
+    f=${l:3}; f=${f#*-> }; f=${f#\"}; f=${f%\"}
+    printf '%s %s\n' "$l" "$([ -f "$f" ] && md5sum < "$f" | cut -c1-12)"
+  done)
+}
+BEFORE=$(snapshot)
+
+if [ "$TIER" = main ]; then
+  code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$BASE")
+  if [ "$code" != 200 ]; then
+    echo "$BASE doesn't answer (${code:-no answer}): start tools/harness/xb/collect-serve.mjs —"
+    echo "  node tools/harness/xb/collect-serve.mjs /home/user/sitetest 8097 /tmp/xbout   (CLAUDE.md: a fresh container)"
+    exit 2
   fi
 fi
+echo "regress $TIER — logs in $OUT${PLAY_SCORES:+, PLAY_SCORES=$PLAY_SCORES}"
+
+# ---- fast: node only -------------------------------------------------------------------------------------
+run gradecases 120 node gradecases.mjs          # grade.js: in time, early, late, drifting, silent, unclear…
+run timingcases 60 node timingcases.mjs         # timing.js: taps → knots → the song's map
+run tempomark 60 node tempomark.mjs             # pdfprep.js tempoMark: "= 104", "in 2", music-text fonts
+run coachcases 60 node coachcases.mjs           # coach.js: every verdict's words; no digits, %, fail, score
+run practicecases 120 node practicecases.mjs    # practice.js: phrases, verdicts, the ladder, a 500-step fuzz
+run guidedverdicts 300 node guidedverdicts.mjs  # synthetic rounds through features → grades → verdicts → words
+run rhythmcases 600 node rhythmcases.mjs        # rhythm.js on a synthetic singer (+ the guided cases)
+# The engine trace (patch 0009): the saved native traces parse, their notes after PAGE match the export.
+for f in fixtures/trace/*.trace; do
+  run "tracecheck:$(basename "$f" .trace)" 60 node tracecheck.mjs "$f" "${f%.trace}.mxl" --quiet
+done
+run tracejs 120 node tracejs.mjs                # omr/trace.js = tracecheck's mapping; OCR word placement
+run importcontract 60 node importcontract.mjs   # every recorded real import run against readerstate's contract
+run synclib 120 node synclib.mjs                # the real sync.js against a fake cloud (offline)
+run mcpcatalog 60 node --experimental-strip-types --no-warnings mcpcatalog.mjs # the frozen MCP tool list
+run vcheck 60 node vcheck.mjs                   # ?v=<badge> on every local module address; every page's badge
+
+if [ "$TIER" = main ]; then
+  # ---- Sing (with guided practice off: the v75-era screen these suites were written for) ------------------
+  for t in loop loopguard review perform playafter lasttake taptiming rhythmpage iosgate stuckctx pitchmon ahead countin unlock; do
+    run "$t" 600 node -r ./guidedoff.cjs "$t.cjs"
+  done
+  run --info chipkeys 600 node -r ./guidedoff.cjs chipkeys.cjs # (note chips as piano keys: printed, read by eye)
+
+  # ---- Play (the owner's converted scores only with PLAY_SCORES) ------------------------------------------
+  # play (8 sizes), playheaders, playfixes, playscore (the Full score), playpaper (the printed density),
+  # playback (▶), playbackfixes, playpeekstaff, playpress (a press sounds at once), playkeys (the docked
+  # keyboard), playhear (what ▶ plays), playv80fixes, playchords, tiecases (fixscore's restoreTies).
+  for t in play playheaders playfixes playscore playpaper playback playbackfixes playpeekstaff playpress playkeys playhear playv80fixes playchords tiecases; do
+    run "$t" 1800 node "$t.cjs"
+  done
+
+  # ---- PDF → Song: the Reader (a synthetic fixture with clean-ups; the real recorded Chromium run) --------
+  for fx in greensleeves greensleeves3-real; do
+    run "reader:$fx" 1200 env FX=$fx SHOTS=0 node reader.cjs
+  done
+  run jobstore 300 node jobstore.cjs              # the job store, ENGINE vs lib/, the crash-loop guard
+  run titlecases 300 node titlecases.cjs          # pdfTitle / chooseTitle (the owner's PDFs when sitetest has them)
+  run keycases 300 node keycases.cjs              # fixscore's unifyKeySignatures, each case idempotent
+  run importfixes 900 node importfixes.cjs        # the v81 review round, a scripted worker (~2 min)
+
+  # ---- The song library (v90), the shell -----------------------------------------------------------------
+  run libcore 300 node libcore.cjs
+  run songlib 1200 env SHOTS=0 node songlib.cjs
+  run jankchrome 1500 env SHOTS=0 node jankchrome.cjs
+  run jank 1500 env SHOTS=0 node -r ./harness/noshots.cjs jank.cjs
+  for t in cutover shell shellmods shellscore shellsing shellplaces; do
+    run "$t" 1500 env SHOTS=0 node -r ./harness/noshots.cjs "$t.cjs"
+  done
+  for t in playpdfonly singpdf; do run "$t" 600 node "$t.cjs"; done
+
+  # ---- WebKitGTK (Xvfb :99 + WebKitWebDriver on :4444, CLAUDE.md "a fresh container") ----------------------
+  WK=(playwebkit playbackwk playpresswk playhearwk cutoverwk readerwk)
+  if curl -s -m 2 http://127.0.0.1:4444/status > /dev/null 2>&1; then
+    for t in "${WK[@]}"; do run "$t" 900 env DISPLAY=:99 node "$t.mjs"; done
+  else
+    for t in "${WK[@]}"; do row "$t" SKIP 0 "no WebKitWebDriver on :4444"; done
+  fi
+
+  # ---- The real conversions (IMPORT_E2E=1): importresume's scenarios (full first: the reference MusicXML),
+  # importreader (the Reader on a real conversion with a reload, iPhone + iPad), importwk (WebKitGTK).
+  if [ -n "$IMPORT_E2E" ]; then
+    for sc in full stub1 prep engine crash discard tabs again engineid; do
+      run "importresume:$sc" 3000 node importresume.cjs $sc
+    done
+    run importreader 3600 node importreader.cjs
+    if curl -s -m 2 http://127.0.0.1:4444/status > /dev/null 2>&1; then
+      run importwk 2400 env DISPLAY=:99 node importwk.mjs
+    fi
+  fi
+fi
+
+# ---- Nothing a suite writes lands in the checkout ------------------------------------------------------------
+AFTER=$(snapshot)
+if [ "$BEFORE" = "$AFTER" ]; then
+  row "checkout untouched" PASS 0 "git status as before the run$([ -n "$BEFORE" ] && echo " ($(echo "$BEFORE" | wc -l) uncommitted entries already)")"
+else
+  row "checkout untouched" FAIL 0 "changed by the run: $(diff <(echo "$BEFORE") <(echo "$AFTER") | grep '^[<>]' | cut -c3- | cut -d' ' -f1-2 | sort -u | head -5 | tr '\n' ';')"
+fi
+
+# ---- The table -----------------------------------------------------------------------------------------------
+count() { local n=0 r; for r in "${ROWS[@]}"; do [ "$(cut -f2 <<< "$r")" = "$1" ] && n=$((n + 1)); done; echo $n; }
+T=$((SECONDS - START))
+echo
+echo "regress $TIER: ${#ROWS[@]} rows — $(count PASS) PASS, $(count FAIL) FAIL, $(count SKIP) SKIP, $(count INFO) INFO — $((T / 60))m$((T % 60))s (logs: $OUT)"
+printf '| %-28s | %-7s | %6s | %s\n' suite verdict time note
+printf '|%s|%s|%s|%s\n' "------------------------------" "---------" "--------" "------"
+for r in "${ROWS[@]}"; do
+  IFS=$'\t' read -r n v s note <<< "$r"
+  printf '| %-28s | %-7s | %5ss | %s\n' "$n" "$v" "$s" "$note"
+done
+[ $FAILED -eq 0 ]

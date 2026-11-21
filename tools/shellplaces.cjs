@@ -10,10 +10,10 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 
 const BASE = process.env.BASE || 'http://localhost:8097/resonate/';
-const SHOTS = process.env.SHOTS || '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/v87';
+const SHOTS = process.env.SHOTS === '0' ? null : process.env.SHOTS || '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/v87'; // ("0": no screenshots, as shell.cjs)
 const FX = '/home/user/tools/fixtures';
 const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
-fs.mkdirSync(SHOTS, { recursive: true });
+if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 
 let passes = 0, fails = 0;
 const ok = (c, msg) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${msg}`); if (c) passes++; else fails++; return c; };
@@ -190,7 +190,7 @@ async function record(sz) {
   await settled(p, 'record');
   ok(await vis(p, '#place-record #playbar') && (await dbg(p))?.place.record.duration > 1.5, `${sz.n}: opened again — the take is still there (▶ Play)`);
   await p.waitForTimeout(300);
-  await p.screenshot({ path: `${SHOTS}/places-record-${sz.n}.png` });
+  if (SHOTS) await p.screenshot({ path: `${SHOTS}/places-record-${sz.n}.png` });
   await tap(p, sz, '#place-record .place-x');
   ok(await gone(p, 'record'), `${sz.n}: ✕ closes it`);
   await p.waitForTimeout(300);
@@ -235,7 +235,7 @@ async function voice(sz) {
   ok(d?.tuner.state === 'off' && !d.tuner.live, `${sz.n}: the tuner parked`);
   ok(await vis(p, '#place-voice #range-card') && await p.evaluate(() => document.querySelector('#place-voice #profile-select').value) === 'p1', `${sz.n}: its cards: Dave's range`);
   await p.waitForTimeout(250);
-  await p.screenshot({ path: `${SHOTS}/places-voice-${sz.n}.png` });
+  if (SHOTS) await p.screenshot({ path: `${SHOTS}/places-voice-${sz.n}.png` });
   // The range test, then Back: it stops.
   await tap(p, sz, '#place-voice #range-btn');
   d = await until(p, (x) => x.place.voice?.run?.kind === 'range' && x.place.voice.run.mic, 8000);

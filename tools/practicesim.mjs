@@ -8,8 +8,8 @@ import { loadSong, fixtureNames } from "./fixturelib.mjs";
 import {
   PRACTICE, groupPhrases, newDoc, sessionFor, timeVerdict, tuneVerdict, phraseMarks, applyRound, answerSelfCheck,
   applyRun, markHeard, nextStep, stepLabel,
-} from "../resonate/public/practice.js";
-import { roundResult, runResult, securedText } from "../resonate/public/coach.js";
+} from "../public/practice.js";
+import { roundResult, runResult, securedText } from "../public/coach.js";
 
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(`--${k}`); return i >= 0 ? args[i + 1] : d; };

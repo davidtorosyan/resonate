@@ -1,0 +1,13 @@
+{
+  "name": "resonate-tools",
+  "private": true,
+  "type": "module",
+  "description": "Resonate's test suites. npm test = regress.sh fast (node only, no server, ~2 min); npm run regress = regress.sh main (the browser suites too: start tools/harness/xb/collect-serve.mjs first). The suites require('playwright'): this is the version installed in the sandbox (/opt/node-tools), with its browsers in PLAYWRIGHT_BROWSERS_PATH.",
+  "scripts": {
+    "test": "./regress.sh fast",
+    "regress": "./regress.sh main"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

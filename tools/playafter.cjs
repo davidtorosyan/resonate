@@ -2,7 +2,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 (async () => {
-  const src = fs.readFileSync('/home/user/tools/review.cjs', 'utf8');
+  const src = fs.readFileSync(require('path').join(__dirname, 'review.cjs'), 'utf8');
   const init = eval(src.slice(src.indexOf('await p.addInitScript(() => {') + 'await p.addInitScript('.length, src.indexOf('  });\n  await p.goto') + 3));
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   const results = [];
@@ -64,7 +64,18 @@ const fs = require('fs');
   await scenario('Pitch on → take → Play', async (p, take, play) => { await p.click('#monitor'); await p.waitForTimeout(500); await take(8); await p.waitForTimeout(1500); await closeReview(p); return play(); });
   await scenario('take → Listen → stop → Play', async (p, take, play) => { await take(8); await p.waitForTimeout(1500); await closeReview(p); await p.click('#listen'); await p.waitForTimeout(1200); await p.click('#listen'); await p.waitForTimeout(300); return play(); });
   await scenario('take → Play twice (stop, play again)', async (p, take, play) => { await take(8); await p.waitForTimeout(1500); await closeReview(p); await play(); await p.click('#play'); await p.waitForTimeout(300); return play(); });
-  await scenario('take → review ▶ You on a line → Play', async (p, take, play) => { await take(8); await p.waitForTimeout(1500); await p.click('#rv-lines .rv-line button[data-mode="voice"]'); await p.waitForTimeout(800); await closeReview(p); return play(); });
-  for (const r of results) console.log(JSON.stringify(r));
+  // (While a line plays, Play reads ■ Stop and a tap on it stops the line: the line is stopped on its own button first.)
+  await scenario('take → review ▶ You on a line → Play', async (p, take, play) => { await take(8); await p.waitForTimeout(1500); await p.click('#rv-lines .rv-line button[data-mode="voice"]'); await p.waitForTimeout(800); await p.click('#rv-lines .rv-line button[data-mode="voice"]'); await p.waitForTimeout(300); await closeReview(p); return play(); });
+  // Every path sounds (on the playback session, no live mic, no page error); the dim lane only closes the review.
+  let fails = 0;
+  for (const r of results) {
+    const silent = /nothing plays/.test(r.name);
+    const good = !r.error && !r.errs.length && r.liveMic === 0 && !r.notPlayback
+      && (silent ? r.starts === 0 && r.sess === null && r.review === false : r.starts > 0 && r.sess === 'playback' && r.audioSession === 'playback');
+    if (!good) fails++;
+    console.log(`${good ? 'PASS' : 'FAIL'} ${r.name}: ${JSON.stringify(r)}`);
+  }
   await b.close();
+  console.log(fails ? `${fails} FAILED` : `all ${results.length} ok`);
+  process.exit(fails ? 1 : 0);
 })();

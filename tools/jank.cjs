@@ -18,10 +18,10 @@ const fs = require('fs');
 const path = require('path');
 
 const BASE = process.env.BASE || 'http://localhost:8097/resonate/';
-const SHOTS = process.env.SHOTS || '/tmp/claude-0/-home-user-resonate/ff8222dc-0c50-507b-b424-c024937f0d1b/scratchpad/jank';
+const SHOTS = process.env.SHOTS === '0' ? null : process.env.SHOTS || '/tmp/claude-0/-home-user-resonate/ff8222dc-0c50-507b-b424-c024937f0d1b/scratchpad/jank'; // ("0": no screenshots, as shell.cjs)
 const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
 const XML = fs.readFileSync(path.join(__dirname, 'fixtures/play/score-pvg.musicxml'), 'utf8');
-fs.mkdirSync(SHOTS, { recursive: true });
+if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 
 let passes = 0, fails = 0;
 const ok = (c, msg) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${msg}`); if (c) passes++; else fails++; return c; };
@@ -62,7 +62,7 @@ const view = (p) => p.evaluate(() => {
     hold: d.hold, stageH: Math.round(st.height), svg: svg && [Math.round(svg.left), Math.round(svg.top), Math.round(svg.right), Math.round(svg.bottom)], stageB: Math.round(st.bottom), stageR: Math.round(st.right) };
 });
 const toggle = async (p, k) => { await p.click(`#mod-${k}`); await waitFn(p, IDLE); await sleep(500); };
-const shot = (p, name) => p.screenshot({ path: `${SHOTS}/score-${name}.png` });
+const shot = (p, name) => SHOTS && p.screenshot({ path: `${SHOTS}/score-${name}.png` });
 const inside = (v) => v.svg && v.svg[2] <= v.stageR + 0.5 && v.svg[3] <= v.stageB + 0.5;
 
 async function a3(sz) {

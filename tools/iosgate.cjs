@@ -53,6 +53,7 @@ const fs = require('fs');
     await p.waitForTimeout(900);
     const r = await p.evaluate(() => ({ made: window.__play.length, starts: window.__starts.map((s) => ({ id: s.id, state: window.__play[s.id].state })), status: document.getElementById('status').textContent }));
     console.log('A', JSON.stringify(r), errs);
+    ok(!errs.length, 'A. no page errors ' + JSON.stringify(errs));
     ok(r.starts.length > 0 && r.starts.every((s) => s.state === 'running'), 'A. first touch held 2.2 s: the note plays at the lift on a live context');
     await ctx.close();
   }
@@ -72,6 +73,7 @@ const fs = require('fs');
     await p.waitForTimeout(1500);
     const r = await p.evaluate(() => ({ made: window.__play.length, sess: window.resonateDebug().session?.kind || null, bar: !document.getElementById('loopbar').hidden, text: document.getElementById('lp-text').textContent, status: document.getElementById('status').textContent, live: window.__play.map((c) => c.state) }));
     console.log('B', JSON.stringify({ r1, ...r }), errs);
+    ok(!errs.length, 'B. no page errors ' + JSON.stringify(errs));
     ok(r.bar && r.sess === 'listen' && r.made === r1, 'B. loop round 2 listens on the context the tap started (no new context)');
     await p.click('#sing').catch(() => {});
     await ctx.close();

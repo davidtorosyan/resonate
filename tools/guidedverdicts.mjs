@@ -5,13 +5,13 @@
 // usage: node guidedverdicts.mjs   (V=1: print every PhraseRhythm)
 import { sing, melody } from './rhythmsynth.mjs';
 import { features, frames, metricFor } from './rhythmharness.mjs';
-import { findClicks, findOnsets, rhythmStats, rhythmObservations, firstSound, voiceCover, noteCover, tolOn } from '/home/user/resonate/public/rhythm.js';
-import { clickWave, CLICK_GAIN } from '/home/user/resonate/public/piano.js';
-import { gradeTake } from '/home/user/resonate/public/grade.js';
-import { MIN_RMS, ANALYSIS_LAG } from '/home/user/resonate/public/pitch.js';
-import { noteName } from '/home/user/resonate/public/music.js';
-import { PRACTICE, timeVerdict, tuneVerdict } from '/home/user/resonate/public/practice.js';
-import { roundResult } from '/home/user/resonate/public/coach.js';
+import { findClicks, findOnsets, rhythmStats, rhythmObservations, firstSound, voiceCover, noteCover, tolOn } from '../public/rhythm.js';
+import { clickWave, CLICK_GAIN } from '../public/piano.js';
+import { gradeTake } from '../public/grade.js';
+import { MIN_RMS, ANALYSIS_LAG } from '../public/pitch.js';
+import { noteName } from '../public/music.js';
+import { PRACTICE, timeVerdict, tuneVerdict } from '../public/practice.js';
+import { roundResult } from '../public/coach.js';
 
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; };
 

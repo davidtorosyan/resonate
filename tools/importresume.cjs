@@ -4,7 +4,8 @@
 //
 //   node importresume.cjs <scenario> [outdir]      scenarios:
 //     full     uninterrupted greensleeves3 (title page + 3 music pages) → song; records the event stream
-//              (fixtures/import/greensleeves3.events.json, previews as data URLs) and the MusicXML
+//              (into outdir; with RECORD=1 into fixtures/import/greensleeves3.events.json, previews as data
+//              URLs) and the MusicXML
 //     stub1    reload right after "End of Stub#1" → continues from the book (sheet 1 never LOADed
 //              again), same MusicXML as `full`
 //     prep     reload while the pages are being found → starts over from the stored PDF, same MusicXML
@@ -124,9 +125,11 @@ const after = (log, marker) => log.slice(Math.max(0, log.indexOf(marker)));
       ok((await jobsLeft(p)) === 0 && !(await dbg(p)).flag, 'job deleted once saved, no flag');
       const order = evs.map((e) => e.t + (e.phase ? ':' + e.phase : ''));
       ok(order.indexOf('phase:engine') > order.lastIndexOf('page') && order.indexOf('done') > order.lastIndexOf('notes'), 'order: pages → engine → … → done');
-      fs.writeFileSync('/home/user/tools/fixtures/import/greensleeves3.events.json', JSON.stringify({ name: 'greensleeves3.pdf (Chromium, real run)', recorded: new Date().toISOString(), events: evs }));
+      // The tracked fixture is written again only on purpose (RECORD=1); else the run's events go to OUT.
+      const evFile = process.env.RECORD === '1' ? path.join(__dirname, 'fixtures/import/greensleeves3.events.json') : `${OUT}/greensleeves3.events.json`;
+      fs.writeFileSync(evFile, JSON.stringify({ name: 'greensleeves3.pdf (Chromium, real run)', recorded: new Date().toISOString(), events: evs }));
       fs.writeFileSync(`${OUT}/log.txt`, await logText(p));
-      console.log('     fixture → /home/user/tools/fixtures/import/greensleeves3.events.json');
+      console.log(`     events → ${evFile}${process.env.RECORD === '1' ? '' : ' (RECORD=1 writes fixtures/import/greensleeves3.events.json)'}`);
     } else if (SC === 'stub1') {
       await p.goto(`${BASE}/resonate/pdf-import.html?pdf=${PDF}`);
       await until(p, async (d) => JSON.parse(d.flag || '{}').done >= 1, 20 * 60000, 'to stub 1');

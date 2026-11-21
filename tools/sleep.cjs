@@ -14,8 +14,8 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const BASE = process.env.BASE || 'http://localhost:8097/resonate/';
-const SHOTS = process.env.SHOTS || '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/sleep';
-fs.mkdirSync(SHOTS, { recursive: true });
+const SHOTS = process.env.SHOTS === '0' ? null : process.env.SHOTS || '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/sleep'; // ("0": no screenshots, as shell.cjs)
+if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 let passes = 0, fails = 0;
 const ok = (c, msg) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${msg}`); if (c) passes++; else fails++; return c; };
 const PROFILE = { active: 'p1', list: [{ id: 'p1', name: 'Dave', vol: { floor: -50, ceiling: -10 }, range: { low: 43, high: 64, comfortLow: 46, comfortHigh: 61, at: 1 } }] };
@@ -175,7 +175,7 @@ async function tuner() {
   await front(p, 'tuner');
   await p.click('#toggle');
   ok(await until(p, () => document.getElementById('toggle').dataset.recording === 'true' && window.__z.ctxs.some((c) => c.state === 'running') && window.__z.state().live === 1), 'tuner: a tap → listening again (a running context, a live track)');
-  await p.screenshot({ path: `${SHOTS}/tuner-back.png` });
+  if (SHOTS) await p.screenshot({ path: `${SHOTS}/tuner-back.png` });
   // A Start still waiting for the mic when the page is hidden stands down.
   await p.click('#toggle');
   await p.waitForTimeout(300);
@@ -209,7 +209,7 @@ async function sing() {
   let n = await front(p, 'Listen');
   await p.click('#listen');
   await sounds(p, 'Listen', n);
-  await p.screenshot({ path: `${SHOTS}/sing-listen-back.png` });
+  if (SHOTS) await p.screenshot({ path: `${SHOTS}/sing-listen-back.png` });
   await p.click('#listen'); // ■
   await p.waitForTimeout(300);
   // A chip key held.
@@ -276,7 +276,7 @@ async function voice() {
   n = await front(p, 'voice');
   await p.click(noteBtn);
   await sounds(p, 'voice: a stepper note', n);
-  await p.screenshot({ path: `${SHOTS}/voice-back.png` });
+  if (SHOTS) await p.screenshot({ path: `${SHOTS}/voice-back.png` });
   // pagehide during the test.
   await p.click('#range-btn');
   await until(p, () => window.resonateDebug().run?.phase === 'anchor', 5000);
@@ -311,7 +311,7 @@ async function record() {
   const n = await front(p, 'record');
   await p.click('#play');
   await sounds(p, 'record: Play', n);
-  await p.screenshot({ path: `${SHOTS}/record-back.png` });
+  if (SHOTS) await p.screenshot({ path: `${SHOTS}/record-back.png` });
   await p.waitForTimeout(500);
   await hide(p);
   await asleep(p, 'record playback hidden');
@@ -336,7 +336,7 @@ async function shell() {
   await front(p, 'shell tuner');
   await p.click('#main-btn');
   ok(await until(p, () => window.resonateDebug().tuner.live && window.__z.ctxs.some((c) => c.state === 'running')), 'shell tuner: a tap → listening again');
-  await p.screenshot({ path: `${SHOTS}/shell-tuner-back.png` });
+  if (SHOTS) await p.screenshot({ path: `${SHOTS}/shell-tuner-back.png` });
   await p.click('#songs-btn');
   await p.waitForSelector('#songs-body .song[data-id="amazing-grace"]', { timeout: 5000 });
   await p.click('#songs-body .song[data-id="amazing-grace"]');
@@ -349,7 +349,7 @@ async function shell() {
   const n = await front(p, 'shell Listen');
   await p.click('#listen');
   await sounds(p, 'shell Listen', n);
-  await p.screenshot({ path: `${SHOTS}/shell-listen-back.png` });
+  if (SHOTS) await p.screenshot({ path: `${SHOTS}/shell-listen-back.png` });
   // The Score in place (play.js): a press, then the background; back, nothing starts by itself — its
   // context stays suspended and the session isn't raised to "playback" (music the user started in
   // another app meanwhile isn't stopped); the next press sounds and sets "playback".
@@ -368,7 +368,7 @@ async function shell() {
   await asleep(p, 'shell Score hidden');
   const n1 = await front(p, 'shell Score');
   ok((await st(p)).session === 'auto', `shell Score: visible again — the session left "${(await st(p)).session}"`);
-  await p.screenshot({ path: `${SHOTS}/shell-score-back.png` });
+  if (SHOTS) await p.screenshot({ path: `${SHOTS}/shell-score-back.png` });
   h = await head();
   await touch(p, 'touchStart', [{ x: h.x, y: h.y, id: 1 }]); await p.waitForTimeout(150); await touch(p, 'touchEnd', []);
   await sounds(p, 'shell Score', n1);

@@ -42,6 +42,6 @@ const SP = '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a9323
   r = await p.evaluate(() => ({ perform: document.body.dataset.perform, lane: getComputedStyle(document.getElementById('lane')).display }));
   ok(r.perform === 'false' && r.lane !== 'none', 'Practice take shows the lane');
   await p.click('#sing'); await p.waitForTimeout(1200);
-  console.log('errors:', errs);
+  ok(!errs.length, 'no page errors ' + JSON.stringify(errs));
   await b.close();
 })();

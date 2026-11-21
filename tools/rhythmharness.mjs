@@ -1,8 +1,8 @@
 // Run the Sing page's own analysis on synthetic audio, in node:
 //  features(): rhythm.js makeFeatures fed 8192-sample chunks, as capture.js delivers them;
 //  frames(): what sing.js's requestAnimationFrame loop gets from pitch.js's reader.
-import { makeFeatures } from '/home/user/resonate/public/rhythm.js';
-import { createYin, FFT_SIZE, MIN_RMS, MIN_CLARITY, MIN_FREQ, MAX_FREQ, TAIL_SAMPLES, ANALYSIS_LAG } from '/home/user/resonate/public/pitch.js';
+import { makeFeatures } from '../public/rhythm.js';
+import { createYin, FFT_SIZE, MIN_RMS, MIN_CLARITY, MIN_FREQ, MAX_FREQ, TAIL_SAMPLES, ANALYSIS_LAG } from '../public/pitch.js';
 
 export function features(audio, sr) {
   const f = makeFeatures(sr);

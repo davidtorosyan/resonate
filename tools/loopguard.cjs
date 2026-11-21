@@ -64,6 +64,6 @@ const fs = require('fs');
   await take(6);
   const part = await p.evaluate(() => ({ whole: window.resonateDebug().take.whole, headline: document.getElementById('rv-headline').textContent, text: document.querySelector('#review .sheet').innerText }));
   ok(part.whole === false && !/\d\s*%/.test(part.text), 'a short take is "part of the song" (data), still no scores: ' + part.headline);
-  console.log('errors:', errs);
+  ok(!errs.length, 'no page errors ' + JSON.stringify(errs));
   await b.close();
 })();

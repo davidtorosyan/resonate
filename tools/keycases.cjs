@@ -72,6 +72,8 @@ const cases = {
 };
 (async () => {
   const b = await chromium.launch(); const p = await b.newPage();
+  let fails = 0;
+  p.on('pageerror', (e) => { fails++; console.log('FAIL page error', e.message); });
   await p.goto('http://localhost:8097/resonate/sing.html'); await p.waitForTimeout(300);
   for (const [name, xml] of Object.entries(cases)) {
     const r = await p.evaluate(async (xml) => {
@@ -87,6 +89,9 @@ const cases = {
       return { changes: a.changes.join(' | ') || '(none)', again: again.changes.filter((c) => /key/.test(c)).join(' | '), out };
     }, xml);
     console.log(`${name}\n   → ${r.changes}${r.again ? '   NOT IDEMPOTENT: ' + r.again : ''}\n      ${r.out}`);
+    if (r.again) { fails++; console.log(`FAIL ${name}: a second run changes keys again`); }
   }
   await b.close();
+  console.log(fails ? `${fails} FAILED` : 'all ok (every case idempotent)');
+  process.exit(fails ? 1 : 0);
 })();

@@ -9,10 +9,10 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 
 const BASE = process.env.BASE || 'http://localhost:8097/resonate/';
-const SHOTS = process.env.SHOTS || '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/shell2';
+const SHOTS = process.env.SHOTS === '0' ? null : process.env.SHOTS || '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/shell2'; // ("0": no screenshots, as shell.cjs)
 const FX = '/home/user/tools/fixtures';
 const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
-fs.mkdirSync(SHOTS, { recursive: true });
+if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 
 let passes = 0, fails = 0;
 const ok = (c, msg) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${msg}`); if (c) passes++; else fails++; return c; };
@@ -101,7 +101,7 @@ async function until(p, pred, ms = 15000) {
 }
 const rect = (p, sel) => p.$eval(sel, (e) => { const r = e.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, r: r.right, b: r.bottom, vis: !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' }; }).catch(() => null);
 const shown = async (p, sel) => !!(await rect(p, sel))?.vis;
-const shot = (p, sz, name) => sz.shots && p.screenshot({ path: `${SHOTS}/${name}-${sz.n}.png` });
+const shot = (p, sz, name) => sz.shots && SHOTS && p.screenshot({ path: `${SHOTS}/${name}-${sz.n}.png` });
 // No page scroll, nothing sideways; the top bar, the dock and Sing's head ≥ 44 px.
 const layout = (p) => p.evaluate(() => {
   const se = document.scrollingElement;

@@ -3,11 +3,11 @@
 // what the coach would be told (rhythmObservations).
 import { sing, melody } from './rhythmsynth.mjs';
 import { features, frames, metricFor } from './rhythmharness.mjs';
-import { findClicks, findOnsets, rhythmStats, rhythmObservations, firstSound, voiceCover, noteCover, tolOn } from '/home/user/resonate/public/rhythm.js';
-import { clickWave, CLICK_GAIN } from '/home/user/resonate/public/piano.js';
-import { gradeTake } from '/home/user/resonate/public/grade.js';
-import { analyzeLines } from '/home/user/resonate/public/coach.js';
-import { MIN_RMS, ANALYSIS_LAG } from '/home/user/resonate/public/pitch.js';
+import { findClicks, findOnsets, rhythmStats, rhythmObservations, firstSound, voiceCover, noteCover, tolOn } from '../public/rhythm.js';
+import { clickWave, CLICK_GAIN } from '../public/piano.js';
+import { gradeTake } from '../public/grade.js';
+import { analyzeLines } from '../public/coach.js';
+import { MIN_RMS, ANALYSIS_LAG } from '../public/pitch.js';
 const GUIDED_ONLY = process.env.ONLY === 'guided'; // (ONLY=guided: just the guided-span cases below)
 
 // 4/4: entries after rests, same-pitch repeats, a melisma, off-beat eighths, held notes.

@@ -1,5 +1,5 @@
 // timing.js: knots → map; partial tapping; merging; bounces; monotonic.
-import { knotsFromTaps, mergeKnots, makeTiming } from '/home/user/resonate/public/timing.js';
+import { knotsFromTaps, mergeKnots, makeTiming } from '../public/timing.js';
 let fails = 0;
 const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++; };
 const near = (a, b, e = 1e-6) => Math.abs(a - b) <= e;
@@ -33,7 +33,7 @@ ok(mono, 'monotonic');
 ok(makeTiming(mergeKnots([], knotsFromTaps([{ q: 0, t: 0 }]))) === null, 'one tap: no map');
 process.exitCode = fails ? 1 : 0;
 // A 30 s pause in the tapping (restarting the music) is left out.
-import('/home/user/resonate/public/timing.js').then(({ splitPauses }) => {
+import('../public/timing.js').then(({ splitPauses }) => {
   const taps = []; for (let q = 0; q < 12; q++) taps.push({ q, t: q * 0.75 + (q >= 6 ? 30 : 0) });
   const { runs, pauses } = splitPauses(knotsFromTaps(taps));
   let sg = []; for (const r of runs) sg = mergeKnots(sg, r);

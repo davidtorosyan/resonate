@@ -169,6 +169,7 @@ const SP = '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a9323
   await p.tap('#monitor'); await p.waitForTimeout(500);
   await p.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })));
   s = await st(); ok(!s.mon && !s.live && s.session === 'auto', 'pagehide: monitor off, session auto');
-  console.log('getUserMedia calls:', await p.evaluate(() => window.__gum), 'errors:', errs);
+  console.log('getUserMedia calls:', await p.evaluate(() => window.__gum));
+  ok(!errs.length, 'no page errors ' + JSON.stringify(errs));
   await b.close();
 })();

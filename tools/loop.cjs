@@ -56,6 +56,6 @@ const SP = '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a9323
   ok(!st.bar && !st.sess && back.endT === songTake && !back.part && /again/.test(st.sing), 'Stop: loop gone, the whole-song take is back');
   // Lyrics loop button.
   ok(!(await p.$('#loop-btn[hidden]')), 'Loop line button visible when idle');
-  console.log('errors:', errs);
+  ok(!errs.length, 'no page errors ' + JSON.stringify(errs));
   await b.close();
 })();

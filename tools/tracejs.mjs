@@ -4,12 +4,12 @@
 //   node tracejs.mjs
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
-const { createTrace, ocrWords, OCR_MARGIN } = await import('/home/user/resonate/public/omr/trace.js');
+const { createTrace, ocrWords, OCR_MARGIN } = await import('../public/omr/trace.js');
 const TRACE = /^([KBEGYNSF] [0-9]|[difymnr] |[+-][0-9])/;
 const HEADER = /^([KBEGYNSF]) /;
 let fails = 0;
 const ok = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) fails++; };
-const dir = '/home/user/tools/fixtures/trace';
+const dir = new URL('fixtures/trace', import.meta.url).pathname;
 for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.trace'))) {
   const lines = fs.readFileSync(`${dir}/${f}`, 'utf8').split('\n').filter((l) => TRACE.test(l));
   const blocks = [];
@@ -47,7 +47,7 @@ const k = t3.block('K 3 1,2 -'); const fl = t3.block(`F 3 HEADS ${encodeURICompo
 ok(k[0].milestone === 'book' && k[0].detail.n === 3 && k[0].detail.done.join() === '1,2', `K → book ${JSON.stringify(k[0].detail)}`);
 ok(fl[0].t === 'sheet' && fl[0].state === 'failed' && fl[0].reason === 'no staff: oops' && fl[0].step === 'HEADS', `F → failed ${JSON.stringify(fl[0])}`);
 // The log fallback's step lines (no trace): a one-page book's tag has no "#N".
-const { stepOfLine } = await import('/home/user/resonate/public/omr/omr.js');
+const { stepOfLine } = await import('../public/omr/omr.js');
 const one = stepOfLine('INFO  [score]                      null 0    | HEADS');
 const three = stepOfLine('INFO  [killing#3]   null 0    | BEAMS');
 ok(one?.sheet === 1 && one.step === 'HEADS' && three?.sheet === 3 && three.step === 'BEAMS' && !stepOfLine('INFO  [score]  null 0    | Book reaching PAGE'),

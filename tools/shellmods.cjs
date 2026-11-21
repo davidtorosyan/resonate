@@ -21,10 +21,10 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 
 const BASE = process.env.BASE || 'http://localhost:8097/resonate/';
-const SHOTS = process.env.SHOTS || '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/v87';
+const SHOTS = process.env.SHOTS === '0' ? null : process.env.SHOTS || '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/v87'; // ("0": no screenshots, as shell.cjs)
 const FX = '/home/user/tools/fixtures';
 const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
-fs.mkdirSync(SHOTS, { recursive: true });
+if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 
 let passes = 0, fails = 0;
 const ok = (c, msg) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${msg}`); if (c) passes++; else fails++; return c; };
@@ -115,7 +115,7 @@ async function until(p, pred, ms = 15000) {
   return d;
 }
 const waitFn = (p, src, ms = 20000) => p.waitForFunction(`(${src})()`, null, { timeout: ms, polling: 100 }).then(() => true, () => false);
-const shot = (p, name) => p.screenshot({ path: `${SHOTS}/${name}.png` });
+const shot = (p, name) => SHOTS && p.screenshot({ path: `${SHOTS}/${name}.png` });
 // What shows (a module sliding out isn't "shown").
 const state = (p) => p.evaluate(() => {
   const vis = (s) => { const e = document.querySelector(s); return !!e && e.getClientRects().length > 0 && !e.closest('[data-leaving]') && getComputedStyle(e).visibility !== 'hidden'; };

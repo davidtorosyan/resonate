@@ -6,7 +6,7 @@ import { loadSong, fixtureNames } from "./fixturelib.mjs";
 import {
   PRACTICE, groupPhrases, phraseKeys, newDoc, newSession, sessionFor, timeVerdict, tuneVerdict, phraseMarks,
   applyRound, answerSelfCheck, overrule, applyRun, markHeard, nextStep, pickPhrase, singFromHere, stepLabel,
-} from "../resonate/public/practice.js";
+} from "../public/practice.js";
 
 let pass = 0, fail = 0;
 const check = (name, ok, detail = "") => {

@@ -1,5 +1,5 @@
 // grade.js on synthetic takes: in time, early, late, drifting, silent, unclear, wrong, octave, stopped early.
-import { gradeTake, gradeLive, takeScore, timingTendency } from '/home/user/resonate/public/grade.js';
+import { gradeTake, gradeLive, takeScore, timingTendency } from '../public/grade.js';
 const FPS = 60;
 // A melody: quarter notes at 100 bpm with a few eighths and a rest.
 const spq = 0.6;

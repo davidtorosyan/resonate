@@ -107,4 +107,5 @@ const SP = '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a9323
   await p.screenshot({ path: SP + 'chipkeys.png' });
   console.log(errs.length ? 'ERRORS ' + errs.join(' | ') : 'no page errors');
   await b.close();
+  process.exit(errs.length ? 1 : 0); // (the rest is read, not judged: regress reports it as INFO)
 })();

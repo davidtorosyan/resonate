@@ -10,7 +10,7 @@
 // The "true" onset is the vowel onset (where a sung syllable's beat is felt); consonants come
 // before it: unvoiced ones as a noise burst, voiced ones as a quiet hum.
 
-import { clickWave, CLICK_GAIN } from '/home/user/resonate/public/piano.js';
+import { clickWave, CLICK_GAIN } from '../public/piano.js';
 export const SR = 48000;
 
 function biquad(type, f, Q, sr = SR) {

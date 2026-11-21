@@ -26,6 +26,7 @@ const { chromium } = require('playwright');
   await p.click('#listen'); await p.waitForTimeout(1800); out.push(await state('interrupted → new context'));
   for (const o of out) console.log(JSON.stringify(o));
   const ok = out[0].sounding > 0 && out[1].sess === null && /didn't start/.test(out[1].status) && out[2].made > out[1].made && out[2].sounding > 0 && out[3].made > out[2].made && out[3].sounding > 0;
-  console.log(ok ? 'PASS' : 'FAIL', 'errors:', errs);
+  console.log(ok && !errs.length ? 'PASS' : 'FAIL', 'errors:', errs);
   await b.close();
+  process.exit(ok && !errs.length ? 0 : 1);
 })();

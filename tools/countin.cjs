@@ -2,9 +2,10 @@
 // Every click, count-in and guide, must sit on one grid with the bar-1 downbeat.
 const { chromium } = require('playwright');
 const fs = require('fs');
-const XML = '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/xml/';
+const path = require('path');
+const XML = path.join(__dirname, 'fixtures/sing/'); // pickup8 (an eighth pickup in 4/4), six8 (6/8, an eighth pickup)
 (async () => {
-  const src = fs.readFileSync('/home/user/tools/review.cjs', 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, 'review.cjs'), 'utf8');
   const init = eval(src.slice(src.indexOf('await p.addInitScript(() => {') + 'await p.addInitScript('.length, src.indexOf('  });\n  await p.goto') + 3));
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   let fails = 0;

@@ -3,11 +3,13 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 (async () => {
-  const src = fs.readFileSync('/home/user/tools/review.cjs', 'utf8');
+  const src = fs.readFileSync(require('path').join(__dirname, 'review.cjs'), 'utf8');
   const init = eval(src.slice(src.indexOf('await p.addInitScript(() => {') + 'await p.addInitScript('.length, src.indexOf('  });\n  await p.goto') + 3));
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   const fails = [];
   const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) fails.push(what); };
+  // 125%: the tempo is per song since v71 (resonate.sing.rate, the old global one, is deleted on load).
+  const AT125 = { 'resonate.sing.song': 'amazing-grace', 'resonate.sing.rates': JSON.stringify({ 'amazing-grace': 1.25 }) };
   const page = async (store = {}) => {
     const ctx = await b.newContext({ viewport: { width: 390, height: 844 } });
     const p = await ctx.newPage();
@@ -42,7 +44,7 @@ const fs = require('fs');
 
   // 1. Listen: every note in the span played starts at songT0 + n.t; only a few seconds wait.
   {
-    const { p, ctx, errs } = await page({ 'resonate.sing.rate': 1.25 });
+    const { p, ctx, errs } = await page(AT125);
     await p.click('#listen');
     await p.waitForTimeout(16000);
     const r = await p.evaluate(() => {
@@ -55,9 +57,10 @@ const fs = require('fs');
       const due = d.notes.filter((n) => n.t < now + 4); // must be scheduled by now (5 s ahead)
       const miss = due.filter((n) => !piano.some((s) => Math.abs(s.when - (songT0 + n.t)) < 0.002));
       const ahead = Math.max(...piano.map((s) => s.when - s.at));
-      return { notes: d.notes.length, due: due.length, miss: miss.length, scheduled: piano.length, ahead: +ahead.toFixed(2), maxWaiting: window.__maxWaiting, keep: window.__const, sess: d.session?.kind, entry };
+      return { notes: d.notes.length, due: due.length, miss: miss.length, scheduled: piano.length, ahead: +ahead.toFixed(2), maxWaiting: window.__maxWaiting, keep: window.__const, sess: d.session?.kind, entry, rate: d.rate };
     });
     console.log(JSON.stringify(r));
+    check(r.rate === 1.25, `the song's own tempo: 125% (${r.rate})`);
     check(r.sess === 'listen', 'Listen still playing after 16 s');
     check(r.due > 20 && r.miss === 0, `every note due so far is scheduled on time (${r.due} due, ${r.miss} missing)`);
     check(r.scheduled < r.notes, `not the whole song at once (${r.scheduled} of ${r.notes})`);
@@ -126,7 +129,7 @@ const fs = require('fs');
   // 4. The page held up longer than the lookahead (a prompt() open): sounds that missed their
   // start are skipped, not started late; scheduling picks up again after.
   {
-    const { p, ctx, errs } = await page({ 'resonate.sing.rate': 1.25 });
+    const { p, ctx, errs } = await page(AT125);
     await p.click('#listen');
     await p.waitForTimeout(2000);
     await p.evaluate(() => { const t = performance.now(); while (performance.now() - t < 6500) {} });

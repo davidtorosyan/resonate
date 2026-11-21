@@ -124,9 +124,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const fs = await import('node:fs');
   const files = process.argv.slice(2);
   if (!files.length) {
-    for (const f of fs.readdirSync('/home/user/tools/fixtures/import')) if (f.endsWith('.events.json')) files.push(`/home/user/tools/fixtures/import/${f}`);
-    for (const d of fs.readdirSync('/home/user/tools/fixtures/reader')) {
-      const f = `/home/user/tools/fixtures/reader/${d}/events.json`;
+    for (const f of fs.readdirSync(new URL('fixtures/import', import.meta.url))) if (f.endsWith('.events.json')) files.push(new URL(`fixtures/import/${f}`, import.meta.url).pathname);
+    for (const d of fs.readdirSync(new URL('fixtures/reader', import.meta.url))) {
+      const f = new URL(`fixtures/reader/${d}/events.json`, import.meta.url).pathname;
       if (fs.existsSync(f) && JSON.parse(fs.readFileSync(f, 'utf8')).real) files.push(f);
     }
   }

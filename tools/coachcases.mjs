@@ -3,8 +3,8 @@
 // exactly when the previous cue is fixed; no %, fail, wrong, score, or digits outside note names.
 // usage: node coachcases.mjs   (fixtures: node dumpnotes.cjs)
 import { loadSong } from "./fixturelib.mjs";
-import { groupPhrases, timeVerdict, tuneVerdict } from "../resonate/public/practice.js";
-import { roundResult, runResult, securedText, analyzeLines, feedback, rhythmText } from "../resonate/public/coach.js";
+import { groupPhrases, timeVerdict, tuneVerdict } from "../public/practice.js";
+import { roundResult, runResult, securedText, analyzeLines, feedback, rhythmText } from "../public/coach.js";
 
 let pass = 0, fail = 0;
 const texts = [];

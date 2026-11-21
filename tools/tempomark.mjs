@@ -1,5 +1,5 @@
 // pdfprep tempoMark on text rows: music-font glyphs, Unicode, letters of a music text font.
-import { tempoMark } from '/home/user/resonate/public/omr/pdfprep.js';
+import { tempoMark } from '../public/omr/pdfprep.js';
 const row = (...strs) => ({ items: strs.map((str, i) => ({ str, transform: [1, 0, 0, 1, i * 10, 500] })) });
 const cases = [
   [row('Fast three, in one', 'h.', '=', '58'), { bpm: 58, unit: 'half', dotted: true }],

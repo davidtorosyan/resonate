@@ -9,16 +9,11 @@
 // 10 MB is held (pdf-large) until the song is converted; a delete elsewhere; SONG_LIMIT 20. Nothing echoes.
 // v90 review: the engine isn't in a song's fingerprint (a v89 tab's form is the same); a delete pulled
 // takes the song out of the conversion queue and its stored jobs (omr/queue.js, omr/jobs.js — faked), not
-// once the space changed; a v89 tab (its sync.js from git, 4b0ec14) and a v90 tab taking turns on one
+// once the space changed; a v89 tab (its sync.js vendored from 4b0ec14: fixtures/sync/v89-sync.js) and a v90 tab taking turns on one
 // device send nothing up again; a song a v89 device stored as "null" is a PDF only — never sent up as that
 // text, no ping-pong with the PDF-only row.
 //   node synclib.mjs
 import { register } from 'node:module';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 register('./synclib/hooks.mjs', import.meta.url);
 const { W, device, UID } = await import('./synclib/world.mjs');
 const S = await import(new URL('../public/sync.js', import.meta.url).href);
@@ -180,12 +175,7 @@ check(!C.queue.length && !C.jobs.length && events.some((e) => e.gone?.includes(P
 // them), and a fresh PDF only that the v89 tab sent first as "null" is put right once, then left alone.
 device('A');
 let V89 = null;
-try {
-  const src = execFileSync('git', ['-C', new URL('..', import.meta.url).pathname, 'show', '4b0ec14:public/sync.js'], { encoding: 'utf8' });
-  const f = join(mkdtempSync(join(tmpdir(), 'synclib-')), 'v89-sync.mjs'); // (the hooks fake its imports too)
-  writeFileSync(f, src);
-  V89 = await import(pathToFileURL(f).href);
-} catch (err) { console.log(`skip 11: v89's sync.js isn't in this checkout's history (${err.message.split('\n')[0]})`); }
+V89 = await import(new URL('fixtures/sync/v89-sync.js', import.meta.url).href); // (v89's sync.js, vendored from 4b0ec14; the hooks fake its imports too)
 if (V89) {
   const P5 = { id: 's000aab1', title: 'Fresh Pdf', xml: null, added: 7000, source: 'pdf', titleAuto: true };
   A.songs.set(P5.id, P5); A.pdfs.set(P5.id, { id: P5.id, pdf: pdfBytes(60, 5), name: 'Fresh_Pdf.pdf', bytes: 60 });
