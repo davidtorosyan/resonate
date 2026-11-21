@@ -112,8 +112,9 @@ cx1 cy1 cx2 cy2 x2 y2), acc (shape), flag (shape), dot, word (text), lyric (text
 clutter. Not produced: per-step OCR word boxes (the Reader gets them from the WebOCR native), letters on heads before
 PAGE (the clef/key aren't applied until then).
 
-**How to A/B** (native; `tools/trace-ab.sh`, `trace-cmp.sh`, `trace-resume.sh`, `trace-jfr.sh` outside the repo do this
-for the test scores): build in a checkout with the patches applied (`./gradlew -PtheMinJavaVersion=17 :app:installDist`),
+**How to A/B** (native; `tools/trace-ab.sh`, `trace-cmp.sh`, `trace-resume.sh` and `trace-jfr.sh` do this for the test
+scores — `SP`, `JDK`, `INST` from the environment, as `tools/accuracy/env.sh` reads them; the web's `-constant`s are
+`tools/accuracy/constants.sh`): build in a checkout with the patches applied (`./gradlew -PtheMinJavaVersion=17 :app:installDist`),
 then run the same TIFF twice, the second time with the trace, and compare the MusicXML without its `encoding-date`:
 ```
 B=app/build/install/app/bin/Audiveris

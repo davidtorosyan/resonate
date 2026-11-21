@@ -136,6 +136,24 @@ The accuracy loop's scripts are in this session's scratchpad, `bin/`: acc-native
 
 **Must stay identical:** every suite that passed before still passes. public/ is untouched.
 
+### Phase 1 — as built (2026-11-21; 7d8e62f for 1.1–1.5, the commit after it for 1.6–1.10; public/ untouched)
+
+- **Verdicts:** `regress.sh fast` (17 rows, ~2 min, `npm test` in tools/) and main (the fast tier, then the browser suites) end with a table and exit 1 on a FAIL. A FAIL line under exit 0 is a FAIL too. "Checkout untouched" compares git status, and the content of what was already uncommitted, before and after the run, so it also works in a dirty checkout. Logs go to `REGRESS_OUT`. The fast tier also runs `accuracy/constcheck.mjs` (1.9).
+- **Stale tests the honest checks found, fixed in the tests:**
+  - practicecases (182) and coachcases (90) had none.
+  - playafter: while a review line plays, Play reads ■ Stop.
+  - play.cjs, since de820b7: a duet partner's own staff keeps its words (`words.also`), and score-voice-partner's Both carries the words.
+  - playpaper Z: without the owner's Piano Man the spread check used synth-pvg, one page at 5 px; it now uses synth-pvg three times over.
+  - shellsing's two home checks read the state before their wait (1.7).
+- **Real, reported, not fixed (public/):** synclib 9b fails in most runs, at HEAD too. sync.js's next pass notes a song deleted during a space change with a stamp newer than the pulled tombstone (take1: `modified_at <= ours`). So the queue entry and stored jobs left behind are cleared only when both land in the same millisecond.
+- **Beyond the letter of the plan:**
+  - keycases is in main.
+  - The Sing suites that printed `errors:` now check for no page errors; so do stuckctx, unlock and voicetest.
+  - titlecases skips the owner's PDFs that sitetest doesn't have (`/wl.pdf` is `wichita.pdf` now).
+  - tracejs and importcontract use relative paths.
+- **1.9:** acc-native, acc-trace and ab.sh, plus pairs-run.sh (round 1's pairs15.sh, its songs as arguments), share `env.sh` (SP required; JDK and INST defaulted). The trace-*.sh scripts stay in tools/ and use the same `env.sh`. The workflow script is copied as `review-workflow.js` (the pairs folder as `args.dir`). The bar and triage tools moved as they were, except that fmt.py takes its data file as an argument. pairs.cjs keeps its scratchpad default, because the running accuracy work calls it.
+- **Not run here:** `IMPORT_E2E=1` (the real conversions) and the live suites (account, sync2–4, mcp1/2).
+
 ## Phase 2 — Dead code and leftovers (one release; nothing visible)
 
 **2.1 Functions nothing calls.** grep finds only their definitions:

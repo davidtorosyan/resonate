@@ -507,13 +507,14 @@ async function runSize(browser, w, h, list) {
       if (v === "score") {
         // the full score: the first system shows every staff; later ones may leave out a staff that
         // rests through them (condensed) — never one staff of a grand staff; words only under the
-        // tune's staff
+        // tune's staff and a second singer's own (words.also, v93: a duet partner's staff)
         const per = R.per; // part → its staff count (the tester's reading)
         let n0 = 0; const grandN = [], tuneN = [];
         for (const pid of k.parts) {
           const st = per[pid] || 1;
           if (st > 1) grandN.push(Array.from({ length: st }, (_, i) => String(n0 + i + 1)));
           if (pid === k.words.part) tuneN.push(String(n0 + (k.words.staff ?? 1)));
+          else if (k.words.also?.includes(pid)) for (let i = 1; i <= st; i++) tuneN.push(String(n0 + i));
           n0 += st;
         }
         ok(R.sys[0] && R.sys[0].length === n0, `${tag}: first system ${R.sys[0]} (${n0} staves)`);
@@ -523,7 +524,9 @@ async function runSize(browser, w, h, list) {
       } else {
         const staves = v === "both" ? (k.kind === "piano" ? 2 : k.kind === "hymn" ? 2 : k.parts.length) : 1;
         ok(R.staves.length === 1 && R.staves[0] === staves, `${tag}: staves per system ${R.staves} ≠ ${staves}`);
-        const wantLyrics = v === "melody" || (name === "synth-voice");
+        // (a voice-only song's Both is the tune with its words: synth-voice; score-voice-partner, whose
+        // partner part sings in too few bars to be in Both)
+        const wantLyrics = v === "melody" || name === "synth-voice" || name === "score-voice-partner";
         ok(wantLyrics ? R.verse > 0 : R.verse === 0, `${tag}: lyrics ${R.verse}`);
       }
       if (name === "amazing-grace") {

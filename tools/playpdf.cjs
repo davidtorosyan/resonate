@@ -30,8 +30,8 @@ const fs = require("fs");
 const path = require("path");
 const BASE = process.env.BASE || "http://localhost:8097/resonate/";
 const SCRATCH = "/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad";
-const SHOTS = process.env.SHOTS || path.join(SCRATCH, "v88");
-fs.mkdirSync(SHOTS, { recursive: true });
+const SHOTS = process.env.SHOTS === "0" ? null : process.env.SHOTS || path.join(SCRATCH, "v88"); // ("0": no screenshots)
+if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(",")) : null;
 const run = (s) => !ONLY || ONLY.has(s);
 let fails = 0, passes = 0;
@@ -40,7 +40,7 @@ const sleep = (t) => new Promise((r) => setTimeout(r, t));
 
 // --- fixtures -------------------------------------------------------------------------------------
 const FIX = path.join(__dirname, "fixtures");
-const unzip = (f) => { const out = fs.mkdtempSync(path.join(SCRATCH, "mxl-")); require("child_process").execFileSync("unzip", ["-o", "-q", f, "-d", out]); const x = fs.readdirSync(out).find((n) => n.endsWith(".xml")); return fs.readFileSync(path.join(out, x), "utf8"); };
+const unzip = (f) => { const out = fs.mkdtempSync(path.join(require("os").tmpdir(), "playpdf-mxl-")); require("child_process").execFileSync("unzip", ["-o", "-q", f, "-d", out]); const x = fs.readdirSync(out).find((n) => n.endsWith(".xml")); return fs.readFileSync(path.join(out, x), "utf8"); };
 const GS_XML = unzip(path.join(FIX, "trace/greensleeves.mxl"));
 const GS_EV = require(path.join(FIX, "trace/greensleeves.events.json")).events.map((x) => x.ev);
 // greensleeves3.pdf = a title page + the first 3 sheets: the MusicXML without its 4th page
@@ -161,7 +161,6 @@ const register = (page) => page.evaluate(() => {
     ok(worstY <= 16, `M staff tops / bottoms within ${worstY.toFixed(1)} px of the engine's (of ${GH}: a system's height rounds its staves to 40 tenths)`);
     // the PDF pages: found by staves; the same pages; the owner's
     const ids = await seed(page, [{ name: "GS3", xml: GS3_XML, pdf: GS3_PDF }, { name: "GS3r", xml: GS3_XML, pdf: GS3_PDF, pages: [4, 3, 2] }, ...(GS4_PDF ? [{ name: "GS4", xml: GS_XML, pdf: GS4_PDF }] : []), ...(HAVE_K ? [{ name: "Killing", xml: fs.readFileSync(K_XML, "utf8"), pdf: fs.readFileSync(K_PDF) }] : [])]);
-    fs.writeFileSync(path.join(SCRATCH, "v88/ids.json"), JSON.stringify(ids));
     await openSong(page, ids.GS3);
     let p = await pdfOn(page);
     await sleep(1200); // (kept with the song's record: saved a second later)
@@ -227,7 +226,6 @@ const register = (page) => page.evaluate(() => {
     }
     await ctx.close();
   }
-  const ids = JSON.parse(fs.readFileSync(path.join(SCRATCH, "v88/ids.json"), "utf8"));
 
   // ===== O, T, R, F: desktop ============================================================================
   if (run("O") || run("T") || run("R") || run("F")) {
@@ -269,7 +267,7 @@ const register = (page) => page.evaluate(() => {
     const bw = await page.evaluate(() => getComputedStyle(document.querySelector("#pdfwrap .pdffocus")).borderTopWidth);
     ok(bw === "3px", `O the border 3 px (${bw})`);
     ok(p.bar?.focus && p.bar.again, "O the PDF's controls: − + ⌖ ⟳");
-    await page.screenshot({ path: path.join(SHOTS, "o-stretch.png") });
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "o-stretch.png") });
     // the bar no taller with the PDF view on
     const barH = await page.evaluate(() => document.getElementById("bar").getBoundingClientRect().height);
     // ⌖ after a pan
@@ -377,7 +375,7 @@ const register = (page) => page.evaluate(() => {
     // each border on one of the engine's systems
     const sysOk = p.focus.rects.filter((r) => r.page === p.page).every((r) => grid(p.page - 1).systems.some((sy) => Math.abs(r.y0 * GH - (sy.box[1] - 28.5)) < 16 && Math.abs(r.y1 * GH - (sy.box[3] + 28.5)) < 16));
     ok(sysOk, "Z every rect on one of the engine's systems");
-    await page.screenshot({ path: path.join(SHOTS, "z-open.png") });
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "z-open.png") });
     // fitted first (double tap toggles)
     const c = [wr[0] + wr[2] / 2, wr[1] + wr[3] / 2];
     await tap(ctx, page, ...c); await sleep(80); await tap(ctx, page, ...c);
@@ -425,7 +423,7 @@ const register = (page) => page.evaluate(() => {
     await pdfReady(page, "p.fit && Math.abs(p.fit.bh - window.resonateDebug().play.pdf.fit.bh) < 1");
     p = await settled(page, 900);
     ok(p.on && Math.abs(p.z - zb) < 0.02 && p.fit.bh < 800, `Z rotated: still ×${p.z.toFixed(2)} on the refitted page (${Math.round(p.fit.bw)}×${Math.round(p.fit.bh)}${p.spread ? ", a spread" : ""})`);
-    await page.screenshot({ path: path.join(SHOTS, "z-rotated.png") });
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "z-rotated.png") });
     await ctx.close();
   }
 
@@ -456,7 +454,7 @@ const register = (page) => page.evaluate(() => {
       return { w: [w.width, w.height], b: [b.left - w.left, b.top - w.top, b.width, b.height], tr, page: f?.pdf?.page, bars: f?.measures?.length, again: !document.getElementById("pdf-again").hidden };
     });
     ok(r.page === 2 && r.bars > 0 && r.w[0] > 300 && r.b[2] > 100 && r.again && /scale\(/.test(r.tr), `S the shell's Score: 📄 opens the same view (${JSON.stringify(r)})`);
-    await page.screenshot({ path: path.join(SHOTS, "s-shell.png") });
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "s-shell.png") });
     await ctx.close();
   }
 
@@ -479,10 +477,10 @@ const register = (page) => page.evaluate(() => {
     await page.mouse.up();
     await sleep(300);
     const f = await page.evaluate(() => window.resonatePlay.focus());
-    await page.screenshot({ path: path.join(SHOTS, "k-stretch-score.png") });
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "k-stretch-score.png") });
     const p = await pdfOn(page);
     ok(p.focus?.rects.length >= 1 && p.borders.length >= 1 && p.z > 1, `K a stretch over two lines (bars ${f.numbers}): ${p.focus?.rects.length} rects on PDF page ${p.page}, ×${p.z.toFixed(2)}`);
-    await page.screenshot({ path: path.join(SHOTS, "k-stretch-pdf.png") });
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "k-stretch-pdf.png") });
     await ctx.close();
   }
 

@@ -93,6 +93,8 @@ const dbg = (p) => p.evaluate(() => {
   return { song: d.song, tuner: d.tuner, overlay: d.overlay, history: history.state,
     sing: s && { session: s.session, nowT: s.nowT, title: s.score?.title, line2: s.notes[s.lines[2]?.[0]]?.t, card: s.practice.card, on: s.practice.on, takeEnd: s.take?.endT ?? null } };
 }).catch(() => null);
+// Home, settled: no song, nothing sliding, the home layout applied (songview drops data-song when it lays home out).
+const home = (x) => !x.song.open && !x.song.moving && !x.song.closing && !x.song.laid;
 async function until(p, pred, ms = 15000) {
   const end = Date.now() + ms;
   let d = null;
@@ -252,8 +254,9 @@ async function runSize(sz) {
   ok(d?.sing?.session?.kind === 'listen', 'and Listen plays');
   await p.waitForTimeout(500);
   await p.click('#brand');
-  d = await until(p, (x) => !x.song.open && !x.song.moving && !x.song.closing, 5000); // (v87: Sing slides out first)
+  await until(p, (x) => !x.song.open && !x.song.moving && !x.song.closing, 5000); // (v87: Sing slides out first)
   await p.waitForSelector('#nextup:not([hidden])', { timeout: 3000 }).catch(() => {});
+  d = await until(p, home, 3000); // (the state read after the wait: home laid out, nothing moving)
   ok(!d?.song.open && !d.song.state.busy && !d.sing?.session, '◎ home: Sing closed, nothing playing');
   ok(d?.tuner.form === 'full' && await shown(p, '.gauge') && await shown(p, '#main-btn') && await shown(p, '#nextup') && !(await shown(p, '#sing-region')), 'the full tuner, Start and Next-up back');
   ok(await p.evaluate((n) => history.length === n + 1 && !history.state?.shellPage, homeEntries) || await p.evaluate(() => !history.state?.shellPage), 'the song\'s history entry gone');
@@ -272,8 +275,9 @@ async function runSize(sz) {
   ok(!!d && /susanna/i.test(d.sing?.title || '') && /susanna/i.test(await p.textContent('#song-pill .t')), `a MusicXML added: Sing switches to it (${d?.song.state?.song} "${d?.sing?.title}")`);
   ok(!(await shown(p, '#songs')) && /index\.html$/.test(p.url()), 'the list closed, no navigation');
   await p.goBack();
-  d = await until(p, (x) => !x.song.open && !x.song.moving && !x.song.closing, 5000);
+  await until(p, (x) => !x.song.open && !x.song.moving && !x.song.closing, 5000);
   await p.waitForFunction(() => /susanna/i.test(document.querySelector('#nextup .t')?.textContent || ''), null, { timeout: 3000 }).catch(() => {});
+  d = await until(p, home, 3000); // (read after the wait, as above)
   const nu = await p.textContent('#nextup .t'); ok(!d?.song.open && d.tuner.form === 'full' && /susanna/i.test(nu), `Back from the song → home (Next-up: that song) [open ${d?.song.open} form ${d?.tuner.form} nextup "${nu}"]`);
 
   // --- a reload with a song open comes home --------------------------------------------------------------

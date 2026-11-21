@@ -2,6 +2,10 @@
 const { chromium } = require('playwright');
 const SP = '/tmp/claude-0/-home-user-resonate/6042bc19-5f16-52ea-a295-8ea17a932323/scratchpad/';
 const LO = Number(process.env.LO || 43), HI = Number(process.env.HI || 64), ANCHOR = Number(process.env.ANCHOR || 52);
+// Checks what the output always showed: the range found = the singer's, no reference note with a live mic
+// (iOS plays quietly while the mic is open), the steppers, the volume calibration, no page errors.
+let fails = 0;
+const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++; };
 (async () => {
   const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   const p = await b.newPage({ viewport: { width: 390, height: 844 } });
@@ -58,22 +62,34 @@ const LO = Number(process.env.LO || 43), HI = Number(process.env.HI || 64), ANCH
     if (d.run?.phase === 'listen' && s !== last) { last = s; process.stdout.write(`${d.run.target}${d.run.dir < 0 ? '↓' : '↑'} `); }
     if (d.run?.phase === 'listen' && !(await p.$('#test[hidden]')) && !global.shot) { global.shot = 1; await p.screenshot({ path: SP + 'voice-test.png' }); }
     if (!d.run) break;
-    if (Date.now() - t0 > 240000) { console.log('TIMEOUT', s); break; }
+    if (Date.now() - t0 > 240000) { ok(false, 'the range test ends within 4 min: ' + s); break; }
   }
   console.log(`\nrange test took ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   const prof = (await p.evaluate(() => window.resonateDebug().profiles)).list[0];
   console.log('range:', JSON.stringify(prof.range), 'expected low', LO, 'high', HI);
   console.log('msg:', await p.textContent('#msg'));
+  ok(prof.range?.low === LO && prof.range?.high === HI, `the range found is the singer's (${prof.range?.low}–${prof.range?.high}, want ${LO}–${HI})`);
+  ok(prof.range && prof.range.low < prof.range.comfortLow && prof.range.comfortLow < prof.range.comfortHigh && prof.range.comfortHigh < prof.range.high, 'comfortable inside the limits');
   const notesLog = await p.evaluate(() => window.__notes);
+  const live = await p.evaluate(() => window.__streams.filter((s) => s.getTracks().some((t) => t.readyState === 'live')).length);
+  ok(notesLog.length > 0 && notesLog.every((n) => !n.micLive), `no reference note starts with a live mic track (${notesLog.filter((n) => n.micLive).length} of ${notesLog.length})`);
+  ok(notesLog.every((n) => n.session === 'playback'), 'every reference note on the playback session');
+  ok(live === 0, `no mic track left live after the test (${live})`);
   console.log('reference notes:', notesLog.length, 'with the mic live:', notesLog.filter((n) => n.micLive).length, 'sessions:', [...new Set(notesLog.map((n) => n.session))].join(','), 'streams opened:', await p.evaluate(() => window.__streams.length), 'still live:', await p.evaluate(() => window.__streams.filter((s) => s.getTracks().some((t) => t.readyState === 'live')).length));
   await p.screenshot({ path: SP + 'voice-range.png', fullPage: true });
   // Steppers: comfortable low +1, and an invalid move.
   await p.locator('.stepper[data-k="comfortLow"] button').last().click();
-  console.log('after +1:', JSON.stringify((await p.evaluate(() => window.resonateDebug().profiles)).list[0].range));
+  const after = (await p.evaluate(() => window.resonateDebug().profiles)).list[0].range;
+  console.log('after +1:', JSON.stringify(after));
+  ok(after.comfortLow === prof.range.comfortLow + 1, `comfortable low + 1 (${prof.range.comfortLow} → ${after.comfortLow})`);
   // Volume
   await p.click('#vol-btn');
   for (let i = 0; i < 40; i++) { await p.waitForTimeout(300); if (!(await p.evaluate(() => window.resonateDebug().run))) break; }
-  console.log('vol:', JSON.stringify((await p.evaluate(() => window.resonateDebug().profiles)).list[0].vol), 'msg:', await p.textContent('#msg'));
-  console.log(errs.length ? 'ERRORS ' + errs.join(' | ') : 'no page errors');
+  const vol = (await p.evaluate(() => window.resonateDebug().profiles)).list[0].vol, msg = await p.textContent('#msg');
+  console.log('vol:', JSON.stringify(vol), 'msg:', msg);
+  ok(vol && Number.isFinite(vol.floor) && Number.isFinite(vol.ceiling) && vol.floor < vol.ceiling && /Volume saved/.test(msg), 'the volume calibration saved (quiet below loud)');
+  ok(!errs.length, 'no page errors ' + errs.join(' | '));
   await b.close();
+  console.log(fails ? `${fails} FAILED` : 'all ok');
+  process.exit(fails ? 1 : 0);
 })();

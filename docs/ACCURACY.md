@@ -9,7 +9,9 @@ patch the engine, bump the engine version — repeat until there are none.
    yellowsub — 73 pages).
 2. **Native conversion** with the site's engine: the browser's TIFF (`tools/mktiff.cjs`) → native Audiveris built from
    omr-build (JDK 25 at /home/user/jdk, `build.sh` steps; the clone + install dirs in the session scratchpad), the web's
-   constants (`indentations=false`, `useParallelism=false`). Script: scratchpad `bin/acc-native.sh` (INST=, OUT=).
+   constants (`indentations=false`, `useParallelism=false`: `tools/accuracy/constants.sh`, checked against the worker by
+   the fast tier). Script: `tools/accuracy/acc-native.sh` (SP=, JDK=, INST=, OUT=; `acc-trace.sh` the same with the
+   0009 trace; `ab.sh` an install against another; `env.sh` says where things are).
 3. **Pairs:** `tools/accuracy/pairs.cjs <slug>` — the song stored in a fresh local profile with its PDF and pages, Play
    opened (Full score, names off), and per PDF system: Resonate's drawing (`scoreCrop`), the same bars on the PDF
    (`pdfCrop`) and the notes as text (`focusData`). 246 systems over the 9 songs; Piano Man's 5 boxed fills have no
@@ -24,7 +26,8 @@ patch the engine, bump the engine version — repeat until there are none.
 
 ## Round 1 (2026-11-20, engine v10)
 The comparison is done: 489 findings (365 play wrong) in 35 patterns. Triage with every finding's list:
-scratchpad `acc/triage.md` (tools in scratchpad `triage/`). It is not in the repo: it names bars of the owner's songs.
+scratchpad `acc/triage.md` (tools: `tools/accuracy/triage/`; the bar tools `cmp.py`, `bar.py`, `short.py`,
+`voicecheck.py` beside them). It is not in the repo: it names bars of the owner's songs.
 Its P1 patterns and where each stands:
 - 1 + 4, phantom / merged hollow heads (HEADS, `evalBlackAsVoid`?), 146 findings: an engine agent, own worktree
   `audiveris-heads` (branch heads-void, from keys-heads-ledgers).
@@ -46,10 +49,10 @@ patterns: 8 small notes, 11 navigation marks, 12 dots, 13 flags, 14 melisma syll
   detection), the P2/P3 patterns. Round 2 starts from the owner's songs reconverted with engine 15.
 
 ## Round 2 (2026-11-21, engine 15)
-- Pairs: scratchpad `acc/pairs15/` (from the native engine-15 exports `acc/r15/`; script `pairs15.sh`; 246 systems; the
+- Pairs: scratchpad `acc/pairs15/` (from the native engine-15 exports `acc/r15/`; script `pairs15.sh`, now `tools/accuracy/pairs-run.sh <slug>…` with RUN=r15 PAIRS=pairs15; 246 systems; the
   clean-ups as of de820b7).
-- Comparison + triage against round 1: workflow script `accuracy-review-r2.js` (session workflows folder), run
-  wf_a9cfed85-67b. Resume it with `resumeFromRunId` and the same args if it's stopped. The triage goes to `acc/triage15.md`.
+- Comparison + triage against round 1: workflow script `accuracy-review-r2.js` (session workflows folder;
+  a copy in the repo, `tools/accuracy/review-workflow.js`, takes the pairs folder as `args.dir`), run wf_a9cfed85-67b. Resume it with `resumeFromRunId` and the same args if it's stopped. The triage goes to `acc/triage15.md`.
 
 ### Round 2 results (2026-11-21)
 - **Counts:** 328 findings (211 play wrong), against round 1's 489 (365). 193 of round 1's are fixed: every phantom head, key miss and tie-as-slur, most whole notes and page-turn ties. The patches caused no regression.

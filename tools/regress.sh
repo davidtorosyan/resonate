@@ -87,6 +87,7 @@ run importcontract 60 node importcontract.mjs   # every recorded real import run
 run synclib 120 node synclib.mjs                # the real sync.js against a fake cloud (offline)
 run mcpcatalog 60 node --experimental-strip-types --no-warnings mcpcatalog.mjs # the frozen MCP tool list
 run vcheck 60 node vcheck.mjs                   # ?v=<badge> on every local module address; every page's badge
+run accuracy-constants 30 node accuracy/constcheck.mjs # the native runs' -constant s = the web worker's
 
 if [ "$TIER" = main ]; then
   # ---- Sing (with guided practice off: the v75-era screen these suites were written for) ------------------
@@ -94,14 +95,23 @@ if [ "$TIER" = main ]; then
     run "$t" 600 node -r ./guidedoff.cjs "$t.cjs"
   done
   run --info chipkeys 600 node -r ./guidedoff.cjs chipkeys.cjs # (note chips as piano keys: printed, read by eye)
+  # Guide me — on by default — from a clean slate on Amazing Grace, a simulated singer; BLEED=1 puts the page's
+  # sound into the fake mic (a phone speaker's click bleed) and fails on any rhythm / practice warning.
+  run guided 1200 node guided.cjs
+  run guided:bleed 1200 env BLEED=1 node guided.cjs
+  run voicetest 600 node voicetest.cjs            # Voice: the range test with a simulated singer, no note over a live mic
+  run sleep 900 env SHOTS=0 node sleep.cjs        # every page asleep when hidden: contexts, sources, tracks, the session
 
   # ---- Play (the owner's converted scores only with PLAY_SCORES) ------------------------------------------
   # play (8 sizes), playheaders, playfixes, playscore (the Full score), playpaper (the printed density),
   # playback (▶), playbackfixes, playpeekstaff, playpress (a press sounds at once), playkeys (the docked
   # keyboard), playhear (what ▶ plays), playv80fixes, playchords, tiecases (fixscore's restoreTies).
+  run playunit 600 node playunit.cjs              # playprep / the note facts on every fixture
+  run playxmlsame 600 node playxmlsame.cjs        # every view's MusicXML byte-identical to HEAD's playprep
   for t in play playheaders playfixes playscore playpaper playback playbackfixes playpeekstaff playpress playkeys playhear playv80fixes playchords tiecases; do
     run "$t" 1800 node "$t.cjs"
   done
+  run playpdf 1200 env SHOTS=0 node playpdf.cjs   # 📄: the bars on the PDF, zoom and pan, the focus border
 
   # ---- PDF → Song: the Reader (a synthetic fixture with clean-ups; the real recorded Chromium run) --------
   for fx in greensleeves greensleeves3-real; do
@@ -110,11 +120,13 @@ if [ "$TIER" = main ]; then
   run jobstore 300 node jobstore.cjs              # the job store, ENGINE vs lib/, the crash-loop guard
   run titlecases 300 node titlecases.cjs          # pdfTitle / chooseTitle (the owner's PDFs when sitetest has them)
   run keycases 300 node keycases.cjs              # fixscore's unifyKeySignatures, each case idempotent
+  run fixcases 300 node fixcases.cjs              # the other clean-ups: boxed fills, stray 8va, 8vb clefs, verses, tempo, tuplet marks
   run importfixes 900 node importfixes.cjs        # the v81 review round, a scripted worker (~2 min)
 
   # ---- The song library (v90), the shell -----------------------------------------------------------------
   run libcore 300 node libcore.cjs
   run songlib 1200 env SHOTS=0 node songlib.cjs
+  run reprocess 900 node reprocess.cjs            # Reconvert: the same song id, settings kept, a reload mid-run, the shell
   run jankchrome 1500 env SHOTS=0 node jankchrome.cjs
   run jank 1500 env SHOTS=0 node -r ./harness/noshots.cjs jank.cjs
   for t in cutover shell shellmods shellscore shellsing shellplaces; do

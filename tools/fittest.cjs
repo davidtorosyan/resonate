@@ -1,10 +1,8 @@
-// fitToRange on real scores × voice types.
-const { chromium } = require('playwright'); const fs = require('fs');
+// fitToRange (fit.js) on a score × voice types: prints each voice's key, phrase moves and range (read, not judged).
+// (The owner's converted songs it also ran on are outside the repo; add a file here to try one.)
+const { chromium } = require('playwright'); const fs = require('fs'); const path = require('path');
 const files = {
-  songbird: '/root/.claude/uploads/6042bc19-5f16-52ea-a295-8ea17a932323/c6b79cee-Hey_Little_Songbird_-_C_Minor_-_MN0230233_3.musicxml',
-  killing: '/home/user/sitetest/tmp/km.musicxml',
-  grace: '/home/user/resonate/public/songs/amazing-grace.musicxml',
-  susanna: '/home/user/sitetest/tmp/gt-oh-susanna.musicxml',
+  grace: path.join(__dirname, '../public/songs/amazing-grace.musicxml'),
 };
 const voices = { bass: [40, 64, 43, 60], baritone: [43, 67, 46, 63], tenor: [48, 72, 50, 69], alto: [53, 77, 55, 72], soprano: [60, 84, 62, 79] };
 (async () => {

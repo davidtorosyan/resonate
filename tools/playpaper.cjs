@@ -73,6 +73,12 @@ async function seed(page, list) {
   await ready(page);
   return ids;
 }
+// A score's bars three times over in every part (numbered on), for a song longer than a fixture.
+const thrice = (xml) => xml.replace(/(<part id="[^"]+">)([\s\S]*?)(<\/part>)/g, (m, open, body, close) => {
+  const n = (body.match(/<measure /g) || []).length;
+  const again = (k) => body.replace(/<measure number="(\d+)"/g, (x, num) => `<measure number="${Number(num) + k * n}"`);
+  return open + body + again(1) + again(2) + close;
+});
 const songList = (names) => names.map((n) => ({ name: n, xml: read(fs.existsSync(path.join(FIX, n + ".musicxml")) ? path.join(FIX, n + ".musicxml") : path.join(SCORES, n + ".musicxml")) }));
 async function openSong(page, id, view) {
   if ((await D(page)).song !== id) { await page.selectOption("#song", id); await ready(page, id); }
@@ -232,9 +238,10 @@ async function partZ(browser) {
   }
   for (const [w, h] of [[1180, 820], [1366, 1024], [1133, 744]]) {
     const { ctx, page } = await newPage(browser, w, h, errors);
-    // (a song long enough for two pages at 5: a one-page view is laid out full width, no spread)
-    const long = OWNER.includes("pianoman") ? "pianoman" : "synth-pvg";
-    const ids = await seed(page, songList([long]));
+    // (a song long enough for two pages at 5: a one-page view is laid out full width, no spread — the
+    // owner's Piano Man, else synth-pvg's 40 bars three times over: synth-pvg alone is one page at 5)
+    const long = OWNER.includes("pianoman") ? "pianoman" : "synth-pvg-x3";
+    const ids = await seed(page, long === "pianoman" ? songList([long]) : [{ name: long, xml: thrice(read(path.join(FIX, "synth-pvg.musicxml"))) }]);
     await openSong(page, ids[long], "both");
     let d = await D(page);
     ok(!d.spread, `Z ${w}x${h}: the default, one page across (${d.sp})`);
