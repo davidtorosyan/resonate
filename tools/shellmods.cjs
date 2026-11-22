@@ -392,9 +392,14 @@ async function linked(p, sz) {
   ok(x.piano.linked && !s.scoreKeys && x.play.keys.shell && !x.play.keys.shown, "linked: the Piano's keyboard is the Score's — Play's docked keyboard not shown");
   ok(s.rc && Math.abs(s.rc.b - s.rp.y) < 1, `linked: the keyboard right under the paper (${s.rc && Math.round(s.rc.b)} / ${Math.round(s.rp.y)})`);
   ok(JSON.stringify(x.piano.range) === JSON.stringify(x.play.keys.view), `linked: its range is the Score's view (${x.piano.range} = ${x.play.keys.view})`);
-  ok(x.piano.chips >= 2 && x.play.hear.home === 'keys', `linked: what ▶ plays — ${x.piano.chips} chips at its left end (${x.play.hear.home})`);
+  // (where the keys keep 8 px a white key beside them — placeHear — E7: with the fingering's #fing at the
+  // row's right end too; else the chips give way to the stretch's controls: a phone's four octaves of
+  // Amazing Grace)
+  const room = await p.evaluate(() => { const d = window.resonateDebug(); return { chips: d.piano.chips, home: d.score.play.playback.hear.home, ...d.score.play.playback.hear.fit }; });
+  ok(room.chips >= 2 ? room.home === 'keys' && room.fit : room.home === 'selbar' && !room.fit && room.fw > 0 && room.keysW + room.fw >= 8 * room.whites,
+    `linked: what ▶ plays — ${room.chips} chips at its left end (${room.home}; the keys ${room.keysW} px for ${room.whites} white keys beside them${room.fw ? `, #fing ${room.fw} px` : ''})`);
   const chip = await p.evaluate(() => { const c = document.querySelector('#piano-region #hear button'), k = document.querySelector('#piano-region .kb'); if (!c) return null; const a = c.getBoundingClientRect(), b = k.getBoundingClientRect(); return { w: a.width, h: a.height, right: a.right, kb: b.left }; });
-  ok(chip && chip.h >= 44 && chip.right <= chip.kb + 0.5, `linked: the chips ≥ 44 px, left of the keys (${JSON.stringify(chip)})`);
+  if (room.home === 'keys') ok(chip && chip.h >= 44 && chip.right <= chip.kb + 0.5, `linked: the chips ≥ 44 px, left of the keys (${JSON.stringify(chip)})`);
   // a key pressed: struck through the Score, lit on the keyboard while held
   const n0 = x.play.peeks;
   let mid = null;

@@ -19,6 +19,10 @@
 // listening listens again REOPEN ms after the last key lifts, at MIN_RMS until the keys' sound is gone
 // (tuner.settle). Silent during a Sing take (quiet()).
 // Hidden (the module, the page): every note cut, the context asleep.
+// Fingering (E7, docs/FINGERING.md §5): #fing at the row's right end — shown while the keyboard is
+// the Score's and the Score says its view has a fingering (fingering(true)); a tap cycles off →
+// numbers → hand (this device's pref, resonate.play.fingers; none: numbers) and tells the Score
+// (score.fingers()), which draws the digits and the ghost hand through forScore().draw.
 import { mountKeyboard } from "../keyboard.js?v=98";
 import { loadPiano, pianoNow, holdPiano, primeHold, pianoBus, keepAlive, ownContext, sleepAudio } from "../piano.js?v=98";
 import { soundGone } from "../pitch.js?v=98";
@@ -33,13 +37,24 @@ const AWAKE = 120000;  // ms: the output kept awake after the last key (as Play:
 const BUS = 0.8, LEVEL = 1.4 / BUS;
 const RESTRIKE = 0.015, SLEEP_TC = 0.002;
 const HAND = { rh: "#a64fff", lh: "#4f7cff" };
+const FINGERS = "resonate.play.fingers"; // "off" | "num" | "hand" (none: "num") — this device's, not shelved
+const MODES = ["off", "num", "hand"];
+const MODE_LABEL = { off: "off", num: "numbers", hand: "hand" };
+// (#fing's face: a hand's outline — off; "123" — numbers; the hand filled — the ghost hand)
+const HAND_PATH = "M8.2 12.6V5.4a1.3 1.3 0 0 1 2.6 0v5.8V3.9a1.3 1.3 0 0 1 2.6 0v7.3V4.9a1.3 1.3 0 0 1 2.6 0v6.6V7.6a1.3 1.3 0 0 1 2.6 0v7.1c0 3.8-2.6 6.4-6.3 6.4-2.4 0-3.9-1.1-5.1-2.8l-2.9-4.1a1.35 1.35 0 0 1 2.1-1.7z";
+const FACE = {
+  off: `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="${HAND_PATH}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`,
+  num: '<span class="n" aria-hidden="true">123</span>',
+  hand: `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="${HAND_PATH}" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>`,
+};
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
 const setSession = (type) => { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {} };
 
 // tuner: { state, park(), start(), settle(until) }; beforeSound(): Sing stops (the tuner is parked here);
 // quiet(): true while Sing records; busy(): a module sounds (the tuner isn't reopened then);
 // score: { press(midi, e) → a strike | null (Sing records) | undefined (play.js not loaded yet: this
-// keyboard's own path), lift(strike), changed() (its keys and chips drawn again) } — the Score's.
+// keyboard's own path), lift(strike), changed() (its keys and chips drawn again), fingers() (#fing's
+// mode changed) } — the Score's.
 export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => false, busy = () => false, score = null }) {
   const kbEl = el.querySelector(".kb");
   // (what ▶ plays, beside the keys while linked: play.js puts its chips here — inside .play-scope, so
@@ -51,7 +66,31 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
   el.insertBefore(hearBox, kbEl);
   el.style.columnGap = "8px";
   let ac = null, stuck = false, gate = null, shown = false, range = [48, 83];
-  let linked = false, scoreLit = new Map(), scoreRange = null, ownLit = new Map(); // (linked: the Score's keys; own: its own presses)
+  let linked = false, scoreLit = new Map(), scoreRange = null, scoreGhost = null, ownLit = new Map(); // (linked: the Score's keys; own: its own presses)
+  // (fingering: the mode, #fing at the row's right end — after the keys)
+  let fmode = "num";
+  try { const v = localStorage.getItem(FINGERS); if (MODES.includes(v)) fmode = v; } catch {}
+  const fingBtn = document.createElement("button");
+  fingBtn.type = "button";
+  fingBtn.id = "fing";
+  fingBtn.className = "fing";
+  fingBtn.hidden = true;
+  el.append(fingBtn);
+  const face = () => {
+    fingBtn.dataset.mode = fmode;
+    fingBtn.innerHTML = FACE[fmode];
+    fingBtn.setAttribute("aria-label", `Fingering: ${MODE_LABEL[fmode]}`);
+    fingBtn.title = `Fingering: ${MODE_LABEL[fmode]}`;
+  };
+  face();
+  fingBtn.addEventListener("click", () => {
+    fmode = MODES[(MODES.indexOf(fmode) + 1) % MODES.length];
+    try { localStorage.setItem(FINGERS, fmode); } catch {}
+    face();
+    fingBtn.blur(); // (the pedal's Space / Enter turn pages, not this again)
+    if (linked) score?.fingers?.();
+  });
+  const fingShown = (on) => { on = !!on && linked && shown; if (fingBtn.hidden === !on) return; fingBtn.hidden = !on; };
   const held = new Set(); // the keys down: { midi, h (holdPiano), a, t0, end, lift, dead, cap, ts }
   const sounding = new Set(); // every press whose note may still sound or start (a lifted one waiting for the context too)
   const log = [];
@@ -72,8 +111,8 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
   // What it shows: the Score's keys and range while linked (once play.js has drawn them), else its own.
   function draw() {
     if (!shown) return;
-    if (linked && scoreRange) kb.update({ lit: scoreLit, range: scoreRange });
-    else kb.update({ lit: ownLit, range });
+    if (linked && scoreRange) kb.update({ lit: scoreLit, range: scoreRange, ghost: scoreGhost });
+    else kb.update({ lit: ownLit, range, ghost: null });
   }
 
   // --- the context ----------------------------------------------------------------------------
@@ -253,7 +292,7 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
       shown = on;
       el.hidden = !on;
       if (on) { kb.remeasure(); kb.forget(); draw(); if (!linked) warm(); }
-      else cutAll();
+      else { cutAll(); fingShown(false); }
     },
     get shown() { return shown; },
     // The Score shown (on) or not: the Score's keyboard, or its own again (its own presses' notes cut
@@ -264,18 +303,22 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
       linked = on;
       hearBox.style.display = on ? "contents" : "none"; // (unlinked: play.js moves the chips back to the stretch's controls)
       if (on) cutAll();
-      else { scoreLit = new Map(); scoreRange = null; if (shown) warm(); arm(); }
+      else { scoreLit = new Map(); scoreRange = null; scoreGhost = null; fingShown(false); if (shown) warm(); arm(); }
       kb.forget();
       draw();
       return true;
     },
     get linked() { return linked; },
-    // For play.js (resonatePlay.shellKeys), while linked and shown: draw the Score's keys, where its
-    // chips go, how tall the keyboard is (the two-systems fit leaves it its share). → null otherwise
+    // For play.js (resonatePlay.shellKeys), while linked and shown: draw the Score's keys (with their
+    // digits, and the ghost hand's rings), where its chips go (and #fing, which they leave room for),
+    // how tall the keyboard is (the two-systems fit leaves it its share), whether the view has a
+    // fingering (#fing shown), its mode. → null otherwise
     forScore: () => (linked && shown ? {
-      draw: (lit, rg) => { scoreLit = lit; scoreRange = rg; draw(); },
-      host: () => ({ row: el, box: hearBox, strip: kbEl }),
+      draw: (lit, rg, ghost = null) => { scoreLit = lit; scoreRange = rg; scoreGhost = ghost || null; draw(); },
+      host: () => ({ row: el, box: hearBox, strip: kbEl, fing: fingBtn }),
       height: () => el.offsetHeight,
+      fingering: (on) => fingShown(on),
+      fingers: () => fmode,
     } : null),
     setRange(rg) { range = rg; if (!linked || !scoreRange) draw(); },
     stopAll: () => cutAll(),
@@ -283,7 +326,11 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
     debug: () => ({ shown, linked, range: linked && scoreRange ? [...scoreRange] : [...range], own: [...range], held: [...held].map((k) => k.midi), lit: linked && scoreRange ? [...scoreLit.keys()] : litKeys.slice(),
       litHands: linked && scoreRange ? [...scoreLit].map(([m, L]) => [m, L.hand]) : litKeys.map((m) => [m, m >= 60 ? "rh" : "lh"]), chips: hearBox.querySelectorAll("button[data-key]").length,
       fingers: kb.held(), log: log.slice(), ctx: ac?.state || null, stuck,
-      awake: !!awake.src, awakeHere: !!awake.src && awake.a === ac, reopenAt, draws: kb.draws, rect: shown ? (({ left, top, width, height }) => ({ left, top, width, height }))(el.getBoundingClientRect()) : null }),
+      awake: !!awake.src, awakeHere: !!awake.src && awake.a === ac, reopenAt, draws: kb.draws, rect: shown ? (({ left, top, width, height }) => ({ left, top, width, height }))(el.getBoundingClientRect()) : null,
+      // fingering: #fing shown, its mode and rect; the digits drawn ([midi, digit]); the keys' layout; the ghost's rings
+      fing: { shown: !fingBtn.hidden, mode: fmode, rect: fingBtn.hidden ? null : (({ left, top, width, height }) => ({ left, top, width, height }))(fingBtn.getBoundingClientRect()),
+        digits: [...kbEl.querySelectorAll(":scope > svg text.fd")].map((t) => [Number(t.dataset.midi), Number(t.textContent)]), geo: kb.geo(), ghost: kb.ghost(),
+        rings: [...kbEl.querySelectorAll(".kb-ghost .kb-gh:not([data-out]) .kb-ring")].map((r) => ({ h: r.parentElement.dataset.h, f: Number(r.dataset.f), midi: Number(r.dataset.midi), down: r.classList.contains("down") })) } }),
   };
 }
 

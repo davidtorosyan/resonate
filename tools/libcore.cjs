@@ -4,7 +4,8 @@
 // songInfo, songChoices), omr/queue.js (enqueue, dropFromQueue, the batch's counts, another space's queue
 // unread), forget.js forgetSong (the song, its take, per-song settings, session, open song, queue, its
 // stored conversions; samples refused), omr/jobs.js deleteJobsFor, importer.js titleFromFileName /
-// holdWake, omr/engine.js ENGINE_N. No conversion runs.
+// holdWake, omr/engine.js ENGINE_N; E7: saveFing and saveClean interleaved keep both fields, saveFing
+// only into the MusicXML it was made from, replaceSong drops fing. No conversion runs.
 //   node libcore.cjs                    (http://localhost:8097; BASE=… for another server)
 const { chromium } = require('playwright');
 const BASE = (process.env.BASE || 'http://localhost:8097').replace(/\/$/, '') + '/resonate/';
@@ -166,6 +167,37 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++
     out.hold = typeof imp.holdWake === 'function';
     imp.holdWake(true); imp.holdWake(false);
     out.engineN = E.ENGINE_N;
+    // saveFing / saveClean (E7): each a read and a write in one transaction — interleaved, neither drops
+    // the other's field; saveFing never into a song replaced since (rev), nor a PDF only; no data event
+    {
+      const fx = '<score-partwise><part-list/></score-partwise><!--fing-->';
+      const g = await L.addSong('Fing song', fx, { source: 'file' });
+      const fing = (k) => ({ v: 1, alg: 1, hand: 'sb', bpm: 90, sig: 'x', at: k, ms: 1, n: { n0: ['r', 1, 0, ''] }, fr: { r: [[0, 60, 62, 64, 65, 67]], l: [] } });
+      const ev3 = events.length;
+      const writes = [];
+      for (let k = 1; k <= 6; k++) writes.push(L.saveClean(g, `<clean${k}/>`, 'v' + k, fx), L.saveFing(g, fing(k), null));
+      const kept = await Promise.all(writes);
+      const s1 = await L.getSong(g);
+      out.fingBoth = { clean: s1.clean, fingAt: s1.fing?.at ?? null, keptAll: kept.filter((x) => x === true).length };
+      // and the other order, each first in its turn
+      const w2 = [];
+      for (let k = 7; k <= 10; k++) w2.push(L.saveFing(g, fing(k), null), L.saveClean(g, `<clean${k}/>`, 'v' + k, fx));
+      await Promise.all(w2);
+      const s2 = await L.getSong(g);
+      out.fingBoth2 = { clean: s2.clean, fingAt: s2.fing?.at ?? null };
+      out.fingEvents = events.slice(ev3).length;
+      out.fingLoad = (await C.loadSong(g))?.fing?.at ?? null;
+      const rep = await L.replaceSong(g, fx + '<!--2-->');
+      const s3 = await L.getSong(g);
+      out.fingReplaced = { fing: 'fing' in s3, clean: 'clean' in s3, rev: !!rep.rev };
+      out.fingStale = await L.saveFing(g, fing(11), null); // (worked out from the old MusicXML: rev null)
+      out.fingNew = await L.saveFing(g, fing(12), rep.rev);
+      out.fingNewAt = (await L.getSong(g)).fing?.at ?? null;
+      out.fingPdfOnly = await L.saveFing(a, fing(13), null);
+      out.fingPdfOnlyRec = 'fing' in (await L.getSong(a));
+      out.fingMissing = await L.saveFing('s-none', fing(14), null);
+      await L.removeSong(g);
+    }
     // clean up
     for (const id of [a, b, f, o]) await L.removeSong(id);
     Q.clearQueue();
@@ -217,6 +249,13 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++
   ok(r.delOther === 1 && r.jobsLeft === 0, 'deleteJobsFor');
   ok(JSON.stringify(r.titles) === JSON.stringify(['Wichita Lineman', 'Killing Me Softly', 'Scanned Document 2', 'Song', 'IMG 0042']), 'titleFromFileName ' + JSON.stringify(r.titles));
   ok(r.hold && r.engineN === Number(/ENGINE_N = (\d+)/.exec(require('fs').readFileSync(require('path').join(__dirname, '../public/omr/engine.js'), 'utf8'))[1]), 'holdWake, ENGINE_N');
+  ok(r.fingBoth.clean?.xml === '<clean6/>' && r.fingBoth.fingAt === 6 && r.fingBoth.keptAll === 6, `saveClean + saveFing interleaved: both fields kept (${JSON.stringify(r.fingBoth)})`);
+  ok(r.fingBoth2.clean?.xml === '<clean10/>' && r.fingBoth2.fingAt === 10, `… the other order too (${JSON.stringify(r.fingBoth2)})`);
+  ok(r.fingEvents === 0, `saveFing / saveClean: no resonate:data event (no sync pass) — ${r.fingEvents}`);
+  ok(r.fingLoad === 10, `loadSong returns the stored fing (${r.fingLoad})`);
+  ok(r.fingReplaced.fing === false && r.fingReplaced.clean === false && r.fingReplaced.rev, `replaceSong drops fing with clean (${JSON.stringify(r.fingReplaced)})`);
+  ok(r.fingStale === false && r.fingNew === true && r.fingNewAt === 12, `saveFing: refused into a song replaced since (rev), kept with the new rev (${r.fingStale}, ${r.fingNew}, ${r.fingNewAt})`);
+  ok(r.fingPdfOnly === false && r.fingPdfOnlyRec === false && r.fingMissing === false, 'saveFing: never into a PDF only, nor a song that isn\'t there');
   ok(!errs.length, 'no page errors ' + JSON.stringify(errs.slice(0, 3)));
   if (fails && !process.env.VERBOSE) console.log(JSON.stringify(r).slice(0, 4000));
   await browser.close();

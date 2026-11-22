@@ -13,6 +13,7 @@
 // device send nothing up again; a song a v89 device stored as "null" is a PDF only — never sent up as that
 // text, no ping-pong with the PDF-only row. v94 review: a later delete of ours met by the cloud's earlier
 // one still goes up with its own stamp, so a change made between them doesn't bring the song back (13).
+// E7: a song's piano fingering (fing) never syncs — not in the row, the file or another device (14).
 //   node synclib.mjs
 import { register } from 'node:module';
 register('./synclib/hooks.mjs', import.meta.url);
@@ -252,6 +253,22 @@ check(row('song', X13.id)?.deleted && !G13.songs.has(X13.id) && !H13.songs.has(X
   `13: H's change, sent at last, is older: gone everywhere (cloud ${row('song', X13.id)?.deleted ? 'deleted' : 'live'}; G ${G13.songs.has(X13.id)}, H ${H13.songs.has(X13.id)}, I ${I13.songs.has(X13.id)})`);
 L = W.cloud.log.length; device('G'); await pass(); device('I'); await pass();
 check(!since(L).some((e) => e[1]?.includes(X13.id)), '13: then nothing more of it goes up');
+
+// 14. The piano fingering (E7: library.js `fing`, derived like `clean`) never syncs: not in the row, not in
+// the file, not to another device; a new fingering alone sends nothing.
+const ungz = async (b) => new TextDecoder().decode(await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+const FG = { id: 's000aad1', title: 'Fingered', xml: XML('Fingered'), added: 9200, source: 'file', clean: { xml: null, ver: 'v98' },
+  fing: { v: 1, alg: 1, hand: 'sb', bpm: 90, sig: '1:x', at: 1, ms: 1, n: { n0: ['l', 1, 0, 'm'] }, fr: { r: [], l: [[0, 55, 53, 52, 50, 48]] } } };
+const J14 = device('J'); J14.songs.set(FG.id, structuredClone(FG));
+L = W.cloud.log.length; await pass();
+const r14 = row('song', FG.id), f14 = W.cloud.files.get(`${UID}/${FG.id}.xml.gz`);
+const text14 = f14 ? await ungz(f14) : '';
+check(r14 && !JSON.stringify(r14.data).includes('fing') && !/"n0"|"fr"/.test(JSON.stringify(r14.data)) && text14 === FG.xml, `14: a fingered song goes up without its fingering (row ${JSON.stringify(r14?.data)}, file = its MusicXML: ${text14 === FG.xml})`);
+const K14 = device('K'); await pass();
+check(K14.songs.has(FG.id) && !('fing' in K14.songs.get(FG.id)), `14: another device gets it without one (${JSON.stringify(Object.keys(K14.songs.get(FG.id) || {}))})`);
+device('J'); J14.songs.get(FG.id).fing = { ...FG.fing, at: 2, alg: 2 };
+L = W.cloud.log.length; await pass();
+check(since(L).length === 0, `14: a new fingering alone sends nothing (${JSON.stringify(since(L).map((e) => e.slice(0, 2)))})`);
 
 // 10. Limit 20.
 check(S.SONG_LIMIT === 20, '10: SONG_LIMIT 20');

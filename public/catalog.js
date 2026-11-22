@@ -32,34 +32,36 @@ const appVersion = () => (typeof document !== "undefined" && document.getElement
 // the app made it (the clean-ups take a while on a big score on a phone), else cleaned now
 // and saved for next time. The original stays as it was imported. null for a PDF-only song
 // (not converted yet: docs/LIBRARY.md) — and for one holding text that isn't MusicXML (a v89
-// device's "null": library.js isMusicXml), which is a PDF only too.
-export function songXml(song) {
+// device's "null": library.js isMusicXml), which is a PDF only too. keep: false — the same text, the
+// cleaned copy not saved (fingering.js after a conversion: the Score's first open keeps it, as before).
+export function songXml(song, { keep = true } = {}) {
   if (!isMusicXml(song?.xml)) return null;
   const APP_VERSION = appVersion();
   if (!/<software>\s*Audiveris/.test(song.xml.slice(0, 4000))) return song.xml;
   if (APP_VERSION && song.clean?.ver === APP_VERSION) return song.clean.xml ?? song.xml;
   const xml = cleanXml(song.xml);
-  if (APP_VERSION) saveClean(song.id, xml === song.xml ? null : xml, APP_VERSION, song.xml).catch(() => {});
+  if (APP_VERSION && keep) saveClean(song.id, xml === song.xml ? null : xml, APP_VERSION, song.xml).catch(() => {});
   return xml;
 }
 
-// A song by id (a sample's key or a library id) → { id, title, xml, source, rev, pdfOnly, engine } —
+// A song by id (a sample's key or a library id) → { id, title, xml, source, rev, pdfOnly, engine, fing } —
 // xml as the pages read it (null: a PDF only, not converted yet — pdfOnly), source "sample" or the
 // library's ("pdf", "file", "link"… or null), rev the library's (a new one each time its MusicXML is
 // replaced: its PDF read again) or null, engine the number of the engine that converted it (null:
-// unknown — before v90, or not converted from a PDF) — or null when there's no such song. Throws when
-// it couldn't be read (a sample that didn't download).
+// unknown — before v90, or not converted from a PDF), fing its stored piano fingering (fingering.js;
+// null: none, a sample's is kept in memory) — or null when there's no such song. Throws when it
+// couldn't be read (a sample that didn't download).
 export async function loadSong(id) {
   if (!id) return null;
   if (SAMPLES[id]) {
     const res = await fetch(SAMPLES[id].url);
     if (!res.ok) throw new Error(`couldn't load (${res.status})`);
-    return { id, title: SAMPLES[id].title, xml: await res.text(), source: "sample", rev: null, pdfOnly: false, engine: null };
+    return { id, title: SAMPLES[id].title, xml: await res.text(), source: "sample", rev: null, pdfOnly: false, engine: null, fing: null };
   }
   const song = await getSong(id);
   if (!song) return null;
   const xml = songXml(song);
-  return { id, title: song.title, xml, source: song.source ?? null, rev: song.rev ?? null, pdfOnly: xml == null, engine: song.engine?.n ?? null };
+  return { id, title: song.title, xml, source: song.source ?? null, rev: song.rev ?? null, pdfOnly: xml == null, engine: song.engine?.n ?? null, fing: song.fing ?? null };
 }
 
 // What the index knows of a song, without reading it: { id, title, added, rev?, k, eng?, fail? }

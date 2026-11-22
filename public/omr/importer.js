@@ -597,6 +597,7 @@ export function createImporter(opts = {}) {
       release?.();
       const out = { songId, title: score.title, score, xml, pages: res.pages, failed: res.failed, lost: res.lost || [], unsaved, log: res.log, jobId: job.id, replaced, deleted, replace: job.replace || null };
       setState('done', { job: null, result: out });
+      if (songId) fingerLater(songId); // (its piano fingering, kept with it: after the save, best effort)
       return out;
     } catch (err) {
       ended(cur);
@@ -621,6 +622,14 @@ export function createImporter(opts = {}) {
     get current() { return current ? summary(current.job) : null; },
     get state() { return state; },
   };
+}
+
+// A saved conversion's piano fingering (E7, docs/FINGERING.md D4): worked out off the main thread
+// and kept with the song, as the Score would on its first open — after the save, never in its way:
+// nothing it does can fail the import (fingering.js fingerSong never throws; a module that didn't
+// load is only logged).
+function fingerLater(id) {
+  import('../fingering.js?v=98').then((m) => m.fingerSong(id)).catch((err) => console.info('fingering', err?.message || err));
 }
 
 // --- the song's title and key mode (moved from pdf-import.js in v81; tools/titlecases.cjs evaluates

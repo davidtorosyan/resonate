@@ -91,7 +91,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     beforeSound: () => { sing.hush(true); if (sing.state()?.busy) sing.stopAll(); }, // (Sing's 🎤 Pitch mic too: iOS plays quietly while it's open)
     quiet: () => !!sing.state()?.take,
     busy: () => !!(sing.state()?.busy || score.state()?.busy),
-    score: { press: (m, e) => score.press(m, e), lift: (pk) => score.lift(pk), changed: () => score.keysChanged() },
+    score: { press: (m, e) => score.press(m, e), lift: (pk) => score.lift(pk), changed: () => score.keysChanged(), fingers: () => score.fingersChanged() },
   });
   const setTitle = (t, id = current) => { title = t || ""; titleId = title ? id : null; pill.querySelector(".t").textContent = title || "…"; };
 

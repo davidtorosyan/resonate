@@ -13,7 +13,7 @@ let n = 0;
 export async function replaceSong(id, xml, { pages = null, title = null, engine = null } = {}) {
   const old = D().songs.get(id);
   if (!old) return null;
-  const { clean, pages: _p, engine: _e, titleAuto, conv, ...keep } = old;
+  const { clean, fing, pages: _p, engine: _e, titleAuto, conv, ...keep } = old; // (library.js: the clean-ups and the fingering go with the old MusicXML)
   const s = { ...keep, xml, rev: `r${++n}`, ...(title ? { title } : {}), ...(engine ? { engine } : {}) };
   D().songs.set(id, s);
   return s;

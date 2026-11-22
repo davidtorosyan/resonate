@@ -237,3 +237,88 @@ One review (1 must-fix, 13 should-fix, 13 nits), all applied but:
 **Timings** (node 22, 4 cores, a regression run alongside): 3000 notes (1588 onsets) take 27–40 ms warm (median of 5) and 47–75 ms on the first run. The suite takes ~1 s.
 
 **Golden:** `tools/fixtures/finger/golden.json` holds 85 hashes: every case × 3 hand sizes, plus the 3000-note piece. A changed output under the same `ALG` fails; `--update` refuses until `ALG` is bumped.
+
+## Fingering on the Piano (E7 stage 2) — as built
+
+Stage 2 shows stage 1's fingering on the shell's Piano, and works it out and keeps it with the song. The assistants' half (the cloud table, `read_resonate fingering`, fingers in a highlight's text, `shareFingering`, forget.js) is built separately; this stage leaves them a reader (below). No Cleanup Phase 8: only its slice for the tests (tools/lib/shell.cjs; boot.js's `resonateDebug().play`, the Score's).
+
+**Files.**
+
+- `public/fingering.js` (main thread; §7 item 3):
+  - `keyboardOf(P)`: the keyboard part, §3's.
+  - `keyboardNotes(P, T, bpm)`: §3's items, plus `pin` (`<technical><fingering>`) and `arp`. `tied` is a non-struck item on a tie's stop; `d` is `hold`, or a twin's `dur`.
+  - `xmlSig`.
+  - `songTempo(id, xml, T)`: what play.js's `tempoBase` is.
+  - `fingeringFor({ id, xml, P, T, bpm, stored, rev, from })`, which returns `{ rec, computed }`.
+  - `fingerSong(id)`: for the importer.
+  - `fingerAsync`: the Worker. There is one, kept. A module Worker that doesn't load falls back to the main thread.
+  - `stats`.
+  - No `fingerText`: the cloud row is the assistants' half.
+- `library.js`: `saveFing(id, fing, rev)`. `saveClean` now uses one readwrite transaction (`modify`). `replaceSong` drops `fing`.
+- `catalog.js`: `loadSong(…).fing`; `songXml(song, { keep })`.
+- `omr/importer.js`: `fingerLater(id)`, after the save. It is a dynamic import of fingering.js, and failures are only logged.
+- `keyboard.js`:
+  - the digits on lit keys (`text.fd` / `circle.fd`);
+  - `.kb-ghost`;
+  - `:scope > svg`;
+  - `geo()`, `spot(m)`, `ghost()` for tests.
+- `shell/pianoview.js`: `#fing`, the pref, and `forScore()`'s `draw(lit, range, ghost)`, `fingering(avail)`, `fingers()`, `host().fing`.
+- `shell/songview.js` / `scoreview.js`: `fingersChanged`.
+- `play.js`: `F`, `fingStart`, `fingOf`, `fingAvail`, `fingMode`, `fingButton`, `fingChanged`, `ghostNow`, `fingSeen`, `groupOfEl`, `playKeep`, and `handOf(f, id)`.
+- `index.html`: `#fing`'s look.
+- `shell/boot.js`: the `play` alias.
+
+**When it's worked out.**
+
+- **The Score:** once a song is placed, in idle time and one step a task: the timeline, Sing's tempo, then the notes and the Worker.
+- **The importer:** after a conversion's save, on `songXml(song, { keep: false })`'s output: the text the Score will read, its cleaned copy not saved there (the Score's first open keeps it, as before; reprocess.cjs checks a replaced song comes without one).
+- **Reuse instead of a second run:**
+  - A record worked out on the page is kept in memory (`memo`: a sample's only home).
+  - A run under way for the same song, alg, hand, bpm and sig is awaited, not repeated. A conversion's save and the Score's reload of that song used to work it out twice.
+  - A record reused this way is saved to the song when its own record lacks one.
+
+**Where it differs from §4–§5, and why:**
+
+- **On only with the Piano linked.** The mode in effect is "off" unless the Piano is the Score's and the view draws fingered notes, so the hand rules never act unseen: the Piano off, 📄, play.html. `scoreState().fingering` is then null.
+- **A short keyboard.** §5's disc, r = min(0.36·ww, 0.13·H), and the letter at 0.85 overlap on a keyboard under ~100 px tall (a desktop's 72 px). The disc gives way first, down to 6.5 px, then the letter. A letter under 7 px is dropped: the digit replaces it. With its letter moved to the foot, a digit's key loses the middle-C dot.
+- **A ringed key** has no disc, no letter, and no tag on a black key.
+- **Which notes follow the fingering's hands:**
+  - A chord picked by a double-tap still plays what the view draws of it. It is what was asked for, as with the chips.
+  - The stretch's columns (`viewOnsets`) stay the drawn notes'.
+  - Only ▶ of a stretch or a page follows `playKeep`.
+- **A key two parts sound** (the voice's tune and the piano's) shows the keyboard note's colour and digit while the fingering is on.
+- **The ghost's frame:** a press on the music wins over ▶ while it's held, plus 2 s. A frame is known by its keys: two frames on the same keys aren't rebuilt.
+- **#fing takes the chips' room first.** On a phone (the Score and the Piano: Amazing Grace's four octaves), the RH / LH chips no longer leave the keys 8 px a white key beside #fing, so they go to the stretch's controls. shellmods' `linked` check reads placeHear's own measure for this (`playback.hear.fit`: the keys' width, the white keys, #fing's width).
+- **Digit sizes are rules by key width on every device**, not a phone rule: digits at ≥ 12 px a white key, rings at ≥ 14. A phone's Both, with its RH / LH chips beside the keys, gets ~9.5 px (no digits); its RH view gets ~15 px.
+- **What makes it stale is tested** for an ALG bump, a typed tempo, a clean-up change (a converted song's cleaned MusicXML read differently: `sig`) and Reprocess.
+
+**For the assistants' upload** (the other half):
+
+- `window.resonatePlay.fingering()` returns the open song's record, or null.
+- window `resonate:fingering` is fired whenever a record is made ready: read from the song, reused, or worked out. Its detail is `{ song, fing (the record), computed, from: "score" | "import" }`, and the conversion's ("import") fires for a song the Score isn't showing too.
+- The record is §4's, plus `ms`. It is fresh as of the event, and stays fresh until the next event for that song. It goes stale with the song's MusicXML (`replaceSong`), its own tempo, ALG or the hand.
+
+**Tests:**
+
+- **playfinger.cjs:** the shell; iPad, phone and desktop; the generated fixture (fingerfixture.cjs: r6, wide, big) and Amazing Grace. It covers §8's browser list, plus:
+  - J: off = a page whose Worker never answers. A press's lit keys, the schedules (Both with LH muted, the LH view) and ▶'s struck notes and keyboard writes are equal, write for write.
+  - G: 2851 notes. No long task while they're worked out; the main thread's share is 16 ms.
+- **playfingerwk.mjs** (WebKitGTK): the Worker, a press's digits and hands, the rings, and 0 of 87 samples with an SVG element animating while ▶ plays with the rings.
+- **fingersurvey.mjs:** the invariants (now `tools/lib/fingerinv.mjs`, shared with fingercases), every hand size, determinism and the shuffle, on Amazing Grace. The owner's songs come in through `PLAY_SCORES=… node dumpkeys.cjs` into the temp dir, never the repo.
+- **libcore:** `saveFing` and `saveClean` interleaved (the old `saveClean` fails it).
+- **synclib 14:** no `fing` in the row, the file or another device; a new fingering alone sends nothing.
+
+**Timings** (sandbox Chromium, desktop):
+
+| song | notes | Worker | main thread (sig + notes + post) |
+|---|---|---|---|
+| Amazing Grace | 162 | 15 ms | 13 ms building |
+| the fixture | 26 | 2–9 ms | — |
+| 150 bars | 2851 | 99 ms | 16 ms (10 ms the notes) |
+
+**Left:**
+
+- The assistants' half.
+- The owner's songs through fingersurvey: each `m` / `w` against its PDF.
+- Digits on a phone in landscape and in Slide Over (no ROOM rule in the shell: CLEANUP-PHASE8 §0.9).
+- One review pass.

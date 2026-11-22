@@ -13,6 +13,8 @@
 //          none on songs converted before v90 and on MusicXML / link / sample songs.
 //   titleAuto: true — the title came from the PDF's file name (addPdfSong): the first conversion may name it.
 //   conv:  { kind, message, at } — the last conversion failed in a way that would fail again; device only.
+//   fing:  { v, alg, hand, bpm, sig, at, ms, n, fr } — its piano fingering (fingering.js, E7): derived, device
+//          only (never synced), dropped with its MusicXML (replaceSong); written only by saveFing.
 //
 // The list of songs is also kept as a small index in localStorage, so showing My songs never
 // reads the songs themselves: each is often 1–2 MB of MusicXML, and reading them all to list
@@ -263,7 +265,7 @@ export async function putSong(song, { quiet = false } = {}) {
 export async function replaceSong(id, xml, { pages = null, title = null, engine = null, quiet = false } = {}) {
   const old = await getSong(id);
   if (!old) return null;
-  const { clean, pages: _pages, engine: _engine, titleAuto, conv, ...keep } = old;
+  const { clean, fing, pages: _pages, engine: _engine, titleAuto, conv, ...keep } = old;
   const song = {
     ...keep, xml, rev: `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, ...(title ? { title } : {}),
     ...(Array.isArray(pages) ? { pages } : {}), ...(engine ? { engine } : {}),
@@ -292,14 +294,42 @@ export async function getPages(id) {
   return Array.isArray(song?.pages) ? song.pages : null;
 }
 
+// A song record changed in one readwrite transaction: read, fn(song) → the record to write (or null:
+// nothing), written — so two such writes (saveClean, saveFing: both run on the first open after a
+// release) never drop each other's field, as a read in one transaction and a write in another did.
+// No "resonate:data" event: what they keep is derived (no sync pass). → written
+function modify(id, fn) {
+  return openSongs().then((db) => new Promise((resolve, reject) => {
+    if (!db) {
+      const song = memory.songs.get(id), next = song ? fn(song) : null;
+      if (next) memory.songs.set(id, next);
+      return resolve(!!next);
+    }
+    let wrote = false;
+    const tx = db.transaction(STORE, "readwrite"), st = tx.objectStore(STORE);
+    const req = st.get(id);
+    req.onsuccess = () => {
+      const song = req.result, next = song ? fn(song) : null;
+      if (next) { st.put(next); wrote = true; }
+    };
+    tx.oncomplete = () => resolve(wrote);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error("storage aborted"));
+  }));
+}
+
 // Keep a cleaned-up copy of a song's MusicXML (tagged with the app version that made it),
 // next to the original, so loading it again doesn't redo the clean-ups.
 export async function saveClean(id, xml, ver, from = null) {
-  const song = await run("readonly", (s, mem) => (s ? s.get(id) : { result: mem.get(id) }));
-  if (!song) return;
-  if (from != null && song.xml !== from) return; // (its MusicXML was replaced meanwhile: its PDF read again)
-  song.clean = { xml, ver };
-  await run("readwrite", (s, mem) => (s ? s.put(song) : (mem.set(id, song), {})));
+  // (its MusicXML replaced meanwhile — its PDF read again: not kept)
+  await modify(id, (song) => (from != null && song.xml !== from ? null : { ...song, clean: { xml, ver } }));
+}
+
+// Keep a song's piano fingering (fingering.js) with it — only into the MusicXML it was worked out
+// from: rev, the song's as it was read (null: never replaced) — a song replaced meanwhile (its PDF
+// read again, another device's version) isn't given the old notes' fingering. → kept
+export async function saveFing(id, fing, rev = null) {
+  return modify(id, (song) => ((song.rev ?? null) !== (rev ?? null) || !isMusicXml(song.xml) ? null : { ...song, fing }));
 }
 
 export async function removeSong(id, { quiet = false } = {}) {

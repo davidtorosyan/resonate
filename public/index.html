@@ -468,6 +468,12 @@
         padding: 6px max(8px, env(safe-area-inset-right)) 6px max(8px, env(safe-area-inset-left)); background: #14142c; position: relative; z-index: 1; }
       .pianobar .kb { flex: 1 1 auto; min-width: 0; height: clamp(56px, 9vh, 110px); touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: pointer; }
       .pianobar .kb svg { display: block; width: 100%; height: 100%; }
+      /* the fingering's button (E7): the row's right end, 44 × 44 — off: a hand's outline, numbers: 123, hand: the hand filled */
+      .pianobar .fing { flex: none; align-self: center; width: 44px; height: 44px; padding: 0; display: grid; place-items: center; border-radius: 12px; border: 1px solid var(--line-2);
+        background: var(--control); color: var(--text-2); font: 700 13px/1 var(--font); touch-action: manipulation; -webkit-tap-highlight-color: transparent; cursor: pointer; }
+      .pianobar .fing[hidden] { display: none; }
+      .pianobar .fing:not([data-mode="off"]) { color: var(--text); background: rgba(166,79,255,0.28); border-color: #a64fff; }
+      .pianobar .fing .n { letter-spacing: -.02em; }
       /* the tuner in the top bar (Sing and the Score, ≥ 700 px): a strip that gives way to the song pill */
       .top > .tuner[data-form="strip"] { width: auto; flex: 1 1 260px; min-width: 200px; max-width: 460px; }
       .top > .tuner[data-form="strip"] .tword { display: none !important; }

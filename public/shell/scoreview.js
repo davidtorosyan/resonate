@@ -123,6 +123,8 @@ export function mountScore({ version, hooks, onLoad = () => {} }) {
     press: (midi, e) => (P?.press ? P.press(midi, e) : undefined),
     lift: (pk) => P?.lift?.(pk),
     keysChanged: () => P?.keysChanged?.(),
+    // (#fing's mode changed: the Score's digits, ghost hand and the fingering's hand rules again)
+    fingersChanged: () => P?.fingersChanged?.(),
     debug: () => (P ? playDebug() : null),
   };
 }

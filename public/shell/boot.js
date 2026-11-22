@@ -77,11 +77,15 @@ const song = mountSongView({ tuner, version, onLoad: hooks, onLeave: showNextUp,
 setOpener((id, opts) => song.open(id, opts));
 function hooks() { // (sing.js, play.js, record.js… set their own when they load: the shell's go back on top, with theirs inside)
   window.resonateBusy = () => tray.busy() || song.busy(); // (nav.js: a reload for another tab's sign-in/out waits for it)
-  window.resonateDebug = () => ({
-    device: device(), tuner: tuner.debug(), import: tray.debug(), eventList: tray.eventList, songs: songs.debug(), song: song.debug(), sing: song.singDebug(), score: song.scoreDebug(), piano: song.pianoDebug(),
-    place: places?.debug(), remote: remoteHome?.debug(),
-    overlay: document.querySelector("body > .sheet:not([hidden]), #places > .sheet:not([hidden]), .pop:not([hidden])")?.id || (overlayOpen("tuner") ? "tuner" : null),
-  });
+  window.resonateDebug = () => {
+    const sc = song.scoreDebug();
+    return {
+      device: device(), tuner: tuner.debug(), import: tray.debug(), eventList: tray.eventList, songs: songs.debug(), song: song.debug(), sing: song.singDebug(), score: sc, piano: song.pianoDebug(),
+      play: sc?.play, // (the Score's, as play.html's resonateDebug().play: the suites read it alike — docs/CLEANUP-PHASE8.md §2)
+      place: places?.debug(), remote: remoteHome?.debug(),
+      overlay: document.querySelector("body > .sheet:not([hidden]), #places > .sheet:not([hidden]), .pop:not([hidden])")?.id || (overlayOpen("tuner") ? "tuner" : null),
+    };
+  };
   remoteHome?.adopt(); // (Sing just loaded: its remote hooks go inside the shell's)
 }
 
