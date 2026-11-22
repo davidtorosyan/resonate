@@ -116,6 +116,7 @@ if [ "$TIER" = main ]; then
   done
   run playpdf 1200 env SHOTS=0 node playpdf.cjs   # 📄: the bars on the PDF, zoom and pan, the focus border
   run playfocus 900 env SHOTS=0 node playfocus.cjs # E3: a highlight's exact span for assistants, a double-tap picks one chord
+  run playmarks 900 env SHOTS=0 node playmarks.cjs # E6: bookmarks — made, tabs on the music, the list, per song, the shell's Score
 
   # ---- PDF → Song: the Reader (a synthetic fixture with clean-ups; the real recorded Chromium run) --------
   for fx in greensleeves greensleeves3-real; do
@@ -139,7 +140,7 @@ if [ "$TIER" = main ]; then
   for t in playpdfonly singpdf; do run "$t" 600 node "$t.cjs"; done
 
   # ---- WebKitGTK (Xvfb :99 + WebKitWebDriver on :4444, CLAUDE.md "a fresh container") ----------------------
-  WK=(playwebkit playbackwk playpresswk playhearwk cutoverwk readerwk)
+  WK=(playwebkit playbackwk playpresswk playhearwk playmarkswk cutoverwk readerwk)
   if curl -s -m 2 http://127.0.0.1:4444/status > /dev/null 2>&1; then
     for t in "${WK[@]}"; do run "$t" 900 env DISPLAY=:99 node "$t.mjs"; done
   else

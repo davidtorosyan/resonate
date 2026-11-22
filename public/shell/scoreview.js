@@ -29,7 +29,10 @@ const OVERRIDES = `
 .score-root #bar #play[data-icon="stop"] { background: var(--grad-live); }
 .score-root #bar #names[data-level="all"] { background: #a64fff; border-color: #a64fff; }
 .score-root #bar #names[data-level="some"], .score-root #bar #names[data-level="off"] { background: transparent; }
-.score-root #bar #keys[aria-pressed="true"], .score-root #bar #pdf[aria-pressed="true"] { background: rgba(166,79,255,0.28); border-color: #a64fff; }
+.score-root #bar #keys[aria-pressed="true"], .score-root #bar #pdf[aria-pressed="true"], .score-root #bar #marks[aria-expanded="true"] { background: rgba(166,79,255,0.28); border-color: #a64fff; }
+/* (the bookmarks' list — fixed, z-index 35: over the paper and the dock (20), under the scrim (40), the sheets
+   (45) and the top bar (46); a tap outside closes it) */
+.score-root #marklist { font-family: var(--font); }
 .score-root #bar #keys { display: none !important; } /* (the dock's Piano toggle drives the keyboard) */
 .score-root #stage { border-radius: 0; }
 /* (the Piano's keyboard right under the paper, as play.html docks its own: no strip of the page between;

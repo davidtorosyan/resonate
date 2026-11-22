@@ -37,10 +37,11 @@ const pdfBtn = $("pdf"), offerEl = $("offer"), stripEl = $("strip"), bubbleEl = 
 // (▶: the one-page shell hands its own over — Sing's page there has a #play of its own)
 const playBtn = window.resonatePlay?.playBtn || $("play"), selbar = $("selbar"), selLoopBtn = $("sel-loop"), speedSel = $("speed"), selClearBtn = $("sel-clear");
 const hearEl = $("hear"), chordsBtn = $("chords");
+const selMarkBtn = $("sel-mark"), marksBtn = $("marks"), markList = $("marklist");
 const pdfBar = $("pdfbar"), pdfOutBtn = $("pdf-out"), pdfInBtn = $("pdf-in"), pdfFocusBtn = $("pdf-focus"), pdfAgainBtn = $("pdf-again");
 
 const K = {
-  play: "resonate.play",        // { songId: { names, view, at, pdfPage, speed, hear, days } } — the account's (space.js DATA_KEYS)
+  play: "resonate.play",        // { songId: { names, view, at, pdfPage, speed, hear, days, marks } } — the account's (space.js DATA_KEYS)
   zoom: "resonate.play.zoom",   // − / +: steps from the default ("+1" … "+8", "-1" … "-8"; none: the default) — this device's (the piano views)
   zoomScore: "resonate.play.zoom.score", // the same for the full score: a size picked for the piano
                                 // doesn't change the score, nor the other way round — this device's
@@ -222,7 +223,7 @@ const gone = new Set();
 function forget(id) {
   if (!id) return;
   gone.add(id);
-  if (S.song === id) { clearTimeout(saveTimer); saveTimer = 0; S.st = {}; }
+  if (S.song === id) { clearTimeout(saveTimer); saveTimer = 0; S.st = {}; marksChanged(); }
 }
 
 // A song's record goes with the song (Sing's ✕ and the sync's deletion remove it). What's left —
@@ -291,7 +292,7 @@ function setBusy(busy) {
   handsSel.disabled = busy || pdf.on;
   if (busy) {
     pgEl.textContent = "…";
-    for (const b of [smallerBtn, biggerBtn, prevBtn, nextBtn, playBtn]) b.disabled = true;
+    for (const b of [smallerBtn, biggerBtn, prevBtn, nextBtn, playBtn, marksBtn]) b.disabled = true;
     placeSelbar(); // (the stretch's controls wait for the drawing)
   }
 }
@@ -352,6 +353,10 @@ async function open(id) {
   placeSelbar();
   S.st = readPlay()[id] || {};
   if (!S.st || typeof S.st !== "object") S.st = {};
+  closeMarks();
+  const mk = cleanMarks(S.st.marks);
+  if (mk.length) S.st.marks = mk; else delete S.st.marks;
+  listButton(); // (before the layout: the bar's height is final when the music is laid out)
   S.speed = SPEEDS.includes(S.st.speed) ? S.st.speed : 1;
   speedSel.value = String(S.speed);
   S.at = Number.isInteger(S.st.at) && S.st.at >= 0 ? S.st.at : 0;
@@ -415,6 +420,7 @@ async function open(id) {
 async function openPdf(id, gen, t0, pinned) {
   S.pdfOnly = true;
   bar.dataset.pdfonly = "";
+  listButton();
   if (pinned) delete S.st.names; // (a level is pinned when the song's notes first show, not its PDF)
   hideOffer();
   againButton();
@@ -1091,6 +1097,7 @@ function sizeButtons() {
   smallerBtn.disabled = !S.ready || pdf.on || nextStep(-1) == null;
   biggerBtn.disabled = !S.ready || pdf.on || nextStep(1) == null;
   namesBtn.disabled = chordsBtn.disabled = pdf.on;
+  marksBtn.disabled = !S.ready || pdf.on;
   keysBtn.disabled = (pdf.on && !S.pdfOnly) || !keysRoom();
   playButtons();
 }
@@ -1192,6 +1199,7 @@ const gests = new Map();
 let tap0 = null; // the last tap on a note: { t (its lift), ids (its chord), gen }
 stage.addEventListener("pointerdown", (e) => {
   if (e.target.closest?.("#selbar")) return; // (the stretch's own controls)
+  if (e.target.closest?.(".mtab")) { tap0 = null; letGoMenu(); return; } // (a bookmark's tab: it selects at its click — never a strike)
   if ((e.pointerType === "mouse" && e.button !== 0) || pdf.on) { letGoMenu(); return; }
   // (sound before sight: the note under the finger and its strike before any change on screen)
   const t0 = performance.now();
@@ -1914,7 +1922,7 @@ function placeHear() {
     if (hearFit.fit) home = kr.box;
   }
   if (home) put();
-  else if (hearEl.parentNode !== selbar) selbar.insertBefore(hearEl, selClearBtn);
+  else if (hearEl.parentNode !== selbar) selbar.insertBefore(hearEl, selMarkBtn);
   setRows(home ? hearRowsFor(keysH()) : 1);
   if (!home && !selbar.hidden) placeSelbar("keep");
 }
@@ -2184,6 +2192,8 @@ function drawSel(why = "place") {
       }
     }
   }
+  drawMarks();
+  markButton();
   playButtons();
   placeSelbar(why);
 }
@@ -2216,6 +2226,337 @@ function noteBand(sel) {
     d.style.cssText = `left:${(l - pr.left).toFixed(1)}px;top:${(t - pr.top).toFixed(1)}px;width:${(r - l).toFixed(1)}px;height:${(b - t).toFixed(1)}px`;
     pg.appendChild(d);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Marks (E6): bookmarks of what was practised, beyond "where you left off" — a stretch or a chord
+// picked (a drag, a double-tap) saved with the stretch's 🔖 (#sel-mark: no prompt; pressed when the
+// selection is a mark, a tap then reads "Remove?" and a second within ARM_MS removes it). Kept in
+// the song's record, resonate.play[id].marks (≤ MARKS_MAX; written through saveState: this space
+// only; gone with the song; not synced yet): { id, q0, end (written quarters, as S.sel), ids (a
+// chord's notes), from / to ({ bar: its number in the MusicXML, beat: quarters from the bar's
+// start, 1 = the downbeat — scoretext.js placeOf, as the focus names them; to: where it stops, not
+// included}), label (the singer's words, ≤ 80), at (made), used (the last ▶ / ⟳ of it) }.
+// On the music: a small tab at each mark's start — over the top staff of the system holding its
+// first onset in the view, at that onset's x (pageGeo's columns, as the bands) — drawn again after
+// every drawing (drawSel); a tap selects it (a stretch as a drag picking it; a chord as its
+// double-tap where the view draws its notes, else the stretch) and never strikes (the stage's
+// pointerdown lets it go). None over the PDF, nor where the view starts nothing in the mark.
+// The bar's 🔖 (#marks, hidden with no marks, over the PDF and for a PDF only — without marks the
+// bar is as it was) lists them in score order: a popover under it (a bottom sheet on a phone).
+// Each row: its label (an input: placeholder the bars, "Bars 12–15" / "Bar 12 · beat 3"), how long
+// since it was played (or made), ▶ (select it, play it once), ✕ (two taps); a tap elsewhere on the
+// row turns to it and selects it. A tap outside or Escape closes it.
+
+const MARKS_MAX = 50, LABEL_MAX = 80, ARM_MS = 3000, SHEET_W = 560;
+const RIBBON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 3.5h9a1 1 0 0 1 1 1v16l-5.5-4-5.5 4v-16a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
+const markId = (have) => { let id; do id = Math.random().toString(36).slice(2, 8); while (!id || have.has(id)); return id; };
+// A stored list, checked (a record from an older or a broken page) → [mark].
+function cleanMarks(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [], have = new Set();
+  const place = (p) => (p && typeof p === "object" && p.bar != null ? { bar: String(p.bar), beat: Number(p.beat) || 1 } : null);
+  for (const m of list) {
+    if (!m || typeof m !== "object") continue;
+    const q0 = Number(m.q0), end = Number(m.end);
+    if (!(Number.isFinite(q0) && Number.isFinite(end) && q0 >= 0 && end > q0 + EPS)) continue;
+    let id = typeof m.id === "string" && m.id ? m.id.slice(0, 16) : "";
+    if (!id || have.has(id)) id = markId(have);
+    have.add(id);
+    const ids = Array.isArray(m.ids) ? m.ids.filter((x) => typeof x === "string").slice(0, 64) : [];
+    out.push({ id, q0, end, ...(ids.length ? { ids } : {}), from: place(m.from), to: place(m.to),
+      label: typeof m.label === "string" ? m.label.slice(0, LABEL_MAX) : "", at: Number(m.at) || 0, used: Number(m.used) || 0 });
+    if (out.length >= MARKS_MAX) break;
+  }
+  return out;
+}
+const marksList = () => (Array.isArray(S.st.marks) ? S.st.marks : []);
+const byScore = (a, b) => a.q0 - b.q0 || a.end - b.end || (a.ids ? 1 : 0) - (b.ids ? 1 : 0);
+const marksSorted = () => [...marksList()].sort(byScore);
+// What of a chord mark the view draws (its note ids).
+function drawnOf(m) {
+  if (!m.ids || !S.P) return [];
+  songTime();
+  const keep = viewKeep();
+  return m.ids.filter((id) => { const e = S.Tid.get(id); return e && !e.rest && keep(e); });
+}
+// The mark the selection is (null: none) — a stretch: the same [q0, end); a chord: the same notes,
+// or what the view draws of them (the hymn's chord picked in Both, in Melody: its tune note); a
+// chord this view doesn't draw, selected as its stretch (selectMark), is that stretch.
+function markOf(sel = S.sel) {
+  if (!sel || !S.P) return null;
+  const list = marksList(), at = (m) => Math.abs(m.q0 - sel.q0) < EPS;
+  if (sel.note) {
+    const ids = new Set(sel.note.ids), same = (a) => a.length === ids.size && a.every((id) => ids.has(id));
+    return list.find((m) => m.ids && at(m) && same(m.ids)) || list.find((m) => m.ids && at(m) && same(drawnOf(m))) || null;
+  }
+  return list.find((m) => at(m) && Math.abs(m.end - sel.end) < EPS && (!m.ids || !drawnOf(m).length)) || null;
+}
+// Where a mark is, in a few words: "Bars 12–15", "Bar 12", a chord "Bar 12 · beat 3".
+function markPlace(m) {
+  if (m.ids) {
+    const f = m.from || (S.P ? placeOf(songTime(), m.q0, numberOf) : null);
+    return f ? `Bar ${f.bar} · beat ${f.beat}` : "";
+  }
+  if (S.P) {
+    const T = songTime(), a = barAt(T, m.q0), b = barAt(T, Math.max(m.q0, m.end - 1e-4));
+    return a === b ? `Bar ${numberOf(a)}` : `Bars ${numberOf(a)}–${numberOf(b)}`;
+  }
+  return m.from && m.to ? (m.from.bar === m.to.bar ? `Bar ${m.from.bar}` : `Bars ${m.from.bar}–${m.to.bar}`) : "";
+}
+// How long since (ms): "today", "2d", "3w", "4mo", "2y" — calendar days.
+function ageOf(t) {
+  if (!t) return "";
+  const day = (d) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 864e5;
+  const n = Math.round(day(new Date()) - day(new Date(t)));
+  return n <= 0 ? "today" : n < 7 ? `${n}d` : n < 60 ? `${Math.floor(n / 7)}w` : n < 730 ? `${Math.floor(n / 30)}mo` : `${Math.floor(n / 365)}y`;
+}
+
+// The selection saved as a mark (already one: nothing; MARKS_MAX: a shake).
+function addMark() {
+  if (!S.sel || !S.P || markOf()) return;
+  const list = marksList();
+  if (list.length >= MARKS_MAX) return nope(selMarkBtn);
+  const T = songTime(), sel = S.sel;
+  const m = { id: markId(new Set(list.map((x) => x.id))), q0: sel.q0, end: sel.end, ...(sel.note ? { ids: sel.note.ids.slice() } : {}),
+    from: placeOf(T, sel.q0, numberOf), to: placeOf(T, sel.end, numberOf, true), label: "", at: Date.now(), used: 0 };
+  S.st.marks = [...list, m];
+  saveState();
+  marksChanged();
+}
+function removeMark(id) {
+  const list = marksList().filter((m) => m.id !== id);
+  if (list.length) S.st.marks = list; else delete S.st.marks;
+  saveState();
+  marksChanged();
+}
+// The marks changed (made, removed, a song's record read or forgotten): the tabs, the buttons, the list.
+function marksChanged() {
+  disarm();
+  drawMarks();
+  markButton();
+  listButton();
+  if (!markList.hidden) renderMarks();
+  remote.changedSoon();
+}
+const nope = (b) => { b.classList.remove("nope"); void b.offsetWidth; b.classList.add("nope"); };
+
+// Two taps to remove (the stretch's 🔖 on a mark, a row's ✕): the first arms it — "Remove?" — for
+// ARM_MS; one tap lapses.
+let armed = null; // { el, id, timer }
+function arm(el, id) {
+  disarm();
+  el.dataset.arm = "";
+  el.setAttribute("aria-label", "Remove?");
+  el.title = "Remove?";
+  if (el.classList.contains("mdel")) el.textContent = "Remove?";
+  armed = { el, id, timer: setTimeout(disarm, ARM_MS) };
+  if (el === selMarkBtn) placeSelbar("keep"); // (wider: kept inside the stage)
+}
+function disarm() {
+  if (!armed) return;
+  const { el, timer } = armed;
+  armed = null;
+  clearTimeout(timer);
+  delete el.dataset.arm;
+  const label = el === selMarkBtn ? "Bookmark" : "Remove";
+  el.setAttribute("aria-label", label);
+  el.title = label;
+  if (el.classList.contains("mdel")) el.textContent = "✕";
+  if (el === selMarkBtn && !selbar.hidden) placeSelbar("keep");
+}
+selMarkBtn.addEventListener("click", () => {
+  if (!S.sel || !S.ready) return;
+  const m = markOf();
+  if (!m) return addMark();
+  if (armed?.el === selMarkBtn && armed.id === m.id) return removeMark(m.id);
+  arm(selMarkBtn, m.id);
+});
+
+// The selection's mark shown: 🔖 pressed, its tab and its row lit.
+function markButton() {
+  const m = markOf();
+  if (armed?.el === selMarkBtn && armed.id !== m?.id) disarm();
+  selMarkBtn.setAttribute("aria-pressed", String(!!m));
+  for (const t of stage.querySelectorAll(".page .mtab")) t.toggleAttribute("data-on", !!m && t.dataset.id === m.id);
+  for (const r of markList.querySelectorAll(".mrow")) r.toggleAttribute("data-on", !!m && r.dataset.id === m.id);
+}
+
+// The tabs, on the shown page(s): at each mark's first onset in the view (the system's column for
+// it), over that system's top staff line; marks starting together side by side.
+function drawMarks() {
+  for (const t of stage.querySelectorAll(".page .mtab")) t.remove();
+  const list = marksSorted();
+  if (!list.length || !S.ready || pdf.on || S.pdfOnly || !S.P) return;
+  const qs = viewOnsets(), first = new Map();
+  for (const m of list) {
+    const d = drawnOf(m);
+    const q = d.length ? Math.min(...d.map((id) => S.Tid.get(id).q)) : qs.find((x) => x >= m.q0 - EPS);
+    if (q != null && q < m.end - EPS) first.set(m, q);
+  }
+  if (!first.size) return;
+  const sp = S.sp || 8, w = Math.max(12, Math.round(1.4 * sp)), h = Math.round(w * 1.4);
+  for (const pg of stage.querySelectorAll(".page")) {
+    const systems = pageGeo(pg), taken = new Map();
+    for (const [m, q] of first) {
+      for (const sys of systems) {
+        const c = sys.cols.find((x) => Math.abs(x.q - q) < EPS);
+        if (!c) continue;
+        const key = `${Math.round(sys.top)}|${Math.round(q * 1e4)}`, k = taken.get(key) || 0;
+        taken.set(key, k + 1);
+        const x = (c.x0 + c.x1) / 2 - w / 2 + k * (w + 3), y = sys.top - 0.35 * sp - h;
+        const t = document.createElement("button");
+        t.type = "button";
+        t.className = "mtab";
+        t.tabIndex = -1; // (the pedal's Space / Enter turn pages: never this)
+        t.dataset.id = m.id;
+        const name = m.label || markPlace(m);
+        t.title = name;
+        t.setAttribute("aria-label", `Bookmark: ${name}`);
+        // (the tab's own box: padding round the ribbon — 7 px each side, 6 over, 3 under)
+        t.style.cssText = `left:${(x - 7).toFixed(1)}px;top:${Math.max(0, y - 6).toFixed(1)}px;--mw:${w}px;--mh:${h}px`;
+        t.append(document.createElement("i"));
+        pg.appendChild(t);
+        break;
+      }
+    }
+  }
+}
+stage.addEventListener("click", (e) => {
+  const t = e.target.closest?.(".mtab");
+  if (!t) return;
+  t.blur();
+  const m = marksList().find((x) => x.id === t.dataset.id);
+  if (m) selectMark(m);
+});
+
+// Select a mark: a chord where the view draws its notes (what it draws of them), else its stretch —
+// the view's onsets in it, ending where the mark ends; turn: show its page first (the list).
+function selectMark(m, turn = false) {
+  if (!S.ready || pdf.on || !S.P || !m) return false;
+  const T = songTime(), d = drawnOf(m);
+  let sel = d.length ? noteSel(d) : null, q = sel?.q0 ?? m.q0;
+  if (!sel) {
+    const inside = viewOnsets().filter((x) => x >= m.q0 - EPS && x < m.end - EPS);
+    if (inside.length) { sel = { q0: m.q0, q1: inside[inside.length - 1], end: m.end }; q = inside[0]; }
+  }
+  if (turn) goBar(barAt(T, q)); // (the page with its first note in this view)
+  if (!sel) return false;
+  if (PB.kind === "span" && PB.state !== "idle") stopPlay(); // (as a new stretch: the old one's playing stops)
+  S.sel = sel;
+  drawSel("place");
+  focusSoon();
+  return true;
+}
+
+// The bar's 🔖: shown with marks, not over the PDF nor for a PDF only.
+function listButton() {
+  const hide = !marksList().length || pdf.on || S.pdfOnly;
+  if (marksBtn.hidden !== hide) marksBtn.hidden = hide;
+  if (hide) closeMarks();
+}
+marksBtn.addEventListener("click", () => (markList.hidden ? openMarks() : closeMarks()));
+function openMarks() {
+  if (!marksList().length || pdf.on || S.pdfOnly) return;
+  renderMarks();
+  markList.hidden = false;
+  marksBtn.setAttribute("aria-expanded", "true");
+  placeMarks();
+}
+function closeMarks() {
+  if (markList.hidden) return;
+  for (const inp of markList.querySelectorAll("input")) setLabel(inp);
+  if (markList.contains(document.activeElement)) document.activeElement.blur();
+  if (armed && markList.contains(armed.el)) disarm();
+  markList.hidden = true;
+  marksBtn.setAttribute("aria-expanded", "false");
+}
+// Under the button, its right edge on the button's (inside the window); under SHEET_W px wide a
+// bottom sheet — above an on-screen keyboard while a label is typed (the visual viewport).
+function placeMarks() {
+  if (markList.hidden) return;
+  const W = innerWidth, H = innerHeight, vv = window.visualViewport;
+  const sheet = W < SHEET_W;
+  markList.toggleAttribute("data-sheet", sheet);
+  if (sheet) {
+    const kb = vv ? Math.max(0, H - (vv.height + vv.offsetTop)) : 0;
+    markList.style.cssText = `bottom:${Math.round(kb)}px;max-height:${Math.round(0.6 * (vv?.height || H))}px`;
+    return;
+  }
+  const r = marksBtn.getBoundingClientRect(), w = markList.offsetWidth, top = Math.round(r.bottom + 6);
+  markList.style.cssText = `left:${Math.round(Math.max(8, Math.min(W - w - 8, r.right - w)))}px;top:${top}px;max-height:${Math.max(160, H - top - 12)}px`;
+}
+addEventListener("resize", placeMarks);
+window.visualViewport?.addEventListener("resize", placeMarks);
+// (a tap anywhere else closes it — and does what it does; Escape closes it)
+document.addEventListener("pointerdown", (e) => {
+  if (markList.hidden || e.target.closest?.("#marklist, #marks")) return;
+  closeMarks();
+}, true);
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || markList.hidden) return;
+  e.preventDefault(); // (the one-page shell's Escape closes its own sheets: not with this one)
+  closeMarks();
+  marksBtn.focus?.({ preventScroll: true });
+});
+function renderMarks() {
+  const cur = markOf();
+  markList.replaceChildren(...marksSorted().map((m) => {
+    const row = document.createElement("div");
+    row.className = "mrow";
+    row.dataset.id = m.id;
+    if (cur === m) row.dataset.on = "";
+    row.innerHTML = `<span class="mgo">${RIBBON}</span><input class="mlabel" type="text" maxlength="${LABEL_MAX}" enterkeyhint="done" autocomplete="off" spellcheck="false" aria-label="Label"><span class="mage"></span>`
+      + `<button type="button" class="mplay" aria-label="Play" title="Play">${ICONS.play}</button><button type="button" class="mdel" aria-label="Remove" title="Remove">✕</button>`;
+    const inp = row.querySelector("input");
+    inp.value = m.label || "";
+    inp.placeholder = markPlace(m);
+    row.querySelector(".mage").textContent = ageOf(m.used || m.at);
+    return row;
+  }));
+}
+// A label typed: kept in the record at once (saved with it at pagehide), saved on change / blur.
+let labelTyped = false;
+function setLabel(inp, save = true) {
+  const m = marksList().find((x) => x.id === inp.closest(".mrow")?.dataset.id);
+  if (!m) return;
+  const v = inp.value.replace(/\s+/g, " ").trim().slice(0, LABEL_MAX);
+  if (v !== m.label) { m.label = v; labelTyped = true; }
+  if (!save || !labelTyped) return;
+  labelTyped = false;
+  saveState();
+  drawMarks();
+  markButton();
+  remote.changedSoon();
+}
+markList.addEventListener("input", (e) => { if (e.target.matches?.("input.mlabel")) setLabel(e.target, false); });
+markList.addEventListener("change", (e) => { if (e.target.matches?.("input.mlabel")) setLabel(e.target); });
+markList.addEventListener("focusout", (e) => { if (e.target.matches?.("input.mlabel")) setLabel(e.target); });
+markList.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.matches?.("input.mlabel")) { e.preventDefault(); e.target.blur(); } });
+markList.addEventListener("click", (e) => {
+  const row = e.target.closest?.(".mrow");
+  const m = row && marksList().find((x) => x.id === row.dataset.id);
+  if (!m || e.target.closest("input")) return;
+  const b = e.target.closest("button");
+  b?.blur();
+  if (b?.classList.contains("mdel")) {
+    if (armed?.el === b && armed.id === m.id) return removeMark(m.id);
+    return arm(b, m.id);
+  }
+  disarm();
+  closeMarks();
+  const ok = selectMark(m, true);
+  if (b?.classList.contains("mplay") && ok) playStart("span");
+});
+
+// For an assistant (scoreState): the marks — the 30 played or made last, in score order.
+function marksState() {
+  const recent = [...marksList()].sort((a, b) => (b.used || b.at) - (a.used || a.at)).slice(0, 30).sort(byScore);
+  return recent.map((m) => ({
+    kind: m.ids ? "note" : "stretch",
+    from: m.from ? { ...m.from } : null, to: m.to ? { ...m.to } : null,
+    label: m.label || "", used: m.used ? new Date(m.used).toISOString() : null,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -2307,6 +2648,7 @@ async function playStart(kind, loop = false) {
   try { args = trackArgs(kind); tr = trackOf(args); } catch (err) { console.warn("play", err); return; }
   S.t.track = ms(tb);
   if (!(tr.len > 0)) return;
+  if (kind === "span") { const m = markOf(); if (m) { m.used = Date.now(); saveState(); } } // (a bookmark played: its age starts again)
   const ev = eventsOf(tr);
   Object.assign(PB, {
     state: loop ? "looping" : "playing", kind, starting: true, a, piano: null, args, tr, ev, base: tr.base, from: tr.from,
@@ -2623,7 +2965,7 @@ function placeSelbar(why = "place") {
   const was = !selbar.hidden;
   selbar.hidden = !show;
   if (!show) return;
-  selLoopBtn.hidden = selClearBtn.hidden = !S.sel;
+  selLoopBtn.hidden = selClearBtn.hidden = selMarkBtn.hidden = !S.sel;
   const st = stage.getBoundingClientRect();
   const w = selbar.offsetWidth, h = selbar.offsetHeight, m = 10;
   const rel = (r) => [r.left - st.left, r.top - st.top, r.right - st.left, r.bottom - st.top];
@@ -2868,6 +3210,7 @@ function pdfControls() {
   renderHear();
   handsSel.disabled = pdf.on || !S.ready;
   for (const b of offerEl.querySelectorAll("button")) b.disabled = pdf.on; // (kept in place: the bar doesn't move)
+  listButton(); // (no bookmarks over the PDF)
   sizeButtons();
   placeSelbar(); // (the stretch's controls: not over the PDF)
   // (the PDF also opens when the sheet couldn't be drawn)
@@ -3804,6 +4147,7 @@ function scoreState() {
       song: { id: S.song, title: S.title }, ready: S.ready, pdf_only: true, view: null, views: [],
       page: pdf.on ? pdf.page : null, pages, measures: null, bars: null, at: null, selection: null, playing: null,
       speed: Math.round(S.speed * 100), pdf: pdf.has ? { on: pdf.on, page: pdf.on ? pdf.page : null, pages } : null,
+      marks: marksState(),
     };
   }
   const shown = S.ready && !pdf.on ? shownBars() : [];
@@ -3816,6 +4160,8 @@ function scoreState() {
     playing: PB.state !== "idle" || PB.starting ? (PB.state === "looping" ? "loop" : PB.kind === "span" ? "selection" : "from the page") : null,
     speed: Math.round(S.speed * 100),
     pdf: pdf.has ? { on: pdf.on, page: pdf.on ? pdf.page : null, pages: pdf.pages || null } : null,
+    // (the bookmarks: kind, from / to — bar number and beat, as selection's start / end —, label, last played)
+    marks: marksState(),
   };
 }
 
@@ -4123,7 +4469,7 @@ const playState = () => ({ page: "play", song: S.song ? { id: S.song, title: S.t
 // before it imports this. (On play.html nothing calls these.)
 window.resonatePlay = Object.assign(window.resonatePlay || {}, {
   open: (id) => open(id),
-  stopAll: async () => { clearPeek(true); stopPlay(); },
+  stopAll: async () => { clearPeek(true); stopPlay(); closeMarks(); },
   // (pdfOnly: the song is a PDF only — shown once its PDF is drawn, never ready)
   state: () => ({ song: S.song, title: S.title, ready: S.ready, busy: PB.state !== "idle" || PB.starting, held: peeks.some((pk) => pk.held && !pk.dead),
     page: S.page, pages: S.pages, at: S.at, lgen: S.lgen, W: S.W, H: S.H, sp: S.sp, mode: S.mode, pdfOnly: S.pdfOnly, shown: shownNow(),
@@ -4285,6 +4631,16 @@ window.resonateDebug = () => {
         bar: pdfBar.hidden ? null : { focus: !pdfFocusBtn.hidden, again: !pdfAgainBtn.hidden, label: pdfAgainBtn.textContent.trim() },
       },
       wake: { held: !!wake && !wake.released, requests: wakeRequests },
+      // bookmarks (E6): the record's, the selection's, the tabs drawn (client px), 🔖's and the list's state
+      marks: {
+        list: marksList().map((m) => JSON.parse(JSON.stringify(m))), sel: markOf()?.id ?? null,
+        tabs: [...stage.querySelectorAll(".page .mtab")].map((t) => { const r = t.getBoundingClientRect(), i = t.firstChild.getBoundingClientRect(); return { id: t.dataset.id, page: Number(t.closest(".page").dataset.page), on: t.hasAttribute("data-on"), rect: [r.left, r.top, r.width, r.height], ribbon: [i.left, i.top, i.width, i.height] }; }),
+        button: { shown: !selMarkBtn.hidden && !selbar.hidden, pressed: selMarkBtn.getAttribute("aria-pressed") === "true", armed: selMarkBtn.hasAttribute("data-arm"), label: selMarkBtn.getAttribute("aria-label") },
+        listBtn: { shown: !marksBtn.hidden && !!marksBtn.offsetParent, disabled: marksBtn.disabled },
+        open: !markList.hidden, sheet: markList.hasAttribute("data-sheet"),
+        rect: markList.hidden ? null : (() => { const r = markList.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(),
+        rows: [...markList.querySelectorAll(".mrow")].map((r) => ({ id: r.dataset.id, label: r.querySelector("input").value, placeholder: r.querySelector("input").placeholder, age: r.querySelector(".mage").textContent, on: r.hasAttribute("data-on"), del: r.querySelector(".mdel").textContent })),
+      },
       playback: playDebug(),
       t: { ...S.t },
     },
