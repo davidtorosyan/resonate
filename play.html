@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0f0f1e" />
     <title>Resonate · Play</title>
-    <script src="away.js?v=97" data-open="score"></script>
+    <script src="away.js?v=98" data-open="score"></script>
     <style>
       :root { color-scheme: dark; }
       /* An open menu's list takes the option's own colours (Chrome on Windows drew the see-through
@@ -81,7 +81,7 @@
       #smaller, #bigger { line-height: 1; padding: 0; }
       #smaller svg, #bigger svg { width: 22px; height: 22px; display: block; margin: auto; }
       #pdf { padding: 0 0.5rem; }
-      #bar #play, #bar #keys, #bar #chords { padding: 0; }
+      #bar #play, #bar #keys, #bar #chords, #bar #marks { padding: 0; }
       #play svg { width: 22px; height: 22px; display: block; margin: auto; }
       #play[data-icon="stop"] { background: rgba(216,107,0,0.25); border-color: #d86b00; }
       #offer { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; color: rgba(255,255,255,0.75); white-space: nowrap; }
@@ -307,6 +307,8 @@
       #strip { flex: 1 1 auto; min-width: 0; height: clamp(56px, 9vh, 110px); touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: pointer; }
       #strip svg { display: block; width: 100%; height: 100%; }
       #keys svg, #chords svg { width: 24px; height: 24px; display: block; margin: auto; }
+      #marks svg { width: 22px; height: 22px; display: block; margin: auto; }
+      #marks[aria-expanded="true"] { background: rgba(166,79,255,0.28); border-color: #a64fff; }
       #keys[aria-pressed="true"], #chords[aria-pressed="true"] { background: rgba(166,79,255,0.28); border-color: #a64fff; }
       /* ▶: what sounds now — heads and names in the peek's orange. */
       #stage g.note.play .notehead use { fill: #d86b00; }
@@ -392,7 +394,80 @@
       /* A PDF only (not converted yet): its pages, the keyboard and the pager — nothing that needs
          the notes (play.js openPdf). */
       #bar[data-pdfonly] #hands, #bar[data-pdfonly] #play, #bar[data-pdfonly] #names, #bar[data-pdfonly] #chords,
-      #bar[data-pdfonly] .size, #bar[data-pdfonly] #offer, #bar[data-pdfonly] #pdf { display: none; }
+      #bar[data-pdfonly] .size, #bar[data-pdfonly] #offer, #bar[data-pdfonly] #pdf, #bar[data-pdfonly] #marks { display: none; }
+      /* The bookmarks' 🔖 (E6) sits in the pager, before ‹, and only with marks: what it takes is given back
+         on its line — the page number and ‹ › narrower, the fewer-names chip without its question, the song
+         menu's basis smaller (on its row), the nav's links closer — so the bar keeps its rows with marks
+         (tools/playmarks.cjs B sweeps it: 300–1440 px × chip / 📄 × touch / mouse, here and in the shell). */
+      .pager:has(#marks:not([hidden])) { gap: 0.2rem; }
+      #bar:has(#marks:not([hidden])) #pg { min-width: 3.2rem; }
+      #bar:has(#marks:not([hidden])) #prev, #bar:has(#marks:not([hidden])) #next { min-width: 44px; }
+      #bar:has(#marks:not([hidden])) #offer > span { display: none; }
+      @media (min-width: 1100px) { #bar:has(#marks:not([hidden])) #song { flex-basis: 4.5rem; min-width: 4.5rem; } }
+      @media (min-width: 670px) and (max-width: 1099px) {
+        #bar:has(#marks:not([hidden])) .ctl { column-gap: 0.25rem; }
+        #bar:has(#marks:not([hidden])) #names { min-width: 2.75rem; padding: 0 0.4rem; }
+        #bar:has(#marks:not([hidden])) { column-gap: 0.5rem; }
+      }
+      @media (min-width: 480px) and (max-width: 669px) {
+        #bar:has(#marks:not([hidden])) .nav { gap: 0.3rem; }
+        #bar:has(#marks:not([hidden])) .nav-link { padding-left: 0.45rem; padding-right: 0.45rem; }
+      }
+      @media (max-width: 479px) {
+        #bar:has(#marks:not([hidden])) #song { flex-basis: calc(100% - 16.9rem); }
+      }
+      /* (with the chip or 📄 too, the song menu gives way further: its title was cut already) */
+      @media (min-width: 421px) and (max-width: 479px) { #bar:has(#marks:not([hidden])) .ctl:has(#offer:not([hidden])) #song { min-width: 2rem; } }
+      @media (min-width: 670px) and (max-width: 1099px) { #bar:has(#marks:not([hidden])) .ctl:has(#pdf:not([hidden])) #song { min-width: 2.5rem; } }
+
+      /* Bookmarks (E6, play.js "Marks"): the stretch's controls save the one picked (🔖 — pressed when
+         it is one; a tap then reads "Remove?", a second within 3 s removes it); a small tab at each
+         mark's start, over its system's top staff (a tap selects it, never strikes a note); the bar's
+         🔖 lists them (hidden while there are none): a popover under it, a bottom sheet on a phone. */
+      #selbar #sel-mark svg path { fill: none; }
+      #selbar #sel-mark[aria-pressed="true"] svg path { fill: currentColor; }
+      #selbar #sel-mark .arm { display: none; }
+      #selbar #sel-mark[data-arm] { padding: 0 0.8rem; background: rgba(216,107,0,0.45); }
+      #selbar #sel-mark[data-arm] svg { display: none; }
+      #selbar #sel-mark[data-arm] .arm { display: inline; }
+      #selbar #sel-mark.nope { animation: nope 0.28s ease-in-out; }
+      @media (prefers-reduced-motion: reduce) { #selbar #sel-mark.nope { animation: none; } }
+      #stage .mtab {
+        position: absolute; z-index: 2; margin: 0; padding: 6px 7px 3px; border: 0; background: none; cursor: pointer;
+        touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+      }
+      #stage .mtab i {
+        display: block; width: var(--mw, 14px); height: var(--mh, 19px); background: #a64fff; opacity: 0.8;
+        clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 72%, 0 100%); border-radius: 2px 2px 0 0;
+      }
+      #stage .mtab[data-on] i { background: #5e2fb8; opacity: 1; }
+      #marklist {
+        position: fixed; z-index: 35; left: 8px; top: 60px; width: min(380px, calc(100vw - 16px)); max-height: 60vh;
+        overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+        padding: 6px; border-radius: 16px; background: #1d1d3a; color: #e8e8f0; box-shadow: 0 8px 28px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.08);
+        font: 500 0.9rem/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      #marklist[hidden] { display: none; }
+      #marklist[data-sheet] { left: 0; right: 0; top: auto; bottom: 0; width: auto; border-radius: 16px 16px 0 0; padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+      #marklist .mrow { display: flex; align-items: center; gap: 6px; min-height: 52px; padding: 2px 2px 2px 8px; border-radius: 12px; cursor: pointer; }
+      #marklist .mrow + .mrow { box-shadow: inset 0 1px 0 rgba(255,255,255,0.07); }
+      #marklist .mrow[data-on] { background: rgba(166,79,255,0.18); }
+      #marklist .mgo { flex: none; display: grid; place-items: center; width: 22px; color: #c48bff; }
+      #marklist .mgo svg { width: 18px; height: 18px; display: block; }
+      #marklist .mlabel {
+        flex: 1 1 auto; min-width: 0; height: 38px; padding: 0 8px; font: inherit; font-size: 16px; color: inherit;
+        background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14); border-radius: 8px; -webkit-user-select: text; user-select: text;
+      }
+      #marklist .mlabel::placeholder { color: rgba(255,255,255,0.55); }
+      #marklist .mlabel:focus { outline: none; border-color: #a64fff; }
+      #marklist .mage { flex: none; min-width: 2.6em; text-align: right; font-size: 0.8rem; color: rgba(255,255,255,0.55); font-variant-numeric: tabular-nums; white-space: nowrap; }
+      #bar #marklist button {
+        flex: none; min-width: 44px; min-height: 44px; height: 44px; padding: 0; border: 0; border-radius: 999px;
+        background: transparent; color: inherit; font: inherit; cursor: pointer; touch-action: manipulation;
+      }
+      #bar #marklist button svg { width: 20px; height: 20px; display: block; margin: auto; }
+      #bar #marklist .mdel { color: rgba(255,255,255,0.6); font-size: 1rem; }
+      #bar #marklist .mdel[data-arm] { padding: 0 0.7rem; background: rgba(216,107,0,0.45); color: #fff; font-size: 0.85rem; font-weight: 600; }
     </style>
   </head>
   <body>
@@ -421,13 +496,15 @@
         <span id="offer" hidden></span>
       </div>
       <span class="pager">
+        <button id="marks" type="button" aria-label="Bookmarks" title="Bookmarks" aria-haspopup="dialog" aria-expanded="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 3.5h9a1 1 0 0 1 1 1v16l-5.5-4-5.5 4v-16a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
         <button id="prev" type="button" aria-label="Previous page" title="Previous page">‹</button>
         <span id="pg" aria-live="polite">…</span>
         <button id="next" type="button" aria-label="Next page" title="Next page">›</button>
       </span>
       <span class="brk"></span>
       <button id="remote-btn" type="button" hidden aria-pressed="false" aria-label="Let an assistant control this device" title="Let an assistant control this device"><svg class="ai-mark" viewBox="0 0 20 16" aria-hidden="true" focusable="false"><path d="M1.5 14.5 6.5 1.5l5 13M3.25 10h6.5M13.5 1.5h5M16 1.5v13M13.5 14.5h5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-      <span id="version" class="mono">v97</span>
+      <span id="version" class="mono">v98</span>
+      <div id="marklist" role="dialog" aria-label="Bookmarks" hidden></div>
     </header>
     <main id="stage" data-names="all">
       <p id="msg" hidden></p>
@@ -437,6 +514,7 @@
         <select id="speed" aria-label="Speed" title="Speed">
           <option value="1">100%</option><option value="0.9">90%</option><option value="0.8">80%</option><option value="0.7">70%</option><option value="0.6">60%</option><option value="0.5">50%</option>
         </select>
+        <button id="sel-mark" type="button" aria-label="Bookmark" title="Bookmark" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 3.5h9a1 1 0 0 1 1 1v16l-5.5-4-5.5 4v-16a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg><span class="arm">Remove?</span></button>
         <button id="sel-clear" type="button" aria-label="Clear" title="Clear">✕</button>
       </div>
       <div id="pdfbar" hidden>
@@ -450,7 +528,7 @@
       <div id="hear" class="hear" role="group" aria-label="Hear" hidden></div>
       <div id="strip" aria-hidden="true"></div>
     </div>
-    <script type="module" src="nav.js?v=97"></script>
-    <script type="module" src="play.js?v=97"></script>
+    <script type="module" src="nav.js?v=98"></script>
+    <script type="module" src="play.js?v=98"></script>
   </body>
 </html>

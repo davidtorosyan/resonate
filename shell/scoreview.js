@@ -8,8 +8,8 @@
 // play.js's own open (resonatePlay.open). play.js lays the music out to its stage's box; the shell
 // tells it when the region changed size (resize — keep: the Piano came or went, what's shown stays),
 // and play.js's own ResizeObserver catches the rest (a rotation).
-import { scopeCss } from "./scopecss.js?v=97";
-import { staleShell } from "./chrome.js?v=97";
+import { scopeCss } from "./scopecss.js?v=98";
+import { staleShell } from "./chrome.js?v=98";
 
 const $ = (id) => document.getElementById(id);
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
@@ -29,7 +29,13 @@ const OVERRIDES = `
 .score-root #bar #play[data-icon="stop"] { background: var(--grad-live); }
 .score-root #bar #names[data-level="all"] { background: #a64fff; border-color: #a64fff; }
 .score-root #bar #names[data-level="some"], .score-root #bar #names[data-level="off"] { background: transparent; }
-.score-root #bar #keys[aria-pressed="true"], .score-root #bar #pdf[aria-pressed="true"] { background: rgba(166,79,255,0.28); border-color: #a64fff; }
+.score-root #bar #keys[aria-pressed="true"], .score-root #bar #pdf[aria-pressed="true"], .score-root #bar #marks[aria-expanded="true"] { background: rgba(166,79,255,0.28); border-color: #a64fff; }
+/* (the bookmarks' list — fixed, z-index 35: over the paper and the dock (20), under the scrim (40), the sheets
+   (45) and the top bar (46); a tap outside closes it) */
+.score-root #marklist { font-family: var(--font); }
+/* (with the bookmarks' 🔖 in the pager, the view menu counts at its narrowest when the bar's line breaks —
+   it still grows to its whole name where the row has room: the bar keeps its rows with marks) */
+.score-root #bar:has(#marks:not([hidden])) #hands { width: 4.5rem; }
 .score-root #bar #keys { display: none !important; } /* (the dock's Piano toggle drives the keyboard) */
 .score-root #stage { border-radius: 0; }
 /* (the Piano's keyboard right under the paper, as play.html docks its own: no strip of the page between;
@@ -81,7 +87,7 @@ export function mountScore({ version, hooks, onLoad = () => {} }) {
       await mount();
       window.resonatePlay = Object.assign(window.resonatePlay || {}, hooks, { region: true, playBtn: el.play });
       window.resonatePlay.keysOn = false; // (play.js's own docked keyboard stays off: the Piano's is the one — play.html's own 🎹 setting untouched)
-      await import("../play.js?v=97");
+      await import("../play.js?v=98");
       P = window.resonatePlay;
       playDebug = window.resonateDebug;
       P.debug = playDebug; // (tests: Play's own resonateDebug, as on play.html)
