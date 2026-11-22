@@ -11,6 +11,10 @@
 //    score_stop, score_go, score_view, score_pdf on; with a Sing tab and a Play tab open on one device
 //    each command goes to the page that runs it — and sing.html alone refuses a score action politely
 //  5 the one-page shell: score_open opens the song in place with the Score shown; its state carries it
+//  6 E7 (needs migration 20261123010000_score_fingering applied and the function deployed): a
+//    fingering row the page writes (fingertext.js → assist.js shareFingering, skipped unchanged) →
+//    read_resonate fingering (both hands, the left hand alone); an assistant can't write or delete
+//    it; forgetSong drops it and the deleted song isn't answered
 // Cleans up after itself (the song deleted through the sync, focus, devices, takes, the grant).
 // usage: TEST_EMAIL=… TEST_PW=… node mcp2.cjs   (MCP_URL=… to call a local copy of the function)
 const { chromium } = require("playwright");
@@ -317,10 +321,40 @@ const pngSize = (b) => (b.slice(1, 4).toString() === "PNG" ? { w: b.readUInt32BE
   await tool(T, "control_resonate", { action: "stop" });
   check(!(await dp.evaluate(() => window.resonatePlay.scoreState().playing)), "5 shell: stop stops the Score's ▶");
 
-  // --- tidy: the song (through the sync), the focus, devices, takes, the grant ---
-  await dp.evaluate(async (sid) => { const L = await import("./library.js?v=" + document.getElementById("version").textContent.trim().replace(/^v/, "")); await L.removeSong(sid); }, id);
+  // --- 6 (E7): the piano fingering — a row the app writes (fingertext.js → assist.js shareFingering),
+  // read_resonate fingering reads it; assistants can't write it; deleting the song (forget.js) drops it ---
+  const fx = await dp.evaluate(async (sid) => {
+    const V = "?v=" + document.getElementById("version").textContent.trim().replace(/^v/, "");
+    const FT = await import("./fingertext.js" + V), A = await import("./assist.js" + V);
+    // (one bar: G3 + B4 on the upper staff over C3 — G3 to the left hand, as R6)
+    const T = { bars: [{ q: 0, len: 4 }], els: [
+      { id: "a", part: "P2", staff: 1, voice: "1", mi: 0, q: 0, o: 0, d: 2, midi: 55 }, { id: "b", part: "P2", staff: 1, voice: "1", mi: 0, q: 0, o: 0, d: 2, chord: true, midi: 71 },
+      { id: "c", part: "P2", staff: 2, voice: "5", mi: 0, q: 0, o: 0, d: 4, midi: 48 }] };
+    const fing = { v: 1, alg: 1, hand: "sb", bpm: 90, sig: "mcp2", n: { a: ["l", 1, 0, "m"], b: ["r", 5, 0, ""], c: ["l", 5, 0, ""] }, fr: { r: [[0, 67, 69, 71, 72, 74]], l: [[0, 55, 53, 52, 50, 48]] } };
+    const data = FT.fingerText({ fing, T, numberOf: (mi) => String(mi + 3), title: "mcp2", song: sid });
+    const first = await A.shareFingering(sid, data);
+    const again = await A.shareFingering(sid, data);
+    return { first, again, text: data.bars[0].text, marker: JSON.parse(localStorage.getItem("resonate.play.fingUp") || "{}") };
+  }, id);
+  const frow = (await rest(`score_fingering?song_id=eq.${id}&select=alg,data,updated_at`))[0];
+  check(fx.first && fx.again && frow?.alg === 1 && frow?.data?.bars?.[0]?.text === fx.text && Object.values(fx.marker).some((m) => m[id] === "1|sb|90|mcp2|1"), `6 the app writes the fingering row once, the marker skips it unchanged (${fx.text})`);
+  let fq = await tool(T, "read_resonate", { what: "fingering", song: TITLE });
+  check(!fq.error && fq.content[1]?.text === fx.text && fq.data?.moved?.[0]?.note === "G3" && /suggestion/.test(fq.data?.legend || ""), `6 read_resonate fingering: ${fq.content[1]?.text}`);
+  fq = await tool(T, "read_resonate", { what: "fingering", song: TITLE, hand: "lh" });
+  check(!fq.error && fq.content[1]?.text === "Bar 3 — LH: @1 C3 5 · @1 G3 1 (written on the right-hand staff) — LH position: thumb on G3", `6 the left hand alone: ${fq.content[1]?.text}`);
+  const AH = { apikey: KEY, Authorization: `Bearer ${T}`, "content-type": "application/json" };
+  const put = await fetch(`${SB}/rest/v1/score_fingering`, { method: "POST", headers: AH, body: JSON.stringify({ song_id: "s0mcp2assistant", alg: 1, data: { bars: [] } }) });
+  const del = await fetch(`${SB}/rest/v1/score_fingering?song_id=eq.${id}`, { method: "DELETE", headers: { ...AH, Prefer: "return=representation" } });
+  const delRows = del.ok ? await del.json() : [];
+  check(!put.ok && !delRows.length && (await rest(`score_fingering?song_id=eq.${id}&select=song_id`)).length === 1, `6 an assistant's token can't write or delete it (insert ${put.status}, delete ${del.status} → ${delRows.length} rows)`);
+
+  // --- tidy: the song (through the sync — forget.js: its fingering row too), the focus, devices, takes, the grant ---
+  await dp.evaluate(async (sid) => { const F = await import("./forget.js?v=" + document.getElementById("version").textContent.trim().replace(/^v/, "")); await F.forgetSong(sid); }, id);
   for (let i = 0; i < 40; i++) { await sleep(1000); row = (await rest(`sync_items?kind=eq.song&id=eq.${id}&select=deleted`))[0]; if (row?.deleted) break; }
   check(row?.deleted === true, "tidy: the song deleted in the cloud");
+  check(!(await rest(`score_fingering?song_id=eq.${id}&select=song_id`)).length, "6 forgetSong deleted its fingering row");
+  fq = await tool(T, "read_resonate", { what: "fingering", song: TITLE });
+  check(fq.error && /No song like/.test(fq.raw), `6 a deleted song isn't answered (${fq.raw.slice(0, 80)})`);
   await fetch(`${SB}/rest/v1/score_focus?device_id=neq.__`, { method: "DELETE", headers: UH });
   await fetch(`${SB}/rest/v1/coach_takes?id=neq.__`, { method: "DELETE", headers: UH });
   await fetch(`${SB}/rest/v1/devices?id=neq.__`, { method: "DELETE", headers: UH });
