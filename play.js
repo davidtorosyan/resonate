@@ -14,20 +14,20 @@
 //
 // A PDF only (added, not converted yet: docs/LIBRARY.md) opens straight into its PDF (📄's view, no
 // Verovio): ‹ › and the pedals turn its pages, the keyboard stays under it, ⟳ reads Convert.
-import { spaceChanged } from "./nav.js?v=96";
-import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=96";
-import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=96";
-import { decorate, fullName, labelOf } from "./playnames.js?v=96";
-import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=96";
-import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=96";
-import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=96";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=96";
-import * as lib from "./library.js?v=96"; // (getSong; getPages where this library has it)
-import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=96";
-import { mountKeyboard } from "./keyboard.js?v=96";
-import { chordMoments } from "./chords.js?v=96";
-import { barsText, sliceMeasures, TEXT_LEGEND } from "./scoretext.js?v=96";
-import { remote, hasAssistant, shareFocus } from "./assist.js?v=96";
+import { spaceChanged } from "./nav.js?v=97";
+import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=97";
+import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=97";
+import { decorate, fullName, labelOf } from "./playnames.js?v=97";
+import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=97";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=97";
+import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=97";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=97";
+import * as lib from "./library.js?v=97"; // (getSong; getPages where this library has it)
+import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=97";
+import { mountKeyboard } from "./keyboard.js?v=97";
+import { chordMoments } from "./chords.js?v=97";
+import { barsText, sliceMeasures, spanInfo, placeOf, TEXT_LEGEND } from "./scoretext.js?v=97";
+import { remote, hasAssistant, shareFocus } from "./assist.js?v=97";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
@@ -1180,11 +1180,16 @@ window.addEventListener("keydown", (e) => {
 // music: from the onset nearest the press to the one nearest the finger, either way, across systems
 // and the two pages of a spread (pickSel). Another finger never drags: it holds its notes. A tap on
 // paper (no note) lets go of the stretch, unless something is playing; a tap on a note strikes and
-// keeps it. Nothing on the PDF (📄): a tap there does nothing. While a finger is on the music ▶'s
-// page turn waits for the last lift (afterPress).
+// keeps it; two taps on one note (a double-tap: the second within DOUBLE ms of the first's lift,
+// the first no longer than TAP) pick that note — its chord on that staff, what the press strikes —
+// at the second lift (selectNote; both taps sound as any press does). Nothing on the PDF (📄): a tap
+// there does nothing. While a finger is on the music ▶'s page turn waits for the last lift
+// (afterPress).
 const MOVE = 12;
-// pointerId → { id, primary, x, y, t, hit, peek, drag, anchor (the onset the press picked), fx, fy, raf }
+const TAP = 350, DOUBLE = 350; // ms
+// pointerId → { id, primary, x, y, t, hit, peek, drag, anchor (the onset the press picked), fx, fy, raf, gen (the drawing), second (a double-tap's first tap) }
 const gests = new Map();
+let tap0 = null; // the last tap on a note: { t (its lift), ids (its chord), gen }
 stage.addEventListener("pointerdown", (e) => {
   if (e.target.closest?.("#selbar")) return; // (the stretch's own controls)
   if ((e.pointerType === "mouse" && e.button !== 0) || pdf.on) { letGoMenu(); return; }
@@ -1195,9 +1200,10 @@ stage.addEventListener("pointerdown", (e) => {
   if (!e.isPrimary && !hit) { letGoMenu(); return; } // (another finger on paper: nothing)
   const old = gests.get(e.pointerId);
   if (old) { gests.delete(e.pointerId); if (old.peek) peekEnd(old.peek); } // (a lift never heard)
-  const g = { id: e.pointerId, primary: e.isPrimary, x: e.clientX, y: e.clientY, t: e.timeStamp, hit, peek: null, drag: false, anchor: null, fx: 0, fy: 0, raf: 0 };
+  const g = { id: e.pointerId, primary: e.isPrimary, x: e.clientX, y: e.clientY, t: e.timeStamp, hit, peek: null, drag: false, anchor: null, fx: 0, fy: 0, raf: 0, gen: S.showGen, second: null, picked: false };
   gests.set(e.pointerId, g);
   if (hit) g.peek = peekStart(hit, e, hitMs);
+  if (hit && e.isPrimary && tap0 && tap0.gen === S.showGen && e.timeStamp - tap0.t <= DOUBLE) g.second = tap0;
   letGoMenu();
   try { stage.setPointerCapture(e.pointerId); } catch {}
 });
@@ -1224,11 +1230,23 @@ stage.addEventListener("pointerup", (e) => {
   if (!g) return;
   gests.delete(e.pointerId);
   if (g.drag) {
+    tap0 = null;
     if (g.anchor) { cancelAnimationFrame(g.raf); g.fx = e.clientX; g.fy = e.clientY; pickSel(g); focusSoon(); }
-  } else if (g.peek) peekEnd(g.peek);
-  else if (g.primary && !g.hit && S.ready && !pdf.on && S.sel && PB.state === "idle" && !PB.starting) clearSel();
+  } else {
+    if (g.peek) peekEnd(g.peek);
+    else if (g.primary && !g.hit && S.ready && !pdf.on && S.sel && PB.state === "idle" && !PB.starting) clearSel();
+    if (g.primary && g.hit) noteTap(g, e);
+  }
   afterPress(g);
 });
+// A tap on a note (no drag; after its sound): the first of a double-tap is remembered, the second —
+// on the same chord, the drawing unchanged — picks it.
+function noteTap(g, e) {
+  if (!S.ready || pdf.on || g.gen !== S.showGen) { tap0 = null; return; }
+  const ids = chordItems(g.hit).map((it) => it.id);
+  if (g.second && ids.some((id) => g.second.ids.includes(id))) { tap0 = null; selectNote(ids); g.picked = true; return; }
+  tap0 = ids.length && e.timeStamp - g.t <= TAP ? { t: e.timeStamp, ids, gen: S.showGen } : null;
+}
 stage.addEventListener("pointercancel", (e) => {
   const g = gests.get(e.pointerId);
   if (!g) return;
@@ -1394,22 +1412,26 @@ function handOf(f) {
 function peekStart(hit, e, hitMs = 0) {
   if (pdf.on || !hit) return null;
   if (window.resonatePlay?.quiet?.()) return null; // (the one-page shell: Sing records — a press stays silent)
-  const it0 = hit.item, f0 = it0.fact;
-  const chord = it0.g.closest("g.chord") || it0.g;
-  // Everything struck on that staff at that moment: the chord, and the other voices' notes starting
-  // there (a converted score splits a chord's notes into voices loosely — a press used to sound only
-  // the pressed note's voice), a tied-over head drawn there too. Not a grace note's neighbours, not a
-  // note started earlier and still held (drawn elsewhere).
-  const at = f0.onset != null && !f0.grace;
-  const together = (it) => at && it.staff === it0.staff && it.fact.mi === f0.mi && !it.fact.grace && it.fact.onset != null && Math.abs(it.fact.onset - f0.onset) < 1e-6;
-  const items = S.items.filter((it) => it.w && (it.g === chord || chord.contains(it.g) || together(it)))
-    .sort((a, b) => a.fact.midi - b.fact.midi);
+  const items = chordItems(hit);
   if (!items.length) return null;
   const lit = new Map();
   for (const it of items) if (!lit.has(it.fact.midi)) lit.set(it.fact.midi, { hand: handOf(it.fact), label: labelOf(it.fact) });
   const pk = strikeStart(e, items, lit, hitMs);
   pk.names = [...new Set(items.map((it) => fullName(it.fact)))];
   return pk;
+}
+// The heads a press on a note strikes (hit: nearHead's), low to high: everything struck on that staff
+// at that moment — the chord, and the other voices' notes starting there (a converted score splits
+// a chord's notes into voices loosely — a press used to sound only the pressed note's voice), a
+// tied-over head drawn there too. Not a grace note's neighbours, not a note started earlier and
+// still held (drawn elsewhere). (A double-tap picks the same heads: selectNote.)
+function chordItems(hit) {
+  const it0 = hit.item, f0 = it0.fact;
+  const chord = it0.g.closest("g.chord") || it0.g;
+  const at = f0.onset != null && !f0.grace;
+  const together = (it) => at && it.staff === it0.staff && it.fact.mi === f0.mi && !it.fact.grace && it.fact.onset != null && Math.abs(it.fact.onset - f0.onset) < 1e-6;
+  return S.items.filter((it) => it.w && (it.g === chord || chord.contains(it.g) || together(it)))
+    .sort((a, b) => a.fact.midi - b.fact.midi);
 }
 // A key pressed on the keyboard (🎹): that key, struck as a note pressed on the music is — the same
 // strike, level, bus and restrike rules, held until the finger lifts, the key lit while held (by
@@ -2093,10 +2115,34 @@ function pickSel(g) {
 }
 function setSel(q0, q1) {
   const end = nextOnset(viewOnsets(), q1, songTime().length);
-  if (S.sel && Math.abs(S.sel.q0 - q0) < EPS && Math.abs(S.sel.end - end) < EPS) return;
+  if (S.sel && !S.sel.note && Math.abs(S.sel.q0 - q0) < EPS && Math.abs(S.sel.end - end) < EPS) return;
   S.sel = { q0, q1, end };
   drawSel("place");
 }
+// One chord picked (a double-tap; ids: the heads its press strikes — one staff, one moment): a
+// selection of its own, S.sel = { q0, q1: q0, end, note: { ids } } — end = q0 + their longest
+// written length, within the bar (▶ plays just them for it, ⟳ round after round; grace notes alone:
+// to the view's next onset). Drawn as a band round the chord on its staff (noteBand).
+function selectNote(ids) {
+  const sel = noteSel(ids);
+  if (!sel) return;
+  if (PB.kind === "span" && PB.state !== "idle") stopPlay(); // (as a new stretch: the old one's playing stops)
+  S.sel = sel;
+  drawSel("place");
+  focusSoon();
+}
+// ids → that selection (null: no note among them).
+function noteSel(ids) {
+  const T = songTime();
+  const els = ids.map((id) => S.Tid.get(id)).filter((e) => e && !e.rest);
+  if (!els.length) return null;
+  const q0 = Math.min(...els.map((e) => e.q)), bar = T.bars[barAt(T, q0)];
+  let end = Math.min(q0 + Math.max(...els.map((e) => e.d)), bar.q + bar.len);
+  if (!(end > q0 + EPS)) end = nextOnset(viewOnsets(), q0, T.length);
+  return { q0, q1: q0, end, note: { ids: els.map((e) => e.id) } };
+}
+// The selection as scoretext.js takes it: { q0, end, ids? }.
+const selSpan = () => (S.sel ? { q0: S.sel.q0, end: S.sel.end, ...(S.sel.note ? { ids: S.sel.note.ids } : {}) } : null);
 function clearSel() {
   if (!S.sel) return;
   S.sel = null;
@@ -2109,8 +2155,16 @@ function clearSel() {
 // why: placeSelbar's — "place" (a stretch picked, a new drawing), "auto" (a turn the music made).
 function drawSel(why = "place") {
   for (const b of stage.querySelectorAll(".page .sel")) b.remove();
+  // (a chord picked that this view doesn't draw — the left hand's, in Right hand: let go; one it
+  // draws only part of — the hymn's soprano and alto, in Melody: only what it draws, for its length)
+  if (S.sel?.note && S.ready && S.P) {
+    songTime();
+    const keep = viewKeep(), ids = S.sel.note.ids.filter((id) => { const e = S.Tid.get(id); return e && keep(e); });
+    if (ids.length < S.sel.note.ids.length) { S.sel = noteSel(ids); if (S.sel) focusSoon(); }
+  }
   const sel = S.sel;
-  if (sel && S.ready) {
+  if (sel?.note && S.ready) noteBand(sel);
+  else if (sel && S.ready) {
     const pad = 0.6 * S.sp, vpad = 1.2 * S.sp;
     for (const pg of stage.querySelectorAll(".page")) {
       const ph = pg.getBoundingClientRect().height;
@@ -2132,6 +2186,36 @@ function drawSel(why = "place") {
   }
   playButtons();
   placeSelbar(why);
+}
+// A chord picked: a band round its heads (their accidentals and names in, ± 0.6 staff spaces) over
+// the staff they're drawn on (its lines ± 1.2) — the stretch's band, one column of one staff.
+function noteBand(sel) {
+  const ids = new Set(sel.note.ids), pad = 0.6 * S.sp, vpad = 1.2 * S.sp;
+  const byPage = new Map();
+  for (const it of S.items) {
+    if (!ids.has(it.id) || !it.g.isConnected) continue;
+    const pg = it.g.closest(".page");
+    if (pg) (byPage.get(pg) || byPage.set(pg, []).get(pg)).push(it);
+  }
+  for (const [pg, list] of byPage) {
+    const pr = pg.getBoundingClientRect();
+    let l = Infinity, r = -Infinity, t = Infinity, b = -Infinity;
+    for (const it of list) {
+      for (const el of [it.head, it.g.querySelector(":scope > g.accid"), it.badge]) {
+        const x = el?.getBoundingClientRect();
+        if (!x || (!x.width && !x.height)) continue;
+        l = Math.min(l, x.left - pad); r = Math.max(r, x.right + pad); t = Math.min(t, x.top - pad); b = Math.max(b, x.bottom + pad);
+      }
+      const lines = [];
+      for (const c of it.staff?.children || []) { if (c.nodeName.toLowerCase() !== "path" || lines.length === 5) break; lines.push(c.getBoundingClientRect()); }
+      if (lines.length) { t = Math.min(t, lines[0].top - vpad); b = Math.max(b, lines[lines.length - 1].bottom + vpad); }
+    }
+    if (!(r > l && b > t)) continue;
+    const d = document.createElement("div");
+    d.className = "sel";
+    d.style.cssText = `left:${(l - pr.left).toFixed(1)}px;top:${(t - pr.top).toFixed(1)}px;width:${(r - l).toFixed(1)}px;height:${(b - t).toFixed(1)}px`;
+    pg.appendChild(d);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2190,7 +2274,8 @@ function trackArgs(kind) {
     const { q0, end } = S.sel, bars = [];
     // (to the bar its last note is in: a stretch ending at a barline has nothing of the next one)
     for (let m = barAt(T, q0); m <= barAt(T, end - 1e-3); m++) bars.push(m);
-    return { bars, span: { q0, q1: end }, base, from: null };
+    // (a chord picked: only its notes)
+    return { bars, span: { q0, q1: end }, base, from: null, only: S.sel.note ? new Set(S.sel.note.ids) : null };
   }
   // (from the first played bar that is the page's first written one)
   const order = songSing()?.order || T.bars.map((_, i) => i);
@@ -2202,7 +2287,9 @@ function trackArgs(kind) {
 }
 // The schedule (playtime track) for those, with what's heard now.
 function trackOf(args) {
-  const tr = track(songTime(), { bars: args.bars, span: args.span, keep: viewKeep(), base: args.base, hear: hearOf() });
+  // (a chord picked sounds whatever the chips say: it's what was asked for — what the view draws of it)
+  const vk = viewKeep(), keep = args.only ? (e) => args.only.has(e.id) && vk(e) : vk;
+  const tr = track(songTime(), { bars: args.bars, span: args.span, keep, base: args.base, hear: args.only ? null : hearOf() });
   return { ...tr, base: args.base, from: args.from };
 }
 // Its events: the bar marks and the notes, in time (a bar's mark before its notes).
@@ -2337,10 +2424,10 @@ function turnWith(mi, p) {
   if (PB.turns.length > 50) PB.turns.shift();
 }
 // A press ended (g): the turn it held back is taken at the last finger's lift — unless a press
-// picked a stretch (it's on the page shown: the page stays, as after a turn by hand; the music's
-// next page is followed).
+// picked a stretch or a chord (it's on the page shown: the page stays, as after a turn by hand; the
+// music's next page is followed).
 function afterPress(g) {
-  if (g.drag && g.anchor) PB.defer = null;
+  if ((g.drag && g.anchor) || g.picked) PB.defer = null;
   if (gests.size) return;
   const d = PB.defer;
   PB.defer = null;
@@ -2469,7 +2556,9 @@ function reschedule(at, speed = PB.speed) {
 // sounded: the cancel took its level back to full, so it still started — a blip of the part just
 // muted — and the heard twin it had beaten was never struck.)
 function rehear() {
-  if ((PB.state === "idle" && !PB.starting) || !PB.args) return;
+  // (a chord picked sounds whatever the chips say: its notes go on sounding, lit — v97's first build
+  // cut them at a chip's tap, then struck them again the next round)
+  if ((PB.state === "idle" && !PB.starting) || !PB.args || PB.args.only) return;
   const t = performance.now();
   PB.tr = trackOf(PB.args);
   PB.ev = eventsOf(PB.tr);
@@ -3372,7 +3461,7 @@ async function songMap(doc) {
     const kept = S.st.pdfMusic;
     if (kept && kept.n === n && Array.isArray(kept.music) && kept.music.length >= last) music = kept.music;
     else {
-      const { findStaves } = await import("./omr/pdfprep.js?v=96");
+      const { findStaves } = await import("./omr/pdfprep.js?v=97");
       const t0 = performance.now();
       music = await musicPages(doc, findStaves, { need: last });
       S.t.pdfMusic = ms(t0);
@@ -3434,9 +3523,28 @@ async function focusInfo() {
   return {
     song: S.song, title: S.title, view: S.view,
     measures: bars.map((mi) => "m" + mi), numbers: bars.map((mi) => ms_[mi]?.getAttribute("number") ?? null),
-    selection: S.sel ? { from: "m" + bars[0], to: "m" + bars[bars.length - 1], q0: S.sel.q0, q1: S.sel.end } : null,
+    selection: S.sel ? { from: "m" + bars[0], to: "m" + bars[bars.length - 1], q0: S.sel.q0, q1: S.sel.end, ...selPlace(),
+      ...(S.sel.note ? { ids: S.sel.note.ids.slice() } : {}) } : null,
     pdf: where ? { page: where.page, rects: where.rects.map((r) => ({ ...r })) } : null,
   };
+}
+// The selection's kind and where it starts and stops (bar numbers as in the MusicXML, beats in
+// quarters from the bar's start, 1 = the downbeat; end: not included); a chord picked: its staff and
+// part too, as the focus' span names them (two chords on two staves at one moment, as long, are two
+// highlights — get_score_view's still_highlighted tells them apart).
+function selPlace() {
+  if (!S.sel || !S.P) return {};
+  const T = songTime();
+  const out = { kind: S.sel.note ? "note" : "stretch", start: placeOf(T, S.sel.q0, numberOf), end: placeOf(T, S.sel.end, numberOf, true) };
+  if (S.sel.note) {
+    const n = S.sel.note;
+    if (n.who?.view !== S.view) {
+      const info = spanInfo(S.P.doc, T, S.P.facts, { span: selSpan(), keep: viewKeep(), number: numberOf });
+      n.who = { view: S.view, staff: info.staff ?? null, part: info.first[0]?.part ?? null };
+    }
+    out.staff = n.who.staff; out.part = n.who.part;
+  }
+  return out;
 }
 
 // The focus on the PDF as a picture (PNG): each PDF page's part holding it — its rects with a
@@ -3704,7 +3812,7 @@ function scoreState() {
     song: { id: S.song, title: S.title }, ready: S.ready, view: S.view, views: S.P ? Object.keys(S.P.views) : [],
     page: S.page, pages: S.pages, measures: shown.length ? [numberOf(shown[0]), numberOf(shown[shown.length - 1])] : null,
     bars: barNumbers().length || null, at: S.P ? numberOf(S.at) : null,
-    selection: sel ? { from: numberOf(sel[0]), to: numberOf(sel[sel.length - 1]) } : null,
+    selection: sel ? { from: numberOf(sel[0]), to: numberOf(sel[sel.length - 1]), ...selPlace() } : null,
     playing: PB.state !== "idle" || PB.starting ? (PB.state === "looping" ? "loop" : PB.kind === "span" ? "selection" : "from the page") : null,
     speed: Math.round(S.speed * 100),
     pdf: pdf.has ? { on: pdf.on, page: pdf.on ? pdf.page : null, pages: pdf.pages || null } : null,
@@ -3731,13 +3839,17 @@ async function sendFocus() {
   S.focusSent = { at: Date.now(), ok, ms: ms(t0), bars: f.data.measures, sizes: { score: f.pics.score?.length || 0, pdf: f.pics.pdf?.length || 0, text: f.data.text.length, xml: f.data.xml?.length || 0 } };
   return ok;
 }
-// What's highlighted: the bars (numbers), their notes as text, the view's MusicXML for them, where
-// they are on the PDF, and the two pictures (data URLs).
+// What's highlighted: exactly (span: a stretch or one chord, its start and end, first and last
+// notes), the bars it's in (numbers), their notes as text (the highlight's, the rest marked as
+// context), the view's MusicXML for them, where they are on the PDF, and the two pictures (data URLs).
+const SPAN_ABOUT = "start / end: bar number as in the MusicXML and beat in quarter notes from the bar's start (1 = the downbeat); the highlight stops at end (not included). stretch = every note starting in it on every staff shown; note = only that note or chord, on that staff (a double-tap on it). first / last: what starts at its first and last onset.";
+const PDF_BARS = "The red border on the PDF marks the whole bars: Resonate knows where each bar is on the PDF, not each note. The exact highlight is span (the blue band on the score picture).";
 async function focusData() {
   const bars = selBars();
   if (!bars?.length) return null;
-  const view = S.view;
-  const text = barsText(S.P.doc, songTime(), S.P.facts, { bars, keep: viewKeep(), chords: chordList(), number: numberOf });
+  const view = S.view, span = selSpan();
+  const text = barsText(S.P.doc, songTime(), S.P.facts, { bars, keep: viewKeep(), chords: chordList(), number: numberOf, span });
+  const info = spanInfo(S.P.doc, songTime(), S.P.facts, { span, keep: viewKeep(), number: numberOf });
   let xml = S.v?.xml ? sliceMeasures(S.v.xml, bars[0], bars[bars.length - 1]) : null;
   const cut = xml && xml.length > XML_MAX;
   if (cut) xml = null;
@@ -3747,14 +3859,17 @@ async function focusData() {
     scoreCrop().then(dataUrl).catch((err) => { console.warn("focus: score picture", err); return null; }),
     where?.pdf ? pdfCrop({ maxW: FOCUS_W, info: pic, focus: where }).then(dataUrl).catch((err) => { console.warn("focus: pdf picture", err); return null; }) : null,
   ]);
-  const span = (ps) => (ps.length > 1 ? `${ps[0]}–${ps[ps.length - 1]}` : String(ps[0]));
+  const pagesOf = (ps) => (ps.length > 1 ? `${ps[0]}–${ps[ps.length - 1]}` : String(ps[0]));
   const picture = pdfPic && pic.pages?.length ? { pages: pic.pages,
-    ...(pic.all.length > pic.pages.length ? { note: `The PDF picture shows page${pic.pages.length > 1 ? "s" : ""} ${span(pic.pages)} of the highlight's ${span(pic.all)} — get_score_pdf {page} for the others.` } : {}) } : null;
+    ...(pic.all.length > pic.pages.length ? { note: `The PDF picture shows page${pic.pages.length > 1 ? "s" : ""} ${pagesOf(pic.pages)} of the highlight's ${pagesOf(pic.all)} — get_score_pdf {page} for the others.` } : {}) } : null;
   return {
     data: {
-      v: 1, title: S.title, view, view_name: VIEW_LABELS[view] || view, measures: bars.map(numberOf), first: bars[0], last: bars[bars.length - 1],
+      v: 2, title: S.title, view, view_name: VIEW_LABELS[view] || view, measures: bars.map(numberOf), first: bars[0], last: bars[bars.length - 1],
+      // (v2: the exact highlight — the bars stay, as context)
+      span: { ...info, about: SPAN_ABOUT }, measures_are: "the whole bars the highlight is in: its context",
       text, legend: TEXT_LEGEND, xml, ...(cut ? { xml_note: "Too long to send here: ask get_score_xml for these bars." } : {}),
-      pdf: where?.pdf ? { page: where.pdf.page, rects: where.pdf.rects.map((r) => ({ page: r.page, x0: +r.x0.toFixed(4), y0: +r.y0.toFixed(4), x1: +r.x1.toFixed(4), y1: +r.y1.toFixed(4) })), ...(picture ? { picture } : {}) } : null,
+      pdf: where?.pdf ? { page: where.pdf.page, rects: where.pdf.rects.map((r) => ({ page: r.page, x0: +r.x0.toFixed(4), y0: +r.y0.toFixed(4), x1: +r.x1.toFixed(4), y1: +r.y1.toFixed(4) })), ...(picture ? { picture } : {}),
+        border: "bars", border_note: PDF_BARS } : null,
       app: $("version")?.textContent || "",
     },
     pics: { score, pdf: pdfPic },
@@ -3777,12 +3892,14 @@ async function dataUrl(blob) {
   }
   return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = () => reject(r.error); r.readAsDataURL(b); });
 }
-// The highlighted bars as drawn (names on the heads as shown, the band under them): each system's
-// band on the shown page(s) with a margin, stacked; no stretch: the shown page(s). A PNG ≤ maxW wide.
+// The highlighted bars as drawn (names on the heads as shown, the band showing the highlight): on
+// each system of the shown page(s) the bars it's in — whole, for context — with a margin, stacked;
+// no stretch: the shown page(s). A PNG ≤ maxW wide.
 const SVGNS = "http://www.w3.org/2000/svg";
 async function scoreCrop({ maxW = FOCUS_W } = {}) {
   if (!S.ready) return null;
   const pieces = [];
+  const want = S.sel ? new Set(focusBars().map((mi) => "m" + mi)) : null;
   for (const pg of stage.querySelectorAll(".page")) {
     const svg = pg.querySelector(":scope > svg");
     const pr = pg.getBoundingClientRect();
@@ -3790,9 +3907,23 @@ async function scoreCrop({ maxW = FOCUS_W } = {}) {
     const bands = [...pg.querySelectorAll(":scope > .sel")].map((b) => ({ x: b.offsetLeft, y: b.offsetTop, w: b.offsetWidth, h: b.offsetHeight }));
     if (S.sel && !bands.length) continue;
     const sp = S.sp || 8, W = pg.offsetWidth, H = pg.offsetHeight;
-    const boxes = bands.length
-      ? bands.map((b) => ({ x0: Math.max(0, b.x - 0.3 * sp), y0: Math.max(0, b.y - 3.5 * sp), x1: Math.min(W, b.x + b.w + 0.3 * sp), y1: Math.min(H, b.y + b.h + 5 * sp), band: b }))
-      : [{ x0: 0, y0: 0, x1: W, y1: H, band: null }];
+    const boxes = [];
+    if (!S.sel) boxes.push({ x0: 0, y0: 0, x1: W, y1: H, bands: [] });
+    else for (const sys of pageGeo(pg)) {
+      // (the system's bars in focus, from their staff lines' ends, and its bands)
+      let x0 = Infinity, x1 = -Infinity;
+      for (const m of sys.el.querySelectorAll(":scope > g.measure")) {
+        if (!want.has(m.id)) continue;
+        for (const st of m.querySelectorAll(":scope > g.staff")) {
+          const r = st.querySelector(":scope > path")?.getBoundingClientRect();
+          if (r?.width) { x0 = Math.min(x0, r.left - pr.left); x1 = Math.max(x1, r.right - pr.left); }
+        }
+      }
+      const mine = bands.filter((b) => b.y < sys.bottom && b.y + b.h > sys.top);
+      if (!mine.length) continue;
+      for (const b of mine) { x0 = Math.min(x0, b.x); x1 = Math.max(x1, b.x + b.w); }
+      boxes.push({ x0: Math.max(0, x0 - 0.3 * sp), y0: Math.max(0, sys.top - 4.7 * sp), x1: Math.min(W, x1 + 0.3 * sp), y1: Math.min(H, sys.bottom + 6.2 * sp), bands: mine });
+    }
     // a copy as the page shows it: the names hidden at this level left out, the pills' strokes as
     // the page's CSS draws them, no lit / peeked colours
     const clone = svg.cloneNode(true);
@@ -3828,9 +3959,9 @@ async function scoreCrop({ maxW = FOCUS_W } = {}) {
     const bg = document.createElementNS(SVGNS, "rect");
     Object.entries({ x: p.x0, y: p.y0, width: w, height: h, fill: "#fff" }).forEach(([a, v]) => bg.setAttribute(a, String(v)));
     wrap.append(bg);
-    if (p.band) {
+    for (const band of p.bands) {
       const r = document.createElementNS(SVGNS, "rect");
-      Object.entries({ x: p.band.x, y: p.band.y, width: p.band.w, height: p.band.h, rx: 3, fill: "#d4e2ff" }).forEach(([a, v]) => r.setAttribute(a, String(v)));
+      Object.entries({ x: band.x, y: band.y, width: band.w, height: band.h, rx: 3, fill: "#d4e2ff" }).forEach(([a, v]) => r.setAttribute(a, String(v)));
       wrap.append(r);
     }
     wrap.append(p.clone);
@@ -3876,6 +4007,25 @@ function selectBars(mi0, mi1) {
   const a = T.bars[mi0], b = T.bars[mi1];
   const inside = qs.filter((q) => q >= a.q - EPS && q < b.q + b.len - EPS);
   if (!inside.length) return false;
+  if (PB.kind === "span" && PB.state !== "idle") stopPlay();
+  setSel(inside[0], inside[inside.length - 1]);
+  return true;
+}
+// A stretch given by beats (an assistant's score_select with from_beat / to_beat: quarters from the
+// bar's start, 1 = the downbeat, as the focus names them): from from_beat in bar mi0 up to — not
+// including — to_beat in bar mi1 (none: from its downbeat, to its end); the view's onsets in it.
+// The focus names beats to 3 decimals (a triplet's third eighth @1.667, at 1.6666…): a beat is
+// taken as the onset within BEAT_TOL of it. → true, or why not.
+const BEAT_TOL = 1e-3;
+function selectBeats(mi0, b0, mi1, b1) {
+  const T = songTime(), A = T.bars[mi0], B = T.bars[mi1];
+  const n = (x) => Math.round(x * 1000) / 1000;
+  const from = b0 == null ? A.q : A.q + Number(b0) - 1, to = b1 == null ? B.q + B.len : B.q + Number(b1) - 1;
+  if (!(from >= A.q - BEAT_TOL && from < A.q + A.len - BEAT_TOL)) return `from_beat ${b0} isn't in bar ${numberOf(mi0)}: its beats run from 1 to ${n(A.len + 1)} (its end), in quarter notes.`;
+  if (!(to <= B.q + B.len + BEAT_TOL && to >= B.q - BEAT_TOL)) return `to_beat ${b1} isn't in bar ${numberOf(mi1)}: its beats run from 1 to ${n(B.len + 1)} (its end), in quarter notes.`;
+  if (!(to > from + BEAT_TOL)) return "The highlight runs from from_beat up to to_beat (not included): to_beat must come after it.";
+  const inside = viewOnsets().filter((q) => q >= from - BEAT_TOL && q < to - BEAT_TOL);
+  if (!inside.length) return "Nothing of this view starts in that span.";
   if (PB.kind === "span" && PB.state !== "idle") stopPlay();
   setSel(inside[0], inside[inside.length - 1]);
   return true;
@@ -3926,11 +4076,13 @@ async function scoreRun(action, a = {}) {
       }
       case "score_select": {
         let m0 = bar(a.from_measure, "from_measure"), m1 = a.to_measure == null ? m0 : bar(a.to_measure, "to_measure");
-        if (m1 < m0) [m0, m1] = [m1, m0];
+        const beats = a.from_beat != null || a.to_beat != null; // (a span within the bars: in order as given)
+        if (m1 < m0 && !beats) [m0, m1] = [m1, m0];
         const wasPdf = pdf.on;
         if (wasPdf) pdfOff();
         goBar(m0);
-        if (!selectBars(m0, m1)) { if (wasPdf) await pdfOn(); return no("Nothing of this view is in those bars."); }
+        const got = beats ? selectBeats(m0, a.from_beat, m1, a.to_beat) : selectBars(m0, m1) || "Nothing of this view is in those bars.";
+        if (got !== true) { if (wasPdf) await pdfOn(); return no(got); }
         focusSoon(); // (what an assistant picked is the focus too)
         if (wasPdf) await pdfOn();
         return done();

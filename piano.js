@@ -194,6 +194,8 @@ export function sleepAudio() {
 // boosted below middle C: a phone speaker barely plays below ~200 Hz, so a low note's
 // fundamental alone would be near silent. release() damps both like lifting the key; it
 // can be called again with an earlier time (stop now instead of at the end of the note).
+// stopsAt(): the context's time its sound has stopped (Infinity until released) — a mic reopened
+// after it can hear its tail until then (pitch.js soundGone).
 // `dest`: where both go (the context's output, or a bus — pianoBus).
 const SUSTAIN = 0.05;   // held tone's level, relative to the piano's
 const HARMONICS = [0, ...Array.from({ length: 12 }, (_, i) => 1 / (i + 1) ** 1.2)];
@@ -231,13 +233,14 @@ export function holdPiano(ac, piano, when, midi, level, { sustain = true, dest =
     osc.start(when);
     parts.push({ src: osc, gain: sg.gain });
   }
-  let releasedAt = Infinity;
+  let releasedAt = Infinity, stopAt = Infinity;
   return {
     // Damp at `at` with time constant `tc` (RELEASE = a lifted key; small = cut off).
     release(at = ac.currentTime, tc = RELEASE) {
       at = Math.max(at, ac.currentTime);
       if (at >= releasedAt) return;
       releasedAt = at;
+      stopAt = at <= when ? ac.currentTime : at + tc * 6;
       if (at <= when) {
         // Called off before it started: silence it outright (cancelling its starting levels
         // alone would leave the gains at their default, full volume, for an instant).
@@ -254,6 +257,7 @@ export function holdPiano(ac, piano, when, midi, level, { sustain = true, dest =
         try { p.src.stop(at + tc * 6); } catch {}
       }
     },
+    stopsAt: () => stopAt,
   };
 }
 

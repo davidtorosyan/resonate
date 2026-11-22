@@ -3,7 +3,7 @@
 // engine's book after every finished page and the events shown). No DOM: the host page draws the
 // events (the Reader, omr/reader.js) and its own buttons.
 //
-//   import { createImporter } from './omr/importer.js?v=96';
+//   import { createImporter } from './omr/importer.js?v=97';
 //   const imp = createImporter({ onEvent, onLog, onState, onProgress, app: 'v80', spaceChanged });
 //   const job = await imp.pending();            // an unfinished import of this space, or null:
 //                                               //   { id, name, size, done, of, page, stuck: { s, page } | null, phase }
@@ -36,13 +36,13 @@
 // At most the page under way is read again. A job made by another engine (ENGINE) starts over from
 // the stored PDF.
 
-import { convertPdf, ENGINE, LOCK, BUSY, STEPS } from './omr.js?v=96';
-import { ENGINE_N } from './engine.js?v=96';
-import * as J from './jobs.js?v=96';
-import { readScoreFile, parseMusicXml } from '../musicxml.js?v=96';
-import { addSong, getSong, getPdf, replaceSong } from '../library.js?v=96';
-import { fixOmrScore, joinMovements } from './fixscore.js?v=96';
-import { activeSpace, dbName, knownDbs } from '../space.js?v=96';
+import { convertPdf, ENGINE, LOCK, BUSY, STEPS } from './omr.js?v=97';
+import { ENGINE_N } from './engine.js?v=97';
+import * as J from './jobs.js?v=97';
+import { readScoreFile, parseMusicXml } from '../musicxml.js?v=97';
+import { addSong, getSong, getPdf, replaceSong } from '../library.js?v=97';
+import { fixOmrScore, joinMovements } from './fixscore.js?v=97';
+import { activeSpace, dbName, knownDbs } from '../space.js?v=97';
 
 const LEFT = 'resonate.import.left'; // { id, stage, at }: the page was left (reload, navigation, hidden) in that stage — not a crash
 const WAIT_MS = 6000;                // a reload's old page releases the engine lock as it unloads
@@ -286,16 +286,25 @@ export function createImporter(opts = {}) {
       done: [], failed: [], starts: {}, lefts: {}, fails: {}, stage: null, runs: 0, skip: [],
       ...(replace ? { replace } : {}), // (a reprocess: the song whose MusicXML the result replaces)
     };
-    const bytes = await file.arrayBuffer();
-    let stored = true;
-    try {
-      await J.createJob(job, bytes);
-      J.setFlag(job);
-    } catch (err) {
-      stored = false;
-      host.onLog(`[resume] the import can't be kept on this device (${err?.message || err}); a reload starts over`);
+    // The engine first, then the job stored: a job another tab finds (pending) always has its tab on the
+    // engine. Stored first, another tab's queue could resume it and take the engine before this one
+    // asked — refused after WAIT_MS, this one then deleted the job being converted there and queued its
+    // song again (two tabs on a batch, under load: the done row lost, the song passed by or read twice).
+    let release = null, refused = null;
+    try { release = await takeLock(WAIT_MS); } catch (err) { refused = err; }
+    let bytes;
+    try { bytes = await file.arrayBuffer(); } catch (err) { release?.(); throw err; }
+    let stored = !refused;
+    if (stored) {
+      try {
+        await J.createJob(job, bytes);
+        J.setFlag(job);
+      } catch (err) {
+        stored = false;
+        host.onLog(`[resume] the import can't be kept on this device (${err?.message || err}); a reload starts over`);
+      }
     }
-    return run(job, { bytes, stored, file });
+    return run(job, { bytes, stored, file, release, refused });
   }
 
   // A song made with PDF → Song, read again from the PDF kept with it (after an engine or clean-up
@@ -376,7 +385,7 @@ export function createImporter(opts = {}) {
     releaseWake();
   }
 
-  async function run(job, { bytes, stored, release = null, resumed = false }) {
+  async function run(job, { bytes, stored, release = null, resumed = false, refused = null }) {
     const ctl = new AbortController();
     const cur = current = { job, ctl, stage: null, buckets: new Map(), pre: [], stored, saving: null, discarded: false };
     const log = [];
@@ -384,6 +393,7 @@ export function createImporter(opts = {}) {
     setState('running', { job: summary(job) });
     keepAwake();
     try {
+      if (refused) throw refused; // (begin asked for the engine already)
       if (!release) release = await takeLock(WAIT_MS);
     } catch (err) {
       // Another tab is converting: a new import is refused (and not kept); a resumed one stays.

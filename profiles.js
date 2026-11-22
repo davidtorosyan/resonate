@@ -5,7 +5,8 @@
 //
 //   { active: id | null,
 //     list: [{ id, name,
-//              vol:   { floor, ceiling } | null,              // dB, as the Tuner measures
+//              vol:   { floor, ceiling,                       // dB: this device's (Voice's holds; never synced —
+//                       room, gate } | null,                  //   the mic's) — the room's noise, the loudness gate (pitch.js micGate)
 //              range: { low, high,                            // MIDI: lowest / highest note held
 //                       comfortLow, comfortHigh,              // MIDI: where a song should sit
 //                       at } | null }] }                      // when it was measured (ms)

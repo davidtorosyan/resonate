@@ -17,16 +17,16 @@
 // The queue is the space's, not the page's (another tab, a reload): an import kept on this device
 // that this tab isn't showing — another tab's, or one a closed tab left — is gone on with here before
 // the queue (waiting while the other tab runs it: "Running in another tab"); a song is counted once.
-import { createImporter } from "../omr/importer.js?v=96";
-import { mount as mountReader } from "../omr/reader.js?v=96";
-import { readFlag } from "../omr/jobs.js?v=96";
-import { readQueue, writeQueue, enqueue, dropFromQueue, clearQueue } from "../omr/queue.js?v=96";
-import { ENGINE_N } from "../omr/engine.js?v=96";
-import { activeSpace, activeDb } from "../space.js?v=96";
-import { etaText } from "../omr/readerstate.js?v=96";
-import { songInfo } from "../catalog.js?v=96";
-import { listPdfIds, markConvFailed } from "../library.js?v=96";
-import { ic, esc, openOverlay, closeOverlay, overlayOpen, pageOpen } from "./chrome.js?v=96";
+import { createImporter } from "../omr/importer.js?v=97";
+import { mount as mountReader } from "../omr/reader.js?v=97";
+import { readFlag } from "../omr/jobs.js?v=97";
+import { readQueue, writeQueue, enqueue, dropFromQueue, clearQueue } from "../omr/queue.js?v=97";
+import { ENGINE_N } from "../omr/engine.js?v=97";
+import { activeSpace, activeDb } from "../space.js?v=97";
+import { etaText } from "../omr/readerstate.js?v=97";
+import { songInfo } from "../catalog.js?v=97";
+import { listPdfIds, markConvFailed } from "../library.js?v=97";
+import { ic, esc, openOverlay, closeOverlay, overlayOpen, pageOpen } from "./chrome.js?v=97";
 
 const $ = (id) => document.getElementById(id);
 const STAGE = { prep: "pages", boot: "engine", export: "MusicXML", save: "saving" };
@@ -328,6 +328,9 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     cur = null;
     if (ok) lastOk = { songId: res?.songId || s?.id, title: res?.title || s?.title };
     let q = readQueue();
+    // (converted, yet waiting again: another tab took it from the queue too, was refused the engine and
+    // put it back first — done now; left there it held the batch's done row back, then was passed by)
+    if (ok && s && q.ids.includes(s.id) && !spaceChanged()) q = writeQueue({ ...q, ids: q.ids.filter((x) => x !== s.id) });
     const ofBatch = !!s?.queued || q.total > q.done + q.ids.length;
     const total = q.total;
     const n = q.ok + (ok && ofBatch ? 1 : 0);

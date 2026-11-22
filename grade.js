@@ -22,7 +22,7 @@
 // frames: [{ t (song time of the audio, s), midi | null, rms }] in time order.
 // notes:  [{ midi, t, d }] (s), in time order.
 
-import { fold, median } from "./music.js?v=96";
+import { fold, median } from "./music.js?v=97";
 
 export const MAX_SHIFT = 0.24;
 const STEP = 0.03;
@@ -123,8 +123,9 @@ function withRests(notes) {
   });
 }
 
-// What counts as "loud" (singing, even without a clear pitch): above the pitch detector's
-// gate and well above the room's noise — ×2.5 (≈ 8 dB) the quietest quarter second of the
+// What counts as "loud" (singing, even without a clear pitch): above `base` (Sing: MIN_RMS, also
+// where this device's calibrated pitch gate is lower — the only floor against a noise that starts
+// mid-take) and well above the room's noise — ×2.5 (≈ 8 dB) the quietest quarter second of the
 // take (median rms; a breath or the count-in is the room) — else a fan or traffic would
 // turn every skipped note "unclear", which isn't counted against you.
 export function loudGate(frames, base) {

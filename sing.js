@@ -2,25 +2,25 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=96";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=96";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=96";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=96";
-import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=96";
-import * as P from "./practice.js?v=96";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=96";
-import { startCapture, playVoice } from "./capture.js?v=96";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=96";
-import { makeFeatures, findClicks, tolOn } from "./rhythm.js?v=96";
-import * as TR from "./takerhythm.js?v=96";
-import { listSongs, getSong, addSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=96";
-import { SAMPLES, songXml, songRev, songInfo } from "./catalog.js?v=96";
-import { forgetSong } from "./forget.js?v=96";
-import { activeProfile } from "./profiles.js?v=96";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=96";
-import { DATA_KEYS } from "./space.js?v=96";
-import { spaceChanged } from "./nav.js?v=96";
-import { shareSong, takeStarted, lineDone, takeEnded, remote, paintRemote } from "./assist.js?v=96";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=97";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=97";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=97";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=97";
+import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=97";
+import * as P from "./practice.js?v=97";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=97";
+import { startCapture, playVoice } from "./capture.js?v=97";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=97";
+import { makeFeatures, findClicks, tolOn } from "./rhythm.js?v=97";
+import * as TR from "./takerhythm.js?v=97";
+import { listSongs, getSong, addSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=97";
+import { SAMPLES, songXml, songRev, songInfo } from "./catalog.js?v=97";
+import { forgetSong } from "./forget.js?v=97";
+import { activeProfile } from "./profiles.js?v=97";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=97";
+import { DATA_KEYS } from "./space.js?v=97";
+import { spaceChanged } from "./nav.js?v=97";
+import { shareSong, takeStarted, lineDone, takeEnded, remote, paintRemote } from "./assist.js?v=97";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -82,6 +82,11 @@ const PX_PER_SEC = 100;     // lane zoom
 const NOW_FRAC = 0.3;       // where the "now" line sits across the lane
 const GUTTER = 36;          // note-label gutter (CSS px)
 const INPUT_LATENCY = 0.02; // mic → analyser, rough (not reported by browsers)
+// A note with no pitch counts as sung ("unclear", not missed) only above this, and the take's own noise
+// floor (grade.js loudGate) — MIN_RMS whatever this device's calibrated gate (the mic's reader takes that,
+// so a distant singer's pitches are read): with the lower one a fan starting mid-take made every skipped
+// note "unclear".
+const LOUD_MIN = MIN_RMS;
 const END_PAD = 1.0;        // keep going this long after the last note
 
 // --- Song state ---------------------------------------------------------------
@@ -894,7 +899,7 @@ function gradeUpTo(t) {
   const [j0, j1] = take.range;
   notes.forEach((n, j) => {
     if (j < j0 || j >= j1 || take.grades[j] || n.t + n.d + MAX_SHIFT > t) return;
-    take.grades[j] = gradeLive(notes, take.frames, j, { endT: t, gate: MIN_RMS });
+    take.grades[j] = gradeLive(notes, take.frames, j, { endT: t, gate: LOUD_MIN });
     const old = chipsEl.querySelectorAll(".chip")[j];
     if (old) old.replaceWith(makeChip(j));
     // A line whose notes are all graded goes to the assistants at once.
@@ -910,7 +915,7 @@ function gradeUpTo(t) {
 // matched with (its moved slot), and drawn next to it.
 function gradeFinal(endT) {
   const [j0, j1] = take.range;
-  const part = gradeTake(notes.slice(j0, j1), take.frames, { endT, gate: MIN_RMS });
+  const part = gradeTake(notes.slice(j0, j1), take.frames, { endT, gate: LOUD_MIN });
   take.grades = notes.map((_, j) => (j >= j0 && j < j1 ? part[j - j0] : null));
   recolour(take);
 }
