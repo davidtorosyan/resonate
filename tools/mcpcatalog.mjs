@@ -1,13 +1,15 @@
 // The MCP server's frozen surface and live catalogue (docs/CONNECTOR.md), without Deno or the network:
 // index.ts registers exactly the 15 frozen tools with open schemas for the two routing tools, and
-// catalog.ts checks parameters as the server will. Run: node --experimental-strip-types mcpcatalog.mjs
-// (Node 22+; catalog.ts has no imports). Live checks of the deployed function: mcp1.cjs.
+// catalog.ts checks parameters as the server will, highlight.ts tells highlights apart as get_score_view
+// will. Run: node --experimental-strip-types mcpcatalog.mjs (Node 22+; catalog.ts and highlight.ts have
+// no imports). Live checks of the deployed function: mcp1.cjs.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "supabase", "functions", "mcp");
 const C = await import(path.join(DIR, "catalog.ts"));
+const H = await import(path.join(DIR, "highlight.ts"));
 let fails = 0;
 const check = (ok, msg) => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"} ${msg}`); };
 
@@ -59,6 +61,19 @@ check(/50 \| 60/.test(r.error || ""), `listed values only: ${r.error}`);
 const caps = C.capabilitiesData();
 check(caps.version === C.VERSION && caps.control_resonate.score_play.params.speed.startsWith("number 50…100") && caps.read_resonate.status.same_as === "get_status" && JSON.stringify(caps).length < 12000, `get_capabilities answer (${JSON.stringify(caps).length} chars)`);
 check(C.capabilitiesBrief().control_resonate.length === Object.keys(C.ACTIONS).length, "the brief in get_status names every action");
+
+// 3 still_highlighted (get_score_view): the stored focus' span vs the device state's selection.
+// A double-tap picks one chord; two on two staves at one moment, as long, have the same start / end:
+// the staff and part tell them apart (v97 review, E3 findings 4 and 6).
+const pl = (bar, beat) => ({ bar, beat });
+const rhRow = { kind: "note", start: pl("9", 1), end: pl("9", 2), staff: "Piano, right hand (upper staff)", first: [{ notes: ["E4", "G4"], part: "P2", staff: 1, staff_name: "Piano, right hand (upper staff)" }] };
+const state = (o) => ({ from: "9", to: "9", kind: "note", start: pl("9", 1), end: pl("9", 2), ...o });
+check(H.sameSpan(state({ staff: rhRow.staff, part: "P2" }), rhRow), "the same chord: still highlighted");
+check(!H.sameSpan(state({ staff: "Piano, left hand (lower staff)", part: "P2" }), rhRow), "the left hand's chord at that moment, as long: another highlight");
+check(!H.sameSpan(state({ staff: "Voice", part: "P3" }), { ...rhRow, staff: "Voice", first: [{ part: "P1", staff: 1 }] }), "two parts both named Voice: the part tells them apart");
+check(H.sameSpan(state({}), rhRow) && H.sameSpan({ from: "9", to: "9" }, rhRow) && H.sameSpan(state({ staff: "x" }), null), "a page or a row that names less: the bars decide");
+check(!H.sameSpan(state({ kind: "stretch" }), rhRow) && !H.sameSpan(state({ staff: rhRow.staff, part: "P2", end: pl("9", 3) }), rhRow), "another kind or another end: another highlight");
+check(H.sameSpan(state({ kind: "stretch" }), { kind: "stretch", start: pl("9", 1), end: pl("9", 2) }), "a stretch: its start, end and kind");
 
 console.log(fails ? `${fails} FAILED` : "all ok");
 process.exit(fails ? 1 : 0);

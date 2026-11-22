@@ -12,8 +12,13 @@
 //   C  a stretch across systems (a drag) and across pages (score_select with beats, a phone)
 //   S  score_select with from_beat / to_beat: a focus' span round trip, between onsets, refusals,
 //      the old bars-only call
+//   R  the v97 review's E3 fixes: a chip muted while a picked chord loops leaves it sounding and lit
+//      (R1); a view drawing only part of the chord keeps only those notes, ▶ plays only them (R2);
+//      a turn held back by the second tap's press isn't taken at its lift (R3, a phone); the device
+//      state names the picked chord's staff and part, as the focus does (R4); beats named to 3
+//      decimals (a triplet's @3.667) select exactly their note, as from and as to (R5)
 //
-// usage: node playfocus.cjs   (BASE=http://localhost:8097/resonate/, ONLY=F,N,C,S, SHOTS=0|<dir>)
+// usage: node playfocus.cjs   (BASE=http://localhost:8097/resonate/, ONLY=F,N,C,S,R, SHOTS=0|<dir>)
 const { chromium } = require("playwright");
 const { ok, done, fail } = require("./lib/check.cjs");
 const { BASE, SHOTS } = require("./lib/paths.cjs");
@@ -399,6 +404,94 @@ const cropStats = (page) => page.evaluate(() => window.resonatePlay.scoreCrop().
       `S4 the bars-only call: whole bars, as before (${JSON.stringify(r.score.selection)})`);
     errors.push(...errs);
     await ctx.close();
+  }
+
+  // ---------------------------------------------------------------- R the review's fixes (v97, E3)
+  if (run("R")) {
+    const { ctx, page, errors: errs } = await newPage(browser, 820, 1180);
+    const F = await facts(page), nums = await numbers(page);
+    const headOf = (id) => page.evaluate((id) => { const g = document.querySelector(`#stage g.note[id="${id}"] > g.notehead`); const r = g.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }, id);
+    const X = () => page.evaluate(() => { const x = window.resonateDebug().play.playback; return { state: x.state, span: x.span, scheduled: x.scheduled, litEls: x.litEls, strip: x.strip, hear: x.hear, now: x.now }; });
+    // (the hymn's first full bar: n4 / n8 the treble staff's chord, n91 / n93 the bass staff's — same onset, same length)
+    await tap(ctx, page, await headOf("n12")); await sleep(600);
+    // R1 ⟳ on the treble chord, then its chip (RH) muted mid-round: the chord sounds on, lit
+    await doubleTap(ctx, page, await headOf("n4"));
+    let x = await X();
+    const chord = x.span?.note?.ids || [];
+    const rh = x.hear.groups.find((g) => g.key === "P1");
+    await page.tap("#sel-loop");
+    await until(page, () => { const x = window.resonateDebug().play.playback; return x.state === "looping" && x.now != null && x.scheduled.some((e) => e.when < x.now - 0.2); });
+    await page.tap(`#hear button[data-key="P1"]`);
+    await sleep(200);
+    x = await X();
+    const cut = x.scheduled.filter((e) => e.cut != null);
+    ok(rh && chord.length === 2 && x.hear.muted.includes("P1") && !cut.length && chord.every((id) => x.litEls.includes(id)),
+      `R1 a chord picked loops; RH muted mid-round: nothing cut, the chord still lit (muted ${JSON.stringify(x.hear.muted)}, cut ${JSON.stringify(cut.map((e) => e.id))}, lit ${JSON.stringify(x.litEls)})`);
+    await page.tap("#sel-loop"); await sleep(200);
+    await page.tap(`#hear button[data-key="P1"]`); await sleep(200);
+    // R4 the device state's selection names the chord's staff and part, as the focus' span does
+    const st1 = await page.evaluate(() => window.resonatePlay.scoreState().selection);
+    const f1 = await focusData(page);
+    ok(st1?.kind === "note" && st1.staff && st1.staff === f1?.span?.staff && st1.part === "P1" && st1.part === f1?.span?.first?.[0]?.part,
+      `R4 the device state's selection: ${JSON.stringify(st1)} (the focus: staff ${f1?.span?.staff}, part ${f1?.span?.first?.[0]?.part})`);
+    await sleep(500);
+    await doubleTap(ctx, page, await headOf("n91"));
+    const st2 = await page.evaluate(() => window.resonatePlay.scoreState().selection);
+    ok(st2?.kind === "note" && same(st2.start, st1?.start) && same(st2.end, st1?.end) && st2.part === "P2" && st2.staff && st2.staff !== st1?.staff,
+      `R4 the bass staff's chord at that moment, as long: the same start / end, another staff and part (${JSON.stringify(st2)})`);
+    // R2 the treble chord picked in Both, then Melody (the tune only): only the tune's note is kept, ▶ plays only it
+    await sleep(500);
+    await doubleTap(ctx, page, await headOf("n4"));
+    const both = (await X()).span;
+    await page.selectOption("#hands", "melody"); await ready(page, "melody"); await sleep(2300); // (the presses' keys unlit)
+    x = await X();
+    const n4 = F.els.find((e) => e.id === "n4");
+    ok(both?.note?.ids.length === 2 && same(x.span?.note?.ids, ["n4"]) && Math.abs(x.span.q0 - n4.q) < EPS && Math.abs(x.span.end - (n4.q + n4.d)) < EPS,
+      `R2 Both's chord ${JSON.stringify(both?.note?.ids)}, then Melody: only what it draws (${JSON.stringify(x.span)})`);
+    await page.tap("#play");
+    await until(page, () => window.resonateDebug().play.playback.strip.length > 0, null, 5000);
+    x = await X();
+    ok(x.scheduled.length && x.scheduled.every((e) => e.id === "n4") && x.strip.length && x.strip.every((k) => k.midi === n4.midi),
+      `R2 ▶ plays only the note Melody draws (${JSON.stringify(x.scheduled.map((e) => e.id))}; keys lit ${JSON.stringify(x.strip.map((k) => k.midi))})`);
+    await until(page, () => window.resonateDebug().play.playback.state === "idle", null, 10000);
+    // R5 beats named to 3 decimals: bar 2's triplet eighths at @3.333 / @3.667
+    const sel = (a) => page.evaluate((a) => window.resonatePlay.scoreRun("score_select", a), a);
+    const b2 = F.bars[1], trip = F.onsets.filter((q) => q > b2.q + 2 + EPS && q < b2.q + b2.len - EPS);
+    let r = await sel({ from_measure: nums[1], from_beat: r3(trip[1] - b2.q + 1) });
+    let p = (await PBD(page)).span;
+    ok(trip.length === 2 && r.ok && p && Math.abs(p.q0 - trip[1]) < EPS && r.score.selection.start.beat === r3(trip[1] - b2.q + 1),
+      `R5 from_beat ${r3(trip[1] - b2.q + 1)} (a triplet's third eighth, ${trip[1]}): from that note (${r.error || JSON.stringify(p)})`);
+    r = await sel({ from_measure: nums[1], from_beat: 3, to_measure: nums[1], to_beat: r3(trip[1] - b2.q + 1) });
+    p = (await PBD(page)).span;
+    ok(r.ok && p && Math.abs(p.q0 - (b2.q + 2)) < EPS && Math.abs(p.end - trip[1]) < EPS, `R5 to_beat ${r3(trip[1] - b2.q + 1)}: up to that note, not including it (${r.error || JSON.stringify(p)})`);
+    // (a focus starting there, given back: the same stretch)
+    const f5 = await focusData(page);
+    r = await sel({ from_measure: f5.span.start.bar, from_beat: f5.span.start.beat, to_measure: f5.span.end.bar, to_beat: f5.span.end.beat });
+    const p5 = (await PBD(page)).span;
+    ok(r.ok && Math.abs(p5.q0 - p.q0) < EPS && Math.abs(p5.end - p.end) < EPS, `R5 that focus' start / end given back: the same stretch (${JSON.stringify(f5.span.start)}–${JSON.stringify(f5.span.end)} → ${JSON.stringify(p5)})`);
+    errors.push(...errs);
+    await ctx.close();
+    // R3 a phone, ▶ from page 1: the second tap pressed in page 1's last bar and held while the music
+    // moves on to page 2 — the chord is picked at the lift and the page stays
+    const P = await newPage(browser, 390, 844);
+    const shown = await P.page.evaluate(() => [...document.querySelectorAll("#stage .page g.measure")].map((m) => Number(m.id.slice(1))));
+    const last = Math.max(...shown);
+    const ph = await P.page.evaluate(() => { const g = document.querySelector("#stage .page g.note > g.notehead"); const r = g.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    await tap(P.ctx, P.page, ph); await sleep(600);
+    await P.page.tap("#play");
+    const inLast = await until(P.page, (m) => window.resonateDebug().play.playback.mi === m, last, 60000);
+    await tap(P.ctx, P.page, ph); await sleep(100);
+    const cdp = await P.ctx.newCDPSession(P.page);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: ph[0], y: ph[1], id: 1 }] });
+    const held = await until(P.page, () => !!window.resonateDebug().play.playback.defer, null, 8000);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await cdp.detach().catch(() => {});
+    await sleep(300);
+    const q = await P.page.evaluate(() => { const d = window.resonateDebug().play, x = d.playback; return { page: d.page, defer: x.defer, span: x.span, state: x.state, musicPage: x.musicPage }; });
+    ok(inLast && held && q.span?.note && q.page === 1 && !q.defer && q.state !== "idle", `R3 a turn held back by the second tap's press: the chord picked at the lift, the page stays (${JSON.stringify(q)})`);
+    await P.page.click("#play").catch(() => {});
+    errors.push(...P.errors);
+    await P.ctx.close();
   }
 
   await browser.close();

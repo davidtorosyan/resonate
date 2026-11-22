@@ -1200,7 +1200,7 @@ stage.addEventListener("pointerdown", (e) => {
   if (!e.isPrimary && !hit) { letGoMenu(); return; } // (another finger on paper: nothing)
   const old = gests.get(e.pointerId);
   if (old) { gests.delete(e.pointerId); if (old.peek) peekEnd(old.peek); } // (a lift never heard)
-  const g = { id: e.pointerId, primary: e.isPrimary, x: e.clientX, y: e.clientY, t: e.timeStamp, hit, peek: null, drag: false, anchor: null, fx: 0, fy: 0, raf: 0, gen: S.showGen, second: null };
+  const g = { id: e.pointerId, primary: e.isPrimary, x: e.clientX, y: e.clientY, t: e.timeStamp, hit, peek: null, drag: false, anchor: null, fx: 0, fy: 0, raf: 0, gen: S.showGen, second: null, picked: false };
   gests.set(e.pointerId, g);
   if (hit) g.peek = peekStart(hit, e, hitMs);
   if (hit && e.isPrimary && tap0 && tap0.gen === S.showGen && e.timeStamp - tap0.t <= DOUBLE) g.second = tap0;
@@ -1244,7 +1244,7 @@ stage.addEventListener("pointerup", (e) => {
 function noteTap(g, e) {
   if (!S.ready || pdf.on || g.gen !== S.showGen) { tap0 = null; return; }
   const ids = chordItems(g.hit).map((it) => it.id);
-  if (g.second && ids.some((id) => g.second.ids.includes(id))) { tap0 = null; selectNote(ids); return; }
+  if (g.second && ids.some((id) => g.second.ids.includes(id))) { tap0 = null; selectNote(ids); g.picked = true; return; }
   tap0 = ids.length && e.timeStamp - g.t <= TAP ? { t: e.timeStamp, ids, gen: S.showGen } : null;
 }
 stage.addEventListener("pointercancel", (e) => {
@@ -2124,16 +2124,22 @@ function setSel(q0, q1) {
 // written length, within the bar (▶ plays just them for it, ⟳ round after round; grace notes alone:
 // to the view's next onset). Drawn as a band round the chord on its staff (noteBand).
 function selectNote(ids) {
+  const sel = noteSel(ids);
+  if (!sel) return;
+  if (PB.kind === "span" && PB.state !== "idle") stopPlay(); // (as a new stretch: the old one's playing stops)
+  S.sel = sel;
+  drawSel("place");
+  focusSoon();
+}
+// ids → that selection (null: no note among them).
+function noteSel(ids) {
   const T = songTime();
   const els = ids.map((id) => S.Tid.get(id)).filter((e) => e && !e.rest);
-  if (!els.length) return;
+  if (!els.length) return null;
   const q0 = Math.min(...els.map((e) => e.q)), bar = T.bars[barAt(T, q0)];
   let end = Math.min(q0 + Math.max(...els.map((e) => e.d)), bar.q + bar.len);
   if (!(end > q0 + EPS)) end = nextOnset(viewOnsets(), q0, T.length);
-  if (PB.kind === "span" && PB.state !== "idle") stopPlay(); // (as a new stretch: the old one's playing stops)
-  S.sel = { q0, q1: q0, end, note: { ids: els.map((e) => e.id) } };
-  drawSel("place");
-  focusSoon();
+  return { q0, q1: q0, end, note: { ids: els.map((e) => e.id) } };
 }
 // The selection as scoretext.js takes it: { q0, end, ids? }.
 const selSpan = () => (S.sel ? { q0: S.sel.q0, end: S.sel.end, ...(S.sel.note ? { ids: S.sel.note.ids } : {}) } : null);
@@ -2149,8 +2155,13 @@ function clearSel() {
 // why: placeSelbar's — "place" (a stretch picked, a new drawing), "auto" (a turn the music made).
 function drawSel(why = "place") {
   for (const b of stage.querySelectorAll(".page .sel")) b.remove();
-  // (a chord picked that this view doesn't draw — the left hand's, in Right hand: let go)
-  if (S.sel?.note && S.ready && S.P) { songTime(); const keep = viewKeep(); if (!S.sel.note.ids.some((id) => { const e = S.Tid.get(id); return e && keep(e); })) S.sel = null; }
+  // (a chord picked that this view doesn't draw — the left hand's, in Right hand: let go; one it
+  // draws only part of — the hymn's soprano and alto, in Melody: only what it draws, for its length)
+  if (S.sel?.note && S.ready && S.P) {
+    songTime();
+    const keep = viewKeep(), ids = S.sel.note.ids.filter((id) => { const e = S.Tid.get(id); return e && keep(e); });
+    if (ids.length < S.sel.note.ids.length) { S.sel = noteSel(ids); if (S.sel) focusSoon(); }
+  }
   const sel = S.sel;
   if (sel?.note && S.ready) noteBand(sel);
   else if (sel && S.ready) {
@@ -2276,8 +2287,8 @@ function trackArgs(kind) {
 }
 // The schedule (playtime track) for those, with what's heard now.
 function trackOf(args) {
-  // (a chord picked sounds whatever the chips say: it's what was asked for)
-  const keep = args.only ? (e) => args.only.has(e.id) : viewKeep();
+  // (a chord picked sounds whatever the chips say: it's what was asked for — what the view draws of it)
+  const vk = viewKeep(), keep = args.only ? (e) => args.only.has(e.id) && vk(e) : vk;
   const tr = track(songTime(), { bars: args.bars, span: args.span, keep, base: args.base, hear: args.only ? null : hearOf() });
   return { ...tr, base: args.base, from: args.from };
 }
@@ -2413,10 +2424,10 @@ function turnWith(mi, p) {
   if (PB.turns.length > 50) PB.turns.shift();
 }
 // A press ended (g): the turn it held back is taken at the last finger's lift — unless a press
-// picked a stretch (it's on the page shown: the page stays, as after a turn by hand; the music's
-// next page is followed).
+// picked a stretch or a chord (it's on the page shown: the page stays, as after a turn by hand; the
+// music's next page is followed).
 function afterPress(g) {
-  if (g.drag && g.anchor) PB.defer = null;
+  if ((g.drag && g.anchor) || g.picked) PB.defer = null;
   if (gests.size) return;
   const d = PB.defer;
   PB.defer = null;
@@ -2545,7 +2556,9 @@ function reschedule(at, speed = PB.speed) {
 // sounded: the cancel took its level back to full, so it still started — a blip of the part just
 // muted — and the heard twin it had beaten was never struck.)
 function rehear() {
-  if ((PB.state === "idle" && !PB.starting) || !PB.args) return;
+  // (a chord picked sounds whatever the chips say: its notes go on sounding, lit — v97's first build
+  // cut them at a chip's tap, then struck them again the next round)
+  if ((PB.state === "idle" && !PB.starting) || !PB.args || PB.args.only) return;
   const t = performance.now();
   PB.tr = trackOf(PB.args);
   PB.ev = eventsOf(PB.tr);
@@ -3516,11 +3529,22 @@ async function focusInfo() {
   };
 }
 // The selection's kind and where it starts and stops (bar numbers as in the MusicXML, beats in
-// quarters from the bar's start, 1 = the downbeat; end: not included).
+// quarters from the bar's start, 1 = the downbeat; end: not included); a chord picked: its staff and
+// part too, as the focus' span names them (two chords on two staves at one moment, as long, are two
+// highlights — get_score_view's still_highlighted tells them apart).
 function selPlace() {
   if (!S.sel || !S.P) return {};
   const T = songTime();
-  return { kind: S.sel.note ? "note" : "stretch", start: placeOf(T, S.sel.q0, numberOf), end: placeOf(T, S.sel.end, numberOf, true) };
+  const out = { kind: S.sel.note ? "note" : "stretch", start: placeOf(T, S.sel.q0, numberOf), end: placeOf(T, S.sel.end, numberOf, true) };
+  if (S.sel.note) {
+    const n = S.sel.note;
+    if (n.who?.view !== S.view) {
+      const info = spanInfo(S.P.doc, T, S.P.facts, { span: selSpan(), keep: viewKeep(), number: numberOf });
+      n.who = { view: S.view, staff: info.staff ?? null, part: info.first[0]?.part ?? null };
+    }
+    out.staff = n.who.staff; out.part = n.who.part;
+  }
+  return out;
 }
 
 // The focus on the PDF as a picture (PNG): each PDF page's part holding it — its rects with a
@@ -3990,15 +4014,17 @@ function selectBars(mi0, mi1) {
 // A stretch given by beats (an assistant's score_select with from_beat / to_beat: quarters from the
 // bar's start, 1 = the downbeat, as the focus names them): from from_beat in bar mi0 up to — not
 // including — to_beat in bar mi1 (none: from its downbeat, to its end); the view's onsets in it.
-// → true, or why not.
+// The focus names beats to 3 decimals (a triplet's third eighth @1.667, at 1.6666…): a beat is
+// taken as the onset within BEAT_TOL of it. → true, or why not.
+const BEAT_TOL = 1e-3;
 function selectBeats(mi0, b0, mi1, b1) {
   const T = songTime(), A = T.bars[mi0], B = T.bars[mi1];
   const n = (x) => Math.round(x * 1000) / 1000;
   const from = b0 == null ? A.q : A.q + Number(b0) - 1, to = b1 == null ? B.q + B.len : B.q + Number(b1) - 1;
-  if (!(from >= A.q - EPS && from < A.q + A.len - EPS)) return `from_beat ${b0} isn't in bar ${numberOf(mi0)}: its beats run from 1 to ${n(A.len + 1)} (its end), in quarter notes.`;
-  if (!(to <= B.q + B.len + EPS && to >= B.q - EPS)) return `to_beat ${b1} isn't in bar ${numberOf(mi1)}: its beats run from 1 to ${n(B.len + 1)} (its end), in quarter notes.`;
-  if (!(to > from + EPS)) return "The highlight runs from from_beat up to to_beat (not included): to_beat must come after it.";
-  const inside = viewOnsets().filter((q) => q >= from - EPS && q < to - EPS);
+  if (!(from >= A.q - BEAT_TOL && from < A.q + A.len - BEAT_TOL)) return `from_beat ${b0} isn't in bar ${numberOf(mi0)}: its beats run from 1 to ${n(A.len + 1)} (its end), in quarter notes.`;
+  if (!(to <= B.q + B.len + BEAT_TOL && to >= B.q - BEAT_TOL)) return `to_beat ${b1} isn't in bar ${numberOf(mi1)}: its beats run from 1 to ${n(B.len + 1)} (its end), in quarter notes.`;
+  if (!(to > from + BEAT_TOL)) return "The highlight runs from from_beat up to to_beat (not included): to_beat must come after it.";
+  const inside = viewOnsets().filter((q) => q >= from - BEAT_TOL && q < to - BEAT_TOL);
   if (!inside.length) return "Nothing of this view starts in that span.";
   if (PB.kind === "span" && PB.state !== "idle") stopPlay();
   setSel(inside[0], inside[inside.length - 1]);

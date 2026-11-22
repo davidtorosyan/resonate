@@ -5,6 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PLAYBOOK, REMINDER } from "./coaching.ts";
 import { action as findAction, capabilitiesBrief, capabilitiesData, checkParams, gather, query as findQuery, ACTIONS, QUERIES, type QueryName } from "./catalog.ts";
+import { sameSpan } from "./highlight.ts";
 import { PDFDocument } from "pdf-lib";
 
 type Sb = SupabaseClient;
@@ -490,10 +491,8 @@ export async function getScoreView(sb: Sb) {
   const sel = (on?.score as Json)?.selection as Json | undefined;
   const ms = (d.measures as string[]) || [];
   const span = (d.span as Json | undefined) ?? null;
-  // (the same bars — and, from a page that names it (v2), the same span)
-  const at = (p: unknown) => JSON.stringify(p ?? null);
-  const sameSpan = !span || !sel?.start || (at(sel.start) === at(span.start) && at(sel.end) === at(span.end) && (sel.kind ?? null) === (span.kind ?? null));
-  const still = !!(sel && (on?.score as Json)?.song && ((on!.score as Json).song as Json).id === f.song_id && sel.from === ms[0] && sel.to === ms[ms.length - 1] && sameSpan);
+  // (the same bars — and, from a page that names it (v2), the same span: a chord picked, on the same staff)
+  const still = !!(sel && (on?.score as Json)?.song && ((on!.score as Json).song as Json).id === f.song_id && sel.from === ms[0] && sel.to === ms[ms.length - 1] && sameSpan(sel, span));
   const imgs: Content[] = [];
   const si = dataUrl(f.score_img), pi = dataUrl(f.pdf_img);
   head.highlight = {
