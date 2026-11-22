@@ -1,6 +1,6 @@
 // WebKitGTK (Safari stand-in) smoke for Play's bookmarks (E6): play.html copied to
 // /home/user/sitetest/tmp/playmarks-wk.html with an error recorder and <base href="/resonate/">.
-// A mouse drag picks a stretch → the stretch's 🔖 saves it (the record, pressed, a tab over its system,
+// A mouse drag picks a stretch → the stretch's 🔖 saves it (the record, pressed, a tab over its system, clear of its ink,
 // the bar's 🔖 shown); a tap on paper lets go; a click on the tab selects it again and strikes nothing;
 // the bar's 🔖 opens the list (a row, its placeholder), a label typed and Enter saved, Escape closes it;
 // the 🔖 twice removes the mark (the bar's 🔖 hidden again); no errors.
@@ -57,7 +57,8 @@ try {
     `🔖 saves it: the record, pressed, a tab, the bar's 🔖 (${JSON.stringify(A)})`);
   const sys = await ex(`const g = window.resonateDebug().play.playback.geo()[0]; return g.rect[1] + g.systems[0].top;`);
   const t = m.marks.tabs[0];
-  ok(t.ribbon[1] + t.ribbon[3] <= sys + 0.5 && t.ribbon[1] + t.ribbon[3] > sys - 20, `the tab just over the first system's top staff (ribbon bottom ${(t.ribbon[1] + t.ribbon[3]).toFixed(1)}, staff top ${sys.toFixed(1)})`);
+  const covers = await ex(`const rb = ${JSON.stringify(t.ribbon)}; return [...document.querySelectorAll("#stage .page g.notehead, #stage .page .nn, #stage .page g.accid")].filter((e) => { const r = e.getBoundingClientRect(); return r.width && r.left < rb[0] + rb[2] && r.right > rb[0] && r.top < rb[1] + rb[3] && r.bottom > rb[1]; }).length;`);
+  ok(t.ribbon[1] + t.ribbon[3] <= sys + 0.5 && t.ribbon[1] + t.ribbon[3] > sys - 80 && !covers, `the tab over the first system's top staff, above the ink there (ribbon bottom ${(t.ribbon[1] + t.ribbon[3]).toFixed(1)}, staff top ${sys.toFixed(1)}, covering ${covers} heads / pills / accidentals)`);
   // a tap on paper lets go; a click on the tab selects it, no strike
   const blank = await ex(`const st = document.getElementById("stage").getBoundingClientRect(); return [st.left + 30, st.bottom - 40];`);
   await at(blank[0], blank[1]);

@@ -33,6 +33,9 @@ const OVERRIDES = `
 /* (the bookmarks' list — fixed, z-index 35: over the paper and the dock (20), under the scrim (40), the sheets
    (45) and the top bar (46); a tap outside closes it) */
 .score-root #marklist { font-family: var(--font); }
+/* (with the bookmarks' 🔖 in the pager, the view menu counts at its narrowest when the bar's line breaks —
+   it still grows to its whole name where the row has room: the bar keeps its rows with marks) */
+.score-root #bar:has(#marks:not([hidden])) #hands { width: 4.5rem; }
 .score-root #bar #keys { display: none !important; } /* (the dock's Piano toggle drives the keyboard) */
 .score-root #stage { border-radius: 0; }
 /* (the Piano's keyboard right under the paper, as play.html docks its own: no strip of the page between;

@@ -206,11 +206,15 @@ function writePlay(all) {
   if (spaceChanged()) return;
   keep(K.play, JSON.stringify(all));
 }
-function saveState() {
+// (marksMine: the marks are this page's change — editMarks made it on the stored list; else the
+// stored marks stay: another tab may have made or removed some since this page read the record)
+function saveState(marksMine = false) {
   clearTimeout(saveTimer);
   saveTimer = 0;
-  if (!S.song || gone.has(S.song) || !Object.keys(S.st).length || spaceChanged()) return;
+  if (!S.song || gone.has(S.song) || spaceChanged()) return;
   const all = readPlay();
+  if (!marksMine && adoptMarks(all[S.song]?.marks)) marksChanged();
+  if (!Object.keys(S.st).length) return;
   all[S.song] = S.st;
   writePlay(all);
 }
@@ -1057,6 +1061,8 @@ function setChords(on, byHand = false) {
   chordsBtn.setAttribute("aria-pressed", String(on));
   if (byHand) keep(K.chords, on ? "on" : "off");
   drawChords();
+  inkCache = new WeakMap(); // (the tabs: placed clear of the names again)
+  drawMarks();
 }
 chordsBtn.addEventListener("click", () => { if (!pdf.on) setChords(!S.chords, true); });
 
@@ -1071,6 +1077,8 @@ function setNames(level, byHand = false) {
   const label = "Note names: " + level;
   namesBtn.setAttribute("aria-label", label);
   namesBtn.title = label;
+  inkCache = new WeakMap(); // (the tabs: placed clear of the pills shown now)
+  drawMarks();
   if (!byHand) return;
   S.st.names = level;
   levelChanged(level);
@@ -1199,12 +1207,20 @@ const gests = new Map();
 let tap0 = null; // the last tap on a note: { t (its lift), ids (its chord), gen }
 stage.addEventListener("pointerdown", (e) => {
   if (e.target.closest?.("#selbar")) return; // (the stretch's own controls)
-  if (e.target.closest?.(".mtab")) { tap0 = null; letGoMenu(); return; } // (a bookmark's tab: it selects at its click — never a strike)
+  tabStruck = null;
   if ((e.pointerType === "mouse" && e.button !== 0) || pdf.on) { letGoMenu(); return; }
   // (sound before sight: the note under the finger and its strike before any change on screen)
   const t0 = performance.now();
   const hit = S.ready ? nearHead(e.clientX, e.clientY, e.pointerType) : null;
   const hitMs = performance.now() - t0;
+  // A bookmark's tab: it selects at its click, never strikes — unless a head is nearer the press than
+  // the tab's ribbon (a note the tab sits on, where it couldn't be lifted clear: struck, as any press).
+  const tab = e.target.closest?.(".mtab");
+  if (tab) {
+    const r = tab.firstChild.getBoundingClientRect();
+    if (!hit || hit.d >= Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2))) { tap0 = null; letGoMenu(); return; }
+    tabStruck = tab.dataset.id;
+  }
   if (!e.isPrimary && !hit) { letGoMenu(); return; } // (another finger on paper: nothing)
   const old = gests.get(e.pointerId);
   if (old) { gests.delete(e.pointerId); if (old.peek) peekEnd(old.peek); } // (a lift never heard)
@@ -2165,10 +2181,16 @@ function drawSel(why = "place") {
   for (const b of stage.querySelectorAll(".page .sel")) b.remove();
   // (a chord picked that this view doesn't draw — the left hand's, in Right hand: let go; one it
   // draws only part of — the hymn's soprano and alto, in Melody: only what it draws, for its length)
+  // (the whole chord is kept, S.sel.note.all: back in a view that draws it all, it's whole again)
   if (S.sel?.note && S.ready && S.P) {
     songTime();
-    const keep = viewKeep(), ids = S.sel.note.ids.filter((id) => { const e = S.Tid.get(id); return e && keep(e); });
-    if (ids.length < S.sel.note.ids.length) { S.sel = noteSel(ids); if (S.sel) focusSoon(); }
+    const all = S.sel.note.all || S.sel.note.ids, keep = viewKeep();
+    const ids = all.filter((id) => { const e = S.Tid.get(id); return e && keep(e); });
+    if (ids.length !== S.sel.note.ids.length || ids.some((id, i) => id !== S.sel.note.ids[i])) {
+      S.sel = noteSel(ids);
+      if (S.sel && S.sel.note.ids.length < all.length) S.sel.note.all = all;
+      if (S.sel) focusSoon();
+    }
   }
   const sel = S.sel;
   if (sel?.note && S.ready) noteBand(sel);
@@ -2232,21 +2254,28 @@ function noteBand(sel) {
 // Marks (E6): bookmarks of what was practised, beyond "where you left off" — a stretch or a chord
 // picked (a drag, a double-tap) saved with the stretch's 🔖 (#sel-mark: no prompt; pressed when the
 // selection is a mark, a tap then reads "Remove?" and a second within ARM_MS removes it). Kept in
-// the song's record, resonate.play[id].marks (≤ MARKS_MAX; written through saveState: this space
-// only; gone with the song; not synced yet): { id, q0, end (written quarters, as S.sel), ids (a
-// chord's notes), from / to ({ bar: its number in the MusicXML, beat: quarters from the bar's
-// start, 1 = the downbeat — scoretext.js placeOf, as the focus names them; to: where it stops, not
-// included}), label (the singer's words, ≤ 80), at (made), used (the last ▶ / ⟳ of it) }.
-// On the music: a small tab at each mark's start — over the top staff of the system holding its
-// first onset in the view, at that onset's x (pageGeo's columns, as the bands) — drawn again after
-// every drawing (drawSel); a tap selects it (a stretch as a drag picking it; a chord as its
-// double-tap where the view draws its notes, else the stretch) and never strikes (the stage's
-// pointerdown lets it go). None over the PDF, nor where the view starts nothing in the mark.
-// The bar's 🔖 (#marks, hidden with no marks, over the PDF and for a PDF only — without marks the
-// bar is as it was) lists them in score order: a popover under it (a bottom sheet on a phone).
-// Each row: its label (an input: placeholder the bars, "Bars 12–15" / "Bar 12 · beat 3"), how long
-// since it was played (or made), ▶ (select it, play it once), ✕ (two taps); a tap elsewhere on the
-// row turns to it and selects it. A tap outside or Escape closes it.
+// the song's record, resonate.play[id].marks (≤ MARKS_MAX; this space only; gone with the song; not
+// synced yet): { id, q0, end (written quarters, as S.sel), ids + notes (a chord's: its notes' ids
+// and facts { q, part, staff, midi, voice } — the ids are positional, "n" + the note's index, so a
+// reconverted song or a changed clean-up moves them: the chord is found again by its facts, the ids
+// a hint; not all found → the mark acts as its stretch), from / to ({ bar: its number in the
+// MusicXML, beat: quarters from the bar's start, 1 = the downbeat — scoretext.js placeOf, as the
+// focus names them; to: where it stops, not included}), label (≤ 80), at (made), used (the last ▶ /
+// ⟳ of it) }. The stored list is the one that counts — another tab may change it: every change is
+// made on it by id (editMarks: read, change, write), any other save of the record keeps it
+// (saveState), and another tab's write is taken in (the storage event).
+// On the music: a small tab at each mark's start — over its first onset in the view (pageGeo's
+// column, as the bands), above that column's ink on the system's top staff (heads, pills, marks,
+// endings: inkOf), not into the system above — drawn again after every drawing (drawSel); a tap
+// selects it (a stretch as a drag picking it; a chord as its double-tap where the view draws its
+// notes, else the stretch); a press nearer a head than the tab's ribbon strikes the head as any
+// press does. None over the PDF, nor where the view starts nothing in the mark.
+// The bar's 🔖 (#marks, in the pager; hidden with no marks, over the PDF and for a PDF only — the
+// bar keeps its rows either way: play.html's give-way rules) lists them in score order: a popover
+// under it (a bottom sheet on a phone). Each row: its label (an input: placeholder the bars, "Bars
+// 12–15" / "Bar 12 · beat 3"), how long since it was played (or made), ▶ (select it, play it once),
+// ✕ (two taps); a tap elsewhere on the row turns to it and selects it. A tap outside or Escape
+// closes it (a tap on the music only closes it).
 
 const MARKS_MAX = 50, LABEL_MAX = 80, ARM_MS = 3000, SHEET_W = 560;
 const RIBBON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 3.5h9a1 1 0 0 1 1 1v16l-5.5-4-5.5 4v-16a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
@@ -2256,6 +2285,8 @@ function cleanMarks(list) {
   if (!Array.isArray(list)) return [];
   const out = [], have = new Set();
   const place = (p) => (p && typeof p === "object" && p.bar != null ? { bar: String(p.bar), beat: Number(p.beat) || 1 } : null);
+  const fact = (n) => (n && typeof n === "object" && Number.isFinite(Number(n.q)) && typeof n.part === "string"
+    ? { q: Number(n.q), part: n.part, staff: Number(n.staff) || 1, midi: Number.isFinite(n.midi) ? n.midi : null, voice: String(n.voice ?? "1") } : null);
   for (const m of list) {
     if (!m || typeof m !== "object") continue;
     const q0 = Number(m.q0), end = Number(m.end);
@@ -2264,7 +2295,8 @@ function cleanMarks(list) {
     if (!id || have.has(id)) id = markId(have);
     have.add(id);
     const ids = Array.isArray(m.ids) ? m.ids.filter((x) => typeof x === "string").slice(0, 64) : [];
-    out.push({ id, q0, end, ...(ids.length ? { ids } : {}), from: place(m.from), to: place(m.to),
+    const notes = ids.length && Array.isArray(m.notes) && m.notes.length === ids.length ? m.notes.map(fact) : null;
+    out.push({ id, q0, end, ...(ids.length ? { ids, ...(notes?.every(Boolean) ? { notes } : {}) } : {}), from: place(m.from), to: place(m.to),
       label: typeof m.label === "string" ? m.label.slice(0, LABEL_MAX) : "", at: Number(m.at) || 0, used: Number(m.used) || 0 });
     if (out.length >= MARKS_MAX) break;
   }
@@ -2273,35 +2305,98 @@ function cleanMarks(list) {
 const marksList = () => (Array.isArray(S.st.marks) ? S.st.marks : []);
 const byScore = (a, b) => a.q0 - b.q0 || a.end - b.end || (a.ids ? 1 : 0) - (b.ids ? 1 : 0);
 const marksSorted = () => [...marksList()].sort(byScore);
-// What of a chord mark the view draws (its note ids).
-function drawnOf(m) {
-  if (!m.ids || !S.P) return [];
-  songTime();
-  const keep = viewKeep();
-  return m.ids.filter((id) => { const e = S.Tid.get(id); return e && !e.rest && keep(e); });
+
+// The stored list taken in (another tab's change; a save of the record): → whether it differed.
+function adoptMarks(stored) {
+  const list = cleanMarks(stored);
+  if (JSON.stringify(list) === JSON.stringify(marksList())) return false;
+  if (list.length) S.st.marks = list; else delete S.st.marks;
+  return true;
 }
-// The mark the selection is (null: none) — a stretch: the same [q0, end); a chord: the same notes,
-// or what the view draws of them (the hymn's chord picked in Both, in Melody: its tune note); a
-// chord this view doesn't draw, selected as its stretch (selectMark), is that stretch.
+// A change to the marks (fn changes the list it's given; false: nothing to write): made on the stored
+// list — this page's copy may be another tab's change behind — written at once with the record, and
+// shown (redraw: false — a label: its tab named in place, nothing rebuilt under a pointer).
+function editMarks(fn, { redraw = true } = {}) {
+  if (!S.song || gone.has(S.song) || spaceChanged()) return false;
+  const list = cleanMarks(readPlay()[S.song]?.marks);
+  if (fn(list) === false) { if (adoptMarks(list)) marksChanged(); return false; }
+  if (list.length) S.st.marks = list; else delete S.st.marks;
+  saveState(true);
+  if (redraw) marksChanged();
+  else { markTitles(); remote.changedSoon(); }
+  return true;
+}
+// (another tab wrote the record: its marks, here too)
+addEventListener("storage", (e) => {
+  if ((e.key !== K.play && e.key !== null) || !S.song || gone.has(S.song) || spaceChanged()) return;
+  if (adoptMarks(readPlay()[S.song]?.marks)) marksChanged();
+});
+
+// A chord mark's notes in the song as it is now: each note found by its facts at the mark's place (its
+// stored id first, when it still names that note), all of them or null — the mark is then its
+// stretch. A mark without facts (none yet when made): its ids, while they still start at the mark.
+const chordCache = new WeakMap(); // S.T → WeakMap(mark → ids | null)
+const byQCache = new WeakMap();   // S.T → Map(q key → its elements)
+const qKey = (q) => Math.round(q * 1e4);
+function chordIds(m) {
+  if (!m.ids || !S.P) return null;
+  const T = songTime();
+  let c = chordCache.get(T);
+  if (!c) chordCache.set(T, (c = new WeakMap()));
+  if (c.has(m)) return c.get(m);
+  let out = null;
+  if (m.notes) {
+    let byQ = byQCache.get(T);
+    if (!byQ) {
+      byQCache.set(T, (byQ = new Map()));
+      for (const e of T.els) { const k = qKey(e.q); (byQ.get(k) || byQ.set(k, []).get(k)).push(e); }
+    }
+    const fits = (e, n) => e && !e.rest && !e.grace && Math.abs(e.q - n.q) < EPS && e.part === n.part && e.staff === n.staff && e.midi === n.midi;
+    const used = new Set(), ids = [];
+    for (const [i, n] of m.notes.entries()) {
+      const hint = S.Tid.get(m.ids[i]);
+      const e = fits(hint, n) && !used.has(hint.id) ? hint
+        : (byQ.get(qKey(n.q)) || []).filter((x) => fits(x, n) && !used.has(x.id)).sort((a, b) => (a.voice === n.voice ? 0 : 1) - (b.voice === n.voice ? 0 : 1))[0];
+      if (!e) break;
+      used.add(e.id);
+      ids.push(e.id);
+    }
+    out = ids.length === m.notes.length ? ids : null;
+  } else if (m.ids.every((id) => { const e = S.Tid.get(id); return e && !e.rest && Math.abs(e.q - m.q0) < EPS; })) out = m.ids.slice();
+  c.set(m, out);
+  return out;
+}
+// What of a chord mark the view draws (its notes' ids; none: a chord not found, or not in the view).
+function drawnOf(m) {
+  const ids = chordIds(m);
+  if (!ids) return [];
+  const keep = viewKeep();
+  return ids.filter((id) => keep(S.Tid.get(id)));
+}
+// The mark the selection is (null: none) — a stretch: the same [q0, end); a chord: the same notes
+// (the whole chord picked, though the view draws part of it: S.sel.note.all), or what the view draws
+// of a chord mark (the hymn's chord marked in Both, its tune note double-tapped in Melody); a chord
+// mark acting as its stretch (not found, or not drawn here: selectMark) is that stretch.
 function markOf(sel = S.sel) {
   if (!sel || !S.P) return null;
   const list = marksList(), at = (m) => Math.abs(m.q0 - sel.q0) < EPS;
   if (sel.note) {
-    const ids = new Set(sel.note.ids), same = (a) => a.length === ids.size && a.every((id) => ids.has(id));
-    return list.find((m) => m.ids && at(m) && same(m.ids)) || list.find((m) => m.ids && at(m) && same(drawnOf(m))) || null;
+    const same = (a, b) => !!a?.length && a.length === b.length && a.every((id) => b.includes(id));
+    const all = sel.note.all || sel.note.ids;
+    return list.find((m) => m.ids && at(m) && same(chordIds(m), all)) || list.find((m) => m.ids && at(m) && same(drawnOf(m), sel.note.ids)) || null;
   }
   return list.find((m) => at(m) && Math.abs(m.end - sel.end) < EPS && (!m.ids || !drawnOf(m).length)) || null;
 }
-// Where a mark is, in a few words: "Bars 12–15", "Bar 12", a chord "Bar 12 · beat 3".
+// Where a mark is, in a few words: "Bars 12–15", "Bar 12", a chord "Bar 12 · beat 3" (from the song as
+// it is now; the stored places while it isn't read yet).
 function markPlace(m) {
-  if (m.ids) {
-    const f = m.from || (S.P ? placeOf(songTime(), m.q0, numberOf) : null);
-    return f ? `Bar ${f.bar} · beat ${f.beat}` : "";
-  }
   if (S.P) {
-    const T = songTime(), a = barAt(T, m.q0), b = barAt(T, Math.max(m.q0, m.end - 1e-4));
+    const T = songTime();
+    if (m.ids && chordIds(m)) { const f = placeOf(T, m.q0, numberOf); return `Bar ${f.bar} · beat ${f.beat}`; }
+    const a = barAt(T, m.q0), b = barAt(T, Math.max(m.q0, m.end - 1e-4));
     return a === b ? `Bar ${numberOf(a)}` : `Bars ${numberOf(a)}–${numberOf(b)}`;
   }
+  if (m.ids && m.from) return `Bar ${m.from.bar} · beat ${m.from.beat}`;
   return m.from && m.to ? (m.from.bar === m.to.bar ? `Bar ${m.from.bar}` : `Bars ${m.from.bar}–${m.to.bar}`) : "";
 }
 // How long since (ms): "today", "2d", "3w", "4mo", "2y" — calendar days.
@@ -2312,25 +2407,29 @@ function ageOf(t) {
   return n <= 0 ? "today" : n < 7 ? `${n}d` : n < 60 ? `${Math.floor(n / 7)}w` : n < 730 ? `${Math.floor(n / 30)}mo` : `${Math.floor(n / 365)}y`;
 }
 
-// The selection saved as a mark (already one: nothing; MARKS_MAX: a shake).
+// The selection saved as a mark — a chord whole, though the view draws part of it (already one:
+// nothing; MARKS_MAX: a shake).
 function addMark() {
   if (!S.sel || !S.P || markOf()) return;
-  const list = marksList();
-  if (list.length >= MARKS_MAX) return nope(selMarkBtn);
-  const T = songTime(), sel = S.sel;
-  const m = { id: markId(new Set(list.map((x) => x.id))), q0: sel.q0, end: sel.end, ...(sel.note ? { ids: sel.note.ids.slice() } : {}),
+  const T = songTime();
+  const ids = S.sel.note ? (S.sel.note.all || S.sel.note.ids).slice() : null;
+  const sel = ids && S.sel.note.all ? noteSel(ids) || S.sel : S.sel;
+  const notes = ids?.map((id) => { const e = S.Tid.get(id); return e ? { q: e.q, part: e.part, staff: e.staff, midi: e.midi ?? null, voice: e.voice } : null; });
+  const m = { id: "", q0: sel.q0, end: sel.end, ...(ids ? { ids, ...(notes.every(Boolean) ? { notes } : {}) } : {}),
     from: placeOf(T, sel.q0, numberOf), to: placeOf(T, sel.end, numberOf, true), label: "", at: Date.now(), used: 0 };
-  S.st.marks = [...list, m];
-  saveState();
-  marksChanged();
+  let full = false;
+  editMarks((list) => {
+    if (list.length >= MARKS_MAX) { full = true; return false; }
+    m.id = markId(new Set(list.map((x) => x.id)));
+    list.push(m);
+  });
+  if (full) nope(selMarkBtn);
 }
 function removeMark(id) {
-  const list = marksList().filter((m) => m.id !== id);
-  if (list.length) S.st.marks = list; else delete S.st.marks;
-  saveState();
-  marksChanged();
+  editMarks((list) => { const i = list.findIndex((m) => m.id === id); if (i < 0) return false; list.splice(i, 1); });
 }
-// The marks changed (made, removed, a song's record read or forgotten): the tabs, the buttons, the list.
+// The marks changed (made, removed, a song's record read or forgotten, another tab's): the tabs, the
+// buttons, the list.
 function marksChanged() {
   disarm();
   drawMarks();
@@ -2381,9 +2480,45 @@ function markButton() {
   for (const t of stage.querySelectorAll(".page .mtab")) t.toggleAttribute("data-on", !!m && t.dataset.id === m.id);
   for (const r of markList.querySelectorAll(".mrow")) r.toggleAttribute("data-on", !!m && r.dataset.id === m.id);
 }
+// The tabs named by their labels (a label saved: in place — rebuilding them under a pointer lost its click).
+function markTitles() {
+  for (const t of stage.querySelectorAll(".page .mtab")) {
+    const m = marksList().find((x) => x.id === t.dataset.id);
+    if (!m) continue;
+    const name = m.label || markPlace(m);
+    t.title = name;
+    t.setAttribute("aria-label", `Bookmark: ${name}`);
+  }
+}
+
+// The ink of a shown page's systems (page px, [left, top, right, bottom]), measured once a drawing:
+// fine — every note (its head, stem, accidental, articulation, name pill), beam, tuplet, mark,
+// ending, slur and chord name —, and coarse — each bar's staves and marks (what a system has under its last staff:
+// words, chord names). A names level shows or hides pills: measured again (setNames).
+const INK = "g.note, g.rest, g.beam, g.tuplet, g.artic, g.fermata, g.dir, g.tempo, g.ending, g.dynam, g.hairpin, g.octave, g.reh, g.harm, g.trill, g.mordent, g.turn, g.breath, g.slur, g.tie, g.chn";
+let inkCache = new WeakMap(); // a .page element → Map(g.system → { fine, coarse })
+function inkOf(pg, sysEl) {
+  let m = inkCache.get(pg);
+  if (!m) inkCache.set(pg, (m = new Map()));
+  let o = m.get(sysEl);
+  if (!o) {
+    const pr = pg.getBoundingClientRect();
+    const rects = (els) => {
+      const out = [];
+      for (const el of els) { const r = el.getBoundingClientRect(); if (r.width || r.height) out.push([r.left - pr.left, r.top - pr.top, r.right - pr.left, r.bottom - pr.top]); }
+      return out;
+    };
+    o = { fine: rects(sysEl.querySelectorAll(INK)), coarse: rects(sysEl.querySelectorAll(":scope > g.measure > g, g.chn")) };
+    m.set(sysEl, o);
+  }
+  return o;
+}
 
 // The tabs, on the shown page(s): at each mark's first onset in the view (the system's column for
-// it), over that system's top staff line; marks starting together side by side.
+// it), above that column's ink over the system's top staff line — never into the system above
+// (clamped under its lowest ink there; a press nearer a head than the ribbon still strikes it);
+// marks starting together side by side.
+const TAB_PAD = [6, 7, 3]; // the tab's box round its ribbon: over, each side, under (px)
 function drawMarks() {
   for (const t of stage.querySelectorAll(".page .mtab")) t.remove();
   const list = marksSorted();
@@ -2395,16 +2530,26 @@ function drawMarks() {
     if (q != null && q < m.end - EPS) first.set(m, q);
   }
   if (!first.size) return;
-  const sp = S.sp || 8, w = Math.max(12, Math.round(1.4 * sp)), h = Math.round(w * 1.4);
+  const sp = S.sp || 8, w = Math.max(12, Math.round(1.4 * sp)), h = Math.round(w * 1.4), [pT, pX, pB] = TAB_PAD;
   for (const pg of stage.querySelectorAll(".page")) {
     const systems = pageGeo(pg), taken = new Map();
     for (const [m, q] of first) {
-      for (const sys of systems) {
+      for (const [si, sys] of systems.entries()) {
         const c = sys.cols.find((x) => Math.abs(x.q - q) < EPS);
         if (!c) continue;
-        const key = `${Math.round(sys.top)}|${Math.round(q * 1e4)}`, k = taken.get(key) || 0;
+        const key = `${si}|${qKey(q)}`, k = taken.get(key) || 0;
         taken.set(key, k + 1);
-        const x = (c.x0 + c.x1) / 2 - w / 2 + k * (w + 3), y = sys.top - 0.35 * sp - h;
+        const x = (c.x0 + c.x1) / 2 - w / 2 + k * (w + 3), l = x - pX, r = x + w + pX;
+        let top = sys.top;
+        for (const [a, t, b] of inkOf(pg, sys.el).fine) if (b > l && a < r && t < top) top = t;
+        let floor = 0; // (the system above: its lowest ink under the tab; the page's top)
+        if (si > 0) for (const [a, , b, bot] of inkOf(pg, systems[si - 1].el).coarse) if (b > l && a < r) floor = Math.max(floor, bot + 2);
+        // (short of room — high notes on a page's first line: a smaller ribbon, its box tight round it;
+        // under 10 px tall it overlaps, and a press nearer a head than the ribbon strikes the head)
+        const room = top - 0.35 * sp - floor;
+        let rh = h, rw = w, pt = pT, pb = pB;
+        if (room < pT + h + pB) { pt = 0; pb = 1; rh = Math.max(10, Math.floor(room - pb)); rw = Math.max(8, Math.round(rh / 1.4)); }
+        const y = Math.max(floor + pt, top - 0.35 * sp - rh - pb);
         const t = document.createElement("button");
         t.type = "button";
         t.className = "mtab";
@@ -2413,8 +2558,7 @@ function drawMarks() {
         const name = m.label || markPlace(m);
         t.title = name;
         t.setAttribute("aria-label", `Bookmark: ${name}`);
-        // (the tab's own box: padding round the ribbon — 7 px each side, 6 over, 3 under)
-        t.style.cssText = `left:${(x - 7).toFixed(1)}px;top:${Math.max(0, y - 6).toFixed(1)}px;--mw:${w}px;--mh:${h}px`;
+        t.style.cssText = `left:${(x + (w - rw) / 2 - pX).toFixed(1)}px;top:${(y - pt).toFixed(1)}px;padding-top:${pt}px;padding-bottom:${pb}px;--mw:${rw}px;--mh:${rh}px`;
         t.append(document.createElement("i"));
         pg.appendChild(t);
         break;
@@ -2422,20 +2566,26 @@ function drawMarks() {
     }
   }
 }
+// (a press on a tab that went to a head — nearer it than the ribbon: struck, not a tab's tap; by its
+// mark's id: the tabs may be drawn again before the click, a double-tap's chord picked)
+let tabStruck = null;
 stage.addEventListener("click", (e) => {
   const t = e.target.closest?.(".mtab");
   if (!t) return;
   t.blur();
+  if (tabStruck && t.dataset.id === tabStruck) { tabStruck = null; return; }
   const m = marksList().find((x) => x.id === t.dataset.id);
   if (m) selectMark(m);
 });
 
-// Select a mark: a chord where the view draws its notes (what it draws of them), else its stretch —
-// the view's onsets in it, ending where the mark ends; turn: show its page first (the list).
+// Select a mark: a chord where the view draws its notes (what it draws of them — the whole chord kept,
+// S.sel.note.all), else its stretch — the view's onsets in it, ending where the mark ends; turn: show
+// its page first (the list).
 function selectMark(m, turn = false) {
   if (!S.ready || pdf.on || !S.P || !m) return false;
   const T = songTime(), d = drawnOf(m);
   let sel = d.length ? noteSel(d) : null, q = sel?.q0 ?? m.q0;
+  if (sel && d.length < chordIds(m).length) sel.note.all = chordIds(m).slice();
   if (!sel) {
     const inside = viewOnsets().filter((x) => x >= m.q0 - EPS && x < m.end - EPS);
     if (inside.length) { sel = { q0: m.q0, q1: inside[inside.length - 1], end: m.end }; q = inside[0]; }
@@ -2455,7 +2605,14 @@ function listButton() {
   if (marksBtn.hidden !== hide) marksBtn.hidden = hide;
   if (hide) closeMarks();
 }
-marksBtn.addEventListener("click", () => (markList.hidden ? openMarks() : closeMarks()));
+// (opened from the keyboard — a click with no pointer: Escape gives the focus back to the 🔖; from a tap
+// the focus stays off the bar, or a pedal's Space / Enter would open the list again)
+let listByKey = false;
+marksBtn.addEventListener("click", (e) => {
+  if (!markList.hidden) return closeMarks();
+  listByKey = e.detail === 0;
+  openMarks();
+});
 function openMarks() {
   if (!marksList().length || pdf.on || S.pdfOnly) return;
   renderMarks();
@@ -2465,14 +2622,15 @@ function openMarks() {
 }
 function closeMarks() {
   if (markList.hidden) return;
-  for (const inp of markList.querySelectorAll("input")) setLabel(inp);
+  commitLabels();
   if (markList.contains(document.activeElement)) document.activeElement.blur();
   if (armed && markList.contains(armed.el)) disarm();
   markList.hidden = true;
   marksBtn.setAttribute("aria-expanded", "false");
 }
 // Under the button, its right edge on the button's (inside the window); under SHEET_W px wide a
-// bottom sheet — above an on-screen keyboard while a label is typed (the visual viewport).
+// bottom sheet — above an on-screen keyboard while a label is typed (the visual viewport: its size
+// and its pan).
 function placeMarks() {
   if (markList.hidden) return;
   const W = innerWidth, H = innerHeight, vv = window.visualViewport;
@@ -2488,19 +2646,26 @@ function placeMarks() {
 }
 addEventListener("resize", placeMarks);
 window.visualViewport?.addEventListener("resize", placeMarks);
-// (a tap anywhere else closes it — and does what it does; Escape closes it)
+window.visualViewport?.addEventListener("scroll", placeMarks);
+markList.addEventListener("focusin", (e) => { if (e.target.matches?.("input.mlabel")) requestAnimationFrame(placeMarks); });
+// (a tap anywhere else closes it — on the music it only closes it: no note struck, nothing let go — a
+// tab still selects its mark, the bar's controls do what they do; Escape closes it)
 document.addEventListener("pointerdown", (e) => {
   if (markList.hidden || e.target.closest?.("#marklist, #marks")) return;
   closeMarks();
+  if (e.target.closest?.("#stage") && !e.target.closest(".mtab, #selbar")) { e.stopPropagation(); e.preventDefault(); }
 }, true);
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || markList.hidden) return;
   e.preventDefault(); // (the one-page shell's Escape closes its own sheets: not with this one)
   closeMarks();
-  marksBtn.focus?.({ preventScroll: true });
+  if (listByKey) marksBtn.focus?.({ preventScroll: true });
 });
 function renderMarks() {
   const cur = markOf();
+  // (a label being typed stays as it is: another tab's change, a mark played, redraw the rows)
+  const a = document.activeElement, typing = markList.contains(a) && a.matches("input.mlabel")
+    ? { id: a.closest(".mrow").dataset.id, value: a.value, s: a.selectionStart, e: a.selectionEnd } : null;
   markList.replaceChildren(...marksSorted().map((m) => {
     const row = document.createElement("div");
     row.className = "mrow";
@@ -2514,22 +2679,18 @@ function renderMarks() {
     row.querySelector(".mage").textContent = ageOf(m.used || m.at);
     return row;
   }));
+  const inp = typing && markList.querySelector(`.mrow[data-id="${typing.id}"] input`);
+  if (inp) { inp.value = typing.value; inp.focus({ preventScroll: true }); try { inp.setSelectionRange(typing.s, typing.e); } catch {} }
 }
-// A label typed: kept in the record at once (saved with it at pagehide), saved on change / blur.
-let labelTyped = false;
-function setLabel(inp, save = true) {
-  const m = marksList().find((x) => x.id === inp.closest(".mrow")?.dataset.id);
-  if (!m) return;
-  const v = inp.value.replace(/\s+/g, " ").trim().slice(0, LABEL_MAX);
-  if (v !== m.label) { m.label = v; labelTyped = true; }
-  if (!save || !labelTyped) return;
-  labelTyped = false;
-  saveState();
-  drawMarks();
-  markButton();
-  remote.changedSoon();
+// A label typed: saved on change / blur (and when the list closes or the page is hidden) — on the
+// stored list, by the mark's id; its tab named in place.
+const labelText = (inp) => inp.value.replace(/\s+/g, " ").trim().slice(0, LABEL_MAX);
+function setLabel(inp) {
+  const id = inp.closest(".mrow")?.dataset.id, v = labelText(inp);
+  if (!id || marksList().find((x) => x.id === id)?.label === v) return;
+  editMarks((list) => { const m = list.find((x) => x.id === id); if (!m || m.label === v) return false; m.label = v; }, { redraw: false });
 }
-markList.addEventListener("input", (e) => { if (e.target.matches?.("input.mlabel")) setLabel(e.target, false); });
+function commitLabels() { for (const inp of markList.querySelectorAll("input.mlabel")) setLabel(inp); }
 markList.addEventListener("change", (e) => { if (e.target.matches?.("input.mlabel")) setLabel(e.target); });
 markList.addEventListener("focusout", (e) => { if (e.target.matches?.("input.mlabel")) setLabel(e.target); });
 markList.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.matches?.("input.mlabel")) { e.preventDefault(); e.target.blur(); } });
@@ -2548,15 +2709,38 @@ markList.addEventListener("click", (e) => {
   const ok = selectMark(m, true);
   if (b?.classList.contains("mplay") && ok) playStart("span");
 });
+// A mark played (▶ / ⟳ of the selection that is one): its age starts again.
+function markUsed() {
+  const m = markOf();
+  if (m) editMarks((list) => { const x = list.find((y) => y.id === m.id); if (!x) return false; x.used = Date.now(); });
+}
 
-// For an assistant (scoreState): the marks — the 30 played or made last, in score order.
+// For an assistant (scoreState): the marks — the 30 played or made last, in score order; where they
+// are from the song as it is now (else as stored); a chord's staff and part too, as the selection's.
+const whoCache = new WeakMap(); // S.P → Map(ids → { staff, part })
+function chordWho(ids) {
+  let c = whoCache.get(S.P);
+  if (!c) whoCache.set(S.P, (c = new Map()));
+  const k = ids.join(" ");
+  if (!c.has(k)) {
+    const els = ids.map((id) => S.Tid.get(id)), q0 = Math.min(...els.map((e) => e.q));
+    const info = spanInfo(S.P.doc, songTime(), S.P.facts, { span: { q0, end: q0 + Math.max(...els.map((e) => e.d)), ids }, number: numberOf });
+    c.set(k, { staff: info.staff ?? null, part: info.first[0]?.part ?? null });
+  }
+  return c.get(k);
+}
 function marksState() {
+  const T = S.P ? songTime() : null;
   const recent = [...marksList()].sort((a, b) => (b.used || b.at) - (a.used || a.at)).slice(0, 30).sort(byScore);
-  return recent.map((m) => ({
-    kind: m.ids ? "note" : "stretch",
-    from: m.from ? { ...m.from } : null, to: m.to ? { ...m.to } : null,
-    label: m.label || "", used: m.used ? new Date(m.used).toISOString() : null,
-  }));
+  return recent.map((m) => {
+    const ids = T && m.ids ? chordIds(m) : null, chord = !!m.ids && (!T || !!ids);
+    return {
+      kind: chord ? "note" : "stretch",
+      from: T ? placeOf(T, m.q0, numberOf) : m.from ? { ...m.from } : null, to: T ? placeOf(T, m.end, numberOf, true) : m.to ? { ...m.to } : null,
+      label: m.label || "", used: m.used ? new Date(m.used).toISOString() : null,
+      ...(ids ? chordWho(ids) : {}),
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2648,7 +2832,7 @@ async function playStart(kind, loop = false) {
   try { args = trackArgs(kind); tr = trackOf(args); } catch (err) { console.warn("play", err); return; }
   S.t.track = ms(tb);
   if (!(tr.len > 0)) return;
-  if (kind === "span") { const m = markOf(); if (m) { m.used = Date.now(); saveState(); } } // (a bookmark played: its age starts again)
+  if (kind === "span") markUsed(); // (a bookmark played: its age starts again)
   const ev = eventsOf(tr);
   Object.assign(PB, {
     state: loop ? "looping" : "playing", kind, starting: true, a, piano: null, args, tr, ev, base: tr.base, from: tr.from,
@@ -4027,7 +4211,7 @@ function dropWake() {
 const SLEEP_TC = 0.002;
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") { lastTick = performance.now(); dropWake(); holdWake(); }
-  else { clearPeek(true, SLEEP_TC); stopPlay(false, SLEEP_TC); stopAwake(); sleepCtx(); saveState(); }
+  else { clearPeek(true, SLEEP_TC); stopPlay(false, SLEEP_TC); stopAwake(); sleepCtx(); commitLabels(); saveState(); }
 });
 // (the session "auto" while asleep, as when the page is left: iOS keeps the audio route up for a
 // "playback" page)
@@ -4044,6 +4228,7 @@ window.addEventListener("pagehide", () => {
   stopPlay();
   stopAwake();
   if (pdf.on) pdfOff();
+  commitLabels();
   saveState();
   dropWake();
   if (ac) ac.close().catch(() => {});

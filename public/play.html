@@ -183,7 +183,7 @@
            — no empty break line, whose row gaps made the bar taller than v78's) */
         #bar #song { order: 3; flex: 1 1 calc(100% - 11rem); min-width: 0; max-width: none; }
         #bar .pager, #bar:has(#offer:not([hidden])) .pager { order: 4; margin-left: 0; }
-        #hands, #play, #names, #chords, #keys, .size, #pdf, #marks, #offer { order: 6; }
+        #hands, #play, #names, #chords, #keys, .size, #pdf, #offer { order: 6; }
         /* (the controls' row holds the view menu, ▶, ABC, 🎹, − +, 📄 with v78's gaps a little
            closer) */
         #bar { column-gap: 0.5rem; }
@@ -196,7 +196,7 @@
         #song { flex-basis: 100%; max-width: none; }
         /* (the controls' row sits .3rem under the song's, as when they shared .ctl's gap: the
            stage keeps v78's height) */
-        #hands, #play, #names, #chords, #keys, .size, #pdf, #marks, #offer { margin-top: -0.1rem; }
+        #hands, #play, #names, #chords, #keys, .size, #pdf, #offer { margin-top: -0.1rem; }
       }
       @media (max-width: 420px) and (any-pointer: coarse) { .nav-link { padding: 0.3rem 0.5rem; } }
       /* ▶ takes a place on the controls' row: with the fewer-names chip and 📄 the one-row bar is
@@ -234,18 +234,14 @@
       @media (max-width: 479px) {
         #bar #chords { order: 3; margin-top: 0; }
         #bar #song { flex-basis: calc(100% - 14.3rem); }
-        /* (the bookmarks' 🔖, shown only with marks: on the song's row too, the song menu narrower — the
-           controls' row is full) */
-        #bar #marks { order: 3; margin-top: 0; }
-        #bar:has(#marks:not([hidden])) #song { flex-basis: calc(100% - 17.5rem); }
       }
       /* (with 📄 on an iPad's controls row: the gaps, ABC and the page number's room ("12 / 31") a
          little closer, so the view menu keeps its whole name and the song menu v80's 5rem) */
       @media (min-width: 670px) and (max-width: 1099px) {
-        .ctl:has(#pdf:not([hidden])), .ctl:has(#marks:not([hidden])) { column-gap: 0.25rem; }
-        .ctl:has(#pdf:not([hidden])) #names, .ctl:has(#marks:not([hidden])) #names { min-width: 2.75rem; padding: 0 0.4rem; }
-        #bar:has(#pdf:not([hidden])), #bar:has(#marks:not([hidden])) { column-gap: 0.5rem; }
-        #bar:has(#pdf:not([hidden])) #pg, #bar:has(#marks:not([hidden])) #pg { min-width: 3.4rem; }
+        .ctl:has(#pdf:not([hidden])) { column-gap: 0.25rem; }
+        .ctl:has(#pdf:not([hidden])) #names { min-width: 2.75rem; padding: 0 0.4rem; }
+        #bar:has(#pdf:not([hidden])) { column-gap: 0.5rem; }
+        #bar:has(#pdf:not([hidden])) #pg { min-width: 3.4rem; }
       }
       /* (the fewer-names chip without its question where the row is full — its button says it:
          "Fewer names: Some" — as on a big phone) */
@@ -399,6 +395,30 @@
          the notes (play.js openPdf). */
       #bar[data-pdfonly] #hands, #bar[data-pdfonly] #play, #bar[data-pdfonly] #names, #bar[data-pdfonly] #chords,
       #bar[data-pdfonly] .size, #bar[data-pdfonly] #offer, #bar[data-pdfonly] #pdf, #bar[data-pdfonly] #marks { display: none; }
+      /* The bookmarks' 🔖 (E6) sits in the pager, before ‹, and only with marks: what it takes is given back
+         on its line — the page number and ‹ › narrower, the fewer-names chip without its question, the song
+         menu's basis smaller (on its row), the nav's links closer — so the bar keeps its rows with marks
+         (tools/playmarks.cjs B sweeps it: 300–1440 px × chip / 📄 × touch / mouse, here and in the shell). */
+      .pager:has(#marks:not([hidden])) { gap: 0.2rem; }
+      #bar:has(#marks:not([hidden])) #pg { min-width: 3.2rem; }
+      #bar:has(#marks:not([hidden])) #prev, #bar:has(#marks:not([hidden])) #next { min-width: 44px; }
+      #bar:has(#marks:not([hidden])) #offer > span { display: none; }
+      @media (min-width: 1100px) { #bar:has(#marks:not([hidden])) #song { flex-basis: 4.5rem; min-width: 4.5rem; } }
+      @media (min-width: 670px) and (max-width: 1099px) {
+        #bar:has(#marks:not([hidden])) .ctl { column-gap: 0.25rem; }
+        #bar:has(#marks:not([hidden])) #names { min-width: 2.75rem; padding: 0 0.4rem; }
+        #bar:has(#marks:not([hidden])) { column-gap: 0.5rem; }
+      }
+      @media (min-width: 480px) and (max-width: 669px) {
+        #bar:has(#marks:not([hidden])) .nav { gap: 0.3rem; }
+        #bar:has(#marks:not([hidden])) .nav-link { padding-left: 0.45rem; padding-right: 0.45rem; }
+      }
+      @media (max-width: 479px) {
+        #bar:has(#marks:not([hidden])) #song { flex-basis: calc(100% - 16.9rem); }
+      }
+      /* (with the chip or 📄 too, the song menu gives way further: its title was cut already) */
+      @media (min-width: 421px) and (max-width: 479px) { #bar:has(#marks:not([hidden])) .ctl:has(#offer:not([hidden])) #song { min-width: 2rem; } }
+      @media (min-width: 670px) and (max-width: 1099px) { #bar:has(#marks:not([hidden])) .ctl:has(#pdf:not([hidden])) #song { min-width: 2.5rem; } }
 
       /* Bookmarks (E6, play.js "Marks"): the stretch's controls save the one picked (🔖 — pressed when
          it is one; a tap then reads "Remove?", a second within 3 s removes it); a small tab at each
@@ -473,10 +493,10 @@
           <button id="bigger" type="button" aria-label="Larger" title="Larger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg></button>
         </span>
         <button id="pdf" type="button" aria-label="Original PDF" title="Original PDF" aria-pressed="false" hidden>📄</button>
-        <button id="marks" type="button" aria-label="Bookmarks" title="Bookmarks" aria-haspopup="dialog" aria-expanded="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 3.5h9a1 1 0 0 1 1 1v16l-5.5-4-5.5 4v-16a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
         <span id="offer" hidden></span>
       </div>
       <span class="pager">
+        <button id="marks" type="button" aria-label="Bookmarks" title="Bookmarks" aria-haspopup="dialog" aria-expanded="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 3.5h9a1 1 0 0 1 1 1v16l-5.5-4-5.5 4v-16a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
         <button id="prev" type="button" aria-label="Previous page" title="Previous page">‹</button>
         <span id="pg" aria-live="polite">…</span>
         <button id="next" type="button" aria-label="Next page" title="Next page">›</button>
