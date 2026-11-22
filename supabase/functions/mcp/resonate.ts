@@ -55,8 +55,9 @@ export async function approved(sb: Sb): Promise<boolean> {
 }
 
 interface SongRef { id: string; title: string; library: boolean }
-// Every song the account knows: My songs (synced) and any song or sample the app has shared.
-async function songs(sb: Sb): Promise<SongRef[]> {
+// Every song the account knows: My songs (synced) and any song or sample the app has shared — and the
+// songs deleted (their sync tombstones: hidden everywhere).
+async function songIndex(sb: Sb): Promise<{ list: SongRef[]; gone: Set<string> }> {
   const [lib, scores] = await Promise.all([
     sb.from("sync_items").select("id,data,deleted").eq("kind", "song"),
     sb.from("song_scores").select("song_id,title:data->>title"),
@@ -64,13 +65,19 @@ async function songs(sb: Sb): Promise<SongRef[]> {
   const out = new Map<string, SongRef>(), gone = new Set<string>();
   for (const r of lib.data || []) { if (r.deleted) gone.add(r.id); else out.set(r.id, { id: r.id, title: String((r.data as Json)?.title ?? r.id), library: true }); }
   for (const r of scores.data || []) if (!out.has(r.song_id) && !gone.has(r.song_id)) out.set(r.song_id, { id: r.song_id, title: String(r.title ?? r.song_id), library: LIB_ID.test(r.song_id) });
-  return [...out.values()];
+  return { list: [...out.values()], gone };
 }
-async function findSong(sb: Sb, q: string): Promise<SongRef | null> {
+async function songs(sb: Sb): Promise<SongRef[]> {
+  return (await songIndex(sb)).list;
+}
+function pickSong(all: SongRef[], q: string): SongRef | null {
   const want = q.trim().toLowerCase();
   if (!want) return null;
-  const all = await songs(sb);
   return all.find((s) => s.id.toLowerCase() === want) || all.find((s) => s.title.toLowerCase() === want) || all.find((s) => s.title.toLowerCase().includes(want)) || null;
+}
+async function findSong(sb: Sb, q: string): Promise<SongRef | null> {
+  if (!q.trim()) return null;
+  return pickSong(await songs(sb), q);
 }
 
 export async function listSongs(sb: Sb) {
@@ -315,6 +322,7 @@ const READERS = {
   score_xml: (sb, a) => getScoreXml(sb, String(a.song), a.from_measure as number | string | undefined, a.to_measure as number | string | undefined, str(a.part)),
   score_pdf: (sb, a) => getScorePdf(sb, String(a.song), a.page as number | undefined),
   capabilities: () => Promise.resolve(capabilities()),
+  fingering: (sb, a) => getFingering(sb, String(a.song), a.from_measure as number | string | undefined, a.to_measure as number | string | undefined, str(a.hand)),
 } satisfies Record<QueryName, (sb: Sb, a: Json) => Promise<unknown>>;
 export function queryName(what: unknown): string {
   return findQuery(what)?.name ?? String(what ?? "");
@@ -465,6 +473,80 @@ export async function getScorePdf(sb: Sb, q: string, page?: number) {
   return okData({ song: f.s.id, title: f.s.title, pages, page: p, page_chosen: why, bytes: one.length,
     note: `Page ${p} of ${pages} of the song's original PDF, as a one-page PDF (the next content item). Ask with page N for another.` },
   [{ type: "resource", resource: { uri: `resonate://songs/${encodeURIComponent(f.s.id)}/pdf/page-${p}.pdf`, mimeType: "application/pdf", blob: b64(one) } }]);
+}
+
+// --- Piano fingering (E7): Resonate's suggestion, worked out on the device, kept as text -----------------
+
+const FING_CAP = 60000; // chars of bars in one answer
+const FING_LIST_MAX = 200; // moved / wide entries in one answer
+const FING_LEGEND = "Resonate's suggested fingering — a suggestion: other fingerings can be right; say so if the user asks. Each bar: RH / LH = right / left hand; @beat = quarter notes from the bar's start (1 = the downbeat); the note with its octave (C4 = middle C); [ ] = keys struck together, low to high, then their fingers in the same order (1 = thumb, 2 index, 3 middle, 4 ring, 5 little finger); – = no finger suggested (a grace note, or a key the hand can't reach: \"(G3 out of reach)\", listed in wide); \"(written on the treble staff)\" = a note this hand plays though it's written on the other hand's staff (listed in moved: bar, beat, note, staff = where it's written, hand = which plays it, finger); tied notes aren't repeated (the finger that struck one holds it; \"held\" = the hand only holds through the bar); position = where the hand sits, named by the key under its thumb (the ghost hand on Resonate's keyboard). Bars in written order (repeats not unfolded), numbered as in the MusicXML.";
+const HAND_SIZE: Record<string, string> = {
+  s: "small (a seventh comfortable, an octave at most)",
+  m: "medium (an octave comfortable, a ninth at most)",
+  l: "large (a ninth comfortable, a tenth at most)",
+};
+const handSize = (h: unknown) => {
+  const s = String(h ?? "");
+  return `${HAND_SIZE[s[0]] ?? s}${s.includes("b") ? ", beginner weights (the thumb kept off black keys, fewer hand jumps)" : ""}`;
+};
+
+export async function getFingering(sb: Sb, q: string, from?: number | string, to?: number | string, hand?: string) {
+  // (the song as the other reads find it — deleted songs hidden — or a song only the Score has opened)
+  const [idx, rows] = await Promise.all([songIndex(sb), sb.from("score_fingering").select("song_id,title:data->>title")]);
+  const all = [...idx.list];
+  for (const r of rows.data || []) if (!idx.gone.has(r.song_id) && !all.some((s) => s.id === r.song_id)) all.push({ id: r.song_id, title: String(r.title || r.song_id), library: LIB_ID.test(r.song_id) });
+  const s = pickSong(all, q);
+  if (!s) return failData(`No song like “${q}”.`, { songs: all.map((x) => x.title) });
+  const { data: row } = await sb.from("score_fingering").select("alg,data,updated_at").eq("song_id", s.id).maybeSingle();
+  const d = (row?.data as Json) || null;
+  const bars = Array.isArray(d?.bars) ? (d!.bars as Json[]).filter((b) => b && typeof b.text === "string") : [];
+  if (!row || !bars.length) {
+    return failData("Not worked out yet — open the song on the Score once.", { song: s.id, title: s.title,
+      note: "Resonate works the fingering out on the device that shows the song on its Score (a song with a piano part, or a hymn), and shares it once an assistant has connected." });
+  }
+  const numbers = bars.map((b) => String(b.bar));
+  const find = (x: number | string | undefined, start = 0) => {
+    if (x === undefined || x === null || x === "") return null;
+    const t = String(x).trim();
+    let i = numbers.indexOf(t, start);
+    if (i < 0) i = numbers.indexOf(t);
+    return i >= 0 ? i : -1;
+  };
+  let a = find(from), b = find(to, Math.max(0, a ?? 0));
+  const range = `bars ${numbers[0]}–${numbers[numbers.length - 1]}`;
+  if (a === -1) return failData(`No measure numbered “${from}” (${range}).`);
+  if (b === -1) return failData(`No measure numbered “${to}” (${range}).`);
+  a ??= 0;
+  b ??= numbers.length - 1; // (from alone: to the end, cut at the cap)
+  if (b < a) [a, b] = [b, a];
+  const one = hand === "rh" || hand === "lh" ? hand : null;
+  const line = (x: Json) => one ? `Bar ${x.bar} — ${typeof x[one] === "string" ? x[one] : `${one.toUpperCase()}: (rests)`}` : String(x.text);
+  const lines: string[] = [];
+  let end = a, size = 0;
+  while (end <= b) {
+    const l = line(bars[end]);
+    if (end > a && size + l.length + 1 > FING_CAP) break;
+    lines.push(l);
+    size += l.length + 1;
+    end++;
+  }
+  const cut = end <= b;
+  const shownBars = new Set(numbers.slice(a, end));
+  const pick = (list: unknown) => (Array.isArray(list) ? (list as Json[]) : []).filter((x) => x && shownBars.has(String(x.bar)) && (!one || x.hand === one));
+  const moved = pick(d!.moved), wide = pick(d!.wide);
+  return okData({
+    song: s.id, title: s.title,
+    about: "Resonate's suggested piano fingering for the song's keyboard part (the piano, or a hymn's two staves), worked out on the device. The bars follow as the next content item.",
+    legend: FING_LEGEND,
+    hand_size: handSize(d!.hand), algorithm: row.alg, worked_out: ago(String(row.updated_at)),
+    bars_in_song: `${numbers.length} (${range}; numbers as written in the MusicXML)`,
+    shown: { from: numbers[a], to: numbers[end - 1], hand: one ?? "both" },
+    // (moved: the notes a hand plays from the other hand's staff — staff = where it's written, hand = who
+    // plays it, finger; wide: keys a hand can't reach at that beat, so no finger)
+    moved: moved.slice(0, FING_LIST_MAX), ...(moved.length > FING_LIST_MAX ? { moved_more: moved.length - FING_LIST_MAX } : {}),
+    wide: wide.slice(0, FING_LIST_MAX), ...(wide.length > FING_LIST_MAX ? { wide_more: wide.length - FING_LIST_MAX } : {}),
+    ...(cut ? { more: `Cut at ${FING_CAP} characters: ask again with from_measure ${numbers[end]} for the rest (or fewer bars, or one hand).`, next_from_measure: numbers[end] } : {}),
+  }, [{ type: "text", text: lines.join("\n") }]);
 }
 
 const dataUrl = (u: unknown): { data: string; mimeType: string } | null => {

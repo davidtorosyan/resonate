@@ -9,11 +9,12 @@
 // Rules: never remove or rename an entry or a parameter (old chats and old snapshots still send
 // them); add, then bump VERSION and add a line to CHANGES. No imports: node can test this file.
 
-export const VERSION = "2026-11-22";
+export const VERSION = "2026-11-23";
 export const CHANGES: { version: string; note: string }[] = [
   { version: "2026-11-20", note: "get_capabilities and read_resonate; control_resonate takes any action listed by get_capabilities, its parameters as fields or inside args." },
   { version: "2026-11-21", note: "The device switch is the AI button at the top of Resonate (it was 📡 Remote), shown once an assistant has connected; answers and the playbook name it." },
   { version: "2026-11-22", note: "Highlights at note / beat resolution: get_score_view's highlight names its exact span (start and end as bar + beat, first and last notes; a stretch, or one note / chord the user double-tapped) and lists only its notes, the rest of those bars as context; score_select takes from_beat / to_beat." },
+  { version: "2026-11-23", note: "read_resonate fingering {song, from_measure?, to_measure?, hand?}: Resonate's suggested piano fingering, bars as text — hand and finger per note, hand positions, notes moved to the other hand, keys out of reach. get_score_view's highlight text has the fingers too, once worked out." },
 ];
 
 export type Param = {
@@ -71,6 +72,8 @@ export const QUERIES = {
   score_view: { tool: "get_score_view", score: true, about: "What the Score shows on each device and the user's latest highlight (notes as text, MusicXML, pictures)." },
   score_xml: { tool: "get_score_xml", score: true, about: "The song's stored MusicXML, optionally some measures and one part.", params: { song: { ...song, required: true }, from_measure: bar, to_measure: bar, part: { type: "string" } } },
   score_pdf: { tool: "get_score_pdf", score: true, about: "One page of the song's original PDF.", params: { song: { ...song, required: true }, page: { type: "int", min: 1 } } },
+  fingering: { score: true, about: "Resonate's suggested piano fingering for a song: hand and finger per note, hand positions, notes moved to the other hand — bars as text.",
+    params: { song: { ...song, required: true }, from_measure: bar, to_measure: bar, hand: { type: "string", values: ["rh", "lh"], about: "one hand only (rh = right, lh = left)" } } },
   capabilities: { tool: "get_capabilities", about: "This list." },
 } satisfies Record<string, Entry>;
 

@@ -58,6 +58,20 @@ r = p("score_select", { from_measure: 12, from_beat: 0 });
 check(/from_beat must be number 1…64/.test(r.error || ""), `a beat before the bar refused: ${r.error}`);
 r = p("set_tempo", { percent: 75 });
 check(/50 \| 60/.test(r.error || ""), `listed values only: ${r.error}`);
+// E7: read_resonate fingering — Resonate's suggested piano fingering (score_fingering), a read with no
+// tool of its own (the 15 stay as they are).
+const fq = C.query("fingering");
+check(fq?.name === "fingering" && fq.entry.score === true && !fq.entry.tool && fq.entry.params.song.required && Object.keys(fq.entry.params).join() === "song,from_measure,to_measure,hand", `the fingering query: score, no tool, params ${Object.keys(fq?.entry.params || {}).join(", ")}`);
+const q = (name, given) => C.checkParams(name, C.query(name).entry, C.gather(given, ["what"]));
+r = q("fingering", { what: "fingering", song: "Killing", from_measure: "12", args: { to_measure: 14, hand: "RH" } });
+check(r.args?.song === "Killing" && r.args.from_measure === "12" && r.args.to_measure === 14 && r.args.hand === "rh" && !r.ignored.length, `fingering's params (hand RH → rh): ${JSON.stringify(r.args)}`);
+r = q("fingering", { song: "x", hand: "both" });
+check(/hand must be rh \| lh/.test(r.error || ""), `fingering: hand rh | lh only: ${r.error}`);
+r = q("fingering", { hand: "lh" });
+check(/needs song/.test(r.error || ""), `fingering needs a song: ${r.error}`);
+check(C.VERSION === "2026-11-23" && /fingering/.test(C.CHANGES.at(-1).note), `VERSION ${C.VERSION}: its CHANGES line names the fingering read`);
+const res = fs.readFileSync(path.join(DIR, "resonate.ts"), "utf8");
+check(/\bfingering: \(sb, a\) => getFingering\(/.test(res) && /from\("score_fingering"\)/.test(res) && /Not worked out yet — open the song on the Score once\./.test(res), "resonate.ts: READERS.fingering → getFingering on score_fingering, the not-yet answer");
 const caps = C.capabilitiesData();
 check(caps.version === C.VERSION && caps.control_resonate.score_play.params.speed.startsWith("number 50…100") && caps.read_resonate.status.same_as === "get_status" && JSON.stringify(caps).length < 12000, `get_capabilities answer (${JSON.stringify(caps).length} chars)`);
 check(C.capabilitiesBrief().control_resonate.length === Object.keys(C.ACTIONS).length, "the brief in get_status names every action");

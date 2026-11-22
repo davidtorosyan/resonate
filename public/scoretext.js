@@ -8,10 +8,20 @@
 // where it starts and stops (bar + beat), its first and last notes (spanInfo) — and the text
 // lists only its notes on each staff line, the rest of each bar after them as context.
 //
-//   barsText(doc, T, facts, { bars, keep, chords, number, span }) → text
+//   barsText(doc, T, facts, { bars, keep, chords, number, span, fing }) → text
 //   spanInfo(doc, T, facts, { span, keep, number }) → { kind, start, end, quarters, bars, first, last, notes, staff? }
 //   placeOf(T, q, number, stop) → { bar, beat }
 //   sliceMeasures(xml, from, to) → the MusicXML with only measures [from, to] (indices) of each part
+//
+// Piano fingering (E7, docs/FINGERING.md §6): with `fing` — finger.js fingerNotes' result, or the song
+// record's stored form { alg, hand, bpm, sig, n: { id: [h, f, p, x] }, fr } — each keyboard note's hand
+// and fingers follow its value, low to high as its names: "@1 [E4 G4 C5] quarter RH 1 2 5", "@1 [G3 B4]
+// half LH 1, RH 5" (the left hand takes G3), "–" = no finger. Then the legend is textLegend(fing):
+// TEXT_LEGEND + FINGER_LEGEND. Without `fing` the text is what it was, byte for byte.
+//   fingOf(fing) → { note(id) → { h, f, p, x } | null, frames: { r, l }, alg, hand, bpm, sig } | null
+//   nameOf(e, facts) → "E♭4" (as written; from the MIDI number without facts)
+//   staffWords(doc) → (e) → the clef of the staff e is written on ("treble", "bass"…), null where that
+//     doesn't tell its staff apart
 
 import { fullName } from "./playnames.js?v=98";
 import { barAt } from "./playtime.js?v=98";
@@ -119,8 +129,8 @@ function staffLabel(info, staff) {
 // start or change), then a line per part / staff / voice: "@beat note value "syllable"".
 // T: playtime timeline; facts: playprep noteFacts; keep(e): the view draws it; chords: [{ q, name }]
 // (the view's chord moments); number(mi): the bar's number in the MusicXML.
-export function barsText(doc, T, facts, { bars, keep = () => true, chords = [], number = (mi) => String(mi + 1), span = null }) {
-  const els = noteEls(doc), parts = partInfo(doc);
+export function barsText(doc, T, facts, { bars, keep = () => true, chords = [], number = (mi) => String(mi + 1), span = null, fing = null }) {
+  const els = noteEls(doc), parts = partInfo(doc), fg = fingOf(fing);
   const inside = span ? inSpan(span) : null;
   const want = new Set(bars);
   const byBar = new Map();
@@ -171,7 +181,7 @@ export function barsText(doc, T, facts, { bars, keep = () => true, chords = [], 
         if (e.chord && last && Math.abs(last.q - e.q) < EPS && !last.rest) { last.notes.push(e); continue; }
         evs.push({ q: e.q, o: e.o, d: e.d, rest: e.rest, mrest: e.mrest, grace: e.grace, notes: [e] });
       }
-      const say = (ev) => eventText(ev, els, facts);
+      const say = (ev) => eventText(ev, els, facts, fg);
       if (!inside) { lines.push(`  ${label}: ${evs.map(say).join(" · ") || "(nothing)"}`); continue; }
       // (a highlight: its notes on the line, the rest of the bar after them — a note started before
       // it and still held at its start says so)
@@ -190,13 +200,31 @@ export function barsText(doc, T, facts, { bars, keep = () => true, chords = [], 
   });
   return lines.join("\n");
 }
-// One event (a note, a chord low to high, a rest): "@2 [F4 A4] quarter "syl-"".
-function eventText(ev, els, facts) {
+// One event (a note, a chord low to high, a rest): "@2 [F4 A4] quarter "syl-"" — with a fingering
+// (fg), the hand and fingers after the value: "@2 [F4 A4] quarter RH 2 4 "syl-"".
+function eventText(ev, els, facts, fg = null) {
   const el = els.get(ev.notes[0].id);
   if (ev.rest) return `${beat(ev.o)} rest ${ev.mrest ? "(whole bar)" : el ? valueOf(el, ev.d) : ""}`.trim();
   const words = ev.notes.map((n) => { const x = els.get(n.id); return x ? wordsOf(x) : ""; }).find(Boolean) || "";
   const cue = ev.notes[0].cue ? " (cue)" : "";
-  return `${beat(ev.o)} ${ev.grace ? "grace " : ""}${pitchOf(ev.notes, facts)}${ev.grace ? "" : " " + (el ? valueOf(el, ev.d) : "")}${cue}${words ? " " + words : ""}`;
+  const fingers = fg ? fingersOf(ev.notes, facts, fg) : "";
+  return `${beat(ev.o)} ${ev.grace ? "grace " : ""}${pitchOf(ev.notes, facts)}${ev.grace ? "" : " " + (el ? valueOf(el, ev.d) : "")}${cue}${fingers}${words ? " " + words : ""}`;
+}
+// An event's hands and fingers, low to high as pitchOf names its notes: " RH 1 2 5", " LH 1, RH 5"
+// (the left hand takes the low note), "–" = no finger (a grace note, a key out of the hand's reach);
+// "" when the fingering has none of its notes (another part than the keyboard's).
+function fingersOf(notes, facts, fg) {
+  const got = notes
+    .map((n) => ({ f: facts.get(n.id), r: fg.note(n.id) }))
+    .sort((a, b) => (a.f?.midi ?? 0) - (b.f?.midi ?? 0));
+  if (!got.some((g) => g.r)) return "";
+  const runs = [];
+  for (const { r } of got) {
+    const h = r ? HAND[r.h] || "?" : "?", d = r && r.f >= 1 && r.f <= 5 ? String(r.f) : "–";
+    const last = runs[runs.length - 1];
+    if (last && last.h === h) last.d.push(d); else runs.push({ h, d: [d] });
+  }
+  return " " + runs.map((x) => `${x.h} ${x.d.join(" ")}`).join(", ");
 }
 // A chord's names low to high (← tied from the note before, → tied to the next): "[F4 A4→]".
 function pitchOf(notes, facts, ties = true) {
@@ -284,6 +312,54 @@ function barScope(span, bar) {
 }
 
 export const TEXT_LEGEND = "Each bar: its number in the MusicXML, then one line per part / staff (/ voice): @beat (quarter notes from the bar's start, 1 = the downbeat), the note with its octave (C4 = middle C; a transposing part at concert pitch; [ ] = a chord, low to high), its written value, → = tied to the next note, ← = tied from the one before, then its lyric syllable in quotes. Chords: Resonate's chord names for what the piano part sounds. The first line names the highlight exactly — a stretch from bar @beat up to bar @beat (not included), or one note / chord on one staff (a double-tap on it); each staff line then lists only the highlighted notes, and \"outside the highlight:\" the rest of that bar, for context (\"still sounding\" = started before the highlight and held into it).";
+
+// --- a fingering (E7) ---------------------------------------------------------------------------
+const HAND = { r: "RH", l: "LH" };
+const NORM = Symbol("fing");
+// finger.js fingerNotes' result ({ notes: Map(id → { h, f, p, x }), frames: { r: [{ q0, keys }], l } }),
+// or the song record's stored form ({ alg, hand, bpm, sig, n: { id: [h, f, p, x] }, fr: { r: [[q0,
+// m1…m5]], l } }) → one shape: { note(id) → { h, f, p, x } | null, frames, alg, hand, bpm, sig }; null:
+// no fingering.
+export function fingOf(fing) {
+  if (!fing || typeof fing !== "object") return null;
+  if (fing[NORM]) return fing;
+  let note = null;
+  if (fing.notes instanceof Map) note = (id) => fing.notes.get(id) || null;
+  else if (fing.n && typeof fing.n === "object") {
+    note = (id) => {
+      const a = Object.hasOwn(fing.n, id) ? fing.n[id] : null;
+      return Array.isArray(a) ? { h: a[0], f: a[1], p: a[2], x: a[3] || "" } : null;
+    };
+  }
+  if (!note) return null;
+  const list = (fs) => (Array.isArray(fs) ? fs : [])
+    .map((x) => (Array.isArray(x) ? { q0: x[0], keys: x.slice(1) } : x))
+    .filter((x) => x && Array.isArray(x.keys));
+  const fr = fing.frames || fing.fr || {};
+  return { [NORM]: true, note, frames: { r: list(fr.r), l: list(fr.l) }, alg: fing.alg ?? null, hand: fing.hand ?? null, bpm: fing.bpm ?? null, sig: fing.sig ?? null };
+}
+const NAMES = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
+export const midiName = (m) => `${NAMES[((m % 12) + 12) % 12]}${Math.floor(m / 12) - 1}`;
+// A timeline element's name with octave: as written (the facts), else from its MIDI number.
+export function nameOf(e, facts) {
+  const f = facts?.get?.(e.id);
+  return f ? fullName(f) : e.midi != null ? midiName(e.midi) : "?";
+}
+// The staff a timeline element is written on, by its clef at that bar ("treble", "bass"…) — null
+// where that doesn't tell it apart (another staff of its part has the same clef there; no doc).
+export function staffWords(doc) {
+  const parts = doc ? partInfo(doc) : new Map();
+  return (e) => {
+    const info = parts.get(e.part), at = info?.at[e.mi];
+    const clef = at?.clefs.get(e.staff);
+    if (!clef) return null;
+    for (const [n, c] of at.clefs) if (n !== e.staff && n <= info.staves && c === clef) return null;
+    return clef;
+  };
+}
+export const FINGER_LEGEND = "Fingering (Resonate's suggestion — other fingerings can be right): after a keyboard note's value, the hand and its fingers, low to high as the notes are named: RH / LH = right / left hand, 1 = thumb … 5 = little finger, – = none suggested (a grace note, or a key the hand can't reach); \"LH 1, RH 5\" = the left hand takes the low note though it's written on the other staff.";
+// The legend for barsText's output: with a fingering, the fingers' line too.
+export const textLegend = (fing) => (fingOf(fing) ? `${TEXT_LEGEND} ${FINGER_LEGEND}` : TEXT_LEGEND);
 
 // The MusicXML of measures [from, to] (indices within each part, 0-based): the header (part list
 // and all) as it is, each part with only those measures, and — before them, as a comment — the
