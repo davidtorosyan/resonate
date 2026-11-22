@@ -14,8 +14,8 @@
 // their `device_commands` row. Only for a signed-in, approved account whose data is on this
 // device and whose sync is on (as sync.js); nothing at all otherwise.
 
-import { supabase, savedUser } from "./auth.js?v=98";
-import { activeSpace } from "./space.js?v=98";
+import { supabase, savedUser } from "./auth.js?v=99";
+import { activeSpace } from "./space.js?v=99";
 
 const SYNC_OFF = "resonate.sync.off";
 const DEVICE_KEY = "resonate.device"; // { id, name }
@@ -101,8 +101,15 @@ export function takeEnded(takeId, { status, meta, review, lines }) {
 // one at every tool call: public.assistant_seen) → { yes: true | false | null (couldn't ask),
 // latest: the assistant active lately }. Yes is kept for the page load; no is asked again after a
 // minute (one may connect meanwhile); a Realtime "assistant" event says yes at once (remote.listen).
-// The Score's focus is sent, and the AI button shown (remote.available), only once one has.
-let assistantP = null, assistantAt = 0;
+// The Score's focus is sent, and the AI button shown (remote.available), only once one has. The
+// answer turning yes (asked, or that event) is said once a page load as window "resonate:assistant",
+// so what was open before is shared now (play.js: the open song's fingering).
+let assistantP = null, assistantAt = 0, assistantSaid = false;
+function sawAssistant() {
+  if (assistantSaid) return;
+  assistantSaid = true;
+  try { window.dispatchEvent(new CustomEvent("resonate:assistant")); } catch {}
+}
 function activity() {
   if (assistantP && assistantP.no && Date.now() - assistantAt > 60000) assistantP = null;
   if (!assistantP) {
@@ -113,7 +120,7 @@ function activity() {
       const { data, error } = await c.sb.from("assistant_activity").select("name,logo,last_at,last_tool").order("last_at", { ascending: false }).limit(1);
       return error ? { yes: null } : { yes: !!data?.length, latest: data?.[0] || null };
     })().catch(() => ({ yes: null }));
-    p.then((r) => { p.no = r.yes !== true; });
+    p.then((r) => { p.no = r.yes !== true; if (r.yes === true) sawAssistant(); });
     assistantP = p;
   }
   return assistantP;
@@ -145,6 +152,63 @@ export async function shareFocus(songId, data, { score = null, pdf = null } = {}
   }
   if (error) console.warn("assist: focus", error.message || error);
   return !error;
+}
+
+// Piano fingering (E7, docs/FINGERING.md §4): a song's suggested fingering as text (fingertext.js
+// fingerText's data), one row a song in score_fingering, for read_resonate fingering. Sent only once
+// an assistant has connected to the account (hasAssistant), and only when it changed since this
+// device last sent it for this account: resonate.play.fingUp = { uid: { songId: "alg|hand|bpm|sig|v" } }
+// (device-only; sig falls back to a hash of the bars' text). Best effort: never throws, not retried (the
+// next time the song shows on the Score sends it again) → true once stored (or already there).
+const FING_UP = "resonate.play.fingUp";
+const fingUpAll = () => { try { const v = JSON.parse(localStorage.getItem(FING_UP) || "{}"); return v && typeof v === "object" && !Array.isArray(v) ? v : {}; } catch { return {}; } };
+function setFingUp(uid, songId, key) {
+  try {
+    const all = fingUpAll(), mine = all[uid] && typeof all[uid] === "object" ? all[uid] : {};
+    if (key) mine[songId] = key; else delete mine[songId];
+    if (Object.keys(mine).length) all[uid] = mine; else delete all[uid];
+    if (Object.keys(all).length) localStorage.setItem(FING_UP, JSON.stringify(all)); else localStorage.removeItem(FING_UP);
+  } catch {}
+}
+function fnv(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16);
+}
+export const fingKey = (data) => [data.alg, data.hand, data.bpm ?? "", data.sig ?? `t${fnv(JSON.stringify(data.bars || []))}`, data.v ?? ""].join("|");
+// (one at a time, in the order asked: a song's newer fingering, or its delete, always lands last)
+let fingChain = Promise.resolve();
+const fingNext = (fn) => {
+  const run = fingChain.then(fn).catch((err) => { console.warn("assist: fingering", err); return false; });
+  fingChain = run;
+  return run;
+};
+export function shareFingering(songId, data) {
+  return fingNext(async () => {
+    if (!songId || !data || !Array.isArray(data.bars) || !Number.isInteger(data.alg)) return false;
+    if (!(await hasAssistant())) return false;
+    const c = await ready();
+    if (!stillMine(c)) return false;
+    const key = fingKey(data);
+    if (fingUpAll()[c.uid]?.[songId] === key) return true;
+    const { error } = await c.sb.from("score_fingering").upsert({ song_id: songId, alg: data.alg, data, updated_at: new Date().toISOString() }, { onConflict: "user_id,song_id" });
+    if (error) { console.warn("assist: fingering", error.message || error); return false; }
+    setFingUp(c.uid, songId, key);
+    return true;
+  });
+}
+// The song is gone (forget.js): its row goes too, and this device's marker for it. Best effort,
+// signed in only (as the rest of this module: an approved account with sync on); a delete that fails
+// is retried with the other writes while the page lives.
+export function dropFingering(songId) {
+  return fingNext(async () => {
+    if (!songId) return false;
+    const c = await ready();
+    if (!stillMine(c)) return false;
+    setFingUp(c.uid, songId, null);
+    await write(({ sb }) => sb.from("score_fingering").delete().eq("song_id", songId));
+    return true;
+  });
 }
 
 // --- This device --------------------------------------------------------------------------
@@ -328,7 +392,7 @@ export const remote = {
     const since = Date.now() - 60000;
     this.channel = c.sb.channel(`user:${c.uid}`, { config: { private: true, broadcast: { replay: { since, limit: 25 } } } })
       .on("broadcast", { event: "command" }, (m) => this.handle(m.payload))
-      .on("broadcast", { event: "assistant" }, (m) => { assistantP = Promise.resolve({ yes: true }); this.noteAssistant(true); this.hooks?.assistant?.({ ...m.payload, received: Date.now() }); })
+      .on("broadcast", { event: "assistant" }, (m) => { assistantP = Promise.resolve({ yes: true }); sawAssistant(); this.noteAssistant(true); this.hooks?.assistant?.({ ...m.payload, received: Date.now() }); })
       .subscribe((status) => { if (status === "SUBSCRIBED") this.catchUp(); });
   },
   // Commands that came while the page couldn't hear them (hidden, reconnecting).

@@ -4,19 +4,19 @@
 // as soon as it's added, converted in the background (one song after another: the Reader tray); the
 // avatar (top right) opens the account menu. nav.js ran first, so whose data the device shows is
 // settled before anything here reads it.
-import { spaceChanged, handing } from "../nav.js?v=98";
-import { mountTuner, tunerHtml } from "./tuner.js?v=98";
-import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=98";
-import { mountSongView } from "./songview.js?v=98";
-import { mountTray } from "./tray.js?v=98";
-import { mountAccount } from "./account-menu.js?v=98";
-import { ic, fic, device, overlayOpen, setUnderWay } from "./chrome.js?v=98";
-import { fadeIn } from "./motion.js?v=98";
-import { mountPlaces } from "./places.js?v=98";
-import { mountRemote } from "./remote.js?v=98";
-import { songInfo } from "../catalog.js?v=98";
-import { readFlag } from "../omr/jobs.js?v=98";
-import { activeSpace, activeDb } from "../space.js?v=98";
+import { spaceChanged, handing } from "../nav.js?v=99";
+import { mountTuner, tunerHtml } from "./tuner.js?v=99";
+import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=99";
+import { mountSongView } from "./songview.js?v=99";
+import { mountTray } from "./tray.js?v=99";
+import { mountAccount } from "./account-menu.js?v=99";
+import { ic, fic, device, overlayOpen, setUnderWay } from "./chrome.js?v=99";
+import { fadeIn } from "./motion.js?v=99";
+import { mountPlaces } from "./places.js?v=99";
+import { mountRemote } from "./remote.js?v=99";
+import { songInfo } from "../catalog.js?v=99";
+import { readFlag } from "../omr/jobs.js?v=99";
+import { activeSpace, activeDb } from "../space.js?v=99";
 
 // An email link at the root, handed to account.html (nav.js): nothing here starts. (nav.js waits
 // forever then, which holds this module back in Chromium — not in WebKit, which runs a module whose
@@ -77,11 +77,15 @@ const song = mountSongView({ tuner, version, onLoad: hooks, onLeave: showNextUp,
 setOpener((id, opts) => song.open(id, opts));
 function hooks() { // (sing.js, play.js, record.js… set their own when they load: the shell's go back on top, with theirs inside)
   window.resonateBusy = () => tray.busy() || song.busy(); // (nav.js: a reload for another tab's sign-in/out waits for it)
-  window.resonateDebug = () => ({
-    device: device(), tuner: tuner.debug(), import: tray.debug(), eventList: tray.eventList, songs: songs.debug(), song: song.debug(), sing: song.singDebug(), score: song.scoreDebug(), piano: song.pianoDebug(),
-    place: places?.debug(), remote: remoteHome?.debug(),
-    overlay: document.querySelector("body > .sheet:not([hidden]), #places > .sheet:not([hidden]), .pop:not([hidden])")?.id || (overlayOpen("tuner") ? "tuner" : null),
-  });
+  window.resonateDebug = () => {
+    const sc = song.scoreDebug();
+    return {
+      device: device(), tuner: tuner.debug(), import: tray.debug(), eventList: tray.eventList, songs: songs.debug(), song: song.debug(), sing: song.singDebug(), score: sc, piano: song.pianoDebug(),
+      play: sc?.play, // (the Score's, as play.html's resonateDebug().play: the suites read it alike — docs/CLEANUP-PHASE8.md §2)
+      place: places?.debug(), remote: remoteHome?.debug(),
+      overlay: document.querySelector("body > .sheet:not([hidden]), #places > .sheet:not([hidden]), .pop:not([hidden])")?.id || (overlayOpen("tuner") ? "tuner" : null),
+    };
+  };
   remoteHome?.adopt(); // (Sing just loaded: its remote hooks go inside the shell's)
 }
 

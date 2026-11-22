@@ -8,8 +8,8 @@
 // play.js's own open (resonatePlay.open). play.js lays the music out to its stage's box; the shell
 // tells it when the region changed size (resize — keep: the Piano came or went, what's shown stays),
 // and play.js's own ResizeObserver catches the rest (a rotation).
-import { scopeCss } from "./scopecss.js?v=98";
-import { staleShell } from "./chrome.js?v=98";
+import { scopeCss } from "./scopecss.js?v=99";
+import { staleShell } from "./chrome.js?v=99";
 
 const $ = (id) => document.getElementById(id);
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
@@ -87,7 +87,7 @@ export function mountScore({ version, hooks, onLoad = () => {} }) {
       await mount();
       window.resonatePlay = Object.assign(window.resonatePlay || {}, hooks, { region: true, playBtn: el.play });
       window.resonatePlay.keysOn = false; // (play.js's own docked keyboard stays off: the Piano's is the one — play.html's own 🎹 setting untouched)
-      await import("../play.js?v=98");
+      await import("../play.js?v=99");
       P = window.resonatePlay;
       playDebug = window.resonateDebug;
       P.debug = playDebug; // (tests: Play's own resonateDebug, as on play.html)
@@ -123,6 +123,8 @@ export function mountScore({ version, hooks, onLoad = () => {} }) {
     press: (midi, e) => (P?.press ? P.press(midi, e) : undefined),
     lift: (pk) => P?.lift?.(pk),
     keysChanged: () => P?.keysChanged?.(),
+    // (#fing's mode changed: the Score's digits, ghost hand and the fingering's hand rules again)
+    fingersChanged: () => P?.fingersChanged?.(),
     debug: () => (P ? playDebug() : null),
   };
 }

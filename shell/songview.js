@@ -20,14 +20,14 @@
 // alone, on its PDF — on every device, unsaved, whatever opened it (Next-up, the Reader's links, an
 // assistant): no Sing toggle, the Score's ▶ stays in its bar (hidden: nothing to play), the Piano as
 // saved (its keyboard under the PDF, the Score's). Converted (reload), the saved modules come back.
-import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=98";
-import { mountSing } from "./singview.js?v=98";
-import { mountScore } from "./scoreview.js?v=98";
-import { mountPiano, rangeOf } from "./pianoview.js?v=98";
-import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=98";
-import { loadSong, songInfo } from "../catalog.js?v=98";
-import { parseMusicXml } from "../musicxml.js?v=98";
-import { titleOf } from "./songlist.js?v=98";
+import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=99";
+import { mountSing } from "./singview.js?v=99";
+import { mountScore } from "./scoreview.js?v=99";
+import { mountPiano, rangeOf } from "./pianoview.js?v=99";
+import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=99";
+import { loadSong, songInfo } from "../catalog.js?v=99";
+import { parseMusicXml } from "../musicxml.js?v=99";
+import { titleOf } from "./songlist.js?v=99";
 
 const $ = (id) => document.getElementById(id);
 const PREF = "resonate.shell.modules"; // { phone | tablet | desktop: ["sing", "score", "piano"] } — this device's
@@ -91,7 +91,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     beforeSound: () => { sing.hush(true); if (sing.state()?.busy) sing.stopAll(); }, // (Sing's 🎤 Pitch mic too: iOS plays quietly while it's open)
     quiet: () => !!sing.state()?.take,
     busy: () => !!(sing.state()?.busy || score.state()?.busy),
-    score: { press: (m, e) => score.press(m, e), lift: (pk) => score.lift(pk), changed: () => score.keysChanged() },
+    score: { press: (m, e) => score.press(m, e), lift: (pk) => score.lift(pk), changed: () => score.keysChanged(), fingers: () => score.fingersChanged() },
   });
   const setTitle = (t, id = current) => { title = t || ""; titleId = title ? id : null; pill.querySelector(".t").textContent = title || "…"; };
 
