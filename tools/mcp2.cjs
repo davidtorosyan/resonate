@@ -5,7 +5,8 @@
 //    owner's files) added on the device goes up with the sync → get_score_xml slices measures 3–5,
 //    get_score_pdf gives page 2 as a one-page PDF; a bundled sample has no files: said so
 //  3 play.html signed in: the device's state shows the Score (song, page, bars); a stretch dragged
-//    on the music → a score_focus row → get_score_view has the bars' notes as text + 2 pictures
+//    on the music → a score_focus row → get_score_view has the bars' notes as text + 2 pictures;
+//    E3: the exact span (start / end as bar + beat, first / last notes), score_select with beats
 //  4 📡 on play.html: score_select, score_play (a note is scheduled on the page's context),
 //    score_stop, score_go, score_view, score_pdf on; with a Sing tab and a Play tab open on one device
 //    each command goes to the page that runs it — and sing.html alone refuses a score action politely
@@ -196,6 +197,11 @@ const pngSize = (b) => (b.slice(1, 4).toString() === "PNG" ? { w: b.readUInt32BE
   check(!r.error && r.data?.highlight?.measures === "5–6" && r.data.highlight.still_highlighted === true && /Bar 5[\s\S]*Bar 6/.test(notes) && /@1 [A-G]/.test(notes) && r.data.highlight.pdf?.page === 2,
     `3 get_score_view: bars ${r.data?.highlight?.measures}, still highlighted, the notes as text, PDF page ${r.data?.highlight?.pdf?.page}`);
   check(imgs.length === 2 && imgs.every((c) => /^image\/(png|jpeg)$/.test(c.mimeType) && c.data.length > 2000) && sizes.every((s) => !s.w || s.w <= 1600), `3 …and 2 pictures (${JSON.stringify(sizes)})`);
+  // (E3: the exact span — a drag over whole bars 5–6: from bar 5's downbeat to bar 7's, the notes starting in it)
+  const span = r.data?.highlight?.span;
+  check(span?.kind === "stretch" && span.start?.bar === "5" && span.start.beat === 1 && span.end?.bar === "7" && span.end.beat === 1 && span.bars?.join() === "5,6" && span.notes > 0 && span.first?.[0]?.notes?.length > 0
+    && /^Highlighted: from bar 5 @1 to the end of bar 6/m.test(notes) && /whole bars/.test(r.data.highlight.pdf?.border_note || ""),
+    `3 …the exact span (E3): ${JSON.stringify(span && { start: span.start, end: span.end, bars: span.bars, notes: span.notes })}, the PDF's border bar-level`);
   imgs.forEach((c, i) => fs.writeFileSync(path.join(SHOTS, `c-focus-${i ? "pdf" : "score"}.${c.mimeType === "image/png" ? "png" : "jpg"}`), Buffer.from(c.data, "base64")));
   console.log(notes.split("\n").slice(0, 8).join("\n"));
   // a picture over the table's limit is left out (the row would be refused whole), and a row refused
@@ -221,6 +227,14 @@ const pngSize = (b) => (b.slice(1, 4).toString() === "PNG" ? { w: b.readUInt32BE
   fr = null;
   for (let i = 0; i < 20; i++) { await sleep(1000); fr = (await rest(`score_focus?song_id=eq.${id}&select=data`))[0]; if (fr?.data?.measures?.join() === "9,10") break; }
   check(fr?.data?.measures?.join() === "9,10", `4 …the focus follows (${fr?.data?.measures})`);
+  // (E3: a span within the bars, by beats — and the focus names it)
+  c = await tool(T, "control_resonate", { action: "score_select", from_measure: 9, from_beat: 2, to_measure: 10, to_beat: 2 });
+  const sb = c.data?.score?.selection;
+  check(!c.error && sb?.from === "9" && sb.start?.bar === "9" && sb.start.beat >= 2 && sb.end?.bar === "10" && !c.data?.ignored_params, `4 score_select bar 9 beat 2 → bar 10 beat 2 (${JSON.stringify(sb)})`);
+  fr = null;
+  for (let i = 0; i < 20; i++) { await sleep(1000); fr = (await rest(`score_focus?song_id=eq.${id}&select=data`))[0]; if (fr?.data?.span?.start?.beat === sb?.start?.beat && fr?.data?.span?.start?.bar === "9") break; }
+  check(fr?.data?.span?.kind === "stretch" && JSON.stringify(fr.data.span.start) === JSON.stringify(sb?.start) && JSON.stringify(fr.data.span.end) === JSON.stringify(sb?.end), `4 …the focus names that span (${JSON.stringify(fr?.data?.span && [fr.data.span.start, fr.data.span.end])})`);
+  c = await tool(T, "control_resonate", { action: "score_select", from_measure: 9, to_measure: 10 });
   c = await tool(T, "control_resonate", { action: "score_play" });
   const pb = await dp.evaluate(() => { const p = window.resonateDebug().play.playback; return { state: p.state, kind: p.kind, n: p.scheduled.length, now: p.now }; });
   check(!c.error && c.data?.score?.playing === "selection" && pb.state === "playing" && pb.n > 0, `4 score_play: the stretch plays (${JSON.stringify(pb)})`);

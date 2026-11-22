@@ -115,6 +115,7 @@ if [ "$TIER" = main ]; then
     run "$t" 1800 node "$t.cjs"
   done
   run playpdf 1200 env SHOTS=0 node playpdf.cjs   # 📄: the bars on the PDF, zoom and pan, the focus border
+  run playfocus 900 env SHOTS=0 node playfocus.cjs # E3: a highlight's exact span for assistants, a double-tap picks one chord
 
   # ---- PDF → Song: the Reader (a synthetic fixture with clean-ups; the real recorded Chromium run) --------
   for fx in greensleeves greensleeves3-real; do

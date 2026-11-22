@@ -205,6 +205,9 @@ const cropStats = (page) => page.evaluate(() => window.resonatePlay.scoreCrop().
     const headOf = (id) => page.evaluate((id) => { const g = document.querySelector(`#stage g.note[id="${id}"] > g.notehead`); const r = g.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }, id);
     // a treble note with another voice on its staff at that moment (the hymn's alto): n4
     const head = await headOf("n4");
+    // (a first tap elsewhere starts the page's audio — the first touch on a fresh page may only
+    // sound at its lift, as on iOS: not what's measured here)
+    await tap(ctx, page, await headOf("n12")); await sleep(600);
     await tap(ctx, page, head);
     const struck = (await D(page)).peek?.ids || [];
     await sleep(140);
@@ -243,8 +246,9 @@ const cropStats = (page) => page.evaluate(() => window.resonatePlay.scoreCrop().
     ok(p.scheduled.length === struckMidis.size && ids.every((id) => struck.includes(id)) && p.scheduled.every((x) => Math.abs(x.dur - (F.els.find((e) => e.id === x.id).d) * spq) < 0.002),
       `N4 ▶ plays just that chord, each note for its written length at ♩=${p.tempo} (${JSON.stringify(p.scheduled.map((x) => ({ id: x.id, dur: +x.dur.toFixed(3) })))})`);
     ok(p.state === "idle" && !!p.span?.note && Math.abs(p.len - len * spq) < 1e-6, `N4 …once (${p.len} s), the chord still picked`);
-    await page.tap("#sel-loop");
-    await until(page, () => window.resonateDebug().play.playback.scheduled.some((x) => x.round >= 3), null, 15000);
+    const canLoop = await page.evaluate(() => !document.getElementById("sel-loop").hidden && !document.getElementById("selbar").hidden);
+    if (canLoop) await page.tap("#sel-loop");
+    await until(page, () => window.resonateDebug().play.playback.scheduled.some((x) => x.round >= 3), null, canLoop ? 15000 : 100);
     p = await PBD(page);
     const rounds = {};
     for (const x of p.scheduled) (rounds[x.round] ||= []).push(x);
@@ -253,8 +257,9 @@ const cropStats = (page) => page.evaluate(() => window.resonatePlay.scoreCrop().
     for (const [r, l] of Object.entries(rounds)) for (let i = 0; i < Math.min(l.length, r0.length); i++) worst = Math.max(worst, Math.abs(l[i].when - r0[i].when - Number(r) * p.len));
     ok(p.state === "looping" && Object.keys(rounds).length >= 3 && Object.values(rounds).every((l) => l.length === r0.length) && worst < 1e-6,
       `N5 ⟳ loops it: ${Object.keys(rounds).length} rounds of ${r0.length} note(s), each one chord-length (${p.len.toFixed(3)} s) after the last (worst ${worst})`);
-    await page.tap("#sel-loop"); await sleep(200);
-    ok((await PBD(page)).state === "idle", "N5 ⟳ again stops");
+    if (canLoop) await page.tap("#sel-loop"); else await page.click("#play").catch(() => {});
+    await sleep(200);
+    ok(canLoop && (await PBD(page)).state === "idle", "N5 ⟳ again stops");
     // a tap on paper lets go
     const blank = await page.evaluate(() => {
       const heads = [...document.querySelectorAll("#stage .page g.notehead")].map((g) => { const r = g.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
@@ -372,9 +377,10 @@ const cropStats = (page) => page.evaluate(() => window.resonatePlay.scoreCrop().
     await touch(ctx, page, line(colPt(s0, 3), colPt(s0, 6), 8));
     const p0 = (await PBD(page)).span, f0 = await focusData(page);
     await tap(ctx, page, await page.evaluate(() => { const st = document.getElementById("stage").getBoundingClientRect(); return [st.left + 40, st.bottom - 160]; }));
-    let r = await sel({ from_measure: f0.span.start.bar, from_beat: f0.span.start.beat, to_measure: f0.span.end.bar, to_beat: f0.span.end.beat });
+    const sp0 = f0?.span || { start: {}, end: {} };
+    let r = await sel({ from_measure: sp0.start.bar ?? "1", from_beat: sp0.start.beat, to_measure: sp0.end.bar, to_beat: sp0.end.beat });
     let p = (await PBD(page)).span;
-    ok(r.ok && p && Math.abs(p.q0 - p0.q0) < EPS && Math.abs(p.end - p0.end) < EPS && same(r.score.selection.start, f0.span.start) && same(r.score.selection.end, f0.span.end),
+    ok(f0?.span && r.ok && p && Math.abs(p.q0 - p0.q0) < EPS && Math.abs(p.end - p0.end) < EPS && same(r.score.selection.start, sp0.start) && same(r.score.selection.end, sp0.end),
       `S1 score_select with the focus' start / end: the same stretch (${JSON.stringify(p)} vs ${JSON.stringify(p0)})`);
     // a beat between two onsets: from the next onset
     const mi = F.bars.findIndex((b, i) => F.onsets.filter((q) => q >= b.q - EPS && q < b.q + b.len - EPS).length >= 3 && i > 0);
@@ -389,7 +395,7 @@ const cropStats = (page) => page.evaluate(() => window.resonatePlay.scoreCrop().
     ok(!r.ok && /after/.test(r.error), `S3 to_beat before from_beat: refused (${r.error})`);
     r = await sel({ from_measure: nums[mi], to_measure: nums[mi + 1] });
     p = (await PBD(page)).span;
-    ok(r.ok && Math.abs(p.q0 - F.bars[mi].q) < EPS && Math.abs(p.end - (F.bars[mi + 1].q + F.bars[mi + 1].len)) < EPS && r.score.selection.kind === "stretch" && r.score.selection.start.beat === 1,
+    ok(r.ok && Math.abs(p.q0 - F.bars[mi].q) < EPS && Math.abs(p.end - (F.bars[mi + 1].q + F.bars[mi + 1].len)) < EPS && r.score.selection.kind === "stretch" && r.score.selection.start?.beat === 1,
       `S4 the bars-only call: whole bars, as before (${JSON.stringify(r.score.selection)})`);
     errors.push(...errs);
     await ctx.close();
