@@ -14,20 +14,20 @@
 //
 // A PDF only (added, not converted yet: docs/LIBRARY.md) opens straight into its PDF (📄's view, no
 // Verovio): ‹ › and the pedals turn its pages, the keyboard stays under it, ⟳ reads Convert.
-import { spaceChanged } from "./nav.js?v=97";
-import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=97";
-import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=97";
-import { decorate, fullName, labelOf } from "./playnames.js?v=97";
-import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=97";
-import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=97";
-import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=97";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=97";
-import * as lib from "./library.js?v=97"; // (getSong; getPages where this library has it)
-import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=97";
-import { mountKeyboard } from "./keyboard.js?v=97";
-import { chordMoments } from "./chords.js?v=97";
-import { barsText, sliceMeasures, spanInfo, placeOf, TEXT_LEGEND } from "./scoretext.js?v=97";
-import { remote, hasAssistant, shareFocus } from "./assist.js?v=97";
+import { spaceChanged } from "./nav.js?v=98";
+import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=98";
+import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=98";
+import { decorate, fullName, labelOf } from "./playnames.js?v=98";
+import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=98";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=98";
+import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=98";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=98";
+import * as lib from "./library.js?v=98"; // (getSong; getPages where this library has it)
+import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=98";
+import { mountKeyboard } from "./keyboard.js?v=98";
+import { chordMoments } from "./chords.js?v=98";
+import { barsText, sliceMeasures, spanInfo, placeOf, TEXT_LEGEND } from "./scoretext.js?v=98";
+import { remote, hasAssistant, shareFocus } from "./assist.js?v=98";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
@@ -3988,7 +3988,7 @@ async function songMap(doc) {
     const kept = S.st.pdfMusic;
     if (kept && kept.n === n && Array.isArray(kept.music) && kept.music.length >= last) music = kept.music;
     else {
-      const { findStaves } = await import("./omr/pdfprep.js?v=97");
+      const { findStaves } = await import("./omr/pdfprep.js?v=98");
       const t0 = performance.now();
       music = await musicPages(doc, findStaves, { need: last });
       S.t.pdfMusic = ms(t0);

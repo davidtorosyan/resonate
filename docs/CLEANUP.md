@@ -472,6 +472,8 @@ Once green, write the new URLs into the files and delete the shim.
 
 ### Phase 8 — Play tested in the shell; Play's page-only paths go (before E7, or the next keyboard change)
 
+**Deferred (2026-11-22):** mapped against the code at 75ab952 — docs/CLEANUP-PHASE8.md (ten corrections to the text below, the deletions rule by rule, every suite, 35–40 h). E7 takes only the slice it needs.
+
 **Why:** the shell sets `keysOn = false` (scoreview.js:81) and hides `#keys`, so no user sees Play's docked keyboard, 🎹, the song menu, play.html's 📡, or the standalone bar. Yet on play.html the tablet default docks that keyboard (play.js:1657), so most Play suites measure a stage and a bar that no user has. The result is two keyboard paths to keep in step.
 
 **Port the suites:**

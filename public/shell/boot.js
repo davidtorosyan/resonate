@@ -4,19 +4,19 @@
 // as soon as it's added, converted in the background (one song after another: the Reader tray); the
 // avatar (top right) opens the account menu. nav.js ran first, so whose data the device shows is
 // settled before anything here reads it.
-import { spaceChanged, handing } from "../nav.js?v=97";
-import { mountTuner, tunerHtml } from "./tuner.js?v=97";
-import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=97";
-import { mountSongView } from "./songview.js?v=97";
-import { mountTray } from "./tray.js?v=97";
-import { mountAccount } from "./account-menu.js?v=97";
-import { ic, fic, device, overlayOpen, setUnderWay } from "./chrome.js?v=97";
-import { fadeIn } from "./motion.js?v=97";
-import { mountPlaces } from "./places.js?v=97";
-import { mountRemote } from "./remote.js?v=97";
-import { songInfo } from "../catalog.js?v=97";
-import { readFlag } from "../omr/jobs.js?v=97";
-import { activeSpace, activeDb } from "../space.js?v=97";
+import { spaceChanged, handing } from "../nav.js?v=98";
+import { mountTuner, tunerHtml } from "./tuner.js?v=98";
+import { mountSongs, mountNextUp, openSong, setOpener } from "./songlist.js?v=98";
+import { mountSongView } from "./songview.js?v=98";
+import { mountTray } from "./tray.js?v=98";
+import { mountAccount } from "./account-menu.js?v=98";
+import { ic, fic, device, overlayOpen, setUnderWay } from "./chrome.js?v=98";
+import { fadeIn } from "./motion.js?v=98";
+import { mountPlaces } from "./places.js?v=98";
+import { mountRemote } from "./remote.js?v=98";
+import { songInfo } from "../catalog.js?v=98";
+import { readFlag } from "../omr/jobs.js?v=98";
+import { activeSpace, activeDb } from "../space.js?v=98";
 
 // An email link at the root, handed to account.html (nav.js): nothing here starts. (nav.js waits
 // forever then, which holds this module back in Chromium — not in WebKit, which runs a module whose

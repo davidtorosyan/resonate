@@ -22,11 +22,11 @@
 // pages' "resonate:data" events (debounced), when the page becomes visible, and every 2 minutes
 // while it's open — one at a time across tabs (Web Locks).
 
-import { supabase, savedUser } from "./auth.js?v=97";
-import { activeSpace, SYNC_META } from "./space.js?v=97";
-import { listSongs, getSong, putSong, replaceSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, countClips, listTakes, getTake, putTake, removeTake, persistent, dbGen, isMusicXml } from "./library.js?v=97";
-import { dropFromQueue } from "./omr/queue.js?v=97";
-import { deleteJobsFor } from "./omr/jobs.js?v=97";
+import { supabase, savedUser } from "./auth.js?v=98";
+import { activeSpace, SYNC_META } from "./space.js?v=98";
+import { listSongs, getSong, putSong, replaceSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, countClips, listTakes, getTake, putTake, removeTake, persistent, dbGen, isMusicXml } from "./library.js?v=98";
+import { dropFromQueue } from "./omr/queue.js?v=98";
+import { deleteJobsFor } from "./omr/jobs.js?v=98";
 
 export const SONG_LIMIT = 20; // (the server's: 20261120010000_sync_limits_20.sql — applied before this ships)
 const FILE_LIMIT = 10 * 1024 * 1024;

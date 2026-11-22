@@ -3,7 +3,7 @@
 // engine's book after every finished page and the events shown). No DOM: the host page draws the
 // events (the Reader, omr/reader.js) and its own buttons.
 //
-//   import { createImporter } from './omr/importer.js?v=97';
+//   import { createImporter } from './omr/importer.js?v=98';
 //   const imp = createImporter({ onEvent, onLog, onState, onProgress, app: 'v80', spaceChanged });
 //   const job = await imp.pending();            // an unfinished import of this space, or null:
 //                                               //   { id, name, size, done, of, page, stuck: { s, page } | null, phase }
@@ -36,13 +36,13 @@
 // At most the page under way is read again. A job made by another engine (ENGINE) starts over from
 // the stored PDF.
 
-import { convertPdf, ENGINE, LOCK, BUSY, STEPS } from './omr.js?v=97';
-import { ENGINE_N } from './engine.js?v=97';
-import * as J from './jobs.js?v=97';
-import { readScoreFile, parseMusicXml } from '../musicxml.js?v=97';
-import { addSong, getSong, getPdf, replaceSong } from '../library.js?v=97';
-import { fixOmrScore, joinMovements } from './fixscore.js?v=97';
-import { activeSpace, dbName, knownDbs } from '../space.js?v=97';
+import { convertPdf, ENGINE, LOCK, BUSY, STEPS } from './omr.js?v=98';
+import { ENGINE_N } from './engine.js?v=98';
+import * as J from './jobs.js?v=98';
+import { readScoreFile, parseMusicXml } from '../musicxml.js?v=98';
+import { addSong, getSong, getPdf, replaceSong } from '../library.js?v=98';
+import { fixOmrScore, joinMovements } from './fixscore.js?v=98';
+import { activeSpace, dbName, knownDbs } from '../space.js?v=98';
 
 const LEFT = 'resonate.import.left'; // { id, stage, at }: the page was left (reload, navigation, hidden) in that stage — not a crash
 const WAIT_MS = 6000;                // a reload's old page releases the engine lock as it unloads

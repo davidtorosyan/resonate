@@ -13,8 +13,8 @@
 //   placeOf(T, q, number, stop) → { bar, beat }
 //   sliceMeasures(xml, from, to) → the MusicXML with only measures [from, to] (indices) of each part
 
-import { fullName } from "./playnames.js?v=97";
-import { barAt } from "./playtime.js?v=97";
+import { fullName } from "./playnames.js?v=98";
+import { barAt } from "./playtime.js?v=98";
 
 const kids = (el, name) => { const out = []; for (const c of el.children) if (c.nodeName === name) out.push(c); return out; };
 const kid = (el, name) => { for (const c of el.children) if (c.nodeName === name) return c; return null; };
