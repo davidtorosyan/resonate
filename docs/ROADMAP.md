@@ -20,12 +20,12 @@ live in CLAUDE.md ("UI principles").
 - [ ] D: **parked** (the owner, 2026-11-21: "aggressively put the accuracy checks on the back burner … ship what you have … continue with the other work"). Round 2 shipped as engine 19 in v94 (dots, ties, cue heads: 328 findings, 211 play wrong). Round 3's comparison stopped half way (129 of 246 systems: 48 play wrong, ~0.37 a system vs 0.86) with nothing new critical. Where to pick it up: docs/ACCURACY.md "Round 3".
 
 *Then (the owner, 2026-11-21), in this order:*
-- [ ] ▶ E1 (building, with E2; they ship together as v96) Opening a score defaults to the **Full score**, not Both (when the song offers one; the song's saved view still wins).
-- [ ] ▶ E2 (building) The 📡 remote button (and the connector's hint text that names it: resonate.ts, coaching.ts — one redeploy):
+- [x] E1 (**v96**, 2026-11-22) Opening a score defaults to the **Full score**, not Both (when the song offers one; the song's saved view still wins).
+- [x] E2 (**v96**; the connector deployed with it) The 📡 remote button — now the AI button (and the connector's hint text that names it: resonate.ts, coaching.ts — one redeploy):
   - shown only once an assistant has been connected to the account (`assistant_activity` has a row);
   - an icon that reads "AI" (not a satellite dish);
   - still one switch per device (several devices may have Resonate open).
-- [ ] E3 Highlights for assistants at **note / beat resolution**. A drag already picks onsets (written time [q0, end)), but `score_focus` names whole measures and sends whole bars. Send the exact span: its first and last notes, beat positions and only the notes inside, plus the measures for context. Also select a single note (a long-press or a tap-and-hold?).
+- [ ] ▶ E3 Highlights for assistants at **note / beat resolution**. A drag already picks onsets (written time [q0, end)), but `score_focus` names whole measures and sends whole bars. Send the exact span: its first and last notes, beat positions and only the notes inside, plus the measures for context. Also select a single note (a long-press or a tap-and-hold?).
 - [ ] E4 Voice calibration too deaf for the iPad on the piano stand: it didn't pick the owner up at all. Look at the dB floor (calibration counts dB above −50; the tuner's `MIN_RMS` 0.012) and make it more generous or adaptive, per device.
 - [ ] E5 Volume calibration **per device** under one voice profile:
   - the range (notes) stays one per profile, the volume one per device (the device id exists: `resonate.device`);
