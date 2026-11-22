@@ -25,8 +25,8 @@ live in CLAUDE.md ("UI principles").
   - shown only once an assistant has been connected to the account (`assistant_activity` has a row);
   - an icon that reads "AI" (not a satellite dish);
   - still one switch per device (several devices may have Resonate open).
-- [ ] ▶ E3 Highlights for assistants at **note / beat resolution**. A drag already picks onsets (written time [q0, end)), but `score_focus` names whole measures and sends whole bars. Send the exact span: its first and last notes, beat positions and only the notes inside, plus the measures for context. Also select a single note (a long-press or a tap-and-hold?).
-- [ ] E4 Voice calibration too deaf for the iPad on the piano stand: it didn't pick the owner up at all. Look at the dB floor (calibration counts dB above −50; the tuner's `MIN_RMS` 0.012) and make it more generous or adaptive, per device.
+- [ ] ▶ E3 (building, with E4+E5; they ship as v97) Highlights for assistants at **note / beat resolution**. A drag already picks onsets (written time [q0, end)), but `score_focus` names whole measures and sends whole bars. Send the exact span: its first and last notes, beat positions and only the notes inside, plus the measures for context. Also select a single note (a long-press or a tap-and-hold?).
+- [ ] ▶ E4 (building, with E5) Voice calibration too deaf for the iPad on the piano stand: it didn't pick the owner up at all. Look at the dB floor (calibration counts dB above −50; the tuner's `MIN_RMS` 0.012) and make it more generous or adaptive, per device.
 - [ ] E5 Volume calibration **per device** under one voice profile:
   - the range (notes) stays one per profile, the volume one per device (the device id exists: `resonate.device`);
   - devices can be renamed, signed out too.
