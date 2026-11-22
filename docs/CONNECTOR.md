@@ -155,9 +155,14 @@ The device switch the assistant acts through is no longer 📡: it's the **AI bu
 - **Unchanged:** the page's own refusal "Remote control is off on this device." (it names the state, not the button; the playbook still maps it).
 - **Tests:** `tools/mcp1.cjs`'s no-device refusal now expects "AI button on" (it fails against the function until this is deployed). mcp1 / mcp2 wait for `#remote-btn` on sing.html / play.html: it now shows only with an `assistant_activity` row, which their own tool calls before that point write (the test user has one already).
 
+## What changed (2026-11-23, E7: piano fingering)
+
+No tool changed: one new query of `read_resonate`, `fingering {song, from_measure?, to_measure?, hand?: rh | lh}` (`QUERIES.fingering`, `score: true`; `READERS.fingering` → `resonate.ts` `getFingering`), answered from the new table `score_fingering` (migration `20261123010000_score_fingering.sql`), which the app fills once it has worked a song's fingering out on the Score; `get_score_view`'s highlight text carries the fingers too. `songs()` now goes through `songIndex()`, `pickSong()` split out of `findSong()`. `VERSION` 2026-11-23 with a `CHANGES` line.
+- **To deploy:** the migration with `apply_migration` (non-destructive), then `mcp` with the same files, `verify_jwt` false, `import_map_path: "deno.json"`; `get_capabilities` → 2026-11-23; mcp2.cjs section 6.
+
 ## Deploy (the integrator)
 
-With the Supabase connector's `deploy_edge_function`: name `mcp`, `verify_jwt: false`, `import_map_path: "deno.json"`. Include the files `index.ts`, `resonate.ts`, `coaching.ts`, `catalog.ts`, `deno.json` and `deno.lock` (all six, every time).
+With the Supabase connector's `deploy_edge_function`: name `mcp`, `verify_jwt: false`, `import_map_path: "deno.json"`. Include the files `index.ts`, `resonate.ts`, `highlight.ts`, `coaching.ts`, `catalog.ts`, `deno.json` and `deno.lock` (all seven, every time).
 
 Then — **always, before calling it done** — make one real signed-in call: a local run proves nothing about the edge runtime.
 1. Run `tools/mcp1.cjs` and `tools/mcp2.cjs` (live, test user) — or, quicker, call a Resonate tool from a session that has the connector (list_songs, get_score_xml).

@@ -26,8 +26,9 @@ import * as lib from "./library.js?v=98"; // (getSong; getPages where this libra
 import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=98";
 import { mountKeyboard } from "./keyboard.js?v=98";
 import { chordMoments } from "./chords.js?v=98";
-import { barsText, sliceMeasures, spanInfo, placeOf, TEXT_LEGEND } from "./scoretext.js?v=98";
-import { remote, hasAssistant, shareFocus } from "./assist.js?v=98";
+import { barsText, sliceMeasures, spanInfo, placeOf, textLegend } from "./scoretext.js?v=98";
+import { remote, hasAssistant, shareFocus, shareFingering } from "./assist.js?v=98";
+import { fingerText } from "./fingertext.js?v=98";
 import { fingeringFor, stats as fingStats } from "./fingering.js?v=98";
 
 const $ = (id) => document.getElementById(id);
@@ -1881,7 +1882,20 @@ async function fingStart(id) {
   F.t.build = out.items;
   fingChanged();
   remote.changedSoon();
+  shareFing();
 }
+// The fingering as text for assistants (fingertext.js → assist.js's score_fingering row), once an
+// assistant has ever connected; the row is sent again only when the record changes (assist.js keys it).
+function shareFing() {
+  const id = S.song, rec = fingRec();
+  if (!rec || !S.P || S.pdfOnly || spaceChanged()) return;
+  hasAssistant().then((yes) => {
+    if (!yes || S.song !== id || fingRec() !== rec) return;
+    const data = fingerText({ fing: rec, T: songTime(), numberOf, title: S.title, song: id, facts: S.P.facts, doc: S.P.doc });
+    if (data) shareFingering(id, data);
+  }).catch((err) => console.warn("fingering: share", err));
+}
+const fingRec = () => (F.state === "ready" && F.song === S.song ? F.rec : null);
 // A note's fingering: { h, f, p, x } — null while there's none (pending, another part).
 const fingOf = (id) => (F.state === "ready" ? F.idx.get(id) || null : null);
 // The view has fingered notes to show, on the shell's Piano, with the music shown.
@@ -4574,7 +4588,8 @@ async function focusData() {
   const bars = selBars();
   if (!bars?.length) return null;
   const view = S.view, span = selSpan();
-  const text = barsText(S.P.doc, songTime(), S.P.facts, { bars, keep: viewKeep(), chords: chordList(), number: numberOf, span });
+  const fing = fingRec();
+  const text = barsText(S.P.doc, songTime(), S.P.facts, { bars, keep: viewKeep(), chords: chordList(), number: numberOf, span, fing });
   const info = spanInfo(S.P.doc, songTime(), S.P.facts, { span, keep: viewKeep(), number: numberOf });
   let xml = S.v?.xml ? sliceMeasures(S.v.xml, bars[0], bars[bars.length - 1]) : null;
   const cut = xml && xml.length > XML_MAX;
@@ -4593,7 +4608,7 @@ async function focusData() {
       v: 2, title: S.title, view, view_name: VIEW_LABELS[view] || view, measures: bars.map(numberOf), first: bars[0], last: bars[bars.length - 1],
       // (v2: the exact highlight — the bars stay, as context)
       span: { ...info, about: SPAN_ABOUT }, measures_are: "the whole bars the highlight is in: its context",
-      text, legend: TEXT_LEGEND, xml, ...(cut ? { xml_note: "Too long to send here: ask get_score_xml for these bars." } : {}),
+      text, legend: textLegend(fing), xml, ...(cut ? { xml_note: "Too long to send here: ask get_score_xml for these bars." } : {}),
       pdf: where?.pdf ? { page: where.pdf.page, rects: where.pdf.rects.map((r) => ({ page: r.page, x0: +r.x0.toFixed(4), y0: +r.y0.toFixed(4), x1: +r.x1.toFixed(4), y1: +r.y1.toFixed(4) })), ...(picture ? { picture } : {}),
         border: "bars", border_note: PDF_BARS } : null,
       app: $("version")?.textContent || "",
@@ -4871,7 +4886,7 @@ window.resonatePlay = Object.assign(window.resonatePlay || {}, {
   // (the open song's fingering, the record as stored — fingering.js; null while there's none: not
   // worked out yet, no keyboard part, a PDF only. A record made ready — read or worked out — is
   // announced as window "resonate:fingering" { song, fing, computed, from })
-  fingering: () => (F.state === "ready" && F.song === S.song ? F.rec : null),
+  fingering: () => fingRec(),
   // (for an assistant: what's in focus — the song, the view, the bars, the stretch picked, where
   // they are on the PDF — and that place on the PDF as a PNG with its red borders)
   focus: () => focusInfo(),
