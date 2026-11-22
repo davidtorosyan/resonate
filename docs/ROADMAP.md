@@ -25,12 +25,12 @@ live in CLAUDE.md ("UI principles").
   - shown only once an assistant has been connected to the account (`assistant_activity` has a row);
   - an icon that reads "AI" (not a satellite dish);
   - still one switch per device (several devices may have Resonate open).
-- [ ] ▶ E3 (built; review + full regress running → v97 with the connector redeploy) Highlights for assistants at **note / beat resolution**. A drag already picks onsets (written time [q0, end)), but `score_focus` names whole measures and sends whole bars. Send the exact span: its first and last notes, beat positions and only the notes inside, plus the measures for context. Also select a single note (a long-press or a tap-and-hold?).
-- [ ] ▶ E4 (built with E5; → v97) Voice calibration too deaf for the iPad on the piano stand: it didn't pick the owner up at all. Look at the dB floor (calibration counts dB above −50; the tuner's `MIN_RMS` 0.012) and make it more generous or adaptive, per device.
-- [ ] E5 Volume calibration **per device** under one voice profile:
+- [x] E3 **v97** (2026-11-22; a double-tap picks one chord; `score_focus` v2 names the exact span — CLAUDE.md Assistants → v88 "E3"; connector redeployed) Highlights for assistants at **note / beat resolution**. A drag already picks onsets (written time [q0, end)), but `score_focus` names whole measures and sends whole bars. Send the exact span: its first and last notes, beat positions and only the notes inside, plus the measures for context. Also select a single note (a long-press or a tap-and-hold?).
+- [x] E4 **v97** (a room step, a gate above the room's noise, `micGate()` for every reader; waiting on the owner's iPad numbers — CLAUDE.md Pages → voice.html) Voice calibration too deaf for the iPad on the piano stand: it didn't pick the owner up at all. Look at the dB floor (calibration counts dB above −50; the tuner's `MIN_RMS` 0.012) and make it more generous or adaptive, per device.
+- [x] E5 **v97** (`vol` never synced, kept through pulls; the device named on the Volume card) Volume calibration **per device** under one voice profile:
   - the range (notes) stays one per profile, the volume one per device (the device id exists: `resonate.device`);
   - devices can be renamed, signed out too.
-- [ ] E6 Score bookmarks / notes: mark bars or phrases (a label, maybe a note) to remember what was practised, beyond "where you left off". Listed in the Score; kept per song (synced later).
+- [ ] ▶ E6 (next: design, then build) Score bookmarks / notes: mark bars or phrases (a label, maybe a note) to remember what was practised, beyond "where you left off". Listed in the Score; kept per song (synced later).
 - [ ] E7 **Piano fingering**:
   - Look at existing work first: PianoPlayer (Musy), Parncutt-style cost models, Nakamura's HMM / PIG dataset, dynamic programming over hand positions.
   - Run it locally as a step after a conversion (like a clean-up: stored with the song, rerun when the algorithm changes).
