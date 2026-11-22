@@ -80,6 +80,7 @@ run guidedverdicts 300 node guidedverdicts.mjs  # synthetic rounds through featu
 run rhythmcases 600 node rhythmcases.mjs        # rhythm.js on a synthetic singer (+ the guided cases)
 run fingercases 120 node fingercases.mjs        # finger.js (E7): hands + fingers, R6, invariants, 3000 notes, golden
 run fingersurvey 120 node fingersurvey.mjs      # finger.js on dumpkeys.cjs's Amazing Grace (+ PLAY_SCORES's dumps): invariants, every hand
+run fingertextcases 60 node fingertextcases.mjs # fingertext.js / scoretext.js (E7): fingering as text for assistants; no fingering = the old text
 # The engine trace (patch 0009): the saved native traces parse, their notes after PAGE match the export.
 for f in fixtures/trace/*.trace; do
   run "tracecheck:$(basename "$f" .trace)" 60 node tracecheck.mjs "$f" "${f%.trace}.mxl" --quiet
