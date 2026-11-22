@@ -5,12 +5,24 @@ import { SPANS } from "../../public/finger.js";
 
 // ---- the invariants (§8 fingersurvey's, on every case and hand size) ----------------------------------
 // no hand's fingered sounding keys span past its practical 1–5 limit (but an arpeggiated chord), fingers
-// rising with pitch at every onset, a held key keeps its finger, no finger on two keys, every struck
-// note fingered or flagged w / g, a tie's continuation = its start, `m` only off a staff hand.
+// rising with pitch at every onset, a held key keeps its finger, no finger on two keys (also counting
+// tie continuations), every struck note fingered or flagged w / g, a tie's continuation = its start
+// (or no finger once its key was let go or ended), `m` only off a staff hand.
 export function invariants(items, res, hand) {
   const bad = [];
   const { A, r, l } = res.debug;
   const prac = SPANS[hand[0]][15][5];
+  // a note's key let go early (Stage A's onset, Stage B's [key, q]), or ended (struck again by another
+  // voice), at or before its onset: a tie's continuation then has no finger — the pedal holds it
+  const keyOf = new Map();
+  for (const e of A.list) { const k = A.link.get(e); if (k != null) keyOf.set(e.id, k); }
+  const gone = (it) => {
+    const k = keyOf.get(it.id);
+    if (k == null) return false;
+    let q = A.let[k] >= 0 ? A.slices[A.let[k]].q : Infinity;
+    for (const R of [r, l]) for (const [k2, q2] of R.let) if (k2 === k && q2 < q) q = q2;
+    return q <= it.q + 1e-4 || !(A.keys[k].end > it.t + 1e-3);
+  };
   for (const [side, R] of [["r", r], ["l", l]]) {
     const sg = side === "l" ? -1 : 1;
     for (const st of R.path) {
@@ -30,7 +42,7 @@ export function invariants(items, res, hand) {
     if (!n) { bad.push(`${it.id}: no entry`); continue; }
     if (n.h !== "r" && n.h !== "l") bad.push(`${it.id}: hand ${n.h}`);
     if (!(Number.isInteger(n.f) && n.f >= 0 && n.f <= 5)) bad.push(`${it.id}: finger ${n.f}`);
-    if (n.f === 0 && !/[wg]/.test(n.x)) bad.push(`${it.id}: no finger, not flagged (${n.x})`);
+    if (n.f === 0 && !/[wg]/.test(n.x) && !(/t/.test(n.x) && gone(it))) bad.push(`${it.id}: no finger, not flagged (${n.x})`);
     if (n.f !== 0 && /[wg]/.test(n.x)) bad.push(`${it.id}: fingered and flagged ${n.x}`);
     if (/m/.test(n.x) && (!it.hand || it.hand === n.h)) bad.push(`${it.id}: m on its own staff's hand`);
     if (!/m/.test(n.x) && it.hand && it.hand !== n.h && !it.grace) {
@@ -40,14 +52,25 @@ export function invariants(items, res, hand) {
     }
     if (n.p < -1 || (n.p >= 0 && !res.frames[n.h][n.p])) bad.push(`${it.id}: frame ${n.p}`);
   }
-  // a tie's continuation: its start's hand and finger
+  // a tie's continuation: its start's hand and finger — none (f 0) once its key is gone
   for (const it of items) {
     if (!it.tied) continue;
     const n = res.notes.get(it.id);
     if (!/t/.test(n.x)) continue;
     const start = items.filter((o) => o.midi === it.midi && !o.tied && o.q < it.q && o.t + o.d > it.t - 1e-3).sort((a, b) => b.q - a.q)[0];
     const s = start && res.notes.get(start.id);
-    if (!s || s.h !== n.h || s.f !== n.f) bad.push(`${it.id}: tie continuation ${n.h}${n.f}, start ${s ? s.h + s.f : "none"}`);
+    if (!s || s.h !== n.h || (s.f !== n.f && !(n.f === 0 && gone(it)))) bad.push(`${it.id}: tie continuation ${n.h}${n.f}, start ${s ? s.h + s.f : "none"}`);
+  }
+  // one finger, one key: at an onset no two different keys of a hand share a finger, the notes struck
+  // there and the tie continuations there alike
+  const fingerAt = new Map(); // onset | hand | finger → the first item there
+  const named = (o) => `${o.midi}${o.tied ? " (a tie's continuation)" : ""}`;
+  for (const it of items) {
+    const n = res.notes.get(it.id);
+    if (!n || !(n.f > 0)) continue;
+    const at = `${Math.round(it.q * 1e4)}|${n.h}|${n.f}`, o = fingerAt.get(at);
+    if (o === undefined) fingerAt.set(at, it);
+    else if (o.midi !== it.midi) bad.push(`${n.h} onset ${it.q}: finger ${n.f} on ${named(o)} and ${named(it)}`);
   }
   // frames: five keys, rising on the hand
   for (const side of ["r", "l"]) for (const fr of res.frames[side]) {

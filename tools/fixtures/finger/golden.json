@@ -1,5 +1,5 @@
 {
- "alg": 1,
+ "alg": 2,
  "note": "sha256[0:16] of each case's output (tools/fingercases.mjs); regenerate with --update after bumping ALG",
  "cases": {
   "five-finger tune [sb]": "46606d1ad254bb54",
@@ -50,6 +50,15 @@
   "held under a moving line [sb]": "68bd427c5e1d47c7",
   "held under a moving line [mb]": "9d22ddea766ab827",
   "held under a moving line [lb]": "9d22ddea766ab827",
+  "tie let go (fingers) [sb]": "c99c64eb46a9ef6f",
+  "tie let go (fingers) [mb]": "edd245b10df0ecdf",
+  "tie let go (fingers) [lb]": "edd245b10df0ecdf",
+  "tie let go (hands) [sb]": "28f6d3feb4ee34ab",
+  "tie let go (hands) [mb]": "7998b9780ad4d2ac",
+  "tie let go (hands) [lb]": "7998b9780ad4d2ac",
+  "tie after a restrike [sb]": "134fa3ec20a8d83a",
+  "tie after a restrike [mb]": "d8ad0d77ea9694b8",
+  "tie after a restrike [lb]": "d8ad0d77ea9694b8",
   "6-note chord [sb]": "a20fac5f3cf3d892",
   "6-note chord [mb]": "a20fac5f3cf3d892",
   "6-note chord [lb]": "a20fac5f3cf3d892",
@@ -83,9 +92,12 @@
   "unison across the staves [sb]": "b70528dd76ab40f6",
   "unison across the staves [mb]": "0b000f5ffdc7c30a",
   "unison across the staves [lb]": "0b000f5ffdc7c30a",
-  "Amazing Grace (hymn) [sb]": "318a909a0a8a7b5e",
-  "Amazing Grace (hymn) [mb]": "f4f94c4b7a48664c",
-  "Amazing Grace (hymn) [lb]": "7ed4697edb8592c5",
-  "3000 notes [sb]": "c116a7493d6ac159"
+  "unison between the hands [sb]": "a1299eacc8b04acc",
+  "unison between the hands [mb]": "a1299eacc8b04acc",
+  "unison between the hands [lb]": "a1299eacc8b04acc",
+  "Amazing Grace (hymn) [sb]": "2b5ee7203b979b6f",
+  "Amazing Grace (hymn) [mb]": "45b0634e0bd47177",
+  "Amazing Grace (hymn) [lb]": "51f19ace94c3b2c1",
+  "3000 notes [sb]": "b65f085ee8fdb545"
  }
 }

@@ -150,6 +150,28 @@ const add = (name, items, check, on = ["sb"]) => CASES.push({ name, items, check
     return [[c === 1 && f.every((x) => x > c), `C4 1, the line above it (${c} | ${f.join(" ")})`], [res.debug.r.let.length === 0, `nothing let go (${res.debug.r.let.length})`]];
   }, SIZES);
 }
+// A tie's continuation whose key was let go before it: no finger (the pedal holds it), still t — never
+// the finger of a key struck with it. Let go by the fingers (a held C4 with the line coming down under
+// it onto B3 at the tie) and by the hands (a held G4 with five keys struck at the tie).
+{
+  const fin = [N("lfC", 0, 6, M.C4, "r"), N("lfCt", 4, 2, M.C4, "r", { tied: true }), ...line("lf", "r", 0, [[M.E4, 1], [M.D4, 1], [M.E4, 1], [M.F4, 1], [M.B3, 1], [M.A3, 1]])];
+  add("tie let go (fingers)", fin, (res) => {
+    const t = res.notes.get("lfCt"), b = res.notes.get("lf4");
+    return [[t.h === "r" && t.f === 0 && t.x === "t" && b.f > 0, `C4's continuation r0t, B3 fingered (${show(res, fin)})`]];
+  }, SIZES);
+  const hands = [N("lhG", 0, 4, M.G4, "r"), N("lhGt", 2, 2, M.G4, "r", { tied: true }), ...line("lh", "r", 0, [[[M.C4, M.E4], 2], [[M.A4, M.B4, M.C5, M.D5, M.E5], 2]])];
+  add("tie let go (hands)", hands, (res) => {
+    const t = res.notes.get("lhGt");
+    return [[t.h === "r" && t.f === 0 && t.x === "t", `G4's continuation r0t under five struck keys (${show(res, hands)})`]];
+  }, SIZES);
+  // another voice strikes the tied C4 again on beat 2 and lets go of it at the tie: the continuation
+  // (linked to that key, which ended there) has no finger either
+  const re = [N("reC", 0, 3, M.C4, "r"), N("reV", 1, 1, M.C4, "r"), N("reCt", 2, 1, M.C4, "r", { tied: true }), N("reE", 0, 1, M.E3, "r"), N("reD", 2, 1, M.D4, "r")];
+  add("tie after a restrike", re, (res) => {
+    const t = res.notes.get("reCt");
+    return [[t.h === "r" && t.f === 0 && t.x === "t" && res.notes.get("reD").f > 0, `C4's continuation r0t, D4 fingered (${show(res, re)})`]];
+  }, SIZES);
+}
 // A 6-note chord: one inner key w (the right hand's lowest), the rest 1–5.
 {
   const six = [...line("sx", "r", 0, [[[M.C4, M.D4, M.E4, M.F4, M.G4, M.A4], 2]]), ...line("sl", "l", 0, [[[M.C2, M.D2, M.E2, M.F2, M.G2], 2]])];
@@ -214,6 +236,15 @@ for (const [held, it] of Object.entries(R6)) {
   add("unison across the staves", un, (res) => {
     const a = res.notes.get("uR"), b = res.notes.get("uL");
     return [[a.h === b.h && a.f === b.f && a.f > 0 && !a.x && !b.x, `C4 one key, one finger (${show(res, un)})`]];
+  }, SIZES);
+}
+// A unison between the hands (C4 on both staves) keeps the staff split: A3 stays in the left hand
+// (D2: a key moves only where its staff's hand can't play it), C4 in either.
+{
+  const it = [N("ugG", 0, 1, M.G3, "r"), N("ugC", 0, 1, M.C4, "r"), N("ugE", 0, 1, M.E4, "r"), N("ulC", 0, 1, M.C3, "l"), N("ulA", 0, 1, M.A3, "l"), N("ulU", 0, 1, M.C4, "l")];
+  add("unison between the hands", it, (res) => {
+    const a = res.notes.get("ulA");
+    return [[a.h === "l" && !a.x && a.f > 0 && it.every((x) => !/m/.test(res.notes.get(x.id).x)), `A3 LH, nothing moved (${show(res, it)})`]];
   }, SIZES);
 }
 
@@ -352,7 +383,7 @@ async function main() {
       if (VERBOSE) console.log(`  ${c.name} [${hand}] ${show(res, c.items)}`);
     }
   }
-  ok(!allBad, `invariants on all ${CASES.length} cases × ${SIZES.length} hand sizes (span ≤ practical but w / arpeggio, fingers rising, held keys keep theirs, every note fingered or flagged, ties = their start, m only off a staff hand)`);
+  ok(!allBad, `invariants on all ${CASES.length} cases × ${SIZES.length} hand sizes (span ≤ practical but w / arpeggio, fingers rising, held keys keep theirs, one key a finger at an onset — ties' continuations too —, every note fingered or flagged, ties = their start or none once let go, m only off a staff hand)`);
 
   // determinism: twice, and shuffled
   for (const c of [CASES.find((x) => x.name.startsWith("Amazing")), CASES.find((x) => x.name === "R6 over C2+C3"), CASES.find((x) => x.name === "6-note chord"), { name: "3000 notes", items: BIG }]) {
