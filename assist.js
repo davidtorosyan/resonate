@@ -8,13 +8,14 @@
 //   coach_lines  each take's lines — written line by line while the take runs, so an assistant
 //                can follow it live (`final` once the take is graded as a whole)
 // Remote control: this device is a row in `devices` (its id and name are device settings); its
-// switch (the Sing page's 📡) sets `remote` — one device at a time. Commands arrive over
+// switch (the AI button at the top of Resonate) sets `remote` — one device at a time. The button
+// shows only once an assistant has connected to the account (remote.available). Commands arrive over
 // Realtime (the account's private topic, "user:<uid>"), are run by the page and answered in
 // their `device_commands` row. Only for a signed-in, approved account whose data is on this
 // device and whose sync is on (as sync.js); nothing at all otherwise.
 
-import { supabase, savedUser } from "./auth.js?v=95";
-import { activeSpace } from "./space.js?v=95";
+import { supabase, savedUser } from "./auth.js?v=96";
+import { activeSpace } from "./space.js?v=96";
 
 const SYNC_OFF = "resonate.sync.off";
 const DEVICE_KEY = "resonate.device"; // { id, name }
@@ -96,27 +97,32 @@ export function takeEnded(takeId, { status, meta, review, lines }) {
   });
 }
 
-// The Score's focus (v88): the bars picked on this device's Score — their notes as text, the view's
-// MusicXML for them, where they are on the PDF, and two pictures (data URLs) — one row a device,
-// replaced by the next. Sent only when an assistant has connected to the account (assistant_activity
-// has a row: read once a page load).
+// Has an assistant connected to the account? assistant_activity has a row (the MCP server writes
+// one at every tool call: public.assistant_seen) → { yes: true | false | null (couldn't ask),
+// latest: the assistant active lately }. Yes is kept for the page load; no is asked again after a
+// minute (one may connect meanwhile); a Realtime "assistant" event says yes at once (remote.listen).
+// The Score's focus is sent, and the AI button shown (remote.available), only once one has.
 let assistantP = null, assistantAt = 0;
-export function hasAssistant() {
-  // (yes is kept for the page load; no is asked again after a minute — one may connect meanwhile)
+function activity() {
   if (assistantP && assistantP.no && Date.now() - assistantAt > 60000) assistantP = null;
   if (!assistantP) {
     assistantAt = Date.now();
     const p = (async () => {
       const c = await ready();
-      if (!c) return false;
-      const { data, error } = await c.sb.from("assistant_activity").select("client_id").limit(1);
-      return !error && !!data?.length;
-    })().catch(() => false);
-    p.then((yes) => { p.no = !yes; });
+      if (!c) return { yes: false };
+      const { data, error } = await c.sb.from("assistant_activity").select("name,logo,last_at,last_tool").order("last_at", { ascending: false }).limit(1);
+      return error ? { yes: null } : { yes: !!data?.length, latest: data?.[0] || null };
+    })().catch(() => ({ yes: null }));
+    p.then((r) => { p.no = r.yes !== true; });
     assistantP = p;
   }
   return assistantP;
 }
+export const hasAssistant = () => activity().then((r) => r.yes === true);
+
+// The Score's focus (v88): the bars picked on this device's Score — their notes as text, the view's
+// MusicXML for them, where they are on the PDF, and two pictures (data URLs) — one row a device,
+// replaced by the next. Sent only when an assistant has connected to the account (hasAssistant).
 // (not retried: a newer focus replaces it — the latest one sent wins) → true once stored
 let focusSeq = 0;
 const FOCUS_PIC_MAX = 2000000; // characters: score_focus's limit on a picture (data URL)
@@ -175,36 +181,74 @@ export function renameDevice(name) {
 // it first, and answers it itself only when none has (v88).
 const FRONT_KEY = "resonate.remote.front"; // { tab, at } — the page in front (device-only)
 const FRONT_MS = 75000; // a front record older than this is a page gone (it beats every 30 s)
+// The AI button seen on this device, per account: { [uid]: { a: an assistant has connected, on:
+// this device's switch } } (device-only; kept while either is true) — so the next load shows the
+// button at once, before the cloud answers (which then decides).
+const SEEN_KEY = "resonate.remote.seen";
+const seenAll = () => { try { const v = JSON.parse(localStorage.getItem(SEEN_KEY) || "{}"); return v && typeof v === "object" ? v : {}; } catch { return {}; } };
+function saveSeen(uid, rec) {
+  try {
+    const all = seenAll();
+    if (rec.a || rec.on) all[uid] = { a: !!rec.a, on: !!rec.on }; else delete all[uid];
+    if (Object.keys(all).length) localStorage.setItem(SEEN_KEY, JSON.stringify(all)); else localStorage.removeItem(SEEN_KEY);
+  } catch {}
+}
+// (no network: the saved session, this device showing its data, sync not off — as ready() asks)
+function remembered() {
+  const user = savedUser();
+  if (!user || activeSpace() !== user.id) return null;
+  try { if (localStorage.getItem(SYNC_OFF) === "1") return null; } catch {}
+  const r = seenAll()[user.id];
+  return r && (r.a || r.on) ? r : null;
+}
 export const remote = {
-  available: false, // signed in, approved, sync on
+  cloud: false,     // signed in, approved, sync on (ready())
+  checked: false,   // ready() has answered
+  assistant: false, // an assistant has connected to the account (activity())
+  early: null,      // the remembered record (SEEN_KEY), until ready() answers
+  // The AI button is offered: for a signed-in, approved account with sync on, once an assistant has
+  // connected — or while this device's switch is on (so it can be turned off), whatever the check
+  // says or if it can't be made. Before the cloud answers: as remembered.
+  get available() { return this.checked ? this.cloud && (this.assistant || this.on) : !!this.early; },
   settings: { start_delay_s: 4, review_after_remote: false }, // the Assistants page's (assistant_settings)
   on: false,        // this device takes commands
   // (Started once per page: a second start — the one-page shell starts it at home, then Sing's own
   // inside the shell — gives its hooks to the remote already running.)
   start(hooks) {
     this.hooks = hooks;
-    if (this.starting) return this.starting.then((ok) => { if (ok) hooks.changed?.(this.on); return ok; });
+    if (this.starting) {
+      if (this.available) hooks.changed?.(this.on); // (this page's button too, at once)
+      return this.starting.then((ok) => { hooks.changed?.(this.on); return ok; });
+    }
+    const r = remembered();
+    if (r) { this.early = r; this.assistant = !!r.a; this.on = !!r.on; hooks.changed?.(this.on); }
     return (this.starting = this.begin());
   },
   async begin() {
     const c = await ready();
-    if (!c) return false;
+    this.checked = true;
+    this.early = null;
+    if (!c) { if (this.on || this.assistant) this.hooks?.changed?.(this.on); return false; } // (shown as remembered: hidden now)
     this.ctx = c;
-    this.available = true;
+    this.cloud = true;
     const me = device();
-    const { data } = await c.sb.from("devices").select("remote").eq("id", me.id).maybeSingle();
-    this.on = !!data?.remote;
-    // The assistant active lately (the page shows it by 📡).
-    c.sb.from("assistant_activity").select("name,logo,last_at,last_tool").order("last_at", { ascending: false }).limit(1)
-      .then(({ data: a }) => { if (a?.[0]) this.hooks?.assistant?.({ name: a[0].name, logo: a[0].logo, tool: a[0].last_tool, at: a[0].last_at }); }, () => {});
+    const { data, error } = await c.sb.from("devices").select("remote").eq("id", me.id).maybeSingle();
+    if (!error) this.on = !!data?.remote; // (unread: as remembered)
+    this.remember();
+    // Has an assistant connected (the button), and the one active lately (the page shows it by the button).
+    this.askAssistant(true);
     this.takeFront();
     await this.beat();
     await this.listen();
     // (old commands go: an hour is plenty to look back on)
     c.sb.from("device_commands").delete().lt("created_at", new Date(Date.now() - 3600000).toISOString()).then(() => {}, () => {});
-    setInterval(() => { if (!document.hidden && this.inFront()) { this.takeFront(); this.beat(); } }, 30000);
+    setInterval(() => {
+      if (document.hidden) return;
+      if (!this.assistant) this.askAssistant(); // (asked again a minute after a no)
+      if (this.inFront()) { this.takeFront(); this.beat(); }
+    }, 30000);
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) { this.takeFront(); this.beat(); this.catchUp(); }
+      if (!document.hidden) { this.takeFront(); this.beat(); this.catchUp(); if (!this.assistant) this.askAssistant(); }
       else if (this.inFront(true)) { this.beat(); this.dropFront(); } // (another tab shown takes over)
     });
     window.addEventListener("focus", () => this.takeFront());
@@ -214,6 +258,23 @@ export const remote = {
     window.addEventListener("pagehide", () => { if (this.inFront(true)) { this.beat(true); this.dropFront(); } });
     this.hooks?.changed?.(this.on);
     return true;
+  },
+  // What this device remembers for the account (SEEN_KEY).
+  remember() { if (stillMine(this.ctx)) saveSeen(this.ctx.uid, { a: this.assistant, on: this.on }); },
+  // Has an assistant connected? (yes: the button shows — at once, wherever this page is; a check
+  // that couldn't be made changes nothing) — with `chip`, also the one active lately.
+  askAssistant(chip = false) {
+    return activity().then((r) => {
+      if (chip && r.latest) this.hooks?.assistant?.({ name: r.latest.name, logo: r.latest.logo, tool: r.latest.last_tool, at: r.latest.last_at });
+      this.noteAssistant(r.yes);
+    }, () => {});
+  },
+  noteAssistant(yes) {
+    if (yes !== true && yes !== false) return;
+    const was = this.available;
+    this.assistant = yes;
+    this.remember();
+    if (this.available !== was) this.hooks?.changed?.(this.on);
   },
   // Which of this device's pages is in front (tabs, Split View): its record in localStorage.
   frontTab() {
@@ -229,14 +290,17 @@ export const remote = {
     if (was && was !== this.tab && this.ctx) { clearTimeout(this.t); this.t = setTimeout(() => this.beat(), 800); }
   },
   dropFront() { try { if (this.frontTab() === this.tab) localStorage.removeItem(FRONT_KEY); } catch {} },
-  // Switch it on here (and so off everywhere else), or off.
+  // Switch it on here (and so off everywhere else), or off. (A tap on the remembered button before
+  // the cloud answered waits for it.)
   async set(on) {
+    if (!this.ctx && this.starting) await this.starting;
     const c = this.ctx;
     if (!stillMine(c)) return false;
     const me = device();
     const { error } = await c.sb.from("devices").upsert({ id: me.id, name: me.name, remote: !!on, seen_at: new Date().toISOString(), state: this.state() }, { onConflict: "user_id,id" });
     if (error) { console.warn("assist: remote", error.message); return this.on; }
     this.on = !!on;
+    this.remember();
     this.hooks?.changed?.(this.on);
     return this.on;
   },
@@ -253,7 +317,7 @@ export const remote = {
     const state = { ...this.state(), ...(leaving ? { visible: false, left: true } : {}) };
     if (!leaving) c.sb.from("assistant_settings").select("start_delay_s,review_after_remote").maybeSingle().then(({ data: st }) => { if (st) this.settings = st; }, () => {});
     const { data, error } = await c.sb.from("devices").upsert({ id: me.id, name: me.name, seen_at: new Date().toISOString(), state }, { onConflict: "user_id,id" }).select("remote").maybeSingle();
-    if (!error && data && !!data.remote !== this.on) { this.on = !!data.remote; this.hooks?.changed?.(this.on); } // (switched on elsewhere)
+    if (!error && data && !!data.remote !== this.on) { this.on = !!data.remote; this.remember(); this.hooks?.changed?.(this.on); } // (switched on elsewhere)
   },
   // (a page not in front says what it shows only right after it ran a command: `ran`)
   changedSoon(ran = false) { if (!ran && !this.inFront(true)) return; clearTimeout(this.t); this.t = setTimeout(() => this.beat(), 800); },
@@ -264,7 +328,7 @@ export const remote = {
     const since = Date.now() - 60000;
     this.channel = c.sb.channel(`user:${c.uid}`, { config: { private: true, broadcast: { replay: { since, limit: 25 } } } })
       .on("broadcast", { event: "command" }, (m) => this.handle(m.payload))
-      .on("broadcast", { event: "assistant" }, (m) => { assistantP = Promise.resolve(true); this.hooks?.assistant?.({ ...m.payload, received: Date.now() }); })
+      .on("broadcast", { event: "assistant" }, (m) => { assistantP = Promise.resolve({ yes: true }); this.noteAssistant(true); this.hooks?.assistant?.({ ...m.payload, received: Date.now() }); })
       .subscribe((status) => { if (status === "SUBSCRIBED") this.catchUp(); });
   },
   // Commands that came while the page couldn't hear them (hidden, reconnecting).
@@ -318,4 +382,19 @@ export const remote = {
   },
 };
 
-window.resonateAssist = () => ({ device: device(), remote: { available: remote.available, on: remote.on }, queued: later.length });
+// The switch's button (the shell's top bar, Sing's): the AI mark is in the page's markup (AI_MARK);
+// lit while on, hidden unless offered (remote.available).
+export const REMOTE_LABEL = "Let an assistant control this device";
+export function paintRemote(btn, on) {
+  if (!btn) return;
+  btn.hidden = !remote.available;
+  btn.dataset.on = String(!!on);
+  btn.title = on ? "An assistant can control this device — tap to stop" : REMOTE_LABEL;
+  btn.setAttribute("aria-label", REMOTE_LABEL);
+  btn.setAttribute("aria-pressed", String(!!on));
+}
+// The AI button's mark: the letters A and I (a serifed I: never read "Al"), drawn in currentColor.
+// The same markup is in index.html, sing.html and play.html (tools/shellplaces.cjs checks it).
+export const AI_MARK = '<svg class="ai-mark" viewBox="0 0 20 16" aria-hidden="true" focusable="false"><path d="M1.5 14.5 6.5 1.5l5 13M3.25 10h6.5M13.5 1.5h5M16 1.5v13M13.5 14.5h5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+window.resonateAssist = () => ({ device: device(), remote: { available: remote.available, cloud: remote.cloud, checked: remote.checked, assistant: remote.assistant, on: remote.on, seen: seenAll() }, queued: later.length });

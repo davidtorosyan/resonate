@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0f0f1e" />
     <title>Resonate · Play</title>
-    <script src="away.js?v=95" data-open="score"></script>
+    <script src="away.js?v=96" data-open="score"></script>
     <style>
       :root { color-scheme: dark; }
       /* An open menu's list takes the option's own colours (Chrome on Windows drew the see-through
@@ -92,13 +92,16 @@
       #pg { min-width: 4.6rem; text-align: center; font-size: 0.85rem; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.75); white-space: nowrap; }
       #prev, #next { font-size: 1.3rem; line-height: 1; padding: 0; }
       #version { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; color: #a64fff; opacity: 0.9; }
-      /* 📡 (signed in, approved, sync on): an assistant may control this page — small, by the badge,
-         so the bar keeps its rows (on the pages' row under 1100 px) */
+      /* The AI button (signed in, approved, sync on, once an assistant has connected): an assistant
+         may control this page — small, by the badge, so the bar keeps its rows (on the pages' row
+         under 1100 px); its mark as tall as the line the emoji it replaced took */
       #bar #remote-btn { min-height: 0; min-width: 0; padding: 0.2rem 0.3rem; line-height: 1.2; border-radius: 999px; font-size: 0.75rem; opacity: 0.65; }
+      #bar #remote-btn .ai-mark { display: block; width: 1.5em; height: 1.2em; }
       #bar #remote-btn[data-on="true"] { opacity: 1; background: #a64fff; border-color: #c48bff; }
       @media (any-pointer: coarse) { #bar #remote-btn { padding: 0.3rem 0.35rem; } }
-      /* (the nav's links give 📡 its width — a little less padding and gap — where the pages or the
-         controls share their row: from 480 px; from 1100 px the bar's gaps a little closer too) */
+      /* (the nav's links give the AI button its width — a little less padding and gap — where the
+         pages or the controls share their row: from 480 px; from 1100 px the bar's gaps a little
+         closer too) */
       @media (min-width: 480px) {
         #bar:has(#remote-btn:not([hidden])) .nav { column-gap: 0.3rem; }
         #bar:has(#remote-btn:not([hidden])) h1 { margin-right: 0; }
@@ -133,7 +136,7 @@
         .ctl { order: 3; }
         .pager { order: 4; }
       }
-      /* (under 670 px the pages share the nav's row, pushed right: 📡 goes by them) */
+      /* (under 670 px the pages share the nav's row, pushed right: the AI button goes by them) */
       @media (min-width: 480px) and (max-width: 669px) {
         #bar #remote-btn:not([hidden]) { margin-left: 0; }
       }
@@ -423,8 +426,8 @@
         <button id="next" type="button" aria-label="Next page" title="Next page">›</button>
       </span>
       <span class="brk"></span>
-      <button id="remote-btn" type="button" hidden aria-pressed="false" aria-label="Remote">📡</button>
-      <span id="version" class="mono">v95</span>
+      <button id="remote-btn" type="button" hidden aria-pressed="false" aria-label="Let an assistant control this device" title="Let an assistant control this device"><svg class="ai-mark" viewBox="0 0 20 16" aria-hidden="true" focusable="false"><path d="M1.5 14.5 6.5 1.5l5 13M3.25 10h6.5M13.5 1.5h5M16 1.5v13M13.5 14.5h5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <span id="version" class="mono">v96</span>
     </header>
     <main id="stage" data-names="all">
       <p id="msg" hidden></p>
@@ -447,7 +450,7 @@
       <div id="hear" class="hear" role="group" aria-label="Hear" hidden></div>
       <div id="strip" aria-hidden="true"></div>
     </div>
-    <script type="module" src="nav.js?v=95"></script>
-    <script type="module" src="play.js?v=95"></script>
+    <script type="module" src="nav.js?v=96"></script>
+    <script type="module" src="play.js?v=96"></script>
   </body>
 </html>

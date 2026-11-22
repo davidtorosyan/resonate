@@ -14,20 +14,20 @@
 //
 // A PDF only (added, not converted yet: docs/LIBRARY.md) opens straight into its PDF (📄's view, no
 // Verovio): ‹ › and the pedals turn its pages, the keyboard stays under it, ⟳ reads Convert.
-import { spaceChanged } from "./nav.js?v=95";
-import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=95";
-import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=95";
-import { decorate, fullName, labelOf } from "./playnames.js?v=95";
-import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=95";
-import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=95";
-import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=95";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=95";
-import * as lib from "./library.js?v=95"; // (getSong; getPages where this library has it)
-import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=95";
-import { mountKeyboard } from "./keyboard.js?v=95";
-import { chordMoments } from "./chords.js?v=95";
-import { barsText, sliceMeasures, TEXT_LEGEND } from "./scoretext.js?v=95";
-import { remote, hasAssistant, shareFocus } from "./assist.js?v=95";
+import { spaceChanged } from "./nav.js?v=96";
+import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=96";
+import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=96";
+import { decorate, fullName, labelOf } from "./playnames.js?v=96";
+import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=96";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=96";
+import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=96";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=96";
+import * as lib from "./library.js?v=96"; // (getSong; getPages where this library has it)
+import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=96";
+import { mountKeyboard } from "./keyboard.js?v=96";
+import { chordMoments } from "./chords.js?v=96";
+import { barsText, sliceMeasures, TEXT_LEGEND } from "./scoretext.js?v=96";
+import { remote, hasAssistant, shareFocus } from "./assist.js?v=96";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
@@ -153,6 +153,7 @@ const S = {
   P: null,          // prepare(): { doc, parts, views, facts }
   waiting: false,   // the view waits for the stage to get a size
   view: "both",
+  byDefault: false, // the view is the song's default (none chosen for it): a Full score that can't draw gives way to Both
   built: new Map(), // view key → buildView() result (its XML is what Verovio loads)
   v: null,          // the shown view's buildView()
   loaded: null,     // the buildView() result Verovio holds
@@ -389,7 +390,10 @@ async function open(id) {
     S.t.prep = ms(t1);
   } catch (err) { return fail("song", err); }
   const views = S.P.views;
-  S.view = S.st.view in views ? S.st.view : "both";
+  // (the view chosen for this song last, else the Full score — the tune with its words over the
+  // piano, as printed — when the song has one, else Both)
+  S.view = S.st.view in views ? S.st.view : "score" in views ? "score" : "both";
+  S.byDefault = !(S.st.view in views);
   handsSel.replaceChildren(...Object.keys(views).map((k) => new Option(VIEW_LABELS[k] || k, k)));
   handsSel.value = S.view;
   handsSel.hidden = Object.keys(views).length < 2;
@@ -437,7 +441,7 @@ async function loadView(gen) {
       const t = performance.now();
       v = buildView(S.P.doc, S.P.views[S.view]);
       S.t.build = ms(t);
-    } catch (err) { return fail("song", err); }
+    } catch (err) { return viewFailed(err); }
     S.built.set(S.view, v);
   }
   S.v = v;
@@ -476,8 +480,19 @@ async function loadView(gen) {
   } catch (err) { console.warn("loadData", err); }
   S.t.data = ms(t);
   S.loaded = ok ? v : null;
-  if (!ok || !tk.getPageCount()) return fail("song");
-  placed(settle(L));
+  if (!ok || !tk.getPageCount()) return viewFailed();
+  return placed(settle(L));
+}
+// A view that doesn't draw: the song says so — unless it's the Full score a song opened at by
+// default (no view chosen for it), which gives way to Both, the view songs opened at before.
+function viewFailed(err) {
+  if (S.byDefault && S.view !== "both" && S.P?.views.both) {
+    if (err) console.warn("view", err);
+    S.byDefault = false;
+    S.view = handsSel.value = "both";
+    return loadView(S.gen);
+  }
+  return fail("song", err);
 }
 
 // The shown view's size pref: S.step (steps from the default; 0: the default).
@@ -692,9 +707,10 @@ function placed(L) {
   S.page = Math.max(1, Math.min(S.pages, p));
   // (a score Verovio loads but draws nothing of — notes kept, no staff on the page: say so, not
   // blank paper with "1 / 1")
-  if (S.v?.pitched && !/<g [^>]*class="staff[" ]/.test(svgOf(S.page))) return fail("song");
+  if (S.v?.pitched && !/<g [^>]*class="staff[" ]/.test(svgOf(S.page))) return viewFailed();
   showMsg("");
   S.ready = true;
+  S.byDefault = false; // (shown: a later relayout's failure is the song's again — no swap to Both under ▶)
   S.failed = null;
   handsSel.disabled = pdf.on;
   show();
@@ -1105,6 +1121,7 @@ async function changeView(v) {
   const gen = ++S.gen;
   handsSel.value = v;
   S.view = v;
+  S.byDefault = false;
   clearPeek();
   stopPlay(); // (the stretch picked stays: it's a stretch of the song, drawn again in this view)
   S.ready = false;
@@ -3355,7 +3372,7 @@ async function songMap(doc) {
     const kept = S.st.pdfMusic;
     if (kept && kept.n === n && Array.isArray(kept.music) && kept.music.length >= last) music = kept.music;
     else {
-      const { findStaves } = await import("./omr/pdfprep.js?v=95");
+      const { findStaves } = await import("./omr/pdfprep.js?v=96");
       const t0 = performance.now();
       music = await musicPages(doc, findStaves, { need: last });
       S.t.pdfMusic = ms(t0);
@@ -3985,17 +4002,18 @@ window.resonatePlay = Object.assign(window.resonatePlay || {}, {
   forget: (id) => forget(id),
 });
 
-// play.html's 📡: an assistant's commands for the Score reach this page (one device at a time, the
-// same switch as Sing's). Only for a signed-in, approved account with sync on (assist.js); hidden
-// otherwise. (The one-page shell has its own 📡 and routes the Score's commands itself.)
+// play.html's AI button: an assistant's commands for the Score reach this page (one device at a
+// time, the same switch as Sing's). Only for a signed-in, approved account with sync on, once an
+// assistant has connected (assist.js remote.available); hidden otherwise. Its mark is in
+// play.html. (The one-page shell has its own and routes the Score's commands itself.)
 if (!window.resonatePlay.region) {
   const rb = $("remote-btn");
   const showRemote = (on) => {
     if (!rb) return;
     rb.hidden = !remote.available;
     rb.dataset.on = String(!!on);
-    rb.title = on ? "An assistant can control this page — tap to stop" : "Let an assistant control this page";
-    rb.setAttribute("aria-label", on ? "Remote on" : "Remote");
+    rb.title = on ? "An assistant can control this device — tap to stop" : "Let an assistant control this device";
+    rb.setAttribute("aria-label", "Let an assistant control this device");
     rb.setAttribute("aria-pressed", String(!!on));
   };
   rb?.addEventListener("click", () => { rb.disabled = true; remote.set(!remote.on).finally(() => { rb.disabled = false; }); });

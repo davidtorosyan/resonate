@@ -2,25 +2,25 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=95";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=95";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=95";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=95";
-import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=95";
-import * as P from "./practice.js?v=95";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=95";
-import { startCapture, playVoice } from "./capture.js?v=95";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=95";
-import { makeFeatures, findClicks, tolOn } from "./rhythm.js?v=95";
-import * as TR from "./takerhythm.js?v=95";
-import { listSongs, getSong, addSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=95";
-import { SAMPLES, songXml, songRev, songInfo } from "./catalog.js?v=95";
-import { forgetSong } from "./forget.js?v=95";
-import { activeProfile } from "./profiles.js?v=95";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=95";
-import { DATA_KEYS } from "./space.js?v=95";
-import { spaceChanged } from "./nav.js?v=95";
-import { shareSong, takeStarted, lineDone, takeEnded, remote } from "./assist.js?v=95";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=96";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=96";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=96";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=96";
+import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=96";
+import * as P from "./practice.js?v=96";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=96";
+import { startCapture, playVoice } from "./capture.js?v=96";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=96";
+import { makeFeatures, findClicks, tolOn } from "./rhythm.js?v=96";
+import * as TR from "./takerhythm.js?v=96";
+import { listSongs, getSong, addSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=96";
+import { SAMPLES, songXml, songRev, songInfo } from "./catalog.js?v=96";
+import { forgetSong } from "./forget.js?v=96";
+import { activeProfile } from "./profiles.js?v=96";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=96";
+import { DATA_KEYS } from "./space.js?v=96";
+import { spaceChanged } from "./nav.js?v=96";
+import { shareSong, takeStarted, lineDone, takeEnded, remote, paintRemote } from "./assist.js?v=96";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -2571,16 +2571,11 @@ function assistTakeEnded(tk) {
 }
 
 // --- Remote control (assist.js remote) ----------------------------------------------------
-// The 📡 switch in the header: on, an assistant can run these on this page (one device at a
-// time). Lines are numbered from 1 here, as people say them.
+// The AI button in the header (once an assistant has connected: assist.js remote.available): on,
+// an assistant can run these on this page (one device at a time). Lines are numbered from 1 here,
+// as people say them.
 const remoteBtn = $("remote-btn");
-function showRemote(on) {
-  remoteBtn.hidden = !remote.available;
-  remoteBtn.dataset.on = String(!!on);
-  remoteBtn.textContent = on ? "📡 Remote on" : "📡";
-  remoteBtn.title = on ? "An assistant can control this page — tap to stop" : "Let an assistant control this page";
-  remoteBtn.setAttribute("aria-pressed", String(!!on));
-}
+const showRemote = (on) => paintRemote(remoteBtn, on);
 remoteBtn.addEventListener("click", () => { remoteBtn.disabled = true; remote.set(!remote.on).finally(() => { remoteBtn.disabled = false; }); });
 function remoteState() {
   return { page: "sing", song: songId && score ? { id: songId, title: score.title } : null, key: score ? optText(keySelect) : null, tempo: score ? optText(tempoSelect) : null,
@@ -2628,8 +2623,8 @@ function setView(v) {
   updateButtons();
 }
 
-// Which assistant is connected: shown by 📡 for 2 minutes after its last call (the dot pulses
-// for 15 s after one).
+// Which assistant is connected: shown by the AI button for 2 minutes after its last call (the
+// dot pulses for 15 s after one).
 const assistantChip = $("assistant-chip");
 let assistantSeen = null;
 function showAssistant(info) {
