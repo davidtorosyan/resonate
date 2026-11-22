@@ -1,7 +1,8 @@
 // The full tuner (home): the voice profile's range, a ±50¢ arc, the note, cents, level and the
 // waveform. Detection is the old Tuner's (app.js, gone in cleanup C phase 4: this is its port):
-// pitch.js's YIN with the same gates (the loudness gate this device's calibration's, else MIN_RMS), and its locked-note logic — a long median for the cents, a short one that re-locks the shown note
-// after it stays > 50¢ off for 250 ms. Nothing opens the mic until Start.
+// pitch.js's YIN with the same gates (the loudness gate: this device's calibrated one, else MIN_RMS), and
+// its locked-note logic — a long median for the cents, a short one that re-locks the shown note after it
+// stays > 50¢ off for 250 ms. Nothing opens the mic until Start.
 // Forms (REDESIGN §5): "full" (home, and the drop over a song), "strip" (a phone with a song open)
 // and "docked" (a tablet / desktop with a song open) — one DOM, laid out by data-form; the small
 // forms carry their own mic button (.tmic) and a state word: "parked · tap to listen" while a song
