@@ -4,7 +4,7 @@
 
 import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=96";
 import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=96";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=96";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE } from "./pitch.js?v=96";
 import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=96";
 import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=96";
 import * as P from "./practice.js?v=96";
@@ -832,7 +832,7 @@ async function beginSing(part) {
   // The singer follows what they hear (output latency); the mic hears them
   // late (input latency); a pitch frame lags its audio (analysis window).
   const latency = (ac.outputLatency || ac.baseLatency || 0) + INPUT_LATENCY;
-  take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, timing: timingSig(), rate, verse: verseSelect.value || score.verses[0] || "1", octave: 0, range: [j0, j1], part: !!part, guide: g, guided: !!part?.guided };
+  take = { frames: [], grades: notes.map(() => null), endT: null, voice: null, songT0, latency, shiftSig, timing: timingSig(), rate, verse: verseSelect.value || score.verses[0] || "1", octave: 0, range: [j0, j1], part: !!part, guide: g, guided: !!part?.guided, gate: mic.read.gate };
   // A whole take is shared with assistants line by line as it's sung (assist.js).
   if (!part && !spaceChanged()) { take.coachId = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`; take.coachSent = new Set(); takeStarted(take.coachId, songId, assistMeta()); }
   // A take an assistant started: who, and the line it ends after (a short performance).
@@ -894,7 +894,7 @@ function gradeUpTo(t) {
   const [j0, j1] = take.range;
   notes.forEach((n, j) => {
     if (j < j0 || j >= j1 || take.grades[j] || n.t + n.d + MAX_SHIFT > t) return;
-    take.grades[j] = gradeLive(notes, take.frames, j, { endT: t, gate: MIN_RMS });
+    take.grades[j] = gradeLive(notes, take.frames, j, { endT: t, gate: take.gate });
     const old = chipsEl.querySelectorAll(".chip")[j];
     if (old) old.replaceWith(makeChip(j));
     // A line whose notes are all graded goes to the assistants at once.
@@ -910,7 +910,7 @@ function gradeUpTo(t) {
 // matched with (its moved slot), and drawn next to it.
 function gradeFinal(endT) {
   const [j0, j1] = take.range;
-  const part = gradeTake(notes.slice(j0, j1), take.frames, { endT, gate: MIN_RMS });
+  const part = gradeTake(notes.slice(j0, j1), take.frames, { endT, gate: take.gate });
   take.grades = notes.map((_, j) => (j >= j0 && j < j1 ? part[j - j0] : null));
   recolour(take);
 }

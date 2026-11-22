@@ -3,10 +3,18 @@
 // its name with octave, its written value, ties, rests, lyrics — the chord names, and the bars of
 // the view's MusicXML (as Verovio drew them). Pure: DOM-on-XML, no drawing.
 //
-//   barsText(doc, T, facts, { bars, keep, chords, number }) → text
+// A highlight (span: { q0, end, ids? } in written quarters — a stretch dragged on the page: what
+// starts in [q0, end); one chord picked by a double-tap: only those notes, ids) is named exactly —
+// where it starts and stops (bar + beat), its first and last notes (spanInfo) — and the text
+// lists only its notes on each staff line, the rest of each bar after them as context.
+//
+//   barsText(doc, T, facts, { bars, keep, chords, number, span }) → text
+//   spanInfo(doc, T, facts, { span, keep, number }) → { kind, start, end, quarters, bars, first, last, notes, staff? }
+//   placeOf(T, q, number, stop) → { bar, beat }
 //   sliceMeasures(xml, from, to) → the MusicXML with only measures [from, to] (indices) of each part
 
 import { fullName } from "./playnames.js?v=96";
+import { barAt } from "./playtime.js?v=96";
 
 const kids = (el, name) => { const out = []; for (const c of el.children) if (c.nodeName === name) out.push(c); return out; };
 const kid = (el, name) => { for (const c of el.children) if (c.nodeName === name) return c; return null; };
@@ -54,7 +62,8 @@ function wordsOf(el) {
   }
   return out.length ? `"${out.join(" / ")}"` : "";
 }
-const beat = (o) => "@" + String(Math.round((o + 1) * 1000) / 1000);
+const r3 = (x) => Math.round(x * 1000) / 1000;
+const beat = (o) => "@" + String(r3(o + 1));
 const FIFTHS = ["C♭", "G♭", "D♭", "A♭", "E♭", "B♭", "F", "C", "G", "D", "A", "E", "B", "F♯", "C♯"];
 function keyName(fifths, mode) {
   const f = Number(fifths) || 0;
@@ -110,8 +119,9 @@ function staffLabel(info, staff) {
 // start or change), then a line per part / staff / voice: "@beat note value "syllable"".
 // T: playtime timeline; facts: playprep noteFacts; keep(e): the view draws it; chords: [{ q, name }]
 // (the view's chord moments); number(mi): the bar's number in the MusicXML.
-export function barsText(doc, T, facts, { bars, keep = () => true, chords = [], number = (mi) => String(mi + 1) }) {
+export function barsText(doc, T, facts, { bars, keep = () => true, chords = [], number = (mi) => String(mi + 1), span = null }) {
   const els = noteEls(doc), parts = partInfo(doc);
+  const inside = span ? inSpan(span) : null;
   const want = new Set(bars);
   const byBar = new Map();
   for (const e of T.els) {
@@ -123,6 +133,7 @@ export function barsText(doc, T, facts, { bars, keep = () => true, chords = [], 
     b.get(k).push(e);
   }
   const lines = [];
+  if (span) lines.push(spanLine(spanInfo(doc, T, facts, { span, keep, number })));
   bars.forEach((mi, i) => {
     const bar = T.bars[mi];
     const first = parts.values().next().value?.at[mi];
@@ -135,6 +146,7 @@ export function barsText(doc, T, facts, { bars, keep = () => true, chords = [], 
     const f1 = facts1.filter(Boolean);
     if (f1.length) head += ` (${f1.join(", ")})`;
     if (bar && bar.len) head += ` — ${Math.round(bar.len * 1000) / 1000} quarters long`;
+    if (span && bar) head += barScope(span, bar);
     lines.push(head);
     const groups = byBar.get(mi) || new Map();
     const keys = [...groups.keys()].sort((a, b) => {
@@ -159,27 +171,119 @@ export function barsText(doc, T, facts, { bars, keep = () => true, chords = [], 
         if (e.chord && last && Math.abs(last.q - e.q) < EPS && !last.rest) { last.notes.push(e); continue; }
         evs.push({ q: e.q, o: e.o, d: e.d, rest: e.rest, mrest: e.mrest, grace: e.grace, notes: [e] });
       }
-      const out = evs.map((ev) => {
-        const el = els.get(ev.notes[0].id);
-        if (ev.rest) return `${beat(ev.o)} rest ${ev.mrest ? "(whole bar)" : el ? valueOf(el, ev.d) : ""}`.trim();
-        const names = ev.notes
-          .map((n) => ({ n, f: facts.get(n.id) }))
-          .sort((a, b) => (a.f?.midi ?? 0) - (b.f?.midi ?? 0))
-          .map(({ n, f }) => (n.tieStop ? "←" : "") + (f ? fullName(f) : "?") + (n.tieStart ? "→" : ""));
-        const pitch = names.length > 1 ? `[${names.join(" ")}]` : names[0];
-        const words = ev.notes.map((n) => { const x = els.get(n.id); return x ? wordsOf(x) : ""; }).find(Boolean) || "";
-        const cue = ev.notes[0].cue ? " (cue)" : "";
-        return `${beat(ev.o)} ${ev.grace ? "grace " : ""}${pitch}${ev.grace ? "" : " " + (el ? valueOf(el, ev.d) : "")}${cue}${words ? " " + words : ""}`;
-      });
-      lines.push(`  ${label}: ${out.join(" · ") || "(nothing)"}`);
+      const say = (ev) => eventText(ev, els, facts);
+      if (!inside) { lines.push(`  ${label}: ${evs.map(say).join(" · ") || "(nothing)"}`); continue; }
+      // (a highlight: its notes on the line, the rest of the bar after them — a note started before
+      // it and still held at its start says so)
+      const inn = evs.filter((ev) => ev.notes.some(inside)), out = evs.filter((ev) => !ev.notes.some(inside));
+      lines.push(`  ${label}: ${inn.map(say).join(" · ") || "(nothing highlighted)"}`);
+      if (out.length) lines.push(`    outside the highlight: ${out.map((ev) => say(ev) + (!ev.rest && ev.q < span.q0 - EPS && ev.q + ev.d > span.q0 + EPS ? " (still sounding)" : "")).join(" · ")}`);
     }
     const ch = bar ? chords.filter((c) => c.q >= bar.q - EPS && c.q < bar.q + bar.len - EPS) : [];
-    if (ch.length) lines.push(`  Chords: ${ch.map((c) => `${c.name} ${beat(c.q - bar.q)}`).join(" · ")}`);
+    const chordText = (list) => list.map((c) => `${c.name} ${beat(c.q - bar.q)}`).join(" · ");
+    if (ch.length && !span) lines.push(`  Chords: ${chordText(ch)}`);
+    else if (ch.length) {
+      const inn = ch.filter((c) => c.q >= span.q0 - EPS && c.q < span.end - EPS), out = ch.filter((c) => !inn.includes(c));
+      lines.push(`  Chords: ${chordText(inn) || "(none starts in the highlight)"}`);
+      if (out.length) lines.push(`    outside the highlight: ${chordText(out)}`);
+    }
   });
   return lines.join("\n");
 }
+// One event (a note, a chord low to high, a rest): "@2 [F4 A4] quarter "syl-"".
+function eventText(ev, els, facts) {
+  const el = els.get(ev.notes[0].id);
+  if (ev.rest) return `${beat(ev.o)} rest ${ev.mrest ? "(whole bar)" : el ? valueOf(el, ev.d) : ""}`.trim();
+  const words = ev.notes.map((n) => { const x = els.get(n.id); return x ? wordsOf(x) : ""; }).find(Boolean) || "";
+  const cue = ev.notes[0].cue ? " (cue)" : "";
+  return `${beat(ev.o)} ${ev.grace ? "grace " : ""}${pitchOf(ev.notes, facts)}${ev.grace ? "" : " " + (el ? valueOf(el, ev.d) : "")}${cue}${words ? " " + words : ""}`;
+}
+// A chord's names low to high (← tied from the note before, → tied to the next): "[F4 A4→]".
+function pitchOf(notes, facts, ties = true) {
+  const names = notes
+    .map((n) => ({ n, f: facts.get(n.id) }))
+    .sort((a, b) => (a.f?.midi ?? 0) - (b.f?.midi ?? 0))
+    .map(({ n, f }) => (ties && n.tieStop ? "←" : "") + (f ? fullName(f) : "?") + (ties && n.tieStart ? "→" : ""));
+  return names.length > 1 ? `[${names.join(" ")}]` : names[0];
+}
 
-export const TEXT_LEGEND = "Each bar: its number in the MusicXML, then one line per part / staff (/ voice): @beat (quarter notes from the bar's start, 1 = the downbeat), the note with its octave (C4 = middle C; a transposing part at concert pitch; [ ] = a chord, low to high), its written value, → = tied to the next note, ← = tied from the one before, then its lyric syllable in quotes. Chords: Resonate's chord names for what the piano part sounds.";
+// --- a highlight --------------------------------------------------------------------------------
+// span: { q0, end, ids? } → is a timeline element in it (ids: one chord picked — only those notes)
+const inSpan = (span) => {
+  if (span.ids) { const ids = new Set(span.ids); return (e) => ids.has(e.id); }
+  return (e) => e.q >= span.q0 - EPS && e.q < span.end - EPS;
+};
+// Where q is: { bar (its number), beat (quarters from the bar's start, 1 = the downbeat) }. As an
+// end (stop: true) a barline is the next bar's downbeat, the score's end its last bar's end.
+export function placeOf(T, q, number, stop = false) {
+  let mi = barAt(T, stop ? q - 1e-4 : q);
+  const b = T.bars[mi];
+  if (stop && mi + 1 < T.bars.length && Math.abs(b.q + b.len - q) < EPS) return { bar: number(mi + 1), beat: 1 };
+  return { bar: number(mi), beat: r3(q - b.q + 1) };
+}
+// What a highlight is, for an assistant: a stretch (what starts in [q0, end) on every staff the
+// view shows) or one chord on one staff (ids); its start and end (end: where it stops, not
+// included); its first and last notes — every staff / voice's chord at its earliest and latest
+// onset (pitched notes, not grace notes); how many notes are in it.
+export function spanInfo(doc, T, facts, { span, keep = () => true, number = (mi) => String(mi + 1) }) {
+  const els = noteEls(doc), parts = partInfo(doc), inside = inSpan(span);
+  const notes = T.els.filter((e) => keep(e) && inside(e) && !e.rest && !e.grace && e.midi != null);
+  // (how many voices each staff has in a bar: a voice is named where its staff has more than one)
+  const voices = new Map();
+  const bars = new Set(notes.map((e) => e.mi));
+  for (const e of T.els) if (bars.has(e.mi) && keep(e)) { const k = `${e.mi}|${e.part}|${e.staff}`; if (!voices.has(k)) voices.set(k, new Set()); voices.get(k).add(e.voice); }
+  const events = (q) => {
+    const by = new Map();
+    for (const e of notes) if (Math.abs(e.q - q) < EPS) { const k = `${e.part}|${e.staff}|${e.voice}`; if (!by.has(k)) by.set(k, []); by.get(k).push(e); }
+    const order = [...parts.keys()];
+    return [...by.values()].sort((a, b) => order.indexOf(a[0].part) - order.indexOf(b[0].part) || a[0].staff - b[0].staff || a[0].voice.localeCompare(b[0].voice, undefined, { numeric: true })).map((ns) => {
+      const e = ns[0], info = parts.get(e.part), el = els.get(e.id);
+      return {
+        notes: ns.map((n) => ({ n, m: facts.get(n.id)?.midi ?? 0 })).sort((a, b) => a.m - b.m).map(({ n }) => { const f = facts.get(n.id); return f ? fullName(f) : "?"; }),
+        part: e.part, part_name: info?.name ?? e.part, staff: e.staff, staff_name: staffLabel(info, e.staff), voice: e.voice,
+        bar: number(e.mi), beat: r3(e.o + 1), value: el ? valueOf(el, e.d) : null,
+        ...(voices.get(`${e.mi}|${e.part}|${e.staff}`)?.size > 1 ? { voices_on_staff: voices.get(`${e.mi}|${e.part}|${e.staff}`).size } : {}),
+      };
+    });
+  };
+  const qs = notes.map((e) => e.q);
+  const first = qs.length ? events(Math.min(...qs)) : [], last = qs.length ? events(Math.max(...qs)) : [];
+  const out = {
+    kind: span.ids ? "note" : "stretch",
+    start: placeOf(T, span.q0, number), end: placeOf(T, span.end, number, true), quarters: r3(span.end - span.q0),
+    bars: [number(barAt(T, span.q0)), number(barAt(T, span.end - 1e-4))],
+    first, last, notes: notes.length,
+  };
+  if (span.ids && first[0]) out.staff = first[0].staff_name;
+  if (span.end >= T.length - EPS) out.to_end_of_score = true;
+  return out;
+}
+// The highlight's first line in the text.
+function spanLine(s) {
+  const at = (p) => `bar ${p.bar} @${p.beat}`;
+  const who = (list) => list.map((x) => `${x.notes.length > 1 ? `[${x.notes.join(" ")}]` : x.notes[0]} (${x.staff_name}${x.voices_on_staff ? `, voice ${x.voice}` : ""})`).join(" · ");
+  if (s.kind === "note") {
+    if (!s.first.length) return `Highlighted: one note at ${at(s.start)}.`;
+    const one = s.notes === 1, value = [...new Set(s.first.map((x) => x.value).filter(Boolean))].join(" / ");
+    return `Highlighted: one ${one ? "note" : "chord"} only, on one staff — ${who(s.first)}${value ? `, ${value}` : ""}, at ${at(s.start)}; the rest of the bar below is context.`;
+  }
+  const end = s.to_end_of_score ? "to the end of the score" : s.end.beat === 1 ? `to the end of bar ${s.bars[1]}` : `up to ${at(s.end)} (not included)`;
+  let t = `Highlighted: from ${at(s.start)} ${end} — ${s.quarters} quarter${s.quarters === 1 ? "" : "s"}, the notes starting in it on every staff shown (${s.notes} note${s.notes === 1 ? "" : "s"}).`;
+  if (s.first.length) t += ` First: ${who(s.first)} at ${at({ bar: s.first[0].bar, beat: s.first[0].beat })}.`;
+  if (s.last.length) t += ` Last: ${who(s.last)} at ${at({ bar: s.last[0].bar, beat: s.last[0].beat })}.`;
+  return t;
+}
+// A bar's own share of the highlight, after its heading: "; highlighted from @2 up to @4" (a part
+// of it), "; highlighted: @2, Piano, right hand only" (one chord); nothing when it's all in.
+function barScope(span, bar) {
+  const b0 = bar.q, b1 = bar.q + bar.len;
+  if (span.ids) return "";
+  const from = span.q0 > b0 + EPS && span.q0 < b1 - EPS, to = span.end > b0 + EPS && span.end < b1 - EPS;
+  if (!from && !to) return "";
+  return `; highlighted${from ? ` from ${beat(span.q0 - b0)}` : ""}${to ? ` up to ${beat(span.end - b0)}` : ""}`;
+}
+
+export const TEXT_LEGEND = "Each bar: its number in the MusicXML, then one line per part / staff (/ voice): @beat (quarter notes from the bar's start, 1 = the downbeat), the note with its octave (C4 = middle C; a transposing part at concert pitch; [ ] = a chord, low to high), its written value, → = tied to the next note, ← = tied from the one before, then its lyric syllable in quotes. Chords: Resonate's chord names for what the piano part sounds. The first line names the highlight exactly — a stretch from bar @beat up to bar @beat (not included), or one note / chord on one staff (a double-tap on it); each staff line then lists only the highlighted notes, and \"outside the highlight:\" the rest of that bar, for context (\"still sounding\" = started before the highlight and held into it).";
 
 // The MusicXML of measures [from, to] (indices within each part, 0-based): the header (part list
 // and all) as it is, each part with only those measures, and — before them, as a comment — the

@@ -81,6 +81,7 @@
       .stepper button { padding: 0.2rem 0.5rem; min-width: 1.9rem; }
       .stepper .note { min-width: 2.9rem; text-align: center; font-weight: 600; text-decoration: underline dotted rgba(255,255,255,0.35); text-underline-offset: 3px; cursor: pointer; background: none; border: 0; padding: 0.2rem 0; }
       .to { opacity: 0.5; margin: 0 0.15rem; }
+      .dev { font: inherit; color: inherit; background: none; border: 0; padding: 0.35rem 0; font-weight: 600; text-decoration: underline dotted rgba(255,255,255,0.35); text-underline-offset: 3px; }
       .presets button { font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius: 999px; }
       #msg { font-size: 0.82rem; color: #4ade80; min-height: 1.1em; }
       #msg[data-kind="error"] { color: #ff8a9a; }
@@ -175,7 +176,7 @@
 
       <section class="card" id="vol-card" hidden>
         <h2>Volume</h2>
-        <p id="vol-text"></p>
+        <p id="vol-text"><button id="device-name" class="dev" type="button" title="Rename this device"></button> · <span id="vol-facts"></span></p>
         <div class="row">
           <button id="vol-btn" type="button">Calibrate volume</button>
         </div>

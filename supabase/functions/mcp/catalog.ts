@@ -9,10 +9,11 @@
 // Rules: never remove or rename an entry or a parameter (old chats and old snapshots still send
 // them); add, then bump VERSION and add a line to CHANGES. No imports: node can test this file.
 
-export const VERSION = "2026-11-21";
+export const VERSION = "2026-11-22";
 export const CHANGES: { version: string; note: string }[] = [
   { version: "2026-11-20", note: "get_capabilities and read_resonate; control_resonate takes any action listed by get_capabilities, its parameters as fields or inside args." },
   { version: "2026-11-21", note: "The device switch is the AI button at the top of Resonate (it was 📡 Remote), shown once an assistant has connected; answers and the playbook name it." },
+  { version: "2026-11-22", note: "Highlights at note / beat resolution: get_score_view's highlight names its exact span (start and end as bar + beat, first and last notes; a stretch, or one note / chord the user double-tapped) and lists only its notes, the rest of those bars as context; score_select takes from_beat / to_beat." },
 ];
 
 export type Param = {
@@ -47,7 +48,10 @@ export const ACTIONS = {
   score_open: { about: "Open a song on the Score (sheet music) — not for coaching.", score: true, params: { song: { ...song, required: true }, view: { type: "string", values: VIEWS } } },
   score_view: { about: "Change the Score's view.", score: true, params: { view: { type: "string", values: VIEWS } } },
   score_go: { about: "Turn the Score to a measure.", score: true, params: { measure: bar } },
-  score_select: { about: "Highlight bars on the Score: get_score_view then has their notes and pictures.", score: true, params: { from_measure: bar, to_measure: bar } },
+  score_select: { about: "Highlight bars on the Score — or, with from_beat / to_beat, a span within them: get_score_view then has its notes and pictures.", score: true,
+    params: { from_measure: bar, to_measure: bar,
+      from_beat: { type: "number", min: 1, max: 64, about: "where in from_measure it starts: beats in quarter notes from the bar's start, 1 = the downbeat (2.5 = the 'and' of 2), as get_score_view names them; default 1" },
+      to_beat: { type: "number", min: 1, max: 65, about: "where in to_measure it stops, not included (to_measure's end when left out)" } } },
   score_play: { about: "Play the Score's piano part: the bars given, else the highlight, else from the page shown; loop = round after round.", score: true, starts: true,
     params: { from_measure: bar, to_measure: bar, loop: { type: "boolean" }, speed: { type: "number", min: 50, max: 100, about: "percent" } } },
   score_stop: { about: "Stop the Score's ▶.", score: true },

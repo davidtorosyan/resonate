@@ -85,6 +85,7 @@ done
 run tracejs 120 node tracejs.mjs                # omr/trace.js = tracecheck's mapping; OCR word placement
 run importcontract 60 node importcontract.mjs   # every recorded real import run against readerstate's contract
 run synclib 120 node synclib.mjs                # the real sync.js against a fake cloud (offline)
+run syncvol 60 node syncvol.mjs                 # a profile's volume calibration stays per device (E5), its name / range synced
 run mcpcatalog 60 node --experimental-strip-types --no-warnings mcpcatalog.mjs # the frozen MCP tool list
 run vcheck 60 node vcheck.mjs                   # ?v=<badge> on every local module address; every page's badge
 run accuracy-constants 30 node accuracy/constcheck.mjs # the native runs' -constant s = the web worker's
@@ -100,6 +101,7 @@ if [ "$TIER" = main ]; then
   run guided 1200 node guided.cjs
   run guided:bleed 1200 env BLEED=1 node guided.cjs
   run voicetest 600 node voicetest.cjs            # Voice: the range test with a simulated singer, no note over a live mic
+  run quietvoice 600 env SHOTS=0 node quietvoice.cjs # a distant singer (−25 dB, room noise) calibrates and is heard; noise alone never (E4)
   run sleep 900 env SHOTS=0 node sleep.cjs        # every page asleep when hidden: contexts, sources, tracks, the session
 
   # ---- Play (the owner's converted scores only with PLAY_SCORES) ------------------------------------------

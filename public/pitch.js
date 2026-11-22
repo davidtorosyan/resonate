@@ -1,6 +1,8 @@
 // Mic + YIN pitch detection: the tuner's (shell/tuner.js), Sing's, Record's and Voice's.
+import { activeProfile } from "./profiles.js?v=96";
 
-export const MIN_RMS = 0.012;    // loudness gate
+export const MIN_RMS = 0.012;    // loudness gate (−38 dB) until this device's volume is calibrated
+export const GATE_DB = 6;        // a calibrated gate: this far above the room's noise, or under your quietest hold when that's higher
 export const MIN_CLARITY = 0.8;  // YIN clarity gate
 export const MIN_FREQ = 50;
 export const MAX_FREQ = 1100;
@@ -8,10 +10,21 @@ export const FFT_SIZE = 4096;
 export const TAIL_SAMPLES = 1024; // voicing also needs the newest ~21 ms to be loud, so short gaps register
 export const ANALYSIS_LAG = 0.05; // a frame describes the trailing ~85 ms window; its pitch lags ~50 ms
 
+// The loudness gate (dB) a calibration on this device sets (Voice: the room's noise, then your quietest
+// hold): above the room, under your quietest — never stricter than MIN_RMS. A distant voice (an iPad on a
+// music stand) can sit 20–30 dB under MIN_RMS; the room's noise is lower still.
+export const gateDb = (room, quiet) => Math.min(20 * Math.log10(MIN_RMS), Math.max(room + GATE_DB, quiet - GATE_DB));
+// This device's gate (rms): the active voice profile's calibration (vol is never synced: each
+// device keeps its own), else MIN_RMS.
+export function micGate(vol = activeProfile()?.vol) {
+  return Number.isFinite(vol?.gate) ? Math.min(MIN_RMS, 10 ** (vol.gate / 20)) : MIN_RMS;
+}
+
 // Open the mic with processing off (echo cancel / noise suppression / AGC
 // distort pitch and level). Returns the pieces the caller needs. `ac`: an AudioContext
-// to use (made earlier, in a tap, so it can run without one now) — left open by close().
-export async function openMic({ ac: given = null } = {}) {
+// to use (made earlier, in a tap, so it can run without one now) — left open by close(). `gate`: the
+// reader's loudness gate (rms; default this device's, micGate).
+export async function openMic({ ac: given = null, gate } = {}) {
   try { if (navigator.audioSession) navigator.audioSession.type = "play-and-record"; } catch {}
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
@@ -23,7 +36,7 @@ export async function openMic({ ac: given = null } = {}) {
   analyser.fftSize = FFT_SIZE;
   analyser.smoothingTimeConstant = 0;
   source.connect(analyser);
-  const read = createReader(analyser, ac.sampleRate);
+  const read = createReader(analyser, ac.sampleRate, gate);
 
   async function close() {
     stream.getTracks().forEach((t) => t.stop());
@@ -35,11 +48,14 @@ export async function openMic({ ac: given = null } = {}) {
 }
 
 // An AnalyserNode (fftSize FFT_SIZE) fed by a mic → read() the newest window:
-// { rms, db, midi | null }.
-export function createReader(analyser, sampleRate) {
+// { rms, db, midi | null }. A pitch needs the window and its newest TAIL_SAMPLES above read.gate
+// (rms; this device's gate unless given — Voice changes it during its calibration).
+export function createReader(analyser, sampleRate, gate = micGate()) {
   const floatBuf = new Float32Array(FFT_SIZE);
   const detect = createYin(sampleRate, FFT_SIZE);
-  return function read() {
+  read.gate = gate;
+  return read;
+  function read() {
     analyser.getFloatTimeDomainData(floatBuf);
     let sumSq = 0;
     for (let i = 0; i < floatBuf.length; i++) sumSq += floatBuf[i] * floatBuf[i];
@@ -48,14 +64,14 @@ export function createReader(analyser, sampleRate) {
     for (let i = floatBuf.length - TAIL_SAMPLES; i < floatBuf.length; i++) tailSq += floatBuf[i] * floatBuf[i];
     const tailRms = Math.sqrt(tailSq / TAIL_SAMPLES);
     let midi = null;
-    if (rms > MIN_RMS && tailRms > MIN_RMS) {
+    if (rms > read.gate && tailRms > read.gate) {
       const r = detect(floatBuf);
       if (r && r.clarity > MIN_CLARITY && r.freq >= MIN_FREQ && r.freq <= MAX_FREQ) {
         midi = 69 + 12 * Math.log2(r.freq / 440);
       }
     }
     return { rms, db: 20 * Math.log10(rms || 1e-6), midi };
-  };
+  }
 }
 
 // YIN (de Cheveigné & Kawahara, 2002), bounded to the vocal range.

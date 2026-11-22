@@ -1,12 +1,12 @@
 // The full tuner (home): the voice profile's range, a ±50¢ arc, the note, cents, level and the
 // waveform. Detection is the old Tuner's (app.js, gone in cleanup C phase 4: this is its port):
-// pitch.js's YIN with the same gates, and its locked-note logic — a long median for the cents, a short one that re-locks the shown note
+// pitch.js's YIN with the same gates (the loudness gate this device's calibration's, else MIN_RMS), and its locked-note logic — a long median for the cents, a short one that re-locks the shown note
 // after it stays > 50¢ off for 250 ms. Nothing opens the mic until Start.
 // Forms (REDESIGN §5): "full" (home, and the drop over a song), "strip" (a phone with a song open)
 // and "docked" (a tablet / desktop with a song open) — one DOM, laid out by data-form; the small
 // forms carry their own mic button (.tmic) and a state word: "parked · tap to listen" while a song
 // is open and the mic is off, "take" / "paused" while the song holds the sound (setHold).
-import { openMic, createYin, MIN_RMS, MIN_CLARITY, MIN_FREQ, MAX_FREQ, FFT_SIZE } from "../pitch.js?v=96";
+import { openMic, createYin, micGate, MIN_CLARITY, MIN_FREQ, MAX_FREQ, FFT_SIZE } from "../pitch.js?v=96";
 import { SHARPS } from "../music.js?v=96";
 import { activeProfile } from "../profiles.js?v=96";
 import { ic } from "./chrome.js?v=96";
@@ -32,8 +32,8 @@ export function mountTuner(root, { onState = () => {} } = {}) {
   let form = "full", hold = null;
   const ctx2d = el.scope.getContext("2d");
 
-  // --- the voice profile: range ribbon and volume calibration -------------------------------
-  let floor = VOL_FLOOR_DEFAULT, ceil = VOL_CEIL_DEFAULT, calibrated = false, range = null;
+  // --- the voice profile: range ribbon and volume calibration (this device's: its loudness gate too) ---
+  let floor = VOL_FLOOR_DEFAULT, ceil = VOL_CEIL_DEFAULT, calibrated = false, range = null, gate = micGate(null);
   function readProfile() {
     const prof = activeProfile();
     let cal = prof ? prof.vol : null;
@@ -41,6 +41,7 @@ export function mountTuner(root, { onState = () => {} } = {}) {
     calibrated = !!(cal && typeof cal.floor === "number" && typeof cal.ceiling === "number" && cal.ceiling > cal.floor);
     floor = calibrated ? cal.floor : VOL_FLOOR_DEFAULT;
     ceil = calibrated ? cal.ceiling : VOL_CEIL_DEFAULT;
+    gate = micGate(cal);
     el.levelN.hidden = !calibrated;
     range = prof?.range && Number.isFinite(prof.range.low) && Number.isFinite(prof.range.high) ? { ...prof.range, name: prof.name } : null;
     drawRibbon();
@@ -231,7 +232,7 @@ export function mountTuner(root, { onState = () => {} } = {}) {
     let sum = 0, peak = 0;
     for (let i = 0; i < buf.length; i++) { const v = buf[i]; sum += v * v; const a = v < 0 ? -v : v; if (a > peak) peak = a; }
     const rms = Math.sqrt(sum / buf.length), db = 20 * Math.log10(rms || 1e-6), now = performance.now();
-    if (rms > MIN_RMS) {
+    if (rms > gate) {
       vols.push({ time: now, db });
       const r = yin(buf);
       if (r && r.clarity > MIN_CLARITY && r.freq >= MIN_FREQ && r.freq <= MAX_FREQ) {
@@ -329,7 +330,7 @@ export function mountTuner(root, { onState = () => {} } = {}) {
     get state() { return state; },
     setForm(f) { form = f; root.dataset.form = f; showMic(); },
     setHold(h) { if ((h || null) !== hold) { hold = h || null; showMic(); } },
-    debug: () => ({ state, note: shown.midi ?? null, cents: shown.cents ?? null, frames: peaks.length, calibrated, range: !!range,
+    debug: () => ({ state, note: shown.midi ?? null, cents: shown.cents ?? null, frames: peaks.length, calibrated, range: !!range, gate: +(20 * Math.log10(gate)).toFixed(1),
       form, hold, word: el.word.textContent, live: !!mic?.stream?.getAudioTracks().some((t) => t.readyState === "live") }),
   };
 }

@@ -1,14 +1,16 @@
-// Voice profiles: create / rename / delete them, calibrate volume (like the Tuner's
-// gear, in two guided steps), and measure the vocal range: the piano plays a note and
+// Voice profiles: create / rename / delete them, calibrate volume on this device (the room's
+// noise, then two guided holds — it sets this device's loudness gate, pitch.js micGate; the volume
+// is the mic's and never syncs: each device keeps its own), and measure the vocal range: the piano plays a note and
 // you sing it back and hold it. From a note you pick as comfortable the test walks down
 // by whole tones until you can't hold one (two tries), checks the semitone in between,
 // then does the same going up. The lowest and highest notes held are your limits; the
 // comfortable range starts a few notes inside them and can be adjusted by hand.
 
-import { openMic, createReader, FFT_SIZE } from "./pitch.js?v=96";
+import { openMic, createReader, gateDb, micGate, FFT_SIZE, GATE_DB } from "./pitch.js?v=96";
 import { loadPiano, holdPiano, ownContext, sleepAudio } from "./piano.js?v=96";
 import { noteName, median } from "./music.js?v=96";
 import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=96";
+import { device, renameDevice, ready } from "./assist.js?v=96";
 
 // (In the one-page shell this page is mounted in a sheet: its own elements first — the Score has a
 // #strip too. On voice.html resonateVoice isn't set: the document.)
@@ -33,7 +35,8 @@ const ON_CENTS = 50;
 const SMOOTH_MS = 120;     // pitch = median of the last voiced frames
 const ANCHOR_MS = 1200;    // a steady comfortable note this long starts the test
 const PAUSE_MS = 700;      // ✓ / ✗ shown between notes
-const VOL_HOLD_MS = 2000, VOL_MIN_DB = -50; // as the old Tuner's calibration (its gear)
+const VOL_HOLD_MS = 2000, VOL_MIN_DB = -50; // a hold counts frames with a pitch above the room + GATE_DB, at most this (the old Tuner's)
+const VOL_ROOM_MS = 1500;  // the room's noise first (stay quiet): its median
 
 // Typical ranges (limits, comfortable), for starting without a test.
 const PRESETS = {
@@ -74,11 +77,15 @@ function render() {
   renderVol(prof);
 }
 
+// This device's calibration (vol lives on this device only), under the device's own name.
 function renderVol(prof) {
-  $("vol-text").textContent = prof.vol
-    ? `Quiet ${Math.round(prof.vol.floor)} dB · loud ${Math.round(prof.vol.ceiling)} dB`
-    : "Not calibrated";
-  $("vol-btn").textContent = prof.vol ? "Calibrate again" : "Calibrate volume";
+  const v = prof.vol, d = device(), name = $("device-name");
+  name.textContent = d.name;
+  name.setAttribute("aria-label", `${d.name} — rename this device`);
+  $("vol-facts").textContent = v
+    ? `${Number.isFinite(v.room) ? `room ${Math.round(v.room)} · ` : ""}quiet ${Math.round(v.floor)} · loud ${Math.round(v.ceiling)} dB`
+    : "not calibrated";
+  $("vol-btn").textContent = v ? "Calibrate again" : "Calibrate volume";
 }
 
 function renderRange(prof) {
@@ -199,6 +206,17 @@ $("new-btn").addEventListener("click", () => {
   render();
   showMsg("");
 });
+// The device's name (resonate.device): here also signed out; signed in, the account's device list too
+// (the heartbeat sends it as well — assist.js).
+$("device-name").addEventListener("click", async () => {
+  const n = prompt("Name this device:", device().name);
+  if (n === null) return;
+  const d = renameDevice(n);
+  const prof = current();
+  if (prof) renderVol(prof);
+  const c = await ready();
+  if (c) c.sb.from("devices").update({ name: d.name }).eq("id", d.id).then(() => {}, () => {});
+});
 $("rename-btn").addEventListener("click", () => {
   const prof = current();
   const name = prompt("Rename profile:", prof.name);
@@ -294,7 +312,7 @@ async function startRun(kind) {
     analyser.fftSize = FFT_SIZE;
     analyser.smoothingTimeConstant = 0;
     const r = { kind, playCtx, micCtx, analyser, read: createReader(analyser, micCtx.sampleRate), stream: null, source: null,
-      piano: null, note: null, seq: 0, raf: 0, lastT: 0, recent: [], phase: "starting", phaseT: performance.now() };
+      piano: null, note: null, seq: 0, raf: 0, lastT: 0, recent: [], phase: "starting", phaseT: performance.now(), calibrated: Number.isFinite(current()?.vol?.gate) }; // (a gate: calibrated since E4)
     run = r;
     const fail = async (text) => {
       if (run === r) await stopRun();
@@ -316,7 +334,7 @@ async function startRun(kind) {
   tLadder.textContent = "";
   tHint.textContent = "";
   if (kind === "range") beginAnchor();
-  else beginVol("quiet");
+  else beginVol("room");
   run.raf = requestAnimationFrame(loop);
 }
 
@@ -382,6 +400,8 @@ function rangeFrame(fr, now, dt) {
     run.window.push({ t: now, m: sm });
     while (run.window[0].t < now - ANCHOR_MS) run.window.shift();
     tYou.textContent = sm === null ? "" : `you: ${noteName(Math.round(sm))}`;
+    if (sm !== null) run.heardT = now;
+    tHint.textContent = !run.calibrated && now - (run.heardT || run.phaseT) > 5000 ? "Not hearing you? Calibrate volume first" : "";
     const voiced = run.window.filter((f) => f.m !== null).map((f) => f.m).sort((a, b) => a - b);
     const mid = voiced.length ? median(voiced) : null;
     const steady = mid === null ? 0 : run.window.filter((f) => f.m !== null && Math.abs(f.m - mid) <= 0.5).length;
@@ -528,18 +548,25 @@ function addLadder(m, ok) {
 
 // --- Volume -------------------------------------------------------------------
 
+// The room (silence: its noise), then the two holds. A hold counts only frames with a pitch above the
+// room's noise + GATE_DB (at most VOL_MIN_DB): a fan, traffic or hiss never fills the bar, a distant
+// voice (an iPad on a music stand) does.
+const VOL_STEPS = { room: ["1", "Room", "Silence", "A moment of quiet."],
+  quiet: ["2", "Quiet", "Your quietest", "Soft but steady, until the bar fills."],
+  loud: ["3", "Loud", "Your loudest", "Full voice, no shouting, until the bar fills."] };
 function beginVol(which) {
   setPhase(which);
   run.activeMs = 0;
   run.samples = [];
+  run.heardT = 0;
   tReplay.hidden = tLimit.hidden = true;
-  tTarget.textContent = which === "quiet" ? "Quiet" : "Loud";
+  const [n, target, title, text] = VOL_STEPS[which];
+  tTarget.textContent = target;
   tTarget.dataset.state = "";
-  tStep.textContent = `Volume · ${which === "quiet" ? "1" : "2"} of 2`;
-  tTitle.textContent = which === "quiet" ? "Your quietest" : "Your loudest";
-  tText.textContent = which === "quiet"
-    ? "Soft but steady, until the bar fills."
-    : "Full voice, no shouting, until the bar fills.";
+  tStep.textContent = `Volume · ${n} of 3`;
+  tTitle.textContent = title;
+  tText.textContent = text;
+  tHint.textContent = "";
   meter(0);
 }
 
@@ -554,10 +581,20 @@ function volFrame(fr, now, dt) {
     if (now - run.phaseT >= PAUSE_MS * 2) beginVol("loud");
     return;
   }
-  if (fr.db > VOL_MIN_DB) {
+  if (run.phase === "room") {
+    if (now - run.phaseT > 300) run.samples.push(fr.db); // (a mic's first moments can be silent)
+    meter((now - run.phaseT) / VOL_ROOM_MS);
+    if (now - run.phaseT < VOL_ROOM_MS || !run.samples.length) return;
+    run.room = pct(run.samples, 0.5);
+    run.read.gate = 10 ** (Math.min(VOL_MIN_DB, run.room + GATE_DB) / 20); // (what a hold counts)
+    return beginVol("quiet");
+  }
+  if (fr.midi !== null) {
     run.activeMs += dt;
     run.samples.push(fr.db);
+    run.heardT = now;
   }
+  tHint.textContent = now - (run.heardT || run.phaseT) > 3000 ? "A little louder" : "";
   meter(run.activeMs / VOL_HOLD_MS);
   if (run.activeMs < VOL_HOLD_MS) return;
   if (run.phase === "quiet") {
@@ -569,10 +606,10 @@ function volFrame(fr, now, dt) {
   const floor = Math.min(run.quiet, pct(run.samples, 0.9));
   let ceiling = Math.max(run.quiet, pct(run.samples, 0.9));
   if (ceiling - floor < 6) ceiling = floor + 6; // keep a usable span (as the Tuner does)
-  const prof = current();
+  const room = +run.room.toFixed(1), prof = current();
   stopRun();
   if (!prof) return;
-  updateProfile(prof.id, { vol: { floor, ceiling } });
+  updateProfile(prof.id, { vol: { floor, ceiling, room, gate: +gateDb(room, floor).toFixed(1) } });
   render();
   showMsg("✓ Volume saved");
 }
@@ -630,4 +667,5 @@ window.resonateVoice = Object.assign(window.resonateVoice || {}, {
   render: () => { if (!run) render(); },
   state: () => ({ run: run?.kind || null, phase: run?.phase || null }),
 });
-window.resonateDebug = () => ({ run: run && { kind: run.kind, phase: run.phase, target: run.target, dir: run.dir, best: run.best, anchor: run.anchor, mic: !!(run.stream || run.mic) }, profiles: loadProfiles() });
+window.resonateDebug = () => ({ run: run && { kind: run.kind, phase: run.phase, target: run.target, dir: run.dir, best: run.best, anchor: run.anchor, mic: !!(run.stream || run.mic),
+  gate: +(20 * Math.log10(run.read.gate)).toFixed(1), room: run.room ?? null, activeMs: run.activeMs ?? null }, profiles: loadProfiles(), device: device(), gate: +(20 * Math.log10(micGate())).toFixed(1) });

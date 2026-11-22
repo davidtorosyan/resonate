@@ -470,7 +470,7 @@ const dataUrl = (u: unknown): { data: string; mimeType: string } | null => {
   const m = typeof u === "string" ? /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/s.exec(u) : null;
   return m ? { mimeType: m[1], data: m[2] } : null;
 };
-const HOW_TO_HIGHLIGHT = "To highlight bars the user drags across the notes on the Score; or call control_resonate score_select {from_measure, to_measure}.";
+const HOW_TO_HIGHLIGHT = "To highlight, the user drags across the notes on the Score (a double-tap on a note highlights just that note or chord); or call control_resonate score_select {from_measure, to_measure, from_beat?, to_beat?}.";
 export async function getScoreView(sb: Sb) {
   const [dev, fc] = await Promise.all([
     sb.from("devices").select("id,name,remote,seen_at,state").order("seen_at", { ascending: false }),
@@ -489,14 +489,19 @@ export async function getScoreView(sb: Sb) {
   const on = devices.find((x) => x.device === f.device_id);
   const sel = (on?.score as Json)?.selection as Json | undefined;
   const ms = (d.measures as string[]) || [];
-  const still = !!(sel && (on?.score as Json)?.song && ((on!.score as Json).song as Json).id === f.song_id && sel.from === ms[0] && sel.to === ms[ms.length - 1]);
+  const span = (d.span as Json | undefined) ?? null;
+  // (the same bars — and, from a page that names it (v2), the same span)
+  const at = (p: unknown) => JSON.stringify(p ?? null);
+  const sameSpan = !span || !sel?.start || (at(sel.start) === at(span.start) && at(sel.end) === at(span.end) && (sel.kind ?? null) === (span.kind ?? null));
+  const still = !!(sel && (on?.score as Json)?.song && ((on!.score as Json).song as Json).id === f.song_id && sel.from === ms[0] && sel.to === ms[ms.length - 1] && sameSpan);
   const imgs: Content[] = [];
   const si = dataUrl(f.score_img), pi = dataUrl(f.pdf_img);
   head.highlight = {
     device: on?.name ?? f.device_id, song: f.song_id, title: d.title, view: d.view_name ?? d.view, measures: ms.length > 1 ? `${ms[0]}–${ms[ms.length - 1]}` : ms[0],
     when: ago(String(f.updated_at)), still_highlighted: still,
+    ...(span ? { span, bars_are: "context: the whole bars the highlight is in" } : {}),
     pdf: d.pdf ?? null,
-    pictures: [si ? "1: the bars as Resonate draws them (note names on the heads as the user sees them; the highlight band in blue)" : null, pi ? `${si ? 2 : 1}: the same bars on the original PDF (page ${(d.pdf as Json)?.page ?? "?"}), red border` : null].filter(Boolean),
+    pictures: [si ? `1: the bars as Resonate draws them (note names on the heads as the user sees them; the highlight band in blue${span ? " — exactly the highlight, the rest of the bars is context" : ""})` : null, pi ? `${si ? 2 : 1}: the same bars on the original PDF (page ${(d.pdf as Json)?.page ?? "?"}), red border${span ? " round the whole bars (the PDF map knows bars, not notes)" : ""}` : null].filter(Boolean),
     ...(d.xml_note ? { xml_note: d.xml_note } : {}),
   };
   head.how = still ? null : HOW_TO_HIGHLIGHT;
