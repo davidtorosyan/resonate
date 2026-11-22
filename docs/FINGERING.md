@@ -1,6 +1,6 @@
 # Piano fingering (E7): design
 
-A draft (2026-11-22, revised after one review), not built. An "As built" section will win where the build differs.
+A draft (2026-11-22, revised after one review). Stage 1, the algorithm (`public/finger.js`), is built: its "as built" section at the end wins where it differs.
 
 ## 1. What the owner asked for
 
@@ -209,3 +209,31 @@ One review (1 must-fix, 13 should-fix, 13 nits), all applied but:
 - Nit 23, "small and medium are pydactyl's own": Balliauw's preprint prints all three hands (Tables 1, 9, 10; pydactyl's match), so they're cited as the paper's.
 - #12, "prep in the Worker": `prepare` needs DOMParser, which a Worker lacks; only finger.js moves there.
 - #14, Q3 in v1: left to the owner; printed fingers are pinned already, so it is only a UI step.
+
+## Fingering algorithm (E7 stage 1) — as built
+
+`public/finger.js` (pure, `ALG` 1), `public/finger-worker.js` (`{ id, items, hand }` → `{ id, result }` / `{ id, error }`), `tools/fingercases.mjs` (fast tier). No ac-kit: Stage B is ours. Default hand "sb".
+
+**API.** `fingerNotes(items, { hand, debug })` → §3's output exactly (`debug: true` adds the stages' results). Also `assignHands(items, { hand })` (Stage A), `fingerHand(A, "r" | "l")` (Stage B: fingers + the path of sounding keys), `framesOf(path, side)`, `keyX`, `SPANS` (Tables 1, 9, 10, checked against the preprint), `COST` (every weight, one place).
+
+**Items** (stage 2 builds them from `track()` items + `S.Tid`): `{ id, q, t, d, midi, staff, hand: "r" | "l" | null, tied, grace, pin: 0–5, arp }`. `d` = `hold` for a struck note (ties joined), its own `dur` for a unison's twin. Bad items are skipped, never thrown on.
+
+**Where it differs from §3, and why:**
+
+- **The hand jump:** where the hand can lift, the cheaper of the distance rules (1, 2, 13) and the jump. Replacing them outright made a thumb walking C-D-E-F cheaper than a thumb-under in a scale; keeping rule 2 under the jump makes 5–5 cost 28 more, not "fine".
+- **Stage A:** a hand's centre is the middle of its struck keys. Held keys can be let go only from the bottom or the top, and only where that lowers the spread (letting go later costs the same). It stays exact over those moves; at most 27 states at once in the tests (a cap of 256 for one-staff pianos).
+- **Stage B:** a held key can be let go beyond the fewest needed: one more where keeping it costs more than `LET`. Kept keys that end before the hand's next onset don't count in a state's identity (an exact merge). Rule 14 doubles rules 1 and 2, not 13 (Balliauw). Finger 4 and the thumb on black are counted per key, not averaged.
+- **`w`:** from the hand's inner side (RH lowest, LH highest), after letting go the held keys in the way. The octave-error case flags G3 under C5 E5.
+- **Pins:** ignored on a moved key (printed for the other hand), and dropped at an onset they leave no state for.
+- **Frames:** free fingers are placed at their offsets between the played ones and snapped to the nearest white key. On a tie, those above go up and the thumb tucks under (3 on E♭ → C D E♭ F G).
+- **R6, large hand:** G3 + B4 is a tenth, the large hand's practical span (18), so D2 leaves it in the RH. Small and medium move it (all three holds); G3 + D5 moves for every size.
+
+**Known limits** (synthetic tests; the survey on real songs decides any tuning, with an `ALG` bump):
+
+- An octave leap into a figure (LH C2 | C3 E3 G3 E3) comes out 5 | 1 2 1 3 at 13, against 5 | 5 3 1 3 at 14. The beginner's ×2 makes a slow octave jump 14; a crossing costs about 6. It is printed as info, not judged.
+- Medium and large hands: 3–1 spans a fifth as relaxed as 5–1, so Alberti is 3 1 2 1 (a tie, the lower state wins).
+- The imaginary E–F key makes E♭–G 5 units, so a small hand's C E♭ G is 1 2 5.
+
+**Timings** (node 22, 4 cores, a regression run alongside): 3000 notes (1588 onsets) take 27–40 ms warm (median of 5) and 47–75 ms on the first run. The suite takes ~1 s.
+
+**Golden:** `tools/fixtures/finger/golden.json` holds 85 hashes: every case × 3 hand sizes, plus the 3000-note piece. A changed output under the same `ALG` fails; `--update` refuses until `ALG` is bumped.
