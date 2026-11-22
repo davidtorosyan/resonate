@@ -91,7 +91,7 @@ async function showDevices() {
     name.textContent = d.name || "Device";
     if (d.remote) { // (the AI button's mark, lit: this device answers the assistant)
       const on = Object.assign(document.createElement("span"), { className: "on", title: "An assistant can control this device" });
-      on.innerHTML = `${AI_MARK}<span>on</span>`;
+      on.innerHTML = `${AI_MARK}<span class="vh">AI button </span><span>on</span>`; // (the mark is aria-hidden: its name for a screen reader)
       name.append(" ", on);
     }
     const sub = `${d.id === me ? "this device · " : ""}${ago(d.seen_at)}${d.state?.song?.title ? ` · ${d.state.song.title}` : ""}`;

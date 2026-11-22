@@ -710,6 +710,7 @@ function placed(L) {
   if (S.v?.pitched && !/<g [^>]*class="staff[" ]/.test(svgOf(S.page))) return viewFailed();
   showMsg("");
   S.ready = true;
+  S.byDefault = false; // (shown: a later relayout's failure is the song's again — no swap to Both under ▶)
   S.failed = null;
   handsSel.disabled = pdf.on;
   show();

@@ -502,9 +502,10 @@ async function remoteGate(sz) {
     const t = document.createElement('template');
     t.innerHTML = m.AI_MARK || '';
     const svg = box?.querySelector('.on svg');
-    return { text: box?.textContent || '', on: box?.querySelector('.on')?.textContent.trim(), mark: !!m.AI_MARK && !!svg && t.content.firstElementChild.isEqualNode(svg), note: document.querySelector('#place-assistants #v-devices .note')?.textContent || '' };
+    const vh = box?.querySelector('.on .vh')?.getBoundingClientRect();
+    return { text: box?.textContent || '', on: box?.querySelector('.on')?.textContent.trim(), hidden: !!vh && vh.width <= 1 && vh.height <= 1, mark: !!m.AI_MARK && !!svg && t.content.firstElementChild.isEqualNode(svg), note: document.querySelector('#place-assistants #v-devices .note')?.textContent || '' };
   });
-  ok(list.mark && list.on === 'on' && !/📡/.test(list.text + list.note) && /AI button/.test(list.note), `${sz.n} gate: Assistants — the device on, marked with the AI mark; its note names the AI button (${JSON.stringify(list)})`);
+  ok(list.mark && list.on === 'AI button on' && list.hidden && !/📡/.test(list.text + list.note) && /AI button/.test(list.note), `${sz.n} gate: Assistants — the device on, marked with the AI mark, read as "AI button on" (the name visually hidden); its note names the AI button (${JSON.stringify(list)})`);
   await p.goBack();
   await gone(p, 'assistants');
   // Turned off: no assistant, so the button goes (and nothing is remembered).
