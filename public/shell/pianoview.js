@@ -16,10 +16,12 @@
 // LIFT_PLAY, or not at all LATE ms after the lift. Before anything sounds the tuner parks (iOS plays
 // quietly while a page has the mic open) and Sing stops — its 🎤 Pitch mic closed until the keys
 // are quiet (one sound at a time); a tuner that was
-// listening listens again REOPEN ms after the last key lifts. Silent during a Sing take (quiet()).
+// listening listens again REOPEN ms after the last key lifts, at MIN_RMS until the keys' sound is gone
+// (tuner.settle). Silent during a Sing take (quiet()).
 // Hidden (the module, the page): every note cut, the context asleep.
 import { mountKeyboard } from "../keyboard.js?v=96";
 import { loadPiano, pianoNow, holdPiano, primeHold, pianoBus, keepAlive, ownContext, sleepAudio } from "../piano.js?v=96";
+import { soundGone } from "../pitch.js?v=96";
 import { SHARPS } from "../music.js?v=96";
 
 const MIN_PRESS = 0.25; // s: a quick tap still sounds this long
@@ -34,7 +36,7 @@ const HAND = { rh: "#a64fff", lh: "#4f7cff" };
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
 const setSession = (type) => { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {} };
 
-// tuner: { state, park(), start() }; beforeSound(): Sing stops (the tuner is parked here);
+// tuner: { state, park(), start(), settle(until) }; beforeSound(): Sing stops (the tuner is parked here);
 // quiet(): true while Sing records; busy(): a module sounds (the tuner isn't reopened then);
 // score: { press(midi, e) → a strike | null (Sing records) | undefined (play.js not loaded yet: this
 // keyboard's own path), lift(strike), changed() (its keys and chips drawn again) } — the Score's.
@@ -158,8 +160,10 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
     log.push({ midi: k.midi, how: k.lift ? "lift" : "hold", lag: Math.round((performance.now() - k.ts) * 10) / 10 });
     if (log.length > 40) log.shift();
     keepAwake(a);
-    if (k.lift) { k.h.release(k.t0 + LIFT_PLAY); k.end = k.t0 + LIFT_PLAY; setTimeout(() => sounding.delete(k), (LIFT_PLAY + 1) * 1000); }
+    if (k.lift) { k.h.release(k.t0 + LIFT_PLAY); k.end = k.t0 + LIFT_PLAY; heard(k); setTimeout(() => sounding.delete(k), (LIFT_PLAY + 1) * 1000); }
   }
+  // (released: the tuner hears its tail until it's gone — at MIN_RMS, not this device's lower gate)
+  function heard(k) { try { tuner.settle?.(soundGone(k.a, k.h.stopsAt())); } catch {} }
   // (couldn't sound at the press: as soon as the context runs with the piano in)
   async function later(k) {
     const late = () => k.lift && performance.now() - k.lift > LATE;
@@ -186,7 +190,7 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
     if (tap && (!ac || ac.state !== "running")) wake(fresh(), "tap");
     clearTimeout(k.cap);
     k.lift = performance.now();
-    if (k.h) { const at = Math.max(k.a.currentTime, k.t0 + MIN_PRESS); k.h.release(at); k.end = at; k.dead = true; setTimeout(() => sounding.delete(k), 1500); }
+    if (k.h) { const at = Math.max(k.a.currentTime, k.t0 + MIN_PRESS); k.h.release(at); k.end = at; k.dead = true; heard(k); setTimeout(() => sounding.delete(k), 1500); }
     held.delete(k);
     lightSoon();
     if (held.size) return;
@@ -204,7 +208,7 @@ export function mountPiano(el, { tuner, beforeSound = () => {}, quiet = () => fa
     for (const k of sounding) {
       clearTimeout(k.cap);
       k.dead = true;
-      if (k.h && k.end > k.a.currentTime - 0.5) { try { k.h.release(k.a.currentTime, tc); } catch {} }
+      if (k.h && k.end > k.a.currentTime - 0.5) { try { k.h.release(k.a.currentTime, tc); heard(k); } catch {} }
     }
     held.clear();
     sounding.clear();

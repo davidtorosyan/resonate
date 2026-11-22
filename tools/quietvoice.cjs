@@ -10,7 +10,14 @@
 //   R  the range test hears the distant singer (and finds the range)
 //   S  a Sing take grades the distant singer's notes; the fan alone sings nothing
 //   D  this device's name is renamed from the Volume card, signed out (resonate.device)
-// (N, C, T, R, S, D fail on the build before E4 — there the fan calibrated; U and the noise checks pass on both.)
+//   P  the Piano's own note: its tail after a key lift isn't read by the tuner as sung (its own sound heard
+//      at MIN_RMS until it's gone); a distant singer after it is
+//   H  the range test: the reference note's tail isn't counted as the singer holding it
+//   S  a fan that starts mid-take, nobody singing: skipped notes "missed", not "unclear" (the noise floor)
+// (N, C, T, R, S, D fail on the build before E4 — there the fan calibrated; U and the noise checks pass on both;
+// P, H and the mid-take fan fail on E4's first build, whose low gate heard our own sound and lost the floor.)
+// P and H play with BLEED: what the page plays — any of its contexts — reaches the mic 10 dB down, 60 ms later
+// (guided.cjs's model, across contexts: the Piano's and the range test's notes have a context of their own).
 //   node quietvoice.cjs          (BASE: the test server; SHOTS=0 none)
 const { chromium } = require('playwright');
 const { ok, done, fail } = require('./lib/check.cjs');
@@ -18,15 +25,30 @@ const { BASE, SHOTS } = require('./lib/paths.cjs');
 
 const LO = 50, HI = 55, ANCHOR = 52; // the range test's singer (short: D3–G3)
 const LEVEL = { quiet: -65, sing: -43, loud: -37, room: -72, fan: -45 };
+const BLEED = -10; // dB: the page's own sound at the mic (P, H)
 
 function sim() { // (in the page)
   // dB RMS → gain: the sawtooth through its 2.5 kHz low-pass, the white noise through 1.2 kHz (measured).
   const vg = (db) => 10 ** ((db + 6.16) / 20), ng = (db) => 10 ** ((db + 15.1) / 20);
-  window.__sim = { mode: 'distant', midi: null, L: null };
+  window.__sim = { mode: 'distant', midi: null, L: null, bleed: null };
+  // (bleed: every context's output into a stream of its own, which the fake mic mixes in)
+  const taps = [], onTap = [], oc = AudioNode.prototype.connect;
+  AudioNode.prototype.connect = function (t, ...a) {
+    const r = oc.call(this, t, ...a);
+    try {
+      const c = this.context;
+      if (t === c.destination && window.__sim.bleed != null && !c.__mic && !(this instanceof ConstantSourceNode)) {
+        if (!c.__tap) { c.__tap = c.createMediaStreamDestination(); taps.push(c.__tap.stream); onTap.forEach((f) => f(c.__tap.stream)); }
+        oc.call(this, c.__tap);
+      }
+    } catch {}
+    return r;
+  };
   let shared = null;
   navigator.mediaDevices.getUserMedia = async () => {
     if (!shared) {
       const ac = new AudioContext();
+      ac.__mic = true;
       const osc = ac.createOscillator(); osc.type = 'sawtooth';
       const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2500;
       const g = ac.createGain(); g.gain.value = 0;
@@ -38,6 +60,13 @@ function sim() { // (in the page)
       const dest = ac.createMediaStreamDestination();
       osc.connect(lp).connect(g).connect(dest); osc.start();
       ns.connect(nlp).connect(n).connect(dest); ns.start();
+      if (window.__sim.bleed != null) {
+        const bl = ac.createGain(); bl.gain.value = 10 ** (window.__sim.bleed / 20);
+        const dl = ac.createDelay(1); dl.delayTime.value = 0.06;
+        bl.connect(dl).connect(dest);
+        const add = (st) => ac.createMediaStreamSource(st).connect(bl);
+        taps.forEach(add); onTap.push(add);
+      }
       const set = (node, v) => node.gain.setTargetAtTime(v, ac.currentTime, 0.01);
       setInterval(() => {
         const S = window.__sim, L = S.L, dbg = window.resonateDebug?.(), run = dbg?.run;
@@ -52,7 +81,8 @@ function sim() { // (in the page)
         } else m = S.midi;
         if (S.mode !== 'distant') m = null; // (noise only)
         const roomPhase = run?.kind === 'vol' && (run.phase === 'room' || run.phase === '');
-        const noise = S.mode === 'fan' || (S.mode === 'fanon' && !roomPhase) ? L.fan : L.room;
+        const late = S.mode === 'fanlate' && dbg?.session?.kind === 'sing' && dbg.nowT >= dbg.notes[0].t + 0.3; // (after the count-in)
+        const noise = S.mode === 'fan' || (S.mode === 'fanon' && !roomPhase) || late ? L.fan : L.room;
         set(n, ng(noise));
         if (m === null) set(g, 0);
         else { osc.frequency.setValueAtTime(440 * 2 ** ((m - 69) / 12), ac.currentTime); set(g, vg(lvl ?? L.sing)); }
@@ -69,10 +99,10 @@ function sim() { // (in the page)
   const errs = [];
   await ctx.addInitScript(sim);
   await ctx.addInitScript(() => { try { localStorage.setItem('resonate.sing.guided', 'off'); } catch {} });
-  const page = async (url, mode) => {
+  const page = async (url, mode, more = {}) => {
     const p = await ctx.newPage();
     p.on('pageerror', (e) => errs.push(`${url}: ${e.message}`));
-    await p.addInitScript(({ mode, L, lo, hi, anchor }) => { window.__sim && Object.assign(window.__sim, { mode, L, lo, hi, anchor }); }, { mode, L: LEVEL, lo: LO, hi: HI, anchor: ANCHOR });
+    await p.addInitScript((o) => { window.__sim && Object.assign(window.__sim, o); }, { mode, L: LEVEL, lo: LO, hi: HI, anchor: ANCHOR, ...more });
     await p.goto(BASE + url);
     return p;
   };
@@ -141,6 +171,41 @@ function sim() { // (in the page)
   r = await tunerHears('fan', 3000);
   ok(r.note === null, `T the fan alone reads no note (note ${r.note}, gate ${r.d.gate} dB)`);
 
+  // --- the Piano's own note: the tuner listens again 300 ms after the lift; its tail isn't sung ----------
+  {
+    const t = await page('index.html', 'distant', { bleed: BLEED });
+    await t.waitForFunction(() => window.resonateDebug?.().piano?.shown && document.querySelector('#piano-region rect.key[data-midi="60"]'), null, { timeout: 15000 });
+    await t.evaluate(() => { addEventListener('pointerup', () => { window.__lift = performance.now(); }, true); });
+    await t.click('#main-btn');
+    await t.waitForFunction(() => window.resonateDebug().tuner.state === 'listening', null, { timeout: 8000 });
+    await t.waitForTimeout(600);
+    const lift = async (singAt = null) => {
+      const pt = await t.evaluate(() => { const b = document.querySelector('#piano-region rect.key[data-midi="60"]').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height * 0.8 }; });
+      await t.mouse.move(pt.x, pt.y); await t.mouse.down(); await t.waitForTimeout(300); await t.mouse.up();
+      return t.evaluate(async (singAt) => { // (sampled in the page, from the lift)
+        const t0 = window.__lift, seen = [];
+        while (performance.now() < t0 + 2600) {
+          const now = performance.now(), d = window.resonateDebug().tuner;
+          if (singAt !== null && now >= t0 + singAt) window.__sim.midi = 57;
+          if (d.note !== null) seen.push([Math.round(now - t0), d.note]);
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        window.__sim.midi = null;
+        const d = window.resonateDebug().tuner, rel = (x) => (Number.isFinite(x) ? Math.round(x - t0) : null);
+        return { seen, state: d.state, until: rel(d.settle?.until), loud: rel(d.settle?.loud), held: d.settle?.held ?? null, reopen: rel(window.resonateDebug().piano.reopenAt) };
+      }, singAt);
+    };
+    const trials = [];
+    for (let i = 0; i < 3; i++) { trials.push(await lift()); await t.waitForTimeout(400); }
+    for (const x of trials) console.log(`  key lift: tuner back at +${x.reopen} ms, the tail above this device's gate until +${x.loud} ms (${x.held} frames held back), the settle window to +${x.until} ms; notes shown ${x.seen.length ? x.seen[0][0] + '–' + x.seen.at(-1)[0] + ' ms: ' + [...new Set(x.seen.map((s) => s[1]))].join(',') : 'none'}`);
+    ok(trials.every((x) => x.state === 'listening' && !x.seen.length), `P the tuner reads no note from the Piano's tail after a key lift, 3 of 3 (gate ${r.d.gate} dB, bleed ${BLEED} dB; shown: ${trials.map((x) => x.seen.length).join(' ')})`);
+    ok(trials.every((x) => x.loud === null || (x.until !== null && x.loud < x.until)), `P its tail ends inside the settle window (${trials.map((x) => `${x.loud} < ${x.until}`).join(', ')} ms after the lift)`);
+    const sang = await lift(1000);
+    console.log(`  key lift, then the singer at +1000 ms: ${sang.seen.length ? sang.seen[0][0] + ' ms: ' + sang.seen[0][1] : 'nothing'}`);
+    ok(sang.seen.length && sang.seen.every((s) => s[1] === 57) && sang.seen[0][0] < 2000, `P after it the distant singer is heard (A3 from +${sang.seen[0]?.[0]} ms)`);
+    await t.close();
+  }
+
   // --- the range test with it ----------------------------------------------------------------------
   p = await page('voice.html', 'distant');
   await p.waitForSelector('#range-btn');
@@ -156,6 +221,33 @@ function sim() { // (in the page)
   const range = (await vdbg(p)).profiles.list[0].range;
   ok(!stuck && range?.low === LO && range?.high === HI, `R the range test hears the distant singer: ${range ? `${range.low}–${range.high}` : 'nothing'} (want ${LO}–${HI}, ${((Date.now() - t1) / 1000).toFixed(0)} s)`);
   if (d?.run) await p.click('#t-stop');
+  await p.close();
+
+  // --- the range test: the reference note's tail isn't the singer holding it ------------------------------
+  p = await page('voice.html', 'distant', { bleed: BLEED, lo: 999, hi: 999 }); // (the singer sings the anchor only)
+  await p.waitForSelector('#range-btn');
+  await p.click('#range-btn');
+  const heard = await p.evaluate(async () => { // (sampled in the page: every listen phase from its start)
+    const out = [], end = performance.now() + 24000;
+    let cur = null;
+    while (performance.now() < end) {
+      const r = window.resonateDebug().run;
+      if (!r) break;
+      if (r.phase === 'listen') {
+        if (!cur) { cur = { target: r.target, on: 0, you: '', t0: performance.now() }; out.push(cur); }
+        const w = parseFloat(document.getElementById('t-meter').firstElementChild.style.width) || 0;
+        cur.on = Math.max(cur.on, r.onMs ?? (w / 100) * 800);
+        const y = document.getElementById('t-you').textContent.trim();
+        if (y && !cur.you) cur.you = y;
+        if (r.settle) cur.settle = r.settle;
+      } else cur = null;
+      await new Promise((res) => setTimeout(res, 25));
+    }
+    return out.map((x) => ({ ...x, settle: x.settle && { until: Math.round(x.settle.until - x.settle.release), loud: x.settle.loud === null ? null : Math.round(x.settle.loud - x.settle.release), listen: Math.round(x.t0 - x.settle.release) } }));
+  });
+  for (const x of heard) console.log(`  listen ${x.target}: on-pitch ${Math.round(x.on)} ms, "${x.you}"${x.settle ? `; after the release: listening +${x.settle.listen}, the tail above this device's gate until ${x.settle.loud === null ? '—' : '+' + x.settle.loud}, the settle window to +${x.settle.until} ms` : ''}`);
+  ok(heard.length >= 2 && heard.every((x) => x.on === 0 && !x.you), `H the range test doesn't count the reference note's tail as held (${heard.length} listens, on-pitch ${heard.map((x) => Math.round(x.on)).join(' ')} ms, nobody singing)`);
+  if ((await vdbg(p)).run) await p.click('#t-stop');
   await p.close();
 
   // --- a Sing take with it -------------------------------------------------------------------------
@@ -180,6 +272,10 @@ function sim() { // (in the page)
   tk = await take('fan', 6);
   console.log(`  take (fan): ${tk.voiced} of ${tk.frames} frames voiced; grades ${tk.g.join(' ')}`);
   ok(tk.frames > 50 && tk.voiced === 0 && !tk.g.some((s) => s === 'good' || s === 'ok' || s === 'close'), `S the fan alone sings no note (${tk.voiced} frames with a pitch)`);
+  tk = await take('fanlate', 9);
+  const skipped = tk.g.filter((s) => s !== 'unsung');
+  console.log(`  take (a fan from the first note, nobody singing): ${tk.voiced} of ${tk.frames} frames voiced; grades ${skipped.join(' ')}`);
+  ok(skipped.length >= 3 && skipped.every((s) => s === 'missed'), `S a fan that starts mid-take: the skipped notes "missed", not "unclear" (${skipped.filter((s) => s === 'unclear').length} unclear of ${skipped.length})`);
 
   // --- this device's name, signed out --------------------------------------------------------------
   p = await page('voice.html', 'distant');

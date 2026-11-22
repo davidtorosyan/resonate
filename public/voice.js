@@ -6,7 +6,7 @@
 // then does the same going up. The lowest and highest notes held are your limits; the
 // comfortable range starts a few notes inside them and can be adjusted by hand.
 
-import { openMic, createReader, gateDb, micGate, FFT_SIZE, GATE_DB } from "./pitch.js?v=96";
+import { openMic, createReader, gateDb, micGate, soundGone, FFT_SIZE, GATE_DB, MIN_RMS } from "./pitch.js?v=96";
 import { loadPiano, holdPiano, ownContext, sleepAudio } from "./piano.js?v=96";
 import { noteName, median } from "./music.js?v=96";
 import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=96";
@@ -28,7 +28,7 @@ const LOWEST = 33;         // A1 (55 Hz): pitch detection stops at 50 Hz
 const HIGHEST = 84;        // C6 (1047 Hz): …and at 1100 Hz
 const NOTE_SEC = 1.2;      // the reference note (piano + held tone, as the Sing page's keys)
 const REF_LEVEL = 2.0;     // ~6 dB above Listen; the loudest sample still peaks below −2 dBFS
-const LISTEN_DELAY = 0.35; // s after it before listening (its fading tail isn't you)
+const LISTEN_DELAY = 0.35; // s after it before listening (its fading tail isn't you: heard at MIN_RMS until it's gone)
 const LISTEN_MAX = 6000;   // ms to find the note and hold it
 const HOLD_MS = 800;       // on-pitch time that counts as holding it
 const ON_CENTS = 50;
@@ -312,7 +312,9 @@ async function startRun(kind) {
     analyser.fftSize = FFT_SIZE;
     analyser.smoothingTimeConstant = 0;
     const r = { kind, playCtx, micCtx, analyser, read: createReader(analyser, micCtx.sampleRate), stream: null, source: null,
-      piano: null, note: null, seq: 0, raf: 0, lastT: 0, recent: [], phase: "starting", phaseT: performance.now(), calibrated: Number.isFinite(current()?.vol?.gate) }; // (a gate: calibrated since E4)
+      piano: null, note: null, seq: 0, raf: 0, lastT: 0, recent: [], phase: "starting", phaseT: performance.now(), calibrated: Number.isFinite(current()?.vol?.gate), // (a gate: calibrated since E4)
+      settle: { until: 0, release: 0, loud: null } }; // (the reference note's tail: until it's gone the reader gates at MIN_RMS — this device's gate can be under it)
+    r.gate = r.read.gate;
     run = r;
     const fail = async (text) => {
       if (run === r) await stopRun();
@@ -357,7 +359,9 @@ function loop() {
   const now = performance.now();
   const dt = run.lastT ? Math.min(100, now - run.lastT) : 0;
   run.lastT = now;
+  if (run.kind === "range") run.read.gate = now < run.settle.until ? Math.max(run.gate, MIN_RMS) : run.gate;
   const fr = run.kind === "vol" || run.stream ? run.read() : null; // range: no mic while a note plays
+  if (fr && run.kind === "range" && fr.rms > run.gate && now < run.settle.until + 1000) run.settle.loud = now; // (for the tests)
   if (run.kind === "range") rangeFrame(fr, now, dt);
   else volFrame(fr, now, dt);
   if (run) run.raf = requestAnimationFrame(loop);
@@ -470,6 +474,7 @@ async function playTarget() {
   const when = ac.currentTime + 0.03;
   r.note = holdPiano(ac, r.piano, when, r.target, REF_LEVEL);
   r.note.release(when + NOTE_SEC);
+  r.settle = { until: soundGone(ac, r.note.stopsAt()), release: performance.now() + (when + NOTE_SEC - ac.currentTime) * 1000, loud: null };
   await sleep((0.03 + NOTE_SEC + LISTEN_DELAY) * 1000);
   if (!live()) return;
   try {
@@ -668,4 +673,4 @@ window.resonateVoice = Object.assign(window.resonateVoice || {}, {
   state: () => ({ run: run?.kind || null, phase: run?.phase || null }),
 });
 window.resonateDebug = () => ({ run: run && { kind: run.kind, phase: run.phase, target: run.target, dir: run.dir, best: run.best, anchor: run.anchor, mic: !!(run.stream || run.mic),
-  gate: +(20 * Math.log10(run.read.gate)).toFixed(1), room: run.room ?? null, activeMs: run.activeMs ?? null }, profiles: loadProfiles(), device: device(), gate: +(20 * Math.log10(micGate())).toFixed(1) });
+  gate: +(20 * Math.log10(run.read.gate)).toFixed(1), room: run.room ?? null, activeMs: run.activeMs ?? null, onMs: run.onMs ?? null, settle: run.settle ? { ...run.settle } : null }, profiles: loadProfiles(), device: device(), gate: +(20 * Math.log10(micGate())).toFixed(1) });

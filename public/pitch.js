@@ -19,6 +19,18 @@ export const gateDb = (room, quiet) => Math.min(20 * Math.log10(MIN_RMS), Math.m
 export function micGate(vol = activeProfile()?.vol) {
   return Number.isFinite(vol?.gate) ? Math.min(MIN_RMS, 10 ** (vol.gate / 20)) : MIN_RMS;
 }
+// Our own sound (a key, a reference note), on `ac` until its time `end` (s; piano.js stopsAt): the
+// moment (performance.now() ms) it has left a mic's window — its output latency, the mic's input
+// latency (INPUT_LAG) and FFT_SIZE samples later. Until then a reader that listens again after it
+// gates at MIN_RMS, not a calibrated gate under it: the tail is under MIN_RMS at the mic (the gate the
+// reopen delays were sized for), and a distant singer's gate would read it as the note sung — the
+// very note the singer is about to sing, so it can't be told apart by its pitch.
+export const INPUT_LAG = 0.02;
+export function soundGone(ac, end) {
+  if (!(end < Infinity)) return 0; // (still held: nothing to wait for yet — the caller asks again at its release)
+  const left = Math.max(0, end - ac.currentTime) + (ac.outputLatency || ac.baseLatency || 0) + INPUT_LAG + FFT_SIZE / ac.sampleRate;
+  return performance.now() + left * 1000;
+}
 
 // Open the mic with processing off (echo cancel / noise suppression / AGC
 // distort pitch and level). Returns the pieces the caller needs. `ac`: an AudioContext
