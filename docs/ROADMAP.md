@@ -4,7 +4,7 @@ The direction the user set on 2026-11-07, in their order. Keep this file current
 off, add decisions and open questions as they're settled. The standing principles also
 live in CLAUDE.md ("UI principles").
 
-## Where things stand (2026-11-20)
+## Where things stand (2026-11-22)
 
 **Work queue: the owner's order, kept up to date so a fresh session can resume.** Work top to bottom. "On deck" (the 2026-11-20 list) comes before the 2026-11-21 list. A step marked ▶ is the one in progress. Its state and the next action are written beside it.
 
@@ -37,7 +37,10 @@ live in CLAUDE.md ("UI principles").
   - Hand + finger per note, readable by assistants (a read_resonate query, catalog.ts).
   - Shown on the Score's keyboard with modes: off / finger numbers / a ghost hand.
   - Example to catch: a G3 + B4 the right hand can't span, so two hands.
-- [ ] ▶ E8 (waiting on the owner's answers; design draft docs/EAR.md sent to the owner 2026-11-22: five questions in §9 before building; cleanup Phase 7 first) **Singing, redone around the ear** (big; a design doc first, docs/EAR.md, then iterate with the owner):
+- [ ] ▶ E7+ (the owner, 2026-11-22: "continue on with the fingering, then get the test right … focus on getting that done before we move on to singing"):
+  - **E7a — the fingering on the owner's songs.** The survey had skipped them (fixed: CLAUDE.md now says to fetch them through the connector). The 9 songs' engine 10 / 15 / 19 native exports (scratchpad `acc/{v10,r15,r19}`) → `dumpkeys` → `fingersurvey`: all invariants hold (140 checks, 27 songs × 3 hand sizes). Next: a pianist review of the engine-19 fingering (workflow `wf_e194bcb5-7d9`: a reviewer per song, two skeptics per finding, grouped into algorithm changes) → fix finger.js (ALG 3), the confirmed patterns as synthetic cases in fingercases.mjs, A/B on the 27.
+  - **E7b — the hand, animated.** The owner: "when I said ghost hand … extending below the piano, I wanted to see the wrist and everything … an animation of a hand dancing across the piano." v99's ghost (five rings, a crossfade) missed it. A drawn hand — fingers on the keys, palm and wrist below the keyboard — that moves from position to position ahead of the notes and presses with the finger that plays. Design → build → one review → ship.
+- [ ] E8 (waiting on the owner's answers; design draft docs/EAR.md sent to the owner 2026-11-22: five questions in §9 before building; cleanup Phase 7 first) **Singing, redone around the ear** (big; a design doc first, docs/EAR.md, then iterate with the owner):
   - Hide the time-series lane and per-note colours from the singer (keep the data for the assistant).
   - Pick a short phrase. ▶ hear it whenever you like, then sing it on your own time (no forced listen → your-turn timing). Press done.
   - Two counts: **beats on** (close or on the money) and **notes hit**, generous. The total isn't shown until all are right ("all of them").
@@ -45,7 +48,7 @@ live in CLAUDE.md ("UI principles").
   - A **notes exercise**: the phrase's lowest / highest (and other) notes, ▶ to hear, hold to match (like the range test), then the phrase again.
   - Everything trains listening: sounds, not visuals, short phrases. The owner's new direction updates the "no scoreboard counts" principle: counts to beat, never a grade or a %.
 
-**Live:** v93 (2026-11-21): engine 15 and the clean-ups (D round 1). The one-page shell is the site (v92). The connector's edge function is version 8.
+**Live:** v99 (2026-11-22): piano fingering (E7). v97 E3–E5, v98 E6 bookmarks. Engine 19 (v94). The connector's edge function is version 11 (catalog 2026-11-23).
 
 **Next:** whatever the owner highlights next (highlight in the Score → `get_score_view` in a Claude chat → fix the engine or a clean-up → Reconvert). Open from v90: the MCP server doesn't know PDF-only songs (`get_song` says "open it once"; needs a resonate.ts change + redeploy); songs converted before v90 read "engine ≤9" even when v89 made them; Killing's piano bars 31, 32, 62 still have a voice short of its bar.
 
