@@ -305,6 +305,12 @@ const unlock = async (page, cdp) => { const p = await paper(page); const f = fin
     ok(d.peekLog.at(-1).again?.join() === "72" && r.damp >= 1, `E the same key struck again: the old note damped as the new starts (again ${JSON.stringify(d.peekLog.at(-1).again)}, ${r.damp} damped at τ 15 ms)`);
     await f.up(1);
     await sleep(300);
+    // (E3: two quick taps on one note are a double-tap — both struck in their press, as above — and
+    // pick that chord; a tap on paper lets go of it before F)
+    const picked = await page.evaluate(() => window.resonateDebug().play.playback.span);
+    ok(picked?.note?.ids?.length >= 1, `E …and the two quick taps picked that chord (a double-tap, E3: ${JSON.stringify(picked)})`);
+    const pe = await paper(page);
+    await f.down(1, pe.x, pe.y); await sleep(40); await f.up(1); await sleep(200);
 
     // F. only the first finger drags
     m0 = await M(page);
