@@ -22,10 +22,20 @@
 //   J  off = today: with the mode off the schedules, a press's lit keys and ▶'s keyboard drawings equal those
 //      of a page whose fingering never came (its Worker never answers)
 //   K  Amazing Grace (a hymn): fingered on every view, #fing shown, a press shows digits
+//   L  ▶ on a second song before its fingering is ready (the Worker held back): once it comes, what ▶
+//      plays follows the fingering's hands (G3, moved to the left hand, muted with it) — the E7 review
+//   M  a switch between two fingered songs (iPad, phone): #fing never hidden on the way, the keys' width
+//      steady, every frame from the switch until the new song's fingering is ready — the E7 review
+//   N  assistants (an approved account faked: REST by route, the Realtime socket held): no assistant —
+//      the open song's fingering isn't sent; one connects (the "assistant" broadcast) — sent once, for
+//      that song; a score_* command then — nothing new (unchanged) — the E7 review
+//   O  fingerSong after a conversion's save (the 150-bar piece, Audiveris-tagged): no long task over
+//      ~200 ms — one step a task (judged on the median of 3; not while the CPU is busy) — the E7 review
 //   node playfinger.cjs                (BASE: the harness, http://localhost:8097/resonate/)
 //   ONLY=desktop,phone node playfinger.cjs     PARTS=A,B,… (the desktop's), SHOTS=0
 const { chromium } = require('playwright');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { ok, skip, done, fail } = require('./lib/check.cjs');
 const { BASE, SHOTS } = require('./lib/paths.cjs');
@@ -42,6 +52,9 @@ const DEVICES = [
 ];
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
 const ROOT = new URL('../', BASE).href; // (the harness's root: /imp/ beside /resonate/)
+// (timing checks are reported, not judged, while the CPU is busy — reader.cjs's rule; STRICT=1 judges anyway)
+const busy = () => !process.env.STRICT && os.loadavg()[0] > os.cpus().length * 0.75;
+const timing = (c, msg) => { if (c || !busy()) ok(c, msg); else console.log(`info  ${msg} — not judged: CPU busy (load ${os.loadavg()[0].toFixed(1)} on ${os.cpus().length} cores)`); };
 
 function INIT() {
   if (location.protocol === 'about:') return;
@@ -376,8 +389,188 @@ async function desktop(dev) {
     ok(!during.length, `G: no long task while it's worked out (${(t.ready - t.start).toFixed(0)} ms: ${JSON.stringify(during)})`);
     console.log(`  info: long tasks since the open: ${lt.filter((x) => x.start > t0).map((x) => Math.round(x.dur)).join(' ') || 'none'} ms (Verovio's are expected)`);
   }
+  if (part('O')) await afterSave(page);
   ok(!ctx.errors.length, `${dev.n}: no page errors ${JSON.stringify(ctx.errors.slice(0, 3))}`);
   await ctx.close();
+  if (part('L')) await beforeReady(dev);
+  if (part('N')) await assistants(dev);
+}
+
+// L: ▶ on a second song before its fingering is ready. The Worker (finger-worker.js as served) holds its
+// answers while the page says "hold" on a BroadcastChannel. Song B's left hand is muted: by staff hands G3
+// (written on the treble staff) sounds; by the fingering's it's the left hand's, muted with it.
+function heldWorker() {
+  const src = fs.readFileSync(path.join(__dirname, '../public/finger-worker.js'), 'utf8');
+  if (!src.includes('self.onmessage = (e) => {')) throw new Error('finger-worker.js changed: heldWorker needs its onmessage');
+  return `const __bc = new BroadcastChannel('fing-hold'); let __held = false; const __q = [];
+__bc.onmessage = (m) => { __held = m.data === 'hold'; if (!__held) for (const f of __q.splice(0)) f(); };
+${src.replace('self.onmessage = (e) => {', 'const __real = (e) => {')}
+self.onmessage = (e) => (__held ? __q.push(() => __real(e)) : __real(e));`;
+}
+const holdWorker = (page, on) => page.evaluate((on) => (window.__fingBc ||= new BroadcastChannel('fing-hold')).postMessage(on ? 'hold' : 'go'), on);
+async function beforeReady(dev) {
+  console.log(`\n=== ${dev.n}: L (▶ before the fingering is ready)`);
+  const ctx = await newCtx(dev, { worker: heldWorker() });
+  const page = await ctx.newPage();
+  const ids = await addSongs(page, [{ name: 'Fingering R6', xml: FX.r6(), view: 'both' }, { name: 'Fingering R6b', xml: FX.r6({ bpm: 100, title: 'Fingering R6b' }), view: 'both' }]);
+  const A = ids['Fingering R6'], B = ids['Fingering R6b'];
+  await page.evaluate(({ A, B }) => {
+    const all = JSON.parse(localStorage.getItem('resonate.play') || '{}');
+    all[B] = { ...(all[B] || {}), hear: { both: ['P2|2'] } }; // (song B: the left hand muted)
+    localStorage.setItem('resonate.play', JSON.stringify(all));
+    localStorage.setItem('resonate.sing.song', A);
+  }, { A, B });
+  await SH.openScore(page, { id: A });
+  ok(await fingReady(page) && (await D(page)).fing.mode === 'num', `L: the first song fingered, numbers (${(await D(page)).fing.mode})`);
+  await holdWorker(page, true);
+  await sleep(300);
+  await SH.openSong(page, B);
+  const st = (await D(page)).fing.state;
+  await (await playBtn(page)).click();
+  await page.waitForFunction(() => { const p = window.resonateDebug().play.playback; return p.items?.length && !p.starting; }, null, { timeout: 20000 });
+  const g0 = await page.evaluate(() => window.resonateDebug().play.playback.items.find((x) => x.id === 'nG3'));
+  ok(st === 'pending' && g0?.sound === true, `L: ▶ on the second song, its fingering not ready (${st}) — by staff hands G3 sounds with the right hand (${JSON.stringify(g0)})`);
+  await holdWorker(page, false);
+  await page.waitForFunction(() => window.resonateDebug().play.fing.state === 'ready', null, { timeout: 30000 }).catch(() => {});
+  await sleep(300);
+  const a = await page.evaluate(() => { const p = window.resonateDebug().play; return { g3: p.playback.items.find((x) => x.id === 'nG3'), state: p.playback.state, fing: p.fing.state, mode: p.fing.mode, n: window.resonatePlay.fingering()?.n?.nG3 }; });
+  ok(a.fing === 'ready' && a.state === 'playing' && a.n?.[0] === 'l' && a.g3?.muted === true && a.g3?.sound === false, `L: … once it comes, ▶ plays by the fingering's hands — G3 (the left hand's: ${JSON.stringify(a.n)}) muted with it, still playing (${JSON.stringify(a)})`);
+  if (a.state !== 'idle') await (await playBtn(page)).click();
+  await sleep(200);
+  ok(!ctx.errors.length, `L: no page errors ${JSON.stringify(ctx.errors.slice(0, 3))}`);
+  await ctx.close();
+}
+
+// M: a switch between two fingered songs — sampled every frame until the new song's fingering is ready:
+// #fing never hidden on the way (its fingering not known yet: it stays as it was), the keys' width steady.
+async function switchSteady(page, label, from, to) {
+  await openOn(page, from, 'both');
+  await page.evaluate(() => {
+    const out = (window.__sw = { on: true, frames: [] });
+    const tick = () => {
+      if (!out.on) return;
+      const b = document.getElementById('fing'), kb = document.querySelector('#piano-region .kb');
+      if (b && kb) {
+        const f = { hidden: b.hidden, w: Math.round(kb.getBoundingClientRect().width), state: window.resonateDebug?.().play?.fing?.state };
+        const l = out.frames[out.frames.length - 1];
+        if (!l || l.hidden !== f.hidden || l.w !== f.w || l.state !== f.state) out.frames.push(f);
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  await SH.openSong(page, to);
+  await fingReady(page);
+  await sleep(400);
+  const fr = await page.evaluate(() => { window.__sw.on = false; return window.__sw.frames; });
+  const unknown = fr.some((f) => f.state === 'wait' || f.state === 'pending');
+  ok(unknown && fr[fr.length - 1].state === 'ready' && !fr.some((f) => f.hidden) && new Set(fr.map((f) => f.w)).size === 1,
+    `${label}: a switch between two fingered songs — #fing never hidden on the way, the keys' width steady (${fr.map((f) => `${f.hidden ? 'hidden' : 'shown'} ${f.w}px ${f.state}`).join(' → ')})`);
+}
+
+// N: assistants get the open song's fingering once one connects — an approved account faked (shellplaces.cjs's
+// way): the session in localStorage, REST answered here (net.fing: the score_fingering writes), sync.js
+// stubbed, the Realtime socket held open (its join answered; a broadcast sent down it on demand).
+const UID = '00000000-0000-4000-8000-0000000f1e7a';
+const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+function session() {
+  const exp = Math.floor(Date.now() / 1000) + 86400;
+  const jwt = `${b64u({ alg: 'HS256', typ: 'JWT' })}.${b64u({ sub: UID, exp, role: 'authenticated', email: 'fing@mail.com', aud: 'authenticated' })}.sig`;
+  return { access_token: jwt, refresh_token: 'r-test', token_type: 'bearer', expires_in: 86400, expires_at: exp, user: { id: UID, email: 'fing@mail.com', aud: 'authenticated', role: 'authenticated' } };
+}
+async function cloudCtx(dev) {
+  const ctx = await newCtx(dev, { seed: { 'resonate.auth': JSON.stringify(session()) } });
+  const net = (ctx.net = { log: [], fing: [], assistant: false, sockets: [] });
+  await ctx.route('**/sync.js*', (r) => r.fulfill({ contentType: 'text/javascript', body: 'export const syncOff = () => true; export const start = () => {}; export const stop = async () => {}; export const syncNow = () => {};' }));
+  await ctx.routeWebSocket(/supabase\.co/, (ws) => {
+    const s = { ws, joins: [] };
+    net.sockets.push(s);
+    ws.onMessage((m) => { try { const j = JSON.parse(String(m)); if (Array.isArray(j) && j[3] === 'phx_join') { s.joins.push(j); ws.send(JSON.stringify([j[0], j[1], j[2], 'phx_reply', { status: 'ok', response: { postgres_changes: [] } }])); } } catch {} });
+  });
+  await ctx.route('**/*.supabase.co/**', (r) => { // (registered after newCtx's abort: tried first)
+    const req = r.request(), u = new URL(req.url()), m = req.method(), at = u.pathname.replace('/rest/v1/', '');
+    net.log.push(`${m} ${at}`);
+    const json = (b, status = 200) => r.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(b) });
+    if (m === 'OPTIONS') return r.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
+    if (at.endsWith('accounts')) return json([{ approved: true }]);
+    if (at.endsWith('assistant_activity')) return json(net.assistant ? [{ name: 'Claude', logo: null, last_at: new Date().toISOString(), last_tool: 'get_status' }] : []);
+    if (at.endsWith('devices')) return json([{ id: 'dtest', name: 'Desk', remote: false, seen_at: new Date().toISOString(), state: null }], m === 'POST' ? 201 : 200);
+    if (at.endsWith('assistant_settings')) return json([{ start_delay_s: 0, review_after_remote: false }]);
+    if (at.endsWith('score_fingering') && m === 'POST') { try { net.fing.push(req.postDataJSON()); } catch { net.fing.push(null); } return json([], 201); }
+    if (u.pathname.includes('/rest/v1/')) return m === 'GET' ? json([]) : json([], 201);
+    return json({}, 404);
+  });
+  return ctx;
+}
+function broadcast(ctx, event, payload) {
+  let n = 0;
+  for (const s of ctx.net.sockets) for (const j of s.joins) if (/^realtime:user:/.test(j[2])) { s.ws.send(JSON.stringify([null, null, j[2], 'broadcast', { type: 'broadcast', event, payload }])); n++; }
+  return n;
+}
+async function assistants(dev) {
+  console.log(`\n=== ${dev.n}: N (assistants get the fingering)`);
+  const ctx = await cloudCtx(dev);
+  const net = ctx.net;
+  const page = await ctx.newPage();
+  const ids = await addSongs(page, [{ name: 'Fingering R6', xml: FX.r6(), view: 'both' }]);
+  const R6 = ids['Fingering R6'];
+  await page.evaluate((id) => localStorage.setItem('resonate.sing.song', id), R6);
+  await SH.openScore(page, { id: R6 });
+  ok(await fingReady(page) && (await D(page)).fing.state === 'ready', 'N: the open song fingered');
+  const asked = () => net.log.filter((l) => l === 'GET assistant_activity').length;
+  for (const end = Date.now() + 10000; Date.now() < end && !(asked() && net.sockets.some((s) => s.joins.some((j) => /^realtime:user:/.test(j[2])))); ) await sleep(100);
+  await sleep(1500);
+  ok(asked() > 0 && net.fing.length === 0, `N: signed in, approved, no assistant has connected — nothing sent (asked ${asked()}×, ${net.fing.length} written)`);
+  // an assistant's first tool call: the server's "assistant" broadcast
+  net.assistant = true;
+  const sent = broadcast(ctx, 'assistant', { name: 'Claude', logo: null, tool: 'get_status', at: new Date().toISOString() });
+  for (const end = Date.now() + 10000; Date.now() < end && !net.fing.length; ) await sleep(100);
+  await sleep(800);
+  const row = net.fing[0];
+  ok(sent > 0 && net.fing.length === 1 && row?.song_id === R6 && Number.isInteger(row?.alg) && row?.data?.bars?.length > 0,
+    `N: an assistant connects (Realtime, ${sent} sent) — the open song's fingering sent once, for it (${net.fing.length} written: ${JSON.stringify(row && { song: row.song_id === R6 ? 'the open song' : row.song_id, alg: row.alg, bars: row.data?.bars?.length })})`);
+  for (const [a, args] of [['score_state', {}], ['score_select', { from_measure: 1, to_measure: 2 }]]) await page.evaluate(([a, args]) => window.resonatePlay.scoreRun(a, args), [a, args]);
+  await sleep(1500);
+  ok(net.fing.length === 1, `N: score_* commands then — nothing new sent (unchanged: ${net.fing.length} written)`);
+  ok(!ctx.errors.length, `N: no page errors ${JSON.stringify(ctx.errors.slice(0, 3))}`);
+  await ctx.close();
+}
+
+// O: fingerSong after a conversion's save — the 150-bar piece (2851 notes), tagged Audiveris so the
+// clean-ups run as on a converted song; the page warmed as the save leaves it (its clean-ups and parse
+// just ran on that MusicXML). Three times: each run's longest task (PerformanceObserver longtask) and
+// their sum. Judged on the median: under ~200 ms — or, where this machine's clean-ups alone take
+// longer (the one step that is a single call), the steps split all the same: the longest ≤ 70% of
+// the sum (before the E7 review the steps were one task: 100%).
+async function afterSave(page) {
+  const xml = FX.big(150, { title: 'Fingering Save' }).replace('<part-list>', '<identification><encoding><software>Audiveris 5.9</software></encoding></identification><part-list>');
+  const runs = await page.evaluate(async (xml) => {
+    const v = document.getElementById('version').textContent.trim().replace(/^v/, '');
+    const L = await import(`./library.js?v=${v}`), F = await import(`./fingering.js?v=${v}`), C = await import(`./catalog.js?v=${v}`), M = await import(`./musicxml.js?v=${v}`);
+    C.cleanXml(xml); M.parseMusicXml(xml); // (as the import's save leaves the page)
+    await new Promise((r) => setTimeout(r, 300));
+    const out = [];
+    for (let k = 0; k < 3; k++) {
+      const id = await L.addSong('Fingering Save ' + k, xml, { source: 'pdf' });
+      await new Promise((r) => setTimeout(r, 300));
+      const longs = [];
+      const po = new PerformanceObserver((l) => { for (const e of l.getEntries()) longs.push(e.duration); });
+      po.observe({ type: 'longtask', buffered: false });
+      const t0 = performance.now();
+      const rec = await F.fingerSong(id);
+      const ms = performance.now() - t0;
+      await new Promise((r) => setTimeout(r, 300));
+      po.disconnect();
+      await L.removeSong(id);
+      out.push({ notes: rec ? Object.keys(rec.n).length : 0, ms: Math.round(ms), longs: longs.map(Math.round) });
+    }
+    return out;
+  }, xml);
+  const med = (a) => a.slice().sort((x, y) => x - y)[a.length >> 1];
+  const longest = med(runs.map((r) => Math.max(0, ...r.longs)));
+  const share = med(runs.map((r) => (r.longs.length ? Math.max(...r.longs) / r.longs.reduce((a, b) => a + b, 0) : 0)));
+  ok(runs.every((r) => r.notes > 2000), `O: fingerSong after a save — the 150-bar piece fingered each time (${runs.map((r) => r.notes).join(', ')} notes)`);
+  timing(longest < 200 || share <= 0.7, `O: … no long task over ~200 ms — one step a task (median longest ${longest} ms, ${Math.round(share * 100)}% of the long tasks' sum; runs: ${runs.map((r) => `[${r.longs.join(' ')}] in ${r.ms} ms`).join(', ')})`);
 }
 
 // I: what makes it work the fingering out again.
@@ -529,13 +722,14 @@ async function ipad(dev) {
   console.log(`\n=== ${dev.n} ${dev.w}×${dev.h}`);
   const ctx = await newCtx(dev);
   const page = await ctx.newPage();
-  const ids = await addSongs(page, [{ name: 'Fingering R6', xml: FX.r6(), view: 'both' }]);
+  const ids = await addSongs(page, [{ name: 'Fingering R6', xml: FX.r6(), view: 'both' }, { name: 'Fingering R6b', xml: FX.r6({ bpm: 100, title: 'Fingering R6b' }), view: 'both' }]);
   const R6 = ids['Fingering R6'];
   await page.evaluate((id) => localStorage.setItem('resonate.sing.song', id), R6);
   await SH.openScore(page, { id: R6 });
   ok(await fingReady(page), 'the fingering worked out on open');
   const d = await D(page);
   ok(d.pf.shown && d.pf.geo.digits && d.pf.geo.rings, `#fing shown; digits and rings at ${d.pf.geo.ww.toFixed(1)} px a white key`);
+  if (part('M')) { await switchSteady(page, 'M', R6, ids['Fingering R6b']); await switchSteady(page, 'M (back)', ids['Fingering R6b'], R6); }
   await checkPress(page, dev, 'B');
   await shot(page, 'finger-ipad-press');
   await checkPlayDigits(page, 'C');
@@ -564,11 +758,12 @@ async function phone(dev) {
   console.log(`\n=== ${dev.n} ${dev.w}×${dev.h}`);
   const ctx = await newCtx(dev);
   const page = await ctx.newPage();
-  const ids = await addSongs(page, [{ name: 'Fingering R6', xml: FX.r6(), view: 'both' }, { name: 'Fingering Wide', xml: FX.wide(), view: 'both' }]);
+  const ids = await addSongs(page, [{ name: 'Fingering R6', xml: FX.r6(), view: 'both' }, { name: 'Fingering Wide', xml: FX.wide(), view: 'both' }, { name: 'Fingering R6b', xml: FX.r6({ bpm: 100, title: 'Fingering R6b' }), view: 'both' }]);
   const R6 = ids['Fingering R6'];
   await page.evaluate((id) => localStorage.setItem('resonate.sing.song', id), R6);
   await SH.openScore(page, { id: R6 });
   ok(await fingReady(page), 'the fingering worked out on open');
+  if (part('M')) { await switchSteady(page, 'M', R6, ids['Fingering R6b']); await switchSteady(page, 'M (back)', ids['Fingering R6b'], R6); }
   let d = await D(page);
   ok(d.pf.shown && !d.pf.geo.digits, `H: Both with its chips — #fing shown, a white key ${d.pf.geo.ww.toFixed(1)} px: no digits`);
   await checkPress(page, dev, 'H Both', { digits: false });

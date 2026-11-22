@@ -581,6 +581,7 @@ export function createImporter(opts = {}) {
         if (await replaceSong(job.replace, xml, { pages, engine, ...(named ? {} : { title }) })) {
           songId = job.replace;
           replaced = true;
+          dropFingeringLater(songId); // (the assistants' copy of its fingering was the old conversion's)
         } else {
           deleted = true;
           host.onLog(`[save] the song was deleted meanwhile; not saved`);
@@ -630,6 +631,12 @@ export function createImporter(opts = {}) {
 // load is only logged).
 function fingerLater(id) {
   import('../fingering.js?v=98').then((m) => m.fingerSong(id)).catch((err) => console.info('fingering', err?.message || err));
+}
+// A replaced song's fingering as assistants read it (assist.js: its score_fingering row, and this
+// device's marker of what it sent) was the old MusicXML's: it goes — the Score sends the new one when
+// it shows it. Best effort, as fingerLater: nothing it does can fail the import.
+function dropFingeringLater(id) {
+  import('../assist.js?v=98').then((m) => m.dropFingering(id)).catch((err) => console.info('fingering: drop', err?.message || err));
 }
 
 // --- the song's title and key mode (moved from pdf-import.js in v81; tools/titlecases.cjs evaluates

@@ -1842,7 +1842,7 @@ const F = {
 };
 function fingReset(id) {
   F.gen++;
-  Object.assign(F, { song: id, state: "wait", stored: null, rec: null, idx: null, list: null, from: null, counts: null, view: null, t: null, err: null });
+  Object.assign(F, { song: id, state: "wait", stored: null, rec: null, idx: null, list: null, from: null, counts: null, view: null, on: false, t: null, err: null }); // (on: the hands' rules aren't in effect for this song until its fingering comes — fingChanged then lays ▶ again)
 }
 // The song shown: its stored fingering if it's still the right one, else worked out (the Worker), in
 // idle time after the music shows — one step a task (the timeline, Sing's tempo, then the notes). The
@@ -1860,7 +1860,7 @@ async function fingStart(id) {
     out = await fingeringFor({ id, xml: S.xml, P: S.P, T: songTime(), bpm: tempoBase(), stored: F.stored, rev: S.rev, from: "score" });
   } catch (err) {
     console.warn("fingering", err);
-    if (gen === F.gen) { F.state = "none"; F.err = String(err?.message || err); }
+    if (gen === F.gen) { F.state = "none"; F.err = String(err?.message || err); fingButton(); }
     return;
   }
   if (gen !== F.gen || S.song !== id) return;
@@ -1895,6 +1895,8 @@ function shareFing() {
     if (data) shareFingering(id, data);
   }).catch((err) => console.warn("fingering: share", err));
 }
+// (an assistant connected after the song opened — assist.js says so once: its fingering now)
+window.addEventListener("resonate:assistant", () => shareFing());
 const fingRec = () => (F.state === "ready" && F.song === S.song ? F.rec : null);
 // A note's fingering: { h, f, p, x } — null while there's none (pending, another part).
 const fingOf = (id) => (F.state === "ready" ? F.idx.get(id) || null : null);
@@ -1910,6 +1912,9 @@ const fingOn = () => fingMode() !== "off";
 // #fing shown or not (as the keys: it stays as it is while a song or a view loads).
 function fingButton() {
   if (loading()) return;
+  // (this song's fingering not known yet — asked once placed, or being worked out: #fing stays as it
+  // was, so another fingered song's open doesn't hide and show it — the keys and chips re-laid twice)
+  if (S.ready && F.song === S.song && (F.state === "wait" || F.state === "pending") && !pdf.on && !S.pdfOnly && !S.failed) return;
   shellKeys()?.fingering?.(fingAvail());
 }
 // The mode changed (#fing), or the fingering came: the keys again — and when the hands' rules came or
@@ -4776,6 +4781,7 @@ async function scoreRun(action, a = {}) {
   const done = (extra = {}) => ({ ok: true, ...extra, score: scoreState() });
   const no = (error, extra = {}) => ({ ok: false, error, ...extra, score: scoreState() });
   if (spaceChanged()) return no("This page is out of date (signed in or out elsewhere) and is reloading.");
+  if (SCORE_ACTIONS.includes(action)) shareFing(); // (an assistant's command: one is connected — the open song's fingering, unless it's there already)
   if (action === "stop" || action === "score_stop") { clearPeek(true); stopPlay(); return done(); }
   if (!SCORE_ACTIONS.includes(action)) return no(`This device shows Resonate's Score (Play), not Sing — “${action}” is for the Sing page.`);
   if (action === "score_open") {

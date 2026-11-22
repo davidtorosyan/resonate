@@ -101,8 +101,15 @@ export function takeEnded(takeId, { status, meta, review, lines }) {
 // one at every tool call: public.assistant_seen) → { yes: true | false | null (couldn't ask),
 // latest: the assistant active lately }. Yes is kept for the page load; no is asked again after a
 // minute (one may connect meanwhile); a Realtime "assistant" event says yes at once (remote.listen).
-// The Score's focus is sent, and the AI button shown (remote.available), only once one has.
-let assistantP = null, assistantAt = 0;
+// The Score's focus is sent, and the AI button shown (remote.available), only once one has. The
+// answer turning yes (asked, or that event) is said once a page load as window "resonate:assistant",
+// so what was open before is shared now (play.js: the open song's fingering).
+let assistantP = null, assistantAt = 0, assistantSaid = false;
+function sawAssistant() {
+  if (assistantSaid) return;
+  assistantSaid = true;
+  try { window.dispatchEvent(new CustomEvent("resonate:assistant")); } catch {}
+}
 function activity() {
   if (assistantP && assistantP.no && Date.now() - assistantAt > 60000) assistantP = null;
   if (!assistantP) {
@@ -113,7 +120,7 @@ function activity() {
       const { data, error } = await c.sb.from("assistant_activity").select("name,logo,last_at,last_tool").order("last_at", { ascending: false }).limit(1);
       return error ? { yes: null } : { yes: !!data?.length, latest: data?.[0] || null };
     })().catch(() => ({ yes: null }));
-    p.then((r) => { p.no = r.yes !== true; });
+    p.then((r) => { p.no = r.yes !== true; if (r.yes === true) sawAssistant(); });
     assistantP = p;
   }
   return assistantP;
@@ -385,7 +392,7 @@ export const remote = {
     const since = Date.now() - 60000;
     this.channel = c.sb.channel(`user:${c.uid}`, { config: { private: true, broadcast: { replay: { since, limit: 25 } } } })
       .on("broadcast", { event: "command" }, (m) => this.handle(m.payload))
-      .on("broadcast", { event: "assistant" }, (m) => { assistantP = Promise.resolve({ yes: true }); this.noteAssistant(true); this.hooks?.assistant?.({ ...m.payload, received: Date.now() }); })
+      .on("broadcast", { event: "assistant" }, (m) => { assistantP = Promise.resolve({ yes: true }); sawAssistant(); this.noteAssistant(true); this.hooks?.assistant?.({ ...m.payload, received: Date.now() }); })
       .subscribe((status) => { if (status === "SUBSCRIBED") this.catchUp(); });
   },
   // Commands that came while the page couldn't hear them (hidden, reconnecting).

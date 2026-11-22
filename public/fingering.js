@@ -209,16 +209,27 @@ async function workOut({ id, P, T, bpm, kb, want, sample, rev, from, ts }) {
   return { rec, computed: true, items: built };
 }
 
+// A breath between heavy steps: idle time (at most 500 ms away), else the next task — as play.js
+// fingStart takes them one a task.
+const breath = () => new Promise((r) => (typeof requestIdleCallback === "function" ? requestIdleCallback(() => r(), { timeout: 500 }) : setTimeout(r, 0)));
+
 // After a conversion's save (omr/importer.js): the song's fingering worked out and kept, as the Score
-// would on its first open. Best effort: never throws.
+// would on its first open — one step a task (the clean-ups, the views, the timeline, the tempo, then
+// the notes: together they held the main thread 0.25–0.6 s on a 150-bar piece). Best effort: never throws.
 export async function fingerSong(id) {
   try {
     const song = await getSong(id);
+    await breath();
     const xml = songXml(song, { keep: false }); // (what the Score will read; its first open keeps the cleaned copy, as always)
     if (!xml) return null;
+    await breath();
     const P = prepare(xml);
+    await breath();
     const T = timeline(P.doc, P.facts);
-    const out = await fingeringFor({ id, xml, P, T, bpm: songTempo(id, xml, T), stored: song.fing || null, rev: song.rev ?? null, from: "import" });
+    await breath();
+    const bpm = songTempo(id, xml, T);
+    await breath();
+    const out = await fingeringFor({ id, xml, P, T, bpm, stored: song.fing || null, rev: song.rev ?? null, from: "import" });
     return out?.rec || null;
   } catch (err) {
     console.info("fingering after the save", err?.message || err);

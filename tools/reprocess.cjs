@@ -133,6 +133,14 @@ async function until(p, pred, ms = 30000, f = dbg) {
   // --- pdf-import.html?reprocess=<id>: the same id, new MusicXML, everything else kept ------------------
   if (want('page')) {
     const ctx = await ctxFor('ag');
+    // (assist.js as served, with a spy on dropFingering: the replaced song's fingering for assistants was
+    // the old conversion's — the E7 review)
+    const DROP = 'export function dropFingering(songId) {';
+    await ctx.route('**/assist.js*', async (r) => {
+      const res = await r.fetch(), src = await res.text();
+      if (!src.includes(DROP)) throw new Error('assist.js changed: the dropFingering spy needs its signature');
+      await r.fulfill({ response: res, body: src.replace(DROP, `${DROP}\n  try { (window.__drops ||= []).push(songId); } catch {}`) });
+    });
     const p = await ctx.newPage();
     await p.goto(`${BASE}/resonate/tools.html`);
     const { id, pdfBytes } = await seedSong(p, { pdf: '/imp/amazing-grace1.pdf', xml: GS_XML });
@@ -153,6 +161,8 @@ async function until(p, pred, ms = 30000, f = dbg) {
     ok(a.key === 2 && a.rate === 0.9 && a.play?.view === 'both' && a.play?.at === 3 && a.play?.speed === 0.75, `settings kept (key ${a.key}, rate ${a.rate}, play ${JSON.stringify(a.play)})`);
     ok(!a.jobs.length && !a.flag, `no job left (${a.jobs.length}), no flag`);
     ok(d.url === '', `the address lost ?reprocess (${JSON.stringify(d.url)})`);
+    const drops = await p.evaluate(() => window.__drops || []);
+    ok(drops.length === 1 && drops[0] === id, `its fingering for assistants dropped (assist.js dropFingering: ${JSON.stringify(drops.map((x) => (x === id ? 'the song' : x)))})`);
     // A reload after it: no second run, the picker.
     await p.reload();
     const r = await until(p, (x) => x.pick, 8000);
