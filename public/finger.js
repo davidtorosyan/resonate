@@ -27,7 +27,8 @@
 //   h  the hand that plays it          f  its finger (0: none — a grace note, or `w`)
 //   p  index of its hand's frame (frames[h][p]; -1 when that hand has none)
 //   x  flags, in this order: "m" moved to the other hand than its staff's, "w" too wide (no finger:
-//      the hand can't reach it), "t" a tie's continuation (its start's hand and finger), "g" a grace
+//      the hand can't reach it), "t" a tie's continuation (its start's hand and finger — no finger, f
+//      0, when its key was let go early, or ended, at or before it: the pedal holds it), "g" a grace
 //      note; "" none. A unison's twin and a tie's continuation carry their key's "m" / "w".
 //   frames  per hand, the key each finger rests on (keys[0] = the thumb's midi, … keys[4] = the fifth's)
 //      from written quarter q0 on; ms  how long it took.
@@ -40,7 +41,7 @@
 
 // Bumped with any change in output (as omr/engine.js ENGINE_N): a stored fingering of another ALG is
 // worked out again. tools/fingercases.mjs fails when the output changes and this doesn't.
-export const ALG = 1;
+export const ALG = 2;
 
 // Finger spans, the right hand, from Balliauw, Herremans, Palhazi Cuervo & Sörensen 2017, "A variable
 // neighbourhood search algorithm to generate piano fingerings for polyphonic sheet music", International
@@ -204,18 +205,18 @@ function prepare(items) {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Stage A — hands. At each onset the staff's hands play their staves' keys, unless they can't — a hand
-// would span past its practical limit or take more than 5 keys with every held key let go (D2): only
-// there are other splits tried (the k lowest struck keys to the left hand, the rest to the right), so
-// moves stay rare. A held key keeps its hand (crossing allowed for it) or is let go early. Costs: LEAVE
-// a key moved off its staff's hand, LET a held key let go, a hand's spread over its struck and kept keys
-// (COMF a unit past the comfortable 1–5 span, PRAC past the practical one, OVER5 a key over 5), MOVE a
-// unit its centre (the middle of its struck keys) moved since it last struck. A state = the hand of
-// every sounding key + each hand's last centre: an exact Viterbi over those moves (up to MAXA states at
-// once). Let-go options per striking hand: its lowest i and highest j held keys, those that lower its
-// spread only (a key kept now can be let go at its next strike for the same LET). Then a key still
-// past a practical span or over 5 is flagged `w`: the inner keys (the right hand's lowest, the left
-// hand's highest) — so the bass and the melody keep theirs.
+// Stage A — hands. At each onset the staff's hands play their staves' keys (a key both staves strike:
+// either hand), unless they can't — a hand would span past its practical limit or take more than 5 keys
+// with every held key let go (D2): only there are other splits tried (the k lowest struck keys to the
+// left hand, the rest to the right), so moves stay rare. A held key keeps its hand (crossing allowed for
+// it) or is let go early. Costs: LEAVE a key moved off its staff's hand, LET a held key let go, a hand's
+// spread over its struck and kept keys (COMF a unit past the comfortable 1–5 span, PRAC past the
+// practical one, OVER5 a key over 5), MOVE a unit its centre (the middle of its struck keys) moved since
+// it last struck. A state = the hand of every sounding key + each hand's last centre: an exact Viterbi
+// over those moves (up to MAXA states at once). Let-go options per striking hand: its lowest i and
+// highest j held keys, those that lower its spread only (a key kept now can be let go at its next strike
+// for the same LET). Then a key still past a practical span or over 5 is flagged `w`: the inner keys
+// (the right hand's lowest, the left hand's highest) — so the bass and the melody keep theirs.
 // → { keys, slices, graces, link, hand: Int8Array (0 right, 1 left), moved, wide (Uint8Array),
 //     let: Int32Array (the onset a key was let go early at, -1), cost, states (most at one onset), size }
 export function assignHands(items, opts = {}) {
@@ -256,12 +257,15 @@ export function assignHands(items, opts = {}) {
       hands.forEach((h, i) => { (h ? l : r).push(st[i]); const home = keys[st[i]].home; if (home && !(home & (h ? 2 : 1))) leave += COST.LEAVE; });
       return { hands, r, l, leave };
     };
-    const staff = st.every((k) => keys[k].home === 1 || keys[k].home === 2) ? st.map((k) => (keys[k].home === 2 ? 1 : 0)) : null;
-    if (staff) {
-      const sp = mk(staff), arpR = sp.r.some((k) => keys[k].arp), arpL = sp.l.some((k) => keys[k].arp);
-      if (!breaks(sp.r, arpR) && !breaks(sp.l, arpL)) return [sp];
+    // the staff split: every key on its staff's hand — a key both staves strike (home 3) on either, so
+    // two splits when there is one: those that don't break the hands, else every other split too
+    const out = [];
+    if (st.every((k) => keys[k].home)) {
+      out.push(mk(st.map((k) => (keys[k].home === 2 ? 1 : 0))));
+      if (st.some((k) => keys[k].home === 3)) out.push(mk(st.map((k) => (keys[k].home === 1 ? 0 : 1))));
+      const fine = out.filter((sp) => !breaks(sp.r, sp.r.some((k) => keys[k].arp)) && !breaks(sp.l, sp.l.some((k) => keys[k].arp)));
+      if (fine.length) return fine;
     }
-    const out = staff ? [mk(staff)] : [];
     for (let k = 0; k <= st.length; k++) {
       const hands = st.map((_, i) => (i < k ? 1 : 0));
       if (!out.some((o) => o.hands.every((h, i) => h === hands[i]))) out.push(mk(hands));
@@ -378,8 +382,8 @@ export function assignHands(items, opts = {}) {
 // fifth on black beside a white key, thumb passing, the same key with another finger. First-order;
 // ties to the lower state index.
 // → { f: Int8Array (a finger per key of this hand, 0 elsewhere), path: [{ s, q, k: [keys], m: [midis], f: [fingers] }]
-//     (the hand's sounding fingered keys after each of its onsets, rising on its x), let: [keys let go
-//     early here], cost }
+//     (the hand's sounding fingered keys after each of its onsets, rising on its x), let: [[key, q]]
+//     (keys let go early here, at the onset q), cost }
 export function fingerHand(A, side, opts = {}) {
   const H = handOf(opts.hand ?? A.size);
   const hb = side === "l" ? 1 : 0, sg = hb ? -1 : 1;
@@ -559,7 +563,7 @@ export function fingerHand(A, side, opts = {}) {
     ks.forEach((k, i) => { if (struck.has(k)) f[k] = fs[i]; });
     // (held from before and not kept: let go early here)
     const kept = new Set(ks);
-    for (const k of S.back.k) if (!kept.has(k) && alive(k, j)) let_.push(k);
+    for (const k of S.back.k) if (!kept.has(k) && alive(k, j)) let_.push([k, st.q]);
   }
   return { f, path, let: let_, cost: steps.length ? best.cost : 0 };
 }
@@ -630,6 +634,8 @@ export function fingerNotes(items, opts = {}) {
   const { keys, slices } = A;
   const out = new Map(), frames = { r: [], l: [] }, stage = {};
   const frameAt = {}; // hand → (q) → its frame index
+  const letQ = new Float64Array(keys.length).fill(Infinity); // the onset a key was let go early at (Stage A or B)
+  for (let k = 0; k < keys.length; k++) if (A.let[k] >= 0) letQ[k] = slices[A.let[k]].q;
   for (const side of ["r", "l"]) {
     const R = fingerHand(A, side, opts);
     const F = framesOf(R.path, side);
@@ -637,6 +643,7 @@ export function fingerNotes(items, opts = {}) {
     for (let j = 0; j < R.path.length; j++) R.path[j].p = F.p[j];
     stage[side] = { ...R, frames: F };
     for (let k = 0; k < keys.length; k++) if (A.hand[k] === (side === "l" ? 1 : 0)) keys[k].f = R.f[k];
+    for (const [k, q] of R.let) if (q < letQ[k]) letQ[k] = q;
     const fr = F.frames;
     frameAt[side] = (q) => {
       if (!fr.length) return -1;
@@ -665,7 +672,10 @@ export function fingerNotes(items, opts = {}) {
     if (k == null) continue;
     const h = H(k);
     const own = !e.tied || keys[k].items.includes(e);
-    out.set(e.id, { h, f: A.wide[k] ? 0 : keys[k].f || 0, p: frameAt[h](own ? keys[k].q : e.q), x: flags(k) + (own ? "" : "t") });
+    // (a continuation after its key was let go early, or ended — struck again by another voice and let
+    // go there: no finger, the pedal holds it; its finger plays on)
+    const f = A.wide[k] || (!own && (letQ[k] <= e.q + QEPS || !(keys[k].end > e.t + TOL))) ? 0 : keys[k].f || 0;
+    out.set(e.id, { h, f, p: frameAt[h](own ? keys[k].q : e.q), x: flags(k) + (own ? "" : "t") });
   }
   const res = { notes: out, frames, ms: now() - t0 };
   if (opts.debug) res.debug = { A, r: stage.r, l: stage.l };

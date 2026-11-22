@@ -16,7 +16,7 @@
 //   G  no long task while a long piece's fingering is worked out (the Worker; this task's share < 50 ms)
 //   H  a phone: no digits where a white key is under 12 px (Both with its chips, a wide piece);
 //      digits and rings in the RH view (~15 px)
-//   I  the cache: a reload works nothing out (stored); an ALG bump (finger.js served with ALG 2), a typed
+//   I  the cache: a reload works nothing out (stored); an ALG bump (finger.js served with the next ALG), a typed
 //      tempo, a clean-up change (a converted song's cleaned MusicXML read differently), a Reprocess (the
 //      tray, a scripted engine: the importer works it out after the save, the Score reuses it) do
 //   J  off = today: with the mode off the schedules, a press's lit keys and ▶'s keyboard drawings equal those
@@ -31,6 +31,8 @@ const { ok, skip, done, fail } = require('./lib/check.cjs');
 const { BASE, SHOTS } = require('./lib/paths.cjs');
 const SH = require('./lib/shell.cjs');
 const FX = require('./fingerfixture.cjs');
+const FINGER_JS = fs.readFileSync(path.join(__dirname, '../public/finger.js'), 'utf8');
+const ALG = Number(/export const ALG = (\d+);/.exec(FINGER_JS)[1]); // (finger.js's, as the page serves it)
 
 const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
 const PARTS = process.env.PARTS ? new Set(process.env.PARTS.split(',')) : null;
@@ -284,10 +286,10 @@ async function desktop(dev) {
   await SH.openScore(page, { id: R6 });
   ok(await fingReady(page), 'the fingering worked out on open');
   let d = await D(page);
-  ok(d.fing.state === 'ready' && d.fing.from === 'computed' && d.fing.alg === 1 && d.fing.hand === 'sb' && d.fing.bpm === 160 && d.fing.worker >= 1 && d.fing.main === 0, `in the Worker, hand "sb", ♩=160 (${JSON.stringify({ s: d.fing.state, from: d.fing.from, alg: d.fing.alg, hand: d.fing.hand, bpm: d.fing.bpm, worker: d.fing.worker, main: d.fing.main })})`);
+  ok(d.fing.state === 'ready' && d.fing.from === 'computed' && d.fing.alg === ALG && d.fing.hand === 'sb' && d.fing.bpm === 160 && d.fing.worker >= 1 && d.fing.main === 0, `in the Worker, hand "sb", ♩=160 (${JSON.stringify({ s: d.fing.state, from: d.fing.from, alg: d.fing.alg, hand: d.fing.hand, bpm: d.fing.bpm, worker: d.fing.worker, main: d.fing.main })})`);
   ok(d.fing.notes === 26 && d.fing.moved === 1 && d.fing.wide === 0, `26 notes, 1 moved (G3), none too wide (${d.fing.notes}, ${d.fing.moved}, ${d.fing.wide})`);
   const rec = await page.evaluate(async (id) => { const v = document.getElementById('version').textContent.trim().replace(/^v/, ''); const L = await import(`./library.js?v=${v}`); const s = await L.getSong(id); return s.fing ? { alg: s.fing.alg, hand: s.fing.hand, bpm: s.fing.bpm, sig: s.fing.sig, n: Object.keys(s.fing.n).length, clean: 'clean' in s } : null; }, R6);
-  ok(rec && rec.alg === 1 && rec.n === 26 && rec.sig === d.fing.sig, `kept with the song (library.js fing: ${JSON.stringify(rec)})`);
+  ok(rec && rec.alg === ALG && rec.n === 26 && rec.sig === d.fing.sig, `kept with the song (library.js fing: ${JSON.stringify(rec)})`);
 
   if (part('A')) {
     const r = await page.evaluate(() => { const f = document.getElementById('fing'), kb = document.querySelector('#piano-region .kb'), row = document.getElementById('piano-region'); const a = f.getBoundingClientRect(), k = kb.getBoundingClientRect(), w = row.getBoundingClientRect(); return { w: a.width, h: a.height, right: a.right, left: a.left, kbRight: k.right, rowRight: w.right, after: kb.nextElementSibling === f, label: f.getAttribute('aria-label'), mode: f.dataset.mode, pref: localStorage.getItem('resonate.play.fingers') }; });
@@ -383,18 +385,18 @@ async function desktop(dev) {
 // I: what makes it work the fingering out again.
 async function cache(dev, ctx, page, R6) {
   await openOn(page, R6, 'both');
-  // an ALG bump: finger.js served with ALG 2 (the Worker's import too)
-  const src = fs.readFileSync(path.join(__dirname, '../public/finger.js'), 'utf8').replace(/export const ALG = \d+;/, 'export const ALG = 2;');
+  // an ALG bump: finger.js served with the next ALG (the Worker's import too)
+  const src = FINGER_JS.replace(/export const ALG = \d+;/, `export const ALG = ${ALG + 1};`);
   await ctx.route('**/finger.js*', (r) => r.fulfill({ contentType: 'text/javascript', body: src }));
   await SH.reopenScore(page, { id: R6 });
   await fingReady(page);
   let d = await D(page);
-  ok(d.fing.from === 'computed' && d.fing.alg === 2 && d.fing.total === 1, `I: an ALG bump — worked out again (alg ${d.fing.alg}, ${d.fing.from})`);
+  ok(d.fing.from === 'computed' && d.fing.alg === ALG + 1 && d.fing.total === 1, `I: an ALG bump — worked out again (alg ${d.fing.alg}, ${d.fing.from})`);
   await ctx.unroute('**/finger.js*');
   await SH.reopenScore(page, { id: R6 });
   await fingReady(page);
   d = await D(page);
-  ok(d.fing.from === 'computed' && d.fing.alg === 1, `I: … and back (alg ${d.fing.alg}, ${d.fing.from})`);
+  ok(d.fing.from === 'computed' && d.fing.alg === ALG, `I: … and back (alg ${d.fing.alg}, ${d.fing.from})`);
   // a typed tempo (Sing's "Type a tempo"): another ♩ at 100%
   await page.evaluate((id) => { const t = JSON.parse(localStorage.getItem('resonate.sing.timing') || '{}'); t[id] = { bpm: 120 }; localStorage.setItem('resonate.sing.timing', JSON.stringify(t)); }, R6);
   await SH.reopenScore(page, { id: R6 });
