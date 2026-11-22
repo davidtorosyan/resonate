@@ -7,14 +7,14 @@
 // them all. The conversions run one after another in the tray (tray.js: its queue), each row says
 // what its song is and where it is: "PDF only · 2d", "PDF · 2d" (converted), "queued", "converting
 // 3/7" — and, only when a newer engine would read it again, a quiet "v9 → v10" beside that.
-import { listSongs, addSong, addPdfSong, listPdfIds } from "../library.js?v=96";
-import { SAMPLES, songInfo } from "../catalog.js?v=96";
-import { readScoreFile, parseMusicXml } from "../musicxml.js?v=96";
-import { spaceChanged } from "../nav.js?v=96";
-import { forgetSong } from "../forget.js?v=96";
-import { titleFromFileName } from "../omr/importer.js?v=96";
-import { ENGINE_N } from "../omr/engine.js?v=96";
-import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen } from "./chrome.js?v=96";
+import { listSongs, addSong, addPdfSong, listPdfIds } from "../library.js?v=97";
+import { SAMPLES, songInfo } from "../catalog.js?v=97";
+import { readScoreFile, parseMusicXml } from "../musicxml.js?v=97";
+import { spaceChanged } from "../nav.js?v=97";
+import { forgetSong } from "../forget.js?v=97";
+import { titleFromFileName } from "../omr/importer.js?v=97";
+import { ENGINE_N } from "../omr/engine.js?v=97";
+import { ic, fic, esc, openOverlay, closeOverlay, overlayOpen } from "./chrome.js?v=97";
 
 const SONG_KEY = "resonate.sing.song";
 const $ = (id) => document.getElementById(id);
