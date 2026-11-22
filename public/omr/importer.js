@@ -286,16 +286,25 @@ export function createImporter(opts = {}) {
       done: [], failed: [], starts: {}, lefts: {}, fails: {}, stage: null, runs: 0, skip: [],
       ...(replace ? { replace } : {}), // (a reprocess: the song whose MusicXML the result replaces)
     };
-    const bytes = await file.arrayBuffer();
-    let stored = true;
-    try {
-      await J.createJob(job, bytes);
-      J.setFlag(job);
-    } catch (err) {
-      stored = false;
-      host.onLog(`[resume] the import can't be kept on this device (${err?.message || err}); a reload starts over`);
+    // The engine first, then the job stored: a job another tab finds (pending) always has its tab on the
+    // engine. Stored first, another tab's queue could resume it and take the engine before this one
+    // asked — refused after WAIT_MS, this one then deleted the job being converted there and queued its
+    // song again (two tabs on a batch, under load: the done row lost, the song passed by or read twice).
+    let release = null, refused = null;
+    try { release = await takeLock(WAIT_MS); } catch (err) { refused = err; }
+    let bytes;
+    try { bytes = await file.arrayBuffer(); } catch (err) { release?.(); throw err; }
+    let stored = !refused;
+    if (stored) {
+      try {
+        await J.createJob(job, bytes);
+        J.setFlag(job);
+      } catch (err) {
+        stored = false;
+        host.onLog(`[resume] the import can't be kept on this device (${err?.message || err}); a reload starts over`);
+      }
     }
-    return run(job, { bytes, stored, file });
+    return run(job, { bytes, stored, file, release, refused });
   }
 
   // A song made with PDF → Song, read again from the PDF kept with it (after an engine or clean-up
@@ -376,7 +385,7 @@ export function createImporter(opts = {}) {
     releaseWake();
   }
 
-  async function run(job, { bytes, stored, release = null, resumed = false }) {
+  async function run(job, { bytes, stored, release = null, resumed = false, refused = null }) {
     const ctl = new AbortController();
     const cur = current = { job, ctl, stage: null, buckets: new Map(), pre: [], stored, saving: null, discarded: false };
     const log = [];
@@ -384,6 +393,7 @@ export function createImporter(opts = {}) {
     setState('running', { job: summary(job) });
     keepAwake();
     try {
+      if (refused) throw refused; // (begin asked for the engine already)
       if (!release) release = await takeLock(WAIT_MS);
     } catch (err) {
       // Another tab is converting: a new import is refused (and not kept); a resumed one stays.

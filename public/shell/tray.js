@@ -328,6 +328,9 @@ export function mountTray({ version, spaceChanged, openSong, onChange = () => {}
     cur = null;
     if (ok) lastOk = { songId: res?.songId || s?.id, title: res?.title || s?.title };
     let q = readQueue();
+    // (converted, yet waiting again: another tab took it from the queue too, was refused the engine and
+    // put it back first — done now; left there it held the batch's done row back, then was passed by)
+    if (ok && s && q.ids.includes(s.id) && !spaceChanged()) q = writeQueue({ ...q, ids: q.ids.filter((x) => x !== s.id) });
     const ofBatch = !!s?.queued || q.total > q.done + q.ids.length;
     const total = q.total;
     const n = q.ok + (ok && ofBatch ? 1 : 0);

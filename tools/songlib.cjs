@@ -582,7 +582,9 @@ async function closeSongs(p) {
 }
 
 // F1: another tab's import kept on this device stalled the queue (nothing ran, nothing showed, the
-// screen kept awake); a tab that waited on another's song counted it a second time.
+// screen kept awake); a tab that waited on another's song counted it a second time. Under load (v97
+// review): another tab's queue took over a new import before its tab had the engine, and two tabs took
+// the same song — the batch's done row lost; the last two checks make each race happen.
 async function fixTabs() {
   console.log("\n--- F1 (iPad, two tabs): another tab's import is gone on with here; a song counted once");
   const ctx = await context(IPAD, { scenario: 'long', wake: true });
@@ -635,6 +637,66 @@ async function fixTabs() {
   ok(!!ends && ends.filter((r) => r?.batch === 2).length === 1 && ends.filter(Boolean).length === 1, `F1 one tab says "2 converted" (${JSON.stringify(ends)})`);
   ok((await queueNow(a2)) === null && (await songsNow(a2)).every((x) => x.k === 'conv'), 'F1 both converted, the queue gone');
   await closeCtx(ctx2, 'F1 counted once');
+
+  // A new import's job is stored only once its tab has the engine. Stored first, another tab's queue
+  // could resume it and take the engine before its own tab asked (a busy tab: here its lock request
+  // held back 3 s) — that tab, refused after 6 s, deleted the job being converted elsewhere and queued
+  // its song again: the batch's done row lost (the check above, under load), or the song read twice.
+  const ctx3 = await context(IPAD, { scenario: 'long' });
+  await ctx3.addInitScript(() => {
+    if (!navigator.locks) return;
+    const req = navigator.locks.request.bind(navigator.locks);
+    navigator.locks.request = (name, opts, cb) => {
+      const ms = +sessionStorage.getItem('__lockDelay') || 0; // (a new import's request: the one with a time limit)
+      return opts?.signal && ms ? new Promise((r) => setTimeout(r, ms)).then(() => req(name, opts, cb)) : req(name, opts, cb);
+    };
+  });
+  const a3 = await home(ctx3);
+  const [one3, two3] = await seed(a3, [{ pdf: true, name: 'One.pdf', title: 'One' }, { pdf: true, name: 'Two.pdf', title: 'Two' }]);
+  const b3 = await home(ctx3);
+  await a3.evaluate(() => sessionStorage.setItem('__lockDelay', '3000'));
+  await openSongs(a3); await openMenu(a3, one3); await a3.click('#row-menu [data-act="convert"]');
+  await until(a3, (x) => x.import.song?.id === one3, 8000);
+  await openSongs(b3); await openMenu(b3, two3); await b3.click('#row-menu [data-act="convert"]');
+  // (song → the jobs converting it; a job gone while a tab goes on converting it — for a second: not the
+  // moment between a run's save and its state)
+  const runs = new Map(), gone = new Map(), dropped = [];
+  for (let i = 0; i < 400; i++) {
+    const [x, y] = [(await dbg(a3))?.import, (await dbg(b3))?.import], jobs = await jobsNow(a3);
+    for (const [t, d] of [['A', x], ['B', y]]) {
+      if (d?.state !== 'running' || !d.song?.id || !d.jobId) continue;
+      runs.set(d.song.id, new Set([...(runs.get(d.song.id) || []), d.jobId]));
+      if (jobs) gone.delete(d.jobId);
+      else if (!gone.has(d.jobId)) gone.set(d.jobId, Date.now());
+      else if (Date.now() - gone.get(d.jobId) > 1000) dropped.push(`${t} ${d.jobId}`);
+    }
+    if (i > 20 && !x?.running && !y?.running && (await queueNow(a3)) === null && !jobs) break;
+    await a3.waitForTimeout(150);
+  }
+  const reads = [one3, two3].map((id) => runs.get(id)?.size || 0);
+  ok(!dropped.length, `F1 a job isn't dropped while another tab converts it (${dropped.length ? 'gone under ' + [...new Set(dropped)].join(', ') : 'never'})`);
+  ok(reads.every((n) => n === 1) && (await songsNow(a3)).every((x) => x.k === 'conv'), `F1 each song converted once (One ${reads[0]}, Two ${reads[1]} runs)`);
+  await closeCtx(ctx3, 'F1 the engine first');
+
+  // Both tabs can take the queue's next song at once (localStorage reaches the other tab late, under
+  // load); the one refused the engine puts it back first in the queue while the other converts it —
+  // done there, it leaves the queue (else it held back the done row, then was passed by: neither tab
+  // said "2 converted"). Here A's second song is put back as that tab would.
+  const ctx4 = await context(IPAD, { scenario: 'long' });
+  const a4 = await home(ctx4);
+  await seed(a4, [{ pdf: true, name: 'One.pdf', title: 'One' }, { pdf: true, name: 'Two.pdf', title: 'Two' }]);
+  await openSongs(a4);
+  await a4.click('#songs-body [data-act="convert-all"]');
+  let second = null;
+  for (let i = 0; i < 300 && !second; i++) {
+    const [q, x] = [await queueNow(a4), (await dbg(a4))?.import];
+    if (q?.done === 1 && x?.state === 'running' && x.song?.id && x.jobId) second = x.song.id;
+    else await a4.waitForTimeout(150);
+  }
+  await a4.evaluate(async ({ id, VER }) => { const v = eval(VER); const Q = await import(`./omr/queue.js?v=${v}`); const q = Q.readQueue(); Q.writeQueue({ ...q, ids: [id, ...q.ids] }); }, { id: second, VER });
+  const d4 = await until(a4, (x) => x.import.result && !x.import.running, 60000);
+  ok(!!second && d4?.import.result?.batch === 2 && (await queueNow(a4)) === null, `F1 a song put back while it converts: "2 converted" all the same (${JSON.stringify(d4?.import.result ?? null)}, queue ${JSON.stringify(await queueNow(a4))})`);
+  await closeCtx(ctx4, 'F1 put back');
 }
 
 // F2: Stop (and the Reader's ✕) in a song's first moments — its PDF read and its job stored — didn't
