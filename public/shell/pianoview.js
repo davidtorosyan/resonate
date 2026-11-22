@@ -23,10 +23,10 @@
 // the Score's and the Score says its view has a fingering (fingering(true)); a tap cycles off →
 // numbers → hand (this device's pref, resonate.play.fingers; none: numbers) and tells the Score
 // (score.fingers()), which draws the digits and the ghost hand through forScore().draw.
-import { mountKeyboard } from "../keyboard.js?v=98";
-import { loadPiano, pianoNow, holdPiano, primeHold, pianoBus, keepAlive, ownContext, sleepAudio } from "../piano.js?v=98";
-import { soundGone } from "../pitch.js?v=98";
-import { SHARPS } from "../music.js?v=98";
+import { mountKeyboard } from "../keyboard.js?v=99";
+import { loadPiano, pianoNow, holdPiano, primeHold, pianoBus, keepAlive, ownContext, sleepAudio } from "../piano.js?v=99";
+import { soundGone } from "../pitch.js?v=99";
+import { SHARPS } from "../music.js?v=99";
 
 const MIN_PRESS = 0.25; // s: a quick tap still sounds this long
 const LIFT_PLAY = 0.8; // s: a press that could only sound at the lift

@@ -17,16 +17,16 @@
 // The queue is the space's, not the page's (another tab, a reload): an import kept on this device
 // that this tab isn't showing — another tab's, or one a closed tab left — is gone on with here before
 // the queue (waiting while the other tab runs it: "Running in another tab"); a song is counted once.
-import { createImporter } from "../omr/importer.js?v=98";
-import { mount as mountReader } from "../omr/reader.js?v=98";
-import { readFlag } from "../omr/jobs.js?v=98";
-import { readQueue, writeQueue, enqueue, dropFromQueue, clearQueue } from "../omr/queue.js?v=98";
-import { ENGINE_N } from "../omr/engine.js?v=98";
-import { activeSpace, activeDb } from "../space.js?v=98";
-import { etaText } from "../omr/readerstate.js?v=98";
-import { songInfo } from "../catalog.js?v=98";
-import { listPdfIds, markConvFailed } from "../library.js?v=98";
-import { ic, esc, openOverlay, closeOverlay, overlayOpen, pageOpen } from "./chrome.js?v=98";
+import { createImporter } from "../omr/importer.js?v=99";
+import { mount as mountReader } from "../omr/reader.js?v=99";
+import { readFlag } from "../omr/jobs.js?v=99";
+import { readQueue, writeQueue, enqueue, dropFromQueue, clearQueue } from "../omr/queue.js?v=99";
+import { ENGINE_N } from "../omr/engine.js?v=99";
+import { activeSpace, activeDb } from "../space.js?v=99";
+import { etaText } from "../omr/readerstate.js?v=99";
+import { songInfo } from "../catalog.js?v=99";
+import { listPdfIds, markConvFailed } from "../library.js?v=99";
+import { ic, esc, openOverlay, closeOverlay, overlayOpen, pageOpen } from "./chrome.js?v=99";
 
 const $ = (id) => document.getElementById(id);
 const STAGE = { prep: "pages", boot: "engine", export: "MusicXML", save: "saving" };

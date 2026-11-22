@@ -158,6 +158,7 @@ The device switch the assistant acts through is no longer 📡: it's the **AI bu
 ## What changed (2026-11-23, E7: piano fingering)
 
 No tool changed: one new query of `read_resonate`, `fingering {song, from_measure?, to_measure?, hand?: rh | lh}` (`QUERIES.fingering`, `score: true`; `READERS.fingering` → `resonate.ts` `getFingering`), answered from the new table `score_fingering` (migration `20261123010000_score_fingering.sql`), which the app fills once it has worked a song's fingering out on the Score; `get_score_view`'s highlight text carries the fingers too. `songs()` now goes through `songIndex()`, `pickSong()` split out of `findSong()`. `VERSION` 2026-11-23 with a `CHANGES` line.
+- **Migration applied 2026-11-22** (`score_fingering`, apply_migration).
 - **To deploy:** the migration with `apply_migration` (non-destructive), then `mcp` with the same files, `verify_jwt` false, `import_map_path: "deno.json"`; `get_capabilities` → 2026-11-23; mcp2.cjs section 6.
 
 ## Deploy (the integrator)
