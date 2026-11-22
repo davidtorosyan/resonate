@@ -1,0 +1,211 @@
+# Piano fingering (E7): design
+
+A draft (2026-11-22, revised after one review), not built. An "As built" section will win where the build differs.
+
+## 1. What the owner asked for
+
+An adult beginner learning to read, from Audiveris conversions of pop piano/vocal arrangements. docs/ROADMAP.md E7:
+
+- **R1** Start from existing work: PianoPlayer, Parncutt-style cost models, Nakamura's HMMs and PIG, dynamic programming over hand positions.
+- **R2** Run locally after a conversion, like a clean-up: stored with the song, rerun when the algorithm changes.
+- **R3** A hand and a finger for every note.
+- **R4** Readable by assistants (a `read_resonate` query).
+- **R5** On the Score's keyboard: off / finger numbers / a ghost hand.
+- **R6** Catch a G3 + B4 the right hand can't span: two hands.
+
+House rules: few words; works signed out. A fingering is a suggestion: nothing counts, grades or marks it wrong.
+
+## 2. Decisions
+
+**D1 — Our own rule-based cost model for the hands; the fingers ours or ac-kit's (a spike decides, §7).** No trained model.
+
+Every published method scores below two pianists' agreement (71.4 Mgen, Nakamura et al. 2020); the learned ones can't ship:
+
+| option | why not |
+|---|---|
+| Nakamura's HMMs (61.7–64.5) | C++ with no licence; trained on PIG ("only nonprofit, academic use"). |
+| ArGNN (66.8) | MIT code, weights from ThumbSet + PIG (restricted); ONNX + MBs of wasm for ~3 points. |
+| Smart Piano Fingering (61.9) | GPL-3.0-only; hands fixed per staff (misses R6). |
+| PianoPlayer (MIT, Python) | No 1–5 span limit (G3+B4 passes); hands fixed per part. |
+| @ac-kit/media-piano-fingering 0.1.3 (BSD-3, 2026-11-15) | Keeps a given hand even past reach, so with staves passed it misses R6. Has Balliauw's hands, printed fingers, early release, a crossing cost; a beam, "~1 s for 917 notes" (its comment); three deps (an esbuild bundle). **A Stage B candidate.** |
+
+Ours, vanilla JS from the published methods:
+
+- **Costs:** Parncutt et al. 1997, Jacobs 2001 (only finger 4 is weak), Balliauw et al. 2017 (rules 13–15, below).
+- **Distances:** Balliauw's 14 units an octave (E–F 2, C–C♯ 1).
+- **Search:** Al Kasimi et al. 2007's chord trellis, by Viterbi.
+- **Spans:** Balliauw's Tables 1, 9, 10 (large, small, medium; pydactyl's match), cited in finger.js and docs/PLAY.md.
+
+Deterministic, explainable (a sum of named costs), no training data, and it gives the hand's position (the ghost). Accuracy: the rule-based VNS reaches 56.7 Mgen / 78.2 Msoft where pianists agree at 70.2: about 2 notes in 5 differ from a given pianist's, about 1 in 5 from every pianist's. A beginner learns what is shown, so printed fingers are kept (§3).
+
+**D2 — Hands from the staff; notes move only at an onset the staff's hands can't play**, each move flagged: R6. Joint methods solve a harder problem, without staves (best 90.8% hand accuracy on PIG: Penner & Hindle 2026).
+
+**D3 — A small hand and beginner weights by default (Q1).** Small: 1–5 comfortable to a seventh, at most an octave. Boyle et al. 2015: an octave clear of the keys' front edge needs ~7.6 in; a ninth at 7.6 in only "with considerable discomfort and not at speed"; non-pianist adults' means 8.3 in (men), 7.6 in (women). An unreachable suggestion is worse than one more hand-over, so v1 errs small; medium (an octave comfortable, a ninth at most) and large are a setting away. The beginner weights (thumb on black ×2, hand jumps ×2) are always on, part of `ALG`; both stored as `hand` ("sb").
+
+**D4 — On the device, in a Worker, after a conversion's save and when a stale song opens** (another algorithm, hand, tempo or MusicXML). No library-wide batch.
+
+**D5 — On the keyboard only (v1), its control at the keyboard's right end**, beside what it changes; the Score's bar is left alone. Digits sparse, as printed music, Synthesia (a hint where "it's time to move your hand") and P.I.A.N.O. ("fingering information for every note overwhelms learners") do. Verovio's `<fingering>` (tested) re-lays the page on every toggle and makes systems 8% taller: on the music, later.
+
+**D6 — Assistants: one cloud table, one query, fingers in the highlight's text** (§6).
+
+**D7 — No PIG by default.** Its terms don't clearly cover a personal app; registering is the owner's call (Q5). Instead: fixtures and a survey (§8).
+
+## 3. The algorithm (contract for `public/finger.js`)
+
+**Input:** ▶'s schedule: `playtime.js` `track(S.T, { bars: written order, keep: the keyboard part, base })` items — ties joined, unisons struck once, an OMR-overfilled voice cut at its barline — with staff and part from `S.Tid`, not `timeline`'s raw `els`.
+
+- **Part:** `views.both` when a piano or a hymn. Piano: staff 1 RH, the last LH, a middle staff by its clef; a one-staff piano has no staff hand. Hymn: treble part RH, bass LH. Else: none.
+- **Notes:** struck items and tie continuations (`t`: not struck, the start's hand and finger, kept busy). Grace notes: no finger (v1). A key both staves strike is one key. A printed `<technical><fingering>` (MuseScore's) pins its finger. An `<arpeggiate>` chord's span isn't limited.
+- **Time:** ▶'s 100%: the song's own tempo (`resonate.sing.timing[id].bpm`) when set, else the score's, else 90 — in the cache key. Never the speed menu. Written order.
+
+**Stage A — hands.** At an onset the staff's hands **fail** when a hand would span past its practical limit or take > 5 keys, with every held key let go. Only there are other splits tried, so `m` stays rare. A split k gives the k lowest struck keys to the LH, the rest to the RH; a held key keeps its hand (crossing allowed for it) or is let go early, the pedal holding it. Costs:
+
+- 3 per key moved off its staff's hand (`LEAVE`; 0 with no staff hand);
+- 2 per held key let go early;
+- each hand's spread over its struck and kept keys: 2 a unit above the comfortable 1–5 span, 10 a unit past the practical one (rule 13), +10 a key over 5;
+- 0.5 a unit the hand's centre moved since it last played.
+
+A state is the hand of every sounding key plus each resting hand's last centre, so the Viterbi is exact; moves tried only where the staff fails keep most onsets to one state. A key still past a practical span or over 5 is then flagged `w` (no finger): the inner key breaking it, so the bass and the melody keep theirs. A one-staff piano: every onset is open.
+
+R6, small hand (practical 14 units):
+
+- G3+B4 on the treble staff, the LH holding C3: RH {G3, B4} spans 18: fails. RH {B4} + LH {C3, G3} (8) costs 3. G3 → LH 1 (`m`), C3 LH 5.
+- Holding C2: LH {C2, G3} is 22; letting C2 go costs 3 + 2 = 5, against 40 + stretch for G3 in the RH. G3 → LH.
+- Holding C2 + C3: C2 let go, LH {C3, G3}: 5. G3 → LH.
+
+**Stage B — fingers, per hand** (the LH mirrored, −x). ac-kit with Stage A's hands as `hand` if the spike wins; else:
+
+- **State:** the fingers of the hand's sounding keys, rising with pitch: C(5, K) ≤ 10.
+- **Held keys** keep their finger; when that leaves no state, one is let go early (+2). **Pinned** fingers are forced.
+- **Transition:** summed over the key pairs (a, fa) → (b, fb) and averaged (Al Kasimi). Inside a chord, stretch and span count twice (rule 14).
+
+| rule | cost |
+|---|---|
+| Stretch | 2 a unit outside MinComf…MaxComf; 10 a unit outside MinPrac…MaxPrac (rule 13) |
+| Small / large span | 1 a unit outside MinRel…MaxRel for thumb pairs, 2 for others |
+| Finger 4; three-to-four; four on black | 1 each |
+| Thumb on black | 1 (×2 beginner), +1 beside a white key |
+| Five on black | 1, beside a white key |
+| Thumb passing | 1 on the same level; 3 from white onto a black thumb |
+| Same key, other finger | 1 (rule 15) |
+| Hand jump | 10 a unit the anchor moves × urgency max(0.05, 0.05 s / gap), instead of Stretch where the hand can lift (gap ≥ 0.15 s): an octave bass on 5–5 is fine. ×2 beginner. |
+
+The **anchor** = a key's x minus its finger's rest offset (0, 2, 4, 6, 8: a five-finger position); 1-2-3-4-5 on C D E F G is one anchor. First-order (on PIG, HMM1 is within 2.6 points of HMM2). Ties go to the lower state index. Pair costs are precomputed tables. Worst case 3000 slices × 100 transitions × 25 pairs = 7.5 M lookups: tens of ms on a desktop, hundreds on a phone — hence the Worker.
+
+**Positions (the ghost).** Each hand's path is cut into frames, the key each finger rests on: played fingers on their keys, the others at their offsets, snapped to the nearest key (white first). A slice keeps the frame while every played finger is within 1 unit of its rest key; else a new frame. Each note gets its frame's index `p`.
+
+**Output.** `fingerNotes(items, { hand: "sb" })` → `{ notes: Map(id → { h: "r" | "l", f: 1–5 | 0, p, x }), frames: { r: [{ q0, keys: [m1…m5] }], l }, ms }`; `x` = `m` moved, `w` too wide, `t` tied, `g` grace. `ALG`, an integer, is bumped with any change in output (as `ENGINE_N`).
+
+## 4. Data
+
+**The song record** (library.js `songs`) gets `fing` beside `clean`: `{ v: 1, alg, hand, bpm, sig, at, n: { "<note id>": [h, f, p, x] }, fr: { r: [[q0, m1…m5]], l } }`, ~40 KB for 2000 notes.
+
+- **`sig`:** `length + ":" + FNV-1a` of the MusicXML Play reads (catalog.js `songXml`); note ids are `ensureIds`'s `n<i>`, positions in it.
+- **Valid** while alg, hand, bpm and sig match. `saveFing(id, fing, from)` reads and writes in one readwrite transaction, never into a song replaced meanwhile, with no `changed()` (no sync pass). `saveClean` too: both run on the first open after a release, and split transactions let one drop the other's field.
+- **Lifetime:** `replaceSong` drops it; it goes with the song (`forgetSong`) and the songs' database (adopt / shelve / park). Samples: in memory only. **Not synced** (derived), as `clean`.
+
+**Device pref:** `resonate.play.fingers` = "off" | "num" | "hand" (not shelved). Default "num" (Q2).
+
+**Cloud, for assistants:** `public.score_fingering`, one row a song (`user_id, song_id, alg, data jsonb check (pg_column_size(data) <= 524288), updated_at`), as `score_focus`. Written after a conversion and on the Score, once an assistant has connected (`hasAssistant`); a device-only marker `resonate.play.fingUp` = { uid: { songId: "alg|hand|bpm|sig" } } skips an unchanged one per account. `forgetSong` deletes the row (best effort). RLS: read own + approved; write and delete only from an app session. `data` = { v, alg, hand, song, title, bars: [{ bar, text }], moved: [{ bar, beat, note, staff, hand, finger }], wide: [{ bar, beat, notes }] }.
+
+## 5. On screen
+
+**The control.** `#fing`, 44 × 44, at the right end of the shell's Piano row (`#piano-region`, after `.kb`).
+
+- **Shown** while the Piano is linked to the Score and the view draws fingered notes (the piano's or a hymn's views, Melody when the tune is the right hand); hidden over the PDF, for a PDF only, until ready.
+- **A tap** cycles Off → numbers → hand: a hand outline, "123", a filled hand; `aria-label` "Fingering: off | numbers | hand".
+- **Room:** the ▶ chips give way first (`placeHear`, `KEY_MIN`).
+- **Off** is exactly today's keyboard and ▶.
+
+**The fingering's hand rules while on.** A piano note lights in its fingering hand's colour: G3 blue (`#4f7cff`) though written on the treble staff. The RH / LH chips mute by it (`hear` keys from `fing.h`), and a one-hand view plays and lights the notes its hand takes (the LH view: G3's key, no head drawn; the RH view leaves it out).
+
+**Finger numbers.**
+
+- **Which keys:** a press on the music or a double-tapped chord: all it lights. During ▶: each hand's first notes in a new position (`p` changes). A key pressed on the keyboard, voice and other parts, grace notes, `w`: none.
+- **White key:** a white disc just under the black keys' ends (r = min(0.36·ww, 0.13·H)), a bold digit in the hand's colour; the letter at the foot shrinks to 0.85; under 16 px a key, the digit replaces it. **Black key:** the disc on its lower end if ≥ 10 px wide, else the digit in its tag.
+- **Phone:** digits only where a white key is ≥ 12 px (six octaves beside `#fing` leave ~8).
+- **No colour per finger:** colour means the hand, the part, the peek.
+
+**The ghost hand.** Per hand, five rings on the current frame's keys (resting fingers too), each holding its digit: a 1.5–2 px stroke in the hand's colour at 60%, a 20% white fill; a finger that plays fills solid, digit white. No disc or letter on a ringed key. A new frame: a 100 ms crossfade (JazzHandsXR: still snapshots beat an animated hand).
+
+- **Which frame:** with ▶, the hand's newest struck note (`PB.sched`; none for a muted hand); idle with a selection (`S.sel`), its first onset; after a press, the chord's, while held and 2 s after; else none.
+- **Phone:** only where a white key is ≥ 14 px; else numbers.
+
+**Cost.** The SVG redraws only when its key string changes (`litKey` gains the finger). The rings are an HTML layer (`.kb-ghost`, `pointer-events: none`), rebuilt at a frame change, fingers down a class; keyboard.js finds its SVG by `:scope > svg`. Nothing animates inside an SVG (WebKit can't composite it).
+
+## 6. Assistants
+
+**The query:** catalog.ts `QUERIES.fingering` (`score: true`; VERSION and CHANGES bumped; the tool list unchanged): "Resonate's suggested piano fingering for a song: hand and finger per note, hand positions, notes moved to the other hand — bars as text." Params: `song`, `from_measure`, `to_measure`, `hand` (rh | lh). resonate.ts `getFingering` finds the song as `get_score_xml` does (`songFiles`: deleted songs hidden), then reads `score_fingering`: ≤ 60 000 characters an answer with `next_from_measure`; no row → "Not worked out yet — open the song on the Score once."; the legend: a suggestion, other fingerings can be right.
+
+A bar in scoretext's terms (C4 = middle C; @beat = quarters from the bar's start):
+
+```
+Bar 12 — RH: @1 [E4 G4 C5] 1 2 5 · @2.5 D5 4 · @3 C5 5 — LH: @1 C3 5 · @1 G3 1 (written on the treble staff) · @3 E3 3 — RH position: thumb on E4
+```
+
+**Highlights:** scoretext.js `barsText` adds the fingers to each keyboard note (" RH 1 2 5"; `TEXT_LEGEND`), carried by `score_focus` unchanged; `scoreState()` adds `fingering: mode`. **Server:** one non-destructive migration, one redeploy (`import_map_path: "deno.json"`).
+
+## 7. Code plan
+
+0. **Cleanup Phase 8 ships first, as its own release** (docs/CLEANUP.md, with its review and device check): one keyboard path.
+1. **Spike (≤ a day):** ac-kit bundled with esbuild, given Stage A's hands, on amazing-grace and the fixtures, timed in WebKitGTK at ×4 CPU. Adopted for Stage B if it passes the fixtures within the budget (§8); else the measured reason goes in docs/PLAY.md.
+2. **`public/finger.js`** (pure): `ALG`, `SPANS`, `keyX`, `assignHands`, `fingerHand` (unless ac-kit), `framesOf`, `fingerNotes`. **`finger-worker.js`:** a module Worker (`?v=` from bump.mjs); plain arrays in and out.
+3. **`public/fingering.js`** (main thread: no DOMParser in a Worker): `keyboardNotes(P, T, bpm)` (track items, staff, pins), `xmlSig`, `fingeringFor({ id, xml, P, T, stored })`, `fingerText(…)` for the cloud row.
+4. **library.js:** `saveFing`; `saveClean` in one transaction; `replaceSong` drops `fing`. **catalog.js:** `loadSong` returns `fing`.
+5. **omr/importer.js:** after the save, on `songXml(id)`'s output: `prepare`, `timeline`, `track` (one more main-thread task after the save's 150–180 ms, per song in Convert all), then the Worker. Best effort: never fails an import.
+6. **play.js:** `S.fing` after `songTime()` (stored, else the Worker's after `placed()`); `fingOf(id)` a Map lookup, null while pending; `peekStart` / `playKeys` add finger and hand; `hear` / `viewKeep` follow `fing.h` while on; `drawKeys` passes `ghostNow()` to `shellKeys().draw`; `scoreState`, `focusData`; assist.js `shareFingering`; `resonateDebug().play.fing`.
+7. **shell/pianoview.js:** `#fing`, its pref; `forScore()` gains `draw(lit, rg, ghost)`, `fingering(available)`.
+8. **keyboard.js:** digits on lit keys, `.kb-ghost`, `:scope > svg`, key centres in `geo`.
+9. **supabase:** migration `20261123010000_score_fingering.sql`; resonate.ts `getFingering` + `READERS.fingering`; catalog.ts; deploy. **forget.js:** the row's delete.
+10. **scoretext.js:** fingers in highlight lines.
+11. **tools/dumpkeys.cjs** (new): the piano part's track items with staff, as JSON → `tools/fixtures/finger/amazing-grace.json` (the bundled sample only).
+12. **Docs:** CLAUDE.md Play → "Fingering (E7)", docs/PLAY.md "As built (E7)", the roadmap.
+
+Then one review pass and its fixes, a release, the redeploy.
+
+## 8. Tests
+
+**Node:**
+
+- **tools/fingercases.mjs** — synthetic slices with acceptable finger sets: a five-finger tune; C major both ways; the mirrored LH; RH chords; LH root–fifth–octave, Alberti, octave leaps (5–5); an arpeggiated tenth; repeated notes; black keys; ties (`t`); a held note under a moving line; a 6-note chord (one inner `w`); **R6:** G3+B4 over a held LH C3, C2, and C2+C3 → G3 LH (`m`) each time, invariants kept for every hand size; a one-staff piano; printed fingers kept; an octave error → an inner `w`, no exception. Also: deterministic, also shuffled; 3000 notes under 100 ms; golden hashes (tools/fixtures/finger/golden.json): a change without an `ALG` bump fails.
+- **tools/fingersurvey.mjs** — on dumpkeys' output (amazing-grace; the owner's songs from `PLAY_SCORES`, never committed). Invariants: no span past practical but `w`, fingers rising with pitch, held keys keep theirs, no finger on two keys, every struck note fingered or flagged. Per song: notes, moved, released, wide, frames, ms. Each `m` and `w` on the owner's songs checked against its PDF crop (tools/accuracy/pairs.cjs): a hand-over, or an OMR error?
+- **tools/mcpcatalog.mjs** (the query); **synclib.mjs** (no `fing` synced); **libcore.cjs** (`saveFing` and `saveClean` interleaved keep both fields).
+
+**Browser (the shell, in regress.sh):**
+
+- **tools/playfinger.cjs** — a generated piano fixture and Amazing Grace, on an iPad, a phone and a desktop: `#fing` only where §5 says, its cycle and pref; a press on G3+B4 lights B4 purple with its digit, G3 blue with LH 1; ▶'s digits only at position changes; muting LH silences G3, the LH view plays it; the rings change once per frame; the SVG drawn only when lit keys change; no long task on open; a phone's wide range → no digits; the cache (a reload computes nothing; an `ALG` bump, Reprocess, a clean-up change, a typed tempo do).
+- **tools/playfingerwk.mjs** (WebKitGTK): presses, the Worker, no SVG element animating (importfixes.cjs S's `svgAnim`).
+- **tools/mcp2.cjs** (live): a `score_fingering` row → `read_resonate fingering` names the moved G3; a highlight's text has fingers; a deleted song isn't answered.
+
+**Evaluation:** the fixtures' share of acceptable fingers. PIG only if registered, outside the repo: target the rule-based level (56.7 Mgen / 78.2 Msoft). Later: public-domain beginner pieces with printed fingering (Czerny, Burgmüller) as ground truth.
+
+## 9. Risks and open questions
+
+**Risks:**
+
+- **Garbage in.** OMR errors (a missed octave clef, a note on the wrong staff) give odd fingers or `w`; Reconvert recomputes. Audiveris exports no 8va lines (it reads them as endings), so an RH 8va passage sits an octave low and may crowd the LH into moves.
+- **2 notes in 5 differ from a given pianist's.** Hard limits keep it playable; it never claims to be the only fingering.
+- **R3's gaps:** grace notes and `w` keys get a hand, no finger.
+- **Repeats:** a bar is fingered as written. **Pedalled long notes** count as held; letting go early softens it.
+- **Tempo:** a misread score tempo weakens the urgency term until the song's own is typed.
+
+**For the owner, each with the default:**
+
+1. Hand size: an octave comfortably? A ninth, a tenth? *Default: small (a seventh comfortable, an octave at most).*
+2. The first time: numbers on, or off until you turn them on? *Default: numbers.*
+3. Change a finger (a teacher's), kept per song, the rest re-solved around it? *Default: not in v1.*
+4. Mark on the music the notes the other hand plays? *Default: not in v1; the keyboard's colour shows it.*
+5. Register for PIG under its academic terms? *Default: no.*
+6. The button at the keyboard's right end, or in the Score's bar? *Default: the keyboard's end.*
+
+## Sources
+
+Parncutt et al. 1997: https://static.uni-graz.at/fileadmin/_Persoenliche_Webseite/parncutt_richard/Pdfs/PaSlClRaDe97_FingeringModel.pdf · Jacobs 2001, Music Perception 18(4) · Al Kasimi et al. 2007: https://archives.ismir.net/ismir2007/paper/000355.pdf · Balliauw et al. 2017: https://dorienherremans.com/sites/default/files/ITOR_VNS_APF_preprint.pdf · Nakamura et al. 2020: https://arxiv.org/abs/1904.10237, terms http://beam.kisarazu.ac.jp/research/PianoFingeringDataset/ · Ramoneda et al. 2022: https://eita-nakamura.github.io/articles/Ramoneda_PianoFingeringFromPartiallyAnnotatedScores_2022.pdf · Penner & Hindle 2026: https://arxiv.org/html/2609.28787v1 · Boyle et al. 2015: https://paskpiano.org/wp-content/uploads/2023/10/Boyle-Boyle-Booker-_APPCA-2015_Dec-2015.pdf · ac-kit: https://www.npmjs.com/package/@ac-kit/media-piano-fingering · PianoPlayer: https://github.com/marcomusy/pianoplayer · pydactyl: https://github.com/dvdrndlph/pydactyl · Smart Piano Fingering: https://github.com/emanuelemerlo/smart-piano-fingering · P.I.A.N.O.: https://www.uni-ulm.de/fileadmin/website_uni_ulm/iui.inst.100/1-hci/hci-paper/2014/2014-gugenheimer-piano.pdf · JazzHandsXR: https://cgvr.cs.uni-bremen.de/theses/finishedtheses/jazz_hands_xr/thesis.pdf · Synthesia: https://synthesia.app/support/guide/firstSong · Verovio: https://raw.githubusercontent.com/rism-digital/verovio/version-6.4.0/src/iomusxml.cpp
+
+## Review notes
+
+One review (1 must-fix, 13 should-fix, 13 nits), all applied but:
+
+- Nit 23, "small and medium are pydactyl's own": Balliauw's preprint prints all three hands (Tables 1, 9, 10; pydactyl's match), so they're cited as the paper's.
+- #12, "prep in the Worker": `prepare` needs DOMParser, which a Worker lacks; only finger.js moves there.
+- #14, Q3 in v1: left to the owner; printed fingers are pinned already, so it is only a UI step.
