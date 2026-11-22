@@ -31,13 +31,13 @@ live in CLAUDE.md ("UI principles").
   - the range (notes) stays one per profile, the volume one per device (the device id exists: `resonate.device`);
   - devices can be renamed, signed out too.
 - [x] E6 **v98** (2026-11-22; 🔖 in the stretch's controls saves the stretch or chord, a tab on the music, the list on the pager; one review pass: 17 findings fixed — docs/PLAY.md "As built: marks (E6)") Score bookmarks / notes: mark bars or phrases (a label, maybe a note) to remember what was practised, beyond "where you left off". Listed in the Score; kept per song (synced later).
-- [ ] ▶ E7 (design docs/FINGERING.md; stage 1, the algorithm `public/finger.js`, built; next: stage 2 — the keyboard — and stage 3 — assistants; cleanup Phase 8 deferred, only E7's slice: docs/CLEANUP-PHASE8.md) **Piano fingering**:
+- [x] E7 **v99** (2026-11-22; design and as-built docs/FINGERING.md: `finger.js` ALG 2 in a Worker, stored with the song and redone when the algorithm or the song changes; #fing on the shell's Piano — numbers / ghost hand / off; `read_resonate fingering` for assistants, connector 2026-11-23 deployed; one review pass: 7 fixes, docs/FINGERING.md "Review round (E7)"; main regress 89 PASS / 0 FAIL. Defaults taken for the design's questions: small hand, numbers on, no editing, moved notes not marked on the music, no PIG data, the button at the keyboard's end — the owner's songs not yet surveyed, PLAY_SCORES not here) **Piano fingering**:
   - Look at existing work first: PianoPlayer (Musy), Parncutt-style cost models, Nakamura's HMM / PIG dataset, dynamic programming over hand positions.
   - Run it locally as a step after a conversion (like a clean-up: stored with the song, rerun when the algorithm changes).
   - Hand + finger per note, readable by assistants (a read_resonate query, catalog.ts).
   - Shown on the Score's keyboard with modes: off / finger numbers / a ghost hand.
   - Example to catch: a G3 + B4 the right hand can't span, so two hands.
-- [ ] E8 (design draft docs/EAR.md sent to the owner 2026-11-22: five questions in §9 before building; cleanup Phase 7 first) **Singing, redone around the ear** (big; a design doc first, docs/EAR.md, then iterate with the owner):
+- [ ] ▶ E8 (waiting on the owner's answers; design draft docs/EAR.md sent to the owner 2026-11-22: five questions in §9 before building; cleanup Phase 7 first) **Singing, redone around the ear** (big; a design doc first, docs/EAR.md, then iterate with the owner):
   - Hide the time-series lane and per-note colours from the singer (keep the data for the assistant).
   - Pick a short phrase. ▶ hear it whenever you like, then sing it on your own time (no forced listen → your-turn timing). Press done.
   - Two counts: **beats on** (close or on the money) and **notes hit**, generous. The total isn't shown until all are right ("all of them").
