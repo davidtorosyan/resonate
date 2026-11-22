@@ -150,6 +150,7 @@ The device switch the assistant acts through is no longer 📡: it's the **AI bu
   - `coaching.ts` (the playbook): "(its AI button on)", the first-turn hint lines, the failure line ("No device has its AI button on", "Remote control is off" → "Tap the AI button at the top of Resonate.").
   - `catalog.ts`: `QUERIES.status.about`, `capabilitiesData().how`; `VERSION` 2026-11-21 with a `CHANGES` line (shown by `get_capabilities`).
 - **Snapshot (reaches a client only after Refresh / re-add; nothing depends on it):** `index.ts`'s descriptions of `get_status` and `control_resonate` ("which one has its AI button on", "on the device whose AI button is on"). A client with the old copy reads "📡 Remote" there and "the AI button" in the answers; the answers are what it tells the user.
+- **Deployed 2026-11-22 with v96:** function version 9 (ACTIVE). Checked with a real signed-in call (the Resonate connector's `get_status`): the hint read "iPad has its AI button on but isn't in front…", `capabilities.version` 2026-11-21.
 - **Unchanged:** the page's own refusal "Remote control is off on this device." (it names the state, not the button; the playbook still maps it).
 - **Tests:** `tools/mcp1.cjs`'s no-device refusal now expects "AI button on" (it fails against the function until this is deployed). mcp1 / mcp2 wait for `#remote-btn` on sing.html / play.html: it now shows only with an `assistant_activity` row, which their own tool calls before that point write (the test user has one already).
 
