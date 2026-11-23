@@ -20,14 +20,14 @@
 // alone, on its PDF — on every device, unsaved, whatever opened it (Next-up, the Reader's links, an
 // assistant): no Sing toggle, the Score's ▶ stays in its bar (hidden: nothing to play), the Piano as
 // saved (its keyboard under the PDF, the Score's). Converted (reload), the saved modules come back.
-import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=99";
-import { mountSing } from "./singview.js?v=99";
-import { mountScore } from "./scoreview.js?v=99";
-import { mountPiano, rangeOf } from "./pianoview.js?v=99";
-import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=99";
-import { loadSong, songInfo } from "../catalog.js?v=99";
-import { parseMusicXml } from "../musicxml.js?v=99";
-import { titleOf } from "./songlist.js?v=99";
+import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=100";
+import { mountSing } from "./singview.js?v=100";
+import { mountScore } from "./scoreview.js?v=100";
+import { mountPiano, rangeOf } from "./pianoview.js?v=100";
+import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=100";
+import { loadSong, songInfo } from "../catalog.js?v=100";
+import { parseMusicXml } from "../musicxml.js?v=100";
+import { titleOf } from "./songlist.js?v=100";
 
 const $ = (id) => document.getElementById(id);
 const PREF = "resonate.shell.modules"; // { phone | tablet | desktop: ["sing", "score", "piano"] } — this device's
@@ -92,6 +92,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     quiet: () => !!sing.state()?.take,
     busy: () => !!(sing.state()?.busy || score.state()?.busy),
     score: { press: (m, e) => score.press(m, e), lift: (pk) => score.lift(pk), changed: () => score.keysChanged(), fingers: () => score.fingersChanged() },
+    resized: () => { if (isOpen && mods.score) frame().then(() => score.resize({ keep: true })); }, // (the drawn hand's band came or went: the Score's bars kept)
   });
   const setTitle = (t, id = current) => { title = t || ""; titleId = title ? id : null; pill.querySelector(".t").textContent = title || "…"; };
 

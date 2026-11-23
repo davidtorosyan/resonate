@@ -14,22 +14,22 @@
 //
 // A PDF only (added, not converted yet: docs/LIBRARY.md) opens straight into its PDF (📄's view, no
 // Verovio): ‹ › and the pedals turn its pages, the keyboard stays under it, ⟳ reads Convert.
-import { spaceChanged } from "./nav.js?v=99";
-import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=99";
-import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=99";
-import { decorate, fullName, labelOf } from "./playnames.js?v=99";
-import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=99";
-import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=99";
-import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=99";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=99";
-import * as lib from "./library.js?v=99"; // (getSong; getPages where this library has it)
-import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=99";
-import { mountKeyboard } from "./keyboard.js?v=99";
-import { chordMoments } from "./chords.js?v=99";
-import { barsText, sliceMeasures, spanInfo, placeOf, textLegend } from "./scoretext.js?v=99";
-import { remote, hasAssistant, shareFocus, shareFingering } from "./assist.js?v=99";
-import { fingerText } from "./fingertext.js?v=99";
-import { fingeringFor, stats as fingStats } from "./fingering.js?v=99";
+import { spaceChanged } from "./nav.js?v=100";
+import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=100";
+import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=100";
+import { decorate, fullName, labelOf } from "./playnames.js?v=100";
+import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=100";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=100";
+import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=100";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=100";
+import * as lib from "./library.js?v=100"; // (getSong; getPages where this library has it)
+import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=100";
+import { mountKeyboard } from "./keyboard.js?v=100";
+import { chordMoments } from "./chords.js?v=100";
+import { barsText, sliceMeasures, spanInfo, placeOf, textLegend } from "./scoretext.js?v=100";
+import { remote, hasAssistant, shareFocus, shareFingering } from "./assist.js?v=100";
+import { fingerText } from "./fingertext.js?v=100";
+import { fingeringFor, stats as fingStats } from "./fingering.js?v=100";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
@@ -1594,6 +1594,7 @@ function peekEnd(pk) {
   if (!ac || ac.state !== "running") getCtx("tap");
   if (pk.notes) { letGo(pk, Math.max(pk.a.currentTime, pk.t0 + MIN_PRESS)); keepAwake(pk.a); }
   pk.hide = setTimeout(() => hidePeek(pk), pk.kb ? 0 : HIDE_AFTER); // (a key on the keyboard comes up with the finger)
+  if (!pk.kb) handShow(); // (the drawn hand lets the chord go too)
 }
 // The press moved off: it's a drag — cut the sound, hide at once.
 function peekCancel(pk) {
@@ -1770,18 +1771,19 @@ function drawKeys() {
   if (dockEl.hidden && !out) { kb.forget(); return; }
   const lit = keysLit(), [lo, hi] = loading() && KB.range ? KB.range : stripRange(lit);
   KB.range = [lo, hi];
-  // (the fingering on — the shell's Piano only: a keyboard note in its fingering hand's colour, its
-  // digit where a press shows it or ▶ comes to a new position; the ghost hand's rings)
+  // (the fingering on — the shell's Piano only: a keyboard note in its fingering hand's colour; numbers:
+  // its digit where a press shows it or ▶ comes to a new position; hand: the drawn hand there instead)
   const mode = out ? fingMode() : "off";
   const keys = new Map();
   for (const [m, L] of lit) {
     const n = mode !== "off" && L.id != null ? fingOf(L.id) : null;
     const hand = n ? (n.h === "l" ? "lh" : "rh") : L.hand;
-    keys.set(m, { hand, fill: HAND[hand], letter: L.label.letter, acc: L.label.acc || "", ...(n && n.f > 0 && (L.peek || L.fd) ? { finger: n.f } : {}) });
+    keys.set(m, { hand, fill: HAND[hand], letter: L.label.letter, acc: L.label.acc || "", ...(mode === "num" && n && n.f > 0 && (L.peek || L.fd) ? { finger: n.f } : {}) });
   }
   if (out) { // (the one-page shell's Piano: one keyboard, its own)
     fingButton();
-    out.draw(keys, [lo, hi], mode === "hand" ? ghostNow() : null);
+    out.draw(keys, [lo, hi], mode === "hand");
+    if (mode === "hand") handShow();
   }
   if (dockEl.hidden) { kb.forget(); return; }
   kb.update({ lit: keys, range: [lo, hi] });
@@ -1826,8 +1828,9 @@ function stripRange(lit) {
 // (groupOfEl), a one-hand view plays what its hand takes (playKeep). Numbers: a press on the music
 // (a double-tapped chord's too) shows every digit it lights; ▶, each hand's first notes in a new
 // position (fingSeen); a key pressed on the keyboard, another part, a grace note or `w`: none.
-// Hand: five rings a hand on its frame's keys (ghostNow: ▶'s newest struck note, a press's chord,
-// else the stretch picked's first onset). Off is the keyboard and ▶ exactly as without it.
+// Hand: the drawn hand (hand.js, on the Piano: forScore().hands()) — ▶ feeds it what it schedules
+// (handFeed) and moves it every frame on its own clock (tvNow); idle, it shows a press's chord or the
+// stretch picked's first onset (handPose). Off is the keyboard and ▶ exactly as without it.
 
 const F = {
   song: null,      // the song it's for
@@ -1835,7 +1838,7 @@ const F = {
   stored: null,    // the song's record's fing (library.js), as loadSong read it
   rec: null,       // the record in use (fingering.js: { v, alg, hand, bpm, sig, at, ms, n, fr })
   idx: null,       // note id → { h, f, p, x }
-  list: null,      // [{ id, q, h, f, p }] by written q (the stretch's first onset: the ghost)
+  list: null,      // [{ id, q, h, f, p }] by written q (the stretch's first onset: the drawn hand)
   from: null,      // "stored" | "computed"
   computed: 0,     // worked out on this page (the Score's)
   counts: null, view: null, on: false, t: null, err: null, gen: 0,
@@ -1923,31 +1926,29 @@ function fingChanged() {
   const on = fingOn();
   if (on !== F.on) {
     F.on = on;
-    PB.fingAt = PB.ghost = null;
+    PB.fingAt = null;
     if (PB.state !== "idle" || PB.starting) rehear();
   }
   drawKeys();
+  // (the drawn hand turned on while ▶ plays: what's already scheduled, now — the rest comes as it's scheduled)
+  if (fingMode() === "hand" && PB.state !== "idle" && PB.piano) handFeed(PB.sched);
 }
-// The ghost hand (mode "hand"): each hand's frame — a press on the music's chord (held and
-// HIDE_AFTER after), else ▶'s newest struck note (none for a muted hand), else the first onset of the
-// stretch or chord picked — with the fingers that play it. → { r?, l?: { keys, down, color, p } } | null
-function ghostNow() {
-  if (fingMode() !== "hand" || !F.rec) return null;
+// The drawn hand while ▶ doesn't play (mode "hand"): each hand's position — a press on the music's
+// chord (held: pressed; let go: up, shown HIDE_AFTER more), else the first onset of the stretch or
+// chord picked (shown just before it's struck) — with the fingers that play it.
+// → { r?, l?: { keys: [m1…m5], down: [{ f, midi }], strike, up } } | null
+function handPose() {
+  if (fingMode() !== "hand" || !F.rec || PB.state !== "idle" || PB.starting) return null;
   const fr = F.rec.fr, out = {};
-  const put = (h, p, f) => {
+  const put = (h, p, f, id, how) => {
     if (!(p >= 0) || !fr[h]?.[p]) return;
-    const g = (out[h] ||= { p, down: [] });
-    if (g.p === p && f > 0) g.down.push(f);
+    const g = (out[h] ||= { p, down: [], ...how });
+    const midi = S.P.facts.get(id)?.midi;
+    if (g.p === p && f > 0 && Number.isFinite(midi)) g.down.push({ f, midi });
   };
   const pk = peeks.findLast((x) => !x.kb && x.items.length);
-  if (pk) for (const it of pk.items) { const n = fingOf(it.id); if (n) put(n.h, n.p, n.f); }
-  else if (PB.state !== "idle" && PB.ghost) {
-    for (const h of ["r", "l"]) {
-      if (!PB.ghost[h]) continue;
-      put(h, PB.ghost[h].p, 0);
-      for (const e of PB.litNow?.values() || []) { const n = !e.muted && fingOf(e.id); if (n && n.h === h) put(h, n.p, n.f); }
-    }
-  } else if (S.sel && PB.state === "idle" && F.list) {
+  if (pk) for (const it of pk.items) { const n = fingOf(it.id); if (n) put(n.h, n.p, n.f, it.id, { strike: true, up: !pk.held }); }
+  else if (S.sel && F.list) {
     const sel = S.sel, only = sel.note ? new Set(sel.note.ids) : null, keep = playKeep(), first = {};
     let lo = 0, hi = F.list.length;
     while (lo < hi) { const mid = (lo + hi) >> 1; if (F.list[mid].q < sel.q0 - EPS) lo = mid + 1; else hi = mid; }
@@ -1956,12 +1957,43 @@ function ghostNow() {
       if (first.r != null && first.l != null && x.q > Math.max(first.r, first.l) + EPS) break;
       if (only ? !only.has(x.id) : !keep(S.Tid.get(x.id) || {})) continue;
       first[x.h] ??= x.q;
-      if (Math.abs(x.q - first[x.h]) < EPS) put(x.h, x.p, x.f);
+      if (Math.abs(x.q - first[x.h]) < EPS) put(x.h, x.p, x.f, x.id, { strike: false, up: false });
     }
   }
   const res = {};
-  for (const h of ["r", "l"]) if (out[h]) res[h] = { keys: fr[h][out[h].p].slice(1), down: out[h].down, color: HAND[h === "l" ? "lh" : "rh"], p: out[h].p };
+  for (const h of ["r", "l"]) if (out[h]?.down.length) res[h] = { keys: fr[h][out[h].p].slice(1), down: out[h].down, strike: out[h].strike, up: out[h].up };
   return res.r || res.l ? res : null;
+}
+const handsOn = () => (fingMode() === "hand" ? shellKeys()?.hands?.() || null : null);
+function handShow() {
+  const H = handsOn();
+  if (H && PB.state === "idle" && !PB.starting) H.show(handPose(), tvNow());
+}
+// ▶'s notes the hand plays: heard, fingered (a finger, not `w`), not grace notes — their position's keys.
+function handFeed(list) {
+  const H = handsOn();
+  if (!H || !F.rec) return;
+  const out = [];
+  for (const x of list) {
+    if (x.bar || x.muted) continue;
+    const n = fingOf(x.id);
+    if (!n || !(n.f > 0) || n.x.includes("w") || S.P.facts.get(x.id)?.grace) continue;
+    const k = F.rec.fr[n.h]?.[n.p];
+    if (k) out.push({ id: x.id, h: n.h, f: n.f, midi: x.midi, keys: k.slice(1), fid: n.p, t: x.when, d: x.end - x.when });
+  }
+  if (out.length) H.notes(out, tvNow());
+}
+// ▶'s clock for the hand, smoothed: the audio clock (what's heard: less the output latency) moves in
+// render-quantum steps — unevenly on some outputs —, so the hand follows the wall clock, re-anchored
+// to the audio clock whenever they're more than 20 ms apart.
+const VC = { off: 0 };
+function tvNow() {
+  const p = performance.now() / 1000, a = PB.state !== "idle" ? PB.a : ac; // (idle too: one clock for a press's hand and ▶'s)
+  if (a && a.state === "running") {
+    const at = a.currentTime - (a.outputLatency || a.baseLatency || 0);
+    if (Math.abs(p + VC.off - at) > 0.02) VC.off = at - p;
+  }
+  return p + VC.off;
 }
 
 // ---------------------------------------------------------------------------
@@ -2407,7 +2439,7 @@ function drawSel(why = "place") {
   markButton();
   playButtons();
   placeSelbar(why);
-  if (fingMode() === "hand") drawKeys(); // (the ghost hand: the stretch's first onset)
+  if (fingMode() === "hand") drawKeys(); // (the drawn hand: the stretch's first onset)
 }
 // A chord picked: a band round its heads (their accidentals and names in, ± 0.6 staff spaces) over
 // the staff they're drawn on (its lines ± 1.2) — the stretch's band, one column of one staff.
@@ -3015,6 +3047,7 @@ async function playStart(kind, loop = false) {
   if (window.resonatePlay?.quiet?.()) return; // (the one-page shell: Sing records)
   window.resonatePlay?.beforeSound?.(); // (the shell's tuner gives its mic up first, and Sing stops)
   stopPlay();
+  handsOn()?.clear(tvNow()); // (a hand shown idle — a stretch, a press — lets go, and ▶'s glides on from where it is)
   const gen = ++PB.gen;
   const a = getCtx("tap"); // (in the tap: iOS starts audio only from one — the session first)
   let tr, args;
@@ -3028,7 +3061,7 @@ async function playStart(kind, loop = false) {
     state: loop ? "looping" : "playing", kind, starting: true, a, piano: null, args, tr, ev, base: tr.base, from: tr.from,
     speed: S.speed, t0: 0, s0: 0, round: 0, idx: 0, sched: [], log: [],
     lit: new Map(), litKey: "", sysEl: null, k: -1, kr: -1, mi: -1, musicPage: 0, turns: [], defer: null,
-    busyInk: [], drawn: -1, fingAt: null, ghost: null, litNow: null,
+    busyInk: [], drawn: -1, fingAt: null, litNow: null,
   });
   activity("play");
   playButtons();
@@ -3063,6 +3096,7 @@ async function playStart(kind, loop = false) {
 function pump() {
   if (PB.state === "idle" || !PB.piano) return;
   const a = PB.a, now = a.currentTime, until = now + AHEAD, ev = PB.ev, len = PB.tr.len;
+  const fed = [];
   for (let guard = 0; guard < 50000; guard++) {
     if (PB.idx >= ev.length) {
       if (PB.state !== "looping") break;
@@ -3086,7 +3120,9 @@ function pump() {
       PB.log.push(x.log);
     }
     PB.sched.push(x);
+    fed.push(x);
   }
+  if (fed.length) handFeed(fed); // (the drawn hand: what it plays)
   // (forget what's long over: notes rung out, bar marks older than a long bar)
   const old = now - 1;
   PB.sched = PB.sched.filter((x) => (x.bar ? x.when > now - 30 : Math.max(x.end, x.stop || 0) > old));
@@ -3112,6 +3148,7 @@ function frame() {
     follow(bar.mi);
   }
   setLit(lit);
+  handsOn()?.tick(tvNow());
   PB.raf = requestAnimationFrame(frame);
 }
 
@@ -3200,8 +3237,7 @@ function playKeys(lit) {
 }
 // A note ▶ strikes, the first frame it's lit (the fingering on): its digit shows when its hand comes
 // to a new position — its frame changes (or a loop's round starts) — with every note of its hand
-// struck there (docs/FINGERING.md §5: digits sparse, as printed music); and it's its hand's newest
-// struck note, whose frame the ghost hand shows.
+// struck there (docs/FINGERING.md §5: digits sparse, as printed music).
 function fingSeen(e) {
   if (e.fd !== undefined) return;
   const n = fingOf(e.id);
@@ -3210,8 +3246,6 @@ function fingSeen(e) {
   if (!cur || cur.p !== n.p || cur.round !== e.round) { at[n.h] = { p: n.p, when: e.when, round: e.round }; e.fd = n.f > 0; }
   else e.fd = n.f > 0 && Math.abs(e.when - cur.when) < 0.02;
   if (e.log) e.log.fd = e.fd; // (tests: playback.scheduled)
-  const g = (PB.ghost ||= {});
-  if (!g[n.h] || e.when >= g[n.h].when - 1e-6) g[n.h] = { p: n.p, when: e.when };
 }
 
 // ■, the end, or anything that stops it (another ▶, song, view, 📄, the page hidden or left).
@@ -3242,7 +3276,8 @@ function stopPlay(natural = false, tc = STOP_TC) {
       } catch {}
     }
   }
-  Object.assign(PB, { state: "idle", kind: null, starting: false, piano: null, sched: [], busyInk: [], sysEl: null, defer: null, fingAt: null, ghost: null, litNow: null });
+  if (was) handsOn()?.clear(tvNow()); // (the drawn hand: rests where it is, then fades — or glides on from there at the next ▶)
+  Object.assign(PB, { state: "idle", kind: null, starting: false, piano: null, sched: [], busyInk: [], sysEl: null, defer: null, fingAt: null, litNow: null });
   if (!was) return;
   if (a && awake.src && awake.a === a) keepAwake(a); // (awake AWAKE ms from the stop, as from a lift — never while hidden)
   setLit(new Map());
@@ -3280,6 +3315,7 @@ function reschedule(at, speed = PB.speed) {
   const local = X - PB.round * len;
   PB.idx = PB.ev.findIndex((e) => e.sec > local + 1e-9);
   if (PB.idx < 0) PB.idx = PB.ev.length;
+  handsOn()?.cut(at, tvNow()); // (the drawn hand: what starts later comes again with pump)
   pump();
 }
 // What's heard changed (a chip) while ▶ plays: the same music scheduled again with it from now —
@@ -4200,7 +4236,7 @@ async function songMap(doc) {
     const kept = S.st.pdfMusic;
     if (kept && kept.n === n && Array.isArray(kept.music) && kept.music.length >= last) music = kept.music;
     else {
-      const { findStaves } = await import("./omr/pdfprep.js?v=99");
+      const { findStaves } = await import("./omr/pdfprep.js?v=100");
       const t0 = performance.now();
       music = await musicPages(doc, findStaves, { need: last });
       S.t.pdfMusic = ms(t0);
@@ -5032,7 +5068,7 @@ window.resonateDebug = () => {
         alg: F.rec?.alg ?? null, hand: F.rec?.hand ?? null, bpm: F.rec?.bpm ?? null, sig: F.rec?.sig ?? null, at: F.rec?.at ?? null,
         stored: F.from === "stored", from: F.from, ms: F.rec?.ms ?? null, notes: F.counts?.notes ?? 0, moved: F.counts?.moved ?? 0, wide: F.counts?.wide ?? 0,
         computed: F.computed, total: fingStats.computed, last: fingStats.last && { ...fingStats.last }, worker: fingStats.worker, main: fingStats.main,
-        t: F.t && { ...F.t }, err: F.err, ghost: fingMode() === "hand" ? ghostNow() : null, on: F.on,
+        t: F.t && { ...F.t }, err: F.err, pose: handPose(), on: F.on,
       },
       audio: ac ? { state: ac.state, stuck: acStuck, session: navigator.audioSession?.type ?? null, rate: ac.sampleRate, base: ac.baseLatency ?? null, out: ac.outputLatency ?? null, piano: !!pianoNow(ac), gate: !!gate, gatesCut } : null,
       awake: { on: !!awake.src, same: !!awake.src && awake.a === ac, idle: awake.src ? Math.round(performance.now() - awake.at) : null, ms: AWAKE },

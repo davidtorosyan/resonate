@@ -200,7 +200,7 @@ export async function leave(uid) {
   if (db) {
     await deleteDbs(db);
     // An unfinished PDF → Song import of this account (its PDF, the engine's book) goes with it.
-    try { await (await import("./omr/jobs.js?v=99")).deleteJobsOf(db); } catch {}
+    try { await (await import("./omr/jobs.js?v=100")).deleteJobsOf(db); } catch {}
   }
   return true;
 }
