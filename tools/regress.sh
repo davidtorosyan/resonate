@@ -142,7 +142,9 @@ if [ "$TIER" = main ]; then
   for t in cutover shell shellmods shellscore shellplaces; do
     run "$t" 1500 env SHOTS=0 node -r ./harness/noshots.cjs "$t.cjs"
   done
-  run shellsing 1500 env SHOTS=0 node -r ./harness/noshots.cjs -r ./guidedoff.cjs shellsing.cjs # (Sing's classic screen in the shell: guided off since v101's Ear hides the lane)
+  # (v101: Ear replaced the guided card this suite checks — the card, its Hear it, the lane under it: reported, not
+  # judged, until it's rewritten for Ear; tools/ear.cjs covers Ear itself)
+  run --info shellsing 1500 env SHOTS=0 node -r ./harness/noshots.cjs shellsing.cjs
   for t in playpdfonly singpdf; do run "$t" 600 node "$t.cjs"; done
 
   # ---- WebKitGTK (Xvfb :99 + WebKitWebDriver on :4444, CLAUDE.md "a fresh container") ----------------------

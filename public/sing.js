@@ -2,25 +2,25 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=100";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=100";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=100";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=100";
-import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=100";
-import * as P from "./practice.js?v=100";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=100";
-import { startCapture, playVoice } from "./capture.js?v=100";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=100";
-import { makeFeatures, findClicks, tolOn } from "./rhythm.js?v=100";
-import * as TR from "./takerhythm.js?v=100";
-import { listSongs, getSong, addSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=100";
-import { SAMPLES, songXml, songRev, songInfo } from "./catalog.js?v=100";
-import { forgetSong } from "./forget.js?v=100";
-import { activeProfile } from "./profiles.js?v=100";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=100";
-import { DATA_KEYS } from "./space.js?v=100";
-import { spaceChanged } from "./nav.js?v=100";
-import { shareSong, takeStarted, lineDone, takeEnded, remote, paintRemote } from "./assist.js?v=100";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=101";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=101";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=101";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=101";
+import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=101";
+import * as P from "./practice.js?v=101";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=101";
+import { startCapture, playVoice } from "./capture.js?v=101";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=101";
+import { makeFeatures, findClicks, tolOn } from "./rhythm.js?v=101";
+import * as TR from "./takerhythm.js?v=101";
+import { listSongs, getSong, addSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=101";
+import { SAMPLES, songXml, songRev, songInfo } from "./catalog.js?v=101";
+import { forgetSong } from "./forget.js?v=101";
+import { activeProfile } from "./profiles.js?v=101";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=101";
+import { DATA_KEYS } from "./space.js?v=101";
+import { spaceChanged } from "./nav.js?v=101";
+import { shareSong, takeStarted, lineDone, takeEnded, remote, paintRemote } from "./assist.js?v=101";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -2278,6 +2278,7 @@ function earStop() {
 
 // The phrase (or its first note) on the piano, a click and a count-in for Beats; mic closed.
 async function earPlay({ first = false, click = false, slow = 1, midi = null, dur = 1.2 } = {}) {
+  window.resonateSing?.beforeSound?.(); // (the shell's tuner gives its mic up first: iOS plays quietly while one is open)
   earStop();
   stopSession();
   stopKeys();
@@ -2326,6 +2327,7 @@ async function earPlay({ first = false, click = false, slow = 1, midi = null, du
 // ● Sing (the free attempt): the mic, nothing sounding; ■ Done ends it (or 3× the phrase + 5 s).
 async function earFree() {
   if (EAR.run?.kind === "free") return earDone();
+  window.resonateSing?.beforeSound?.();
   earStop();
   stopSession();
   stopKeys();
