@@ -468,6 +468,8 @@
         padding: 6px max(8px, env(safe-area-inset-right)) 6px max(8px, env(safe-area-inset-left)); background: #14142c; position: relative; z-index: 1; }
       .pianobar .kb { flex: 1 1 auto; min-width: 0; height: clamp(56px, 9vh, 110px); touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: pointer; }
       .pianobar .kb svg { display: block; width: 100%; height: 100%; }
+      /* the drawn hand (E7): a band under the keys for the palm, the wrist and the forearm (hand.js draws there; the keys keep their height) */
+      .pianobar[data-hand] { padding-bottom: calc(6px + var(--kb-band, 0px)); }
       /* the fingering's button (E7): the row's right end, 44 × 44 — off: a hand's outline, numbers: 123, hand: the hand filled */
       .pianobar .fing { flex: none; align-self: center; width: 44px; height: 44px; padding: 0; display: grid; place-items: center; border-radius: 12px; border: 1px solid var(--line-2);
         background: var(--control); color: var(--text-2); font: 700 13px/1 var(--font); touch-action: manipulation; -webkit-tap-highlight-color: transparent; cursor: pointer; }

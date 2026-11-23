@@ -10,12 +10,15 @@
 //   C  ▶ (numbers): a digit only on each hand's first notes in a new position — every decision as the rule
 //      says from the stored frames, the digits drawn are those notes' fingers, most lit notes have none
 //   D  muting LH silences G3 (it's the left hand's now) and the LH view plays it; the RH view leaves it out
-//   E  the ghost hand (hand): its rings built again once per frame change (a class for the fingers down),
-//      on the stored frame's keys; no digit on a ringed key
-//   F  the SVG written only when what it shows changes (the rings are their own layer)
+//   E  the drawn hand (hand.js; docs/FINGERING.md "The drawn hand"): a band under the keys (85 px on an
+//      iPad), the Score laid out again with its bars kept, the layer aria-hidden and never hit-tested, above
+//      the dock; a press — each hand glides to its chord, the fingers that play holding their keys; ▶ —
+//      drawn every frame, at each fingered note's onset its finger holding its key, no digit discs; ■ — the
+//      hands rest, then fade and their loop stops; idle with a stretch — the stretch's first position
+//   F  the SVG written only when what it shows changes (the hands are their own canvases)
 //   G  no long task while a long piece's fingering is worked out (the Worker; this task's share < 50 ms)
 //   H  a phone: no digits where a white key is under 12 px (Both with its chips, a wide piece);
-//      digits and rings in the RH view (~15 px)
+//      digits and the compact hand in the RH view (~15 px), its band 46 px
 //   I  the cache: a reload works nothing out (stored); an ALG bump (finger.js served with the next ALG), a typed
 //      tempo, a clean-up change (a converted song's cleaned MusicXML read differently), a Reprocess (the
 //      tray, a scripted engine: the importer works it out after the save, the Score reuses it) do
@@ -66,25 +69,25 @@ function INIT() {
   addEventListener('resonate:fingering', (e) => window.__fingEv.push({ song: e.detail.song, computed: e.detail.computed, from: e.detail.from, bpm: e.detail.fing?.bpm }));
   try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__lt.push({ start: e.startTime, dur: e.duration }); }).observe({ type: 'longtask', buffered: true }); } catch {}
   // The Piano's keyboard while something plays: every frame — the keys lit (hand), the digits drawn, the
-  // rings — every write of its SVG (what it shows then) and every ring group built.
+  // drawn hand (its clock, each hand's fingertips: finger, key held) — and every write of its SVG.
   window.__kb = {
     start() {
       const kb = document.querySelector('#piano-region .kb');
       const svg = () => kb.querySelector(':scope > svg');
       const sig = () => { const s = svg(); return [...s.querySelectorAll('rect.lit')].map((r) => r.dataset.midi + r.dataset.hand).join(',') + '|' + [...s.querySelectorAll('text.fd')].map((t) => t.dataset.midi + ':' + t.textContent).join(',') + '|' + s.querySelectorAll('text').length; };
-      const S = { frames: [], svg: [], builds: [], on: true };
-      const rings = () => { const o = {}; for (const g of kb.querySelectorAll('.kb-ghost .kb-gh:not([data-out])')) o[g.dataset.h] = { keys: [...g.children].map((r) => Number(r.dataset.midi)), down: [...g.children].filter((r) => r.classList.contains('down')).map((r) => Number(r.dataset.f)) }; return o; };
-      S.mo = new MutationObserver((ms) => {
-        for (const m of ms) {
-          if (m.target === svg()) S.svg.push(sig());
-          else if (m.target.classList?.contains('kb-ghost')) for (const n of m.addedNodes) if (n.classList?.contains('kb-gh')) S.builds.push({ h: n.dataset.h, keys: [...n.children].map((r) => Number(r.dataset.midi)), t: performance.now() });
-        }
-      });
+      const S = { frames: [], svg: [], on: true };
+      const hand = () => {
+        const h = kb.querySelector('.kb-hands')?.__hand?.debug();
+        if (!h || !h.on) return null;
+        const tips = (p) => p && { vis: p.vis, wrist: p.wrist, tips: p.tips.map((x) => [x.f, x.key, x.hold]) };
+        return { clock: h.clock, draws: h.draws, r: tips(h.poses.r), l: tips(h.poses.l), op: h.canvases.map((c) => c.op) };
+      };
+      S.mo = new MutationObserver((ms) => { for (const m of ms) if (m.target === svg()) S.svg.push(sig()); });
       S.mo.observe(kb, { childList: true, subtree: true });
       const tick = () => {
         if (!S.on) return;
         const s = svg();
-        S.frames.push({ t: performance.now(), lit: [...s.querySelectorAll('rect.lit')].map((r) => [Number(r.dataset.midi), r.dataset.hand]), fd: [...s.querySelectorAll('text.fd')].map((t) => [Number(t.dataset.midi), Number(t.textContent)]), rings: rings() });
+        S.frames.push({ t: performance.now(), lit: [...s.querySelectorAll('rect.lit')].map((r) => [Number(r.dataset.midi), r.dataset.hand]), fd: [...s.querySelectorAll('text.fd')].map((t) => [Number(t.dataset.midi), Number(t.textContent)]), hand: hand() });
         requestAnimationFrame(tick);
       };
       requestAnimationFrame(tick);
@@ -173,8 +176,10 @@ async function pressNote(page, dev, id, { ms = 300, during = null } = {}) {
 }
 const keysNow = (page) => page.evaluate(() => {
   const s = document.querySelector('#piano-region .kb > svg');
+  const h = document.querySelector('#piano-region .kb-hands')?.__hand?.debug();
+  const tips = (p) => p && p.tips.map((x) => [x.f, x.key, x.hold]);
   return { lit: [...s.querySelectorAll('rect.lit')].map((r) => [Number(r.dataset.midi), r.dataset.hand, r.getAttribute('fill')]), fd: [...s.querySelectorAll('text.fd')].map((t) => [Number(t.dataset.midi), Number(t.textContent)]),
-    rings: [...document.querySelectorAll('#piano-region .kb-ghost .kb-gh:not([data-out]) .kb-ring')].map((r) => [r.parentElement.dataset.h, Number(r.dataset.f), Number(r.dataset.midi), r.classList.contains('down')]) };
+    hand: h && h.on ? { mode: h.mode, band: h.band, r: tips(h.poses.r), l: tips(h.poses.l), vis: { r: h.poses.r?.vis ?? 0, l: h.poses.l?.vis ?? 0 }, looping: h.looping, op: h.canvases.map((c) => c.op), draws: h.draws } : null };
 });
 const fingering = (page) => page.evaluate(() => window.resonatePlay.fingering());
 const playBtn = async (page) => (await page.evaluateHandle(() => window.resonatePlay.playBtn)).asElement();
@@ -244,25 +249,51 @@ async function checkPlayDigits(page, label) {
   ok(litNoDigit, `${label}: ▶ — keys lit without a digit (same position)`);
   return { S, scheduled };
 }
-// E + F: the ghost hand while ▶ plays (hand).
-async function checkGhost(page, label) {
+// E: the drawn hand's place — the band under the keys (iPad 85 px), the Score above it with its bars kept,
+// the layer aria-hidden, never hit-tested, above the dock.
+async function checkHandLayout(page, dev, label) {
+  await sleep(500);
+  const L = await page.evaluate(() => {
+    const row = document.getElementById('piano-region'), layer = row.querySelector('.kb-hands'), dock = document.querySelector('footer.dock'), stage = document.getElementById('stage');
+    const r = (e) => e && e.getBoundingClientRect();
+    const lr = r(layer), dr = r(dock), sr = r(stage), rr = r(row);
+    const kb = row.querySelector('.kb').getBoundingClientRect();
+    const hit = document.elementFromPoint(kb.left + kb.width / 2, kb.bottom + 10);
+    return { band: getComputedStyle(row).getPropertyValue('--kb-band').trim(), pad: getComputedStyle(row).paddingBottom, layer: !!layer, aria: layer?.getAttribute('aria-hidden'), pe: layer && getComputedStyle(layer).pointerEvents,
+      bottom: lr?.bottom, dockTop: dr?.top, stageBottom: sr?.bottom, rowTop: rr?.top, hitInLayer: !!hit && !!layer && layer.contains(hit), hitKey: !!hit?.closest?.('svg') };
+  });
+  const want = dev.n === 'ipad' ? '85px' : null;
+  ok(L.layer && L.aria === 'true' && L.pe === 'none' && (!want || L.band === want), `${label}: hand mode — the band under the keys ${L.band} (${dev.n}${want ? ', want ' + want : ''}), the layer aria-hidden, never hit-tested`);
+  ok(L.bottom <= L.dockTop + 0.5 && L.stageBottom <= L.rowTop + 0.5 && !L.hitInLayer && !L.hitKey, `${label}: … the layer above the dock (${L.bottom?.toFixed(0)} ≤ ${L.dockTop?.toFixed(0)}), the Score above the row (${L.stageBottom?.toFixed(0)} ≤ ${L.rowTop?.toFixed(0)}), a touch in the band hits no key`);
+}
+// E + F: the drawn hand while ▶ plays (hand), and after ■.
+async function checkHand(page, label) {
   const fg = await fingering(page);
-  const g0 = (await D(page)).pf.ghost;
-  const { S } = await playAll(page);
-  const g1 = (await D(page)).pf.ghost;
-  const frames = g1.frames - g0.frames, builds = g1.builds - g0.builds, downs = g1.downs - g0.downs;
-  ok(frames >= 3 && builds === frames && downs >= frames, `${label}: ▶ (hand) — the rings built again once per frame change (${frames} frames, ${builds} builds, ${downs} fingers-down changes)`);
-  ok(S.builds.length === builds, `${label}: … the layer's groups added = the builds (${S.builds.length})`);
-  const frameKeys = { r: fg.fr.r.map((x) => x.slice(1).join()), l: fg.fr.l.map((x) => x.slice(1).join()) };
-  const off = S.frames.flatMap((f) => Object.entries(f.rings).filter(([h, r]) => !frameKeys[h].includes(r.keys.join())).map(([h, r]) => h + ':' + r.keys.join()));
-  ok(S.frames.some((f) => f.rings.r || f.rings.l) && !off.length, `${label}: … every ring set is a stored frame's keys (${off.slice(0, 3).join(' ') || 'all'})`);
-  const downOk = S.frames.some((f) => Object.values(f.rings).some((r) => r.down.length));
-  ok(downOk, `${label}: … a finger that plays filled`);
-  const ringedDigit = S.frames.filter((f) => f.fd.some(([m]) => Object.values(f.rings).some((r) => r.keys.includes(m))));
-  ok(!ringedDigit.length, `${label}: … no digit disc on a ringed key (${ringedDigit.length} frames)`);
+  const { S, scheduled } = await playAll(page);
+  const frames = S.frames.filter((f) => f.hand);
+  const draws = frames.length ? frames[frames.length - 1].hand.draws - frames[0].hand.draws : 0;
+  ok(frames.length > 30 && draws > 10, `${label}: ▶ (hand) — the hands drawn while it plays (${draws} draws over ${frames.length} frames)`);
+  // each fingered note: at its onset (+ 30–130 ms, the visual clock) its finger holds its key
+  let n = 0, held = 0;
+  const miss = [];
+  for (const e of scheduled) {
+    const f = fg?.n?.[e.id];
+    if (!f || !(f[1] > 0) || f[3].includes('w') || e.cut != null) continue;
+    const near = frames.filter((x) => x.hand.clock >= e.when + 0.03 && x.hand.clock <= e.when + Math.min(0.13, e.dur));
+    if (!near.length) continue;
+    n++;
+    if (near.some((x) => x.hand[f[0]]?.tips.some(([ff, key, hold]) => ff === f[1] && key === e.midi && hold))) held++;
+    else miss.push(`${e.id}:${f[0]}${f[1]}@${e.midi}`);
+  }
+  ok(n >= 5 && held >= 0.9 * n, `${label}: … at each fingered note's onset its finger holds its key (${held}/${n}${miss.length ? '; ' + miss.slice(0, 4).join(' ') : ''})`);
+  const wristUp = frames.filter((x) => ['r', 'l'].some((h) => x.hand[h] && x.hand[h].wrist <= 0));
+  ok(!S.frames.some((f) => f.fd.length), `${label}: … no digit discs on the keys (the nails carry them)`);
   let dup = 0;
   for (let i = 1; i < S.svg.length; i++) if (S.svg[i] === S.svg[i - 1]) dup++;
   ok(S.svg.length > 0 && !dup && S.svg.length < S.frames.length / 2, `${label}: the SVG written only when what it shows changed (${S.svg.length} writes over ${S.frames.length} frames, ${dup} the same as before)`);
+  void wristUp;
+  // ■ (it ended): the hands rest, then fade; their own loop stops
+  await page.waitForFunction(() => { const h = document.querySelector('#piano-region .kb-hands')?.__hand?.debug(); return h && !h.looping && h.canvases.every((c) => c.op === 0); }, null, { timeout: 6000, polling: 100 }).then(() => ok(true, `${label}: after the end — the hands fade, their loop stops`), () => ok(false, `${label}: after the end — the hands fade, their loop stops`));
   return S;
 }
 // D: muting LH silences G3; the LH view plays it, the RH view leaves it out.
@@ -363,17 +394,19 @@ async function desktop(dev) {
   if (part('E')) {
     await openOn(page, R6, 'both');
     await setMode(page, 'hand');
-    const k = await pressNote(page, dev, 'nG3', { during: () => keysNow(page) });
-    const lr = k.rings.filter((x) => x[0] === 'l'), rr = k.rings.filter((x) => x[0] === 'r');
-    ok(lr.length === 5 && rr.length === 5 && lr.some((x) => x[1] === 1 && x[2] === 55 && x[3]) && rr.some((x) => x[2] === 71 && x[3]) && !k.fd.length, `E: a press (hand) — five rings a hand, G3 under the left thumb filled, B4's filled, no discs (${JSON.stringify(k.rings)})`);
+    await checkHandLayout(page, dev, 'E');
+    const k = await pressNote(page, dev, 'nG3', { ms: 900, during: () => keysNow(page) });
+    const lt = k?.hand?.l || [], rt = k?.hand?.r || [];
+    ok(lt.some(([f, key, hold]) => f === 1 && key === 55 && hold) && rt.some(([, key, hold]) => key === 71 && hold) && !k.fd.length, `E: a press (hand) — the hands glide to the chord: G3 held by the left thumb, B4 by the right hand, no discs (${JSON.stringify(k?.hand)})`);
     await shot(page, 'finger-desktop-hand');
     await sleep(2400);
-    await checkGhost(page, 'E/F');
-    // the stretch picked: its first onset's frame, idle
+    await checkHand(page, 'E/F');
+    // the stretch picked: its first onset's position, idle
     await page.evaluate(() => window.resonatePlay.scoreRun('score_select', { from_measure: 4, to_measure: 4 }));
-    await sleep(400);
-    const gs = (await D(page)).fing.ghost, fg = await fingering(page);
-    ok(gs?.r && eq(gs.r.keys, fg.fr.r[gs.r.p].slice(1)) && fg.fr.r[gs.r.p][0] <= 12, `E: idle with a stretch (bar 4) — the right hand's frame at its first onset (${JSON.stringify(gs?.r)})`);
+    await sleep(900);
+    const gs = (await D(page)).fing.pose, fg = await fingering(page), kn = await keysNow(page);
+    const p = gs?.r && fg.fr.r.findIndex((x) => eq(x.slice(1), gs.r.keys));
+    ok(gs?.r && p >= 0 && fg.fr.r[p][0] <= 12 && kn.hand?.vis.r > 0.9, `E: idle with a stretch (bar 4) — the right hand shown on its first onset's position (${JSON.stringify(gs?.r)}, shown ${kn.hand?.vis.r})`);
     await setMode(page, 'num');
   }
   if (part('J')) await offIsToday(dev, R6);
@@ -730,16 +763,20 @@ async function ipad(dev) {
   await SH.openScore(page, { id: R6 });
   ok(await fingReady(page), 'the fingering worked out on open');
   const d = await D(page);
-  ok(d.pf.shown && d.pf.geo.digits && d.pf.geo.rings, `#fing shown; digits and rings at ${d.pf.geo.ww.toFixed(1)} px a white key`);
+  ok(d.pf.shown && d.pf.geo.digits && d.pf.geo.hand, `#fing shown; digits and the hand at ${d.pf.geo.ww.toFixed(1)} px a white key`);
   if (part('M')) { await switchSteady(page, 'M', R6, ids['Fingering R6b']); await switchSteady(page, 'M (back)', ids['Fingering R6b'], R6); }
   await checkPress(page, dev, 'B');
   await shot(page, 'finger-ipad-press');
   await checkPlayDigits(page, 'C');
   await checkHands(page, 'D');
   await setMode(page, 'hand');
-  await checkGhost(page, 'E/F');
+  await checkHandLayout(page, dev, 'E');
+  await checkHand(page, 'E/F');
   await shot(page, 'finger-ipad-hand');
   await setMode(page, 'num');
+  await sleep(300);
+  const back = await page.evaluate(() => ({ band: getComputedStyle(document.getElementById('piano-region')).paddingBottom, hand: document.getElementById('piano-region').hasAttribute('data-hand'), layer: !!document.querySelector('#piano-region .kb-hands') }));
+  ok(!back.hand && !back.layer && back.band === '6px', `E: numbers again — no band, no layer (${JSON.stringify(back)})`);
   // K: Amazing Grace, a hymn — fingered on its views, a press shows digits
   await SH.openSong(page, 'amazing-grace');
   await fingReady(page);
@@ -771,13 +808,21 @@ async function phone(dev) {
   await checkPress(page, dev, 'H Both', { digits: false });
   await setView(page, 'rh');
   d = await D(page);
-  ok(d.pf.geo.digits && d.pf.geo.rings, `H: the RH view (no chips) — ${d.pf.geo.ww.toFixed(1)} px a white key: digits and rings`);
+  ok(d.pf.geo.digits && d.pf.geo.hand, `H: the RH view (no chips) — ${d.pf.geo.ww.toFixed(1)} px a white key: digits and the hand`);
   await checkPress(page, dev, 'H RH');
   await shot(page, 'finger-phone-press');
   await setMode(page, 'hand');
-  const k = await pressNote(page, dev, 'nG3', { during: () => keysNow(page) });
-  ok(k && k.rings.length === 10, `H: the RH view (hand) — rings on the phone (${k?.rings.length})`);
+  await sleep(300);
+  d = await D(page);
+  ok(d.pf.band === 46 && d.pf.hand?.mode === 'compact', `H: the RH view (hand) — the compact hand, a 46 px band (${d.pf.band}, ${d.pf.hand?.mode})`);
+  const k = await pressNote(page, dev, 'nB4', { ms: 900, during: () => keysNow(page) });
+  ok(k?.hand?.r?.some(([, key, hold]) => key === 71 && hold), `H: … a press on B4 — the right hand holds it (${JSON.stringify(k?.hand?.r)})`);
+  await shot(page, 'finger-phone-hand');
   await sleep(2400);
+  await setView(page, 'both');
+  d = await D(page);
+  ok(d.pf.band === 0 && !d.pf.hand && d.pf.mode === 'hand' && !d.pf.geo.hand, `H: Both with its chips (${d.pf.geo.ww.toFixed(1)} px a white key) — no hand, no band, though the mode says hand (${d.pf.band})`);
+  await setView(page, 'rh');
   await setMode(page, 'num');
   await SH.openSong(page, ids['Fingering Wide']);
   await fingReady(page);

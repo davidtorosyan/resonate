@@ -57,7 +57,9 @@ export function invariants(items, res, hand) {
     if (!it.tied) continue;
     const n = res.notes.get(it.id);
     if (!/t/.test(n.x)) continue;
-    const start = items.filter((o) => o.midi === it.midi && !o.tied && o.q < it.q && o.t + o.d > it.t - 1e-3).sort((a, b) => b.q - a.q)[0];
+    // (its own staff's: another staff striking the key again mid-tie isn't its start — ALG 3)
+    const cands = items.filter((o) => o.midi === it.midi && !o.tied && o.q < it.q && o.t + o.d > it.t - 1e-3).sort((a, b) => b.q - a.q);
+    const start = cands.find((o) => o.staff === it.staff && o.hand === it.hand) || cands[0];
     const s = start && res.notes.get(start.id);
     if (!s || s.h !== n.h || (s.f !== n.f && !(n.f === 0 && gone(it)))) bad.push(`${it.id}: tie continuation ${n.h}${n.f}, start ${s ? s.h + s.f : "none"}`);
   }

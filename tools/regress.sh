@@ -81,6 +81,7 @@ run rhythmcases 600 node rhythmcases.mjs        # rhythm.js on a synthetic singe
 run fingercases 120 node fingercases.mjs        # finger.js (E7): hands + fingers, R6, invariants, 3000 notes, golden
 run fingersurvey 120 node fingersurvey.mjs      # finger.js on dumpkeys.cjs's Amazing Grace (+ PLAY_SCORES's dumps): invariants, every hand
 run fingertextcases 60 node fingertextcases.mjs # fingertext.js / scoretext.js (E7): fingering as text for assistants; no fingering = the old text
+run handcases 120 node handcases.mjs              # handplan.js (E7+): the drawn hand's plan and pose — fingers on their keys, moves in order, smooth, a window = the whole
 # The engine trace (patch 0009): the saved native traces parse, their notes after PAGE match the export.
 for f in fixtures/trace/*.trace; do
   run "tracecheck:$(basename "$f" .trace)" 60 node tracecheck.mjs "$f" "${f%.trace}.mxl" --quiet
@@ -120,7 +121,7 @@ if [ "$TIER" = main ]; then
   run playpdf 1200 env SHOTS=0 node playpdf.cjs   # 📄: the bars on the PDF, zoom and pan, the focus border
   run playfocus 900 env SHOTS=0 node playfocus.cjs # E3: a highlight's exact span for assistants, a double-tap picks one chord
   run playmarks 900 env SHOTS=0 node playmarks.cjs # E6: bookmarks — made, tabs on the music, the list, per song, the shell's Score
-  run playfinger 1800 env SHOTS=0 node playfinger.cjs # E7: fingering on the shell's Piano — #fing, digits, the ghost hand, the hands' rules, the cache, off = today
+  run playfinger 1800 env SHOTS=0 node playfinger.cjs # E7: fingering on the shell's Piano — #fing, digits, the drawn hand, the hands' rules, the cache, off = today
 
   # ---- PDF → Song: the Reader (a synthetic fixture with clean-ups; the real recorded Chromium run) --------
   for fx in greensleeves greensleeves3-real; do

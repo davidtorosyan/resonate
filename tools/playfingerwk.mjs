@@ -3,8 +3,10 @@
 // fixture (fingerfixture.cjs r6: G3 + B4 on the treble staff over the left hand's held C3), the Score with the
 // Piano. Checks: the fingering worked out in the Worker (a module Worker in WebKit), kept with the song; a
 // press on G3 + B4 (WebDriver mouse actions) lights G3 blue with LH 1 and B4 purple with its digit; the
-// ghost hand's rings on a press; while ▶ plays with the rings, no SVG element ever animating (sampled every
-// 100 ms, as importfixes.cjs S's svgAnim) — the rings' crossfades are HTML animations; no page errors.
+// drawn hand (hand.js) on a press — its canvases drawn, the fingers that play holding their keys; while ▶
+// plays with the hand, no SVG element and no animation of any kind ever running (sampled every 100 ms, as
+// importfixes.cjs S's svgAnim: the hand moves by transforms written from script), the hands drawn many
+// times, rAF gaps reported; no page errors.
 // Needs Xvfb :99 + WebKitWebDriver on :4444 (CLAUDE.md "A fresh container").
 // usage: node playfingerwk.mjs   (ROOT=http://localhost:8097/ SITE=/home/user/sitetest)
 import fs from "node:fs";
@@ -43,7 +45,7 @@ async function press(x, y, during = null, hold = 300) {
   await j("DELETE", `/session/${sid}/actions`).catch(() => {});
   return out;
 }
-const KEYS = `const s = document.querySelector("#piano-region .kb > svg"); return { lit: [...s.querySelectorAll("rect.lit")].map((r) => [Number(r.dataset.midi), r.dataset.hand, r.getAttribute("fill")]), fd: [...s.querySelectorAll("text.fd")].map((t) => [Number(t.dataset.midi), Number(t.textContent)]), rings: document.querySelectorAll("#piano-region .kb-ghost .kb-gh:not([data-out]) .kb-ring").length };`;
+const KEYS = `const s = document.querySelector("#piano-region .kb > svg"); return { lit: [...s.querySelectorAll("rect.lit")].map((r) => [Number(r.dataset.midi), r.dataset.hand, r.getAttribute("fill")]), fd: [...s.querySelectorAll("text.fd")].map((t) => [Number(t.dataset.midi), Number(t.textContent)]), hand: (() => { const h = document.querySelector("#piano-region .kb-hands")?.__hand?.debug(); return h && h.on ? { draws: h.draws, r: h.poses.r && h.poses.r.tips.map((x) => [x.f, x.key, x.hold]), l: h.poses.l && h.poses.l.tips.map((x) => [x.f, x.key, x.hold]) } : null; })() };`;
 const HEAD = `const g = document.getElementById("nG3"); const h = g && (g.querySelector(".notehead") || g); if (!h) return null; const b = h.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 };`;
 try {
   await j("POST", `/session/${sid}/window/rect`, { width: 1280, height: 800 }).catch(() => {});
@@ -74,29 +76,38 @@ try {
   ok(g3 && g3[1] === "lh" && g3[2] === "#4f7cff" && b4 && b4[1] === "rh", `a press on G3 + B4: G3 blue (left hand), B4 purple (${JSON.stringify(k?.lit)})`);
   ok(JSON.stringify((k?.fd || []).slice().sort((a, b) => a[0] - b[0])) === JSON.stringify([[55, 1], [71, fg.nB4[1]]]), `… G3 LH 1, B4 ${fg.nB4[1]} on the keys (${JSON.stringify(k?.fd)})`);
   await sleep(2600);
-  // the ghost hand: a press, then ▶ — no SVG element animating
+  // the drawn hand: a press, then ▶ — no SVG element animating
   await ex(`document.getElementById("fing").click(); return 1;`);
   const mode = await ex(`return document.getElementById("fing").dataset.mode;`);
+  await sleep(600);
   pt = await ex(HEAD);
-  const kh = await press(pt.x, pt.y, KEYS);
-  ok(mode === "hand" && kh?.rings === 10 && !kh.fd.length, `the ghost hand on a press: ${kh?.rings} rings, no discs (${mode})`);
+  const kh = await press(pt.x, pt.y, KEYS, 900);
+  ok(mode === "hand" && kh?.hand?.draws > 0 && kh.hand.l?.some(([f, k, h]) => f === 1 && k === 55 && h) && kh.hand.r?.some(([, k, h]) => k === 71 && h) && !kh.fd.length, `the drawn hand on a press: G3 held by the left thumb, B4 by the right hand, no discs (${mode}, ${JSON.stringify(kh?.hand)})`);
   await sleep(2600);
   const anim = await exa(`const done = arguments[arguments.length - 1]; (async () => {
     window.resonatePlay.playBtn.click();
-    let svgAnim = 0, htmlAnim = 0, n = 0;
+    let svgAnim = 0, anyAnim = 0, n = 0;
+    const H = () => document.querySelector("#piano-region .kb-hands")?.__hand?.debug();
+    const d0 = H()?.draws || 0, gaps = [];
+    let last = 0, on = true;
+    const raf = (t) => { if (last) gaps.push(t - last); last = t; if (on) requestAnimationFrame(raf); };
+    requestAnimationFrame(raf);
     const end = performance.now() + 9000;
     while (performance.now() < end) {
       const a = document.getAnimations().filter((x) => x.playState === "running");
       if (a.some((x) => x.effect && x.effect.target instanceof SVGElement)) svgAnim++;
-      if (a.some((x) => x.effect && x.effect.target && x.effect.target.classList && x.effect.target.classList.contains("kb-gh"))) htmlAnim++;
+      if (a.some((x) => x.effect?.target?.closest?.("#piano-region"))) anyAnim++; // (the Piano row: nothing animates there)
       n++;
       await new Promise((r) => setTimeout(r, 100));
     }
-    const g = window.resonateDebug().piano.fing.ghost, pb = window.resonateDebug().play.playback;
-    done({ svgAnim, htmlAnim, n, frames: g.frames, builds: g.builds, played: pb.scheduled.length, state: pb.state });
+    on = false;
+    gaps.sort((a, b) => a - b);
+    const pb = window.resonateDebug().play.playback;
+    done({ svgAnim, anyAnim, n, draws: (H()?.draws || 0) - d0, ticks: H()?.ticks, played: pb.scheduled.length, state: pb.state, p50: gaps[gaps.length >> 1], p95: gaps[Math.floor(gaps.length * 0.95)], over34: gaps.filter((g) => g > 34).length, frames: gaps.length });
   })().catch((e) => done({ err: e.message }));`);
-  ok(anim && anim.n > 50 && anim.svgAnim === 0 && anim.played > 10, `▶ with the ghost hand: an SVG element animating in ${anim?.svgAnim} of ${anim?.n} samples (${anim?.played} notes struck)`);
-  ok(anim && anim.frames >= 3 && anim.builds === anim.frames, `… the rings built again once per frame change (${anim?.frames} frames, ${anim?.builds} builds; a crossfade seen in ${anim?.htmlAnim} samples)`);
+  ok(anim && anim.n > 50 && anim.svgAnim === 0 && anim.anyAnim === 0 && anim.played > 10, `▶ with the drawn hand: an SVG element animating in ${anim?.svgAnim}, anything in the Piano row in ${anim?.anyAnim} of ${anim?.n} samples (${anim?.played} notes struck)`);
+  ok(anim && anim.draws > 20, `… the hands drawn ${anim?.draws} times (${anim?.ticks} ticks)`);
+  console.log(`info  rAF gaps while ▶ plays with the hand: median ${anim?.p50?.toFixed(1)} ms, p95 ${anim?.p95?.toFixed(1)} ms, ${anim?.over34} over 34 ms of ${anim?.frames}`);
   const errs = await ex("return window.__err || [];");
   ok(!errs.length, `no page errors ${JSON.stringify(errs.slice(0, 3))}`);
 } catch (err) {

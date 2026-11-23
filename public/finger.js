@@ -41,7 +41,7 @@
 
 // Bumped with any change in output (as omr/engine.js ENGINE_N): a stored fingering of another ALG is
 // worked out again. tools/fingercases.mjs fails when the output changes and this doesn't.
-export const ALG = 2;
+export const ALG = 3;
 
 // Finger spans, the right hand, from Balliauw, Herremans, Palhazi Cuervo & Sörensen 2017, "A variable
 // neighbourhood search algorithm to generate piano fingerings for polyphonic sheet music", International
@@ -70,7 +70,9 @@ export const SPANS = Object.freeze({
 export const COST = Object.freeze({
   // Stage A — hands
   LEAVE: 3,       // a key moved off its staff's hand
-  LET: 2,         // a held key let go early (the pedal holds it) — Stage B too
+  LET: 2,         // a held key let go early (the pedal holds it) — Stage B: LET_B
+  LET_TOP: 10,     // … a held key beyond every key struck with it, on the hand's outer side (the tune over its chords, the bass under them)
+  LET_B: 10,       // Stage B: a held key let go to free a finger (a line over held notes: 4 slid while the chord under it was dropped)
   COMF: 2,        // a unit past comfortable (rule 1); a hand's spread, a finger pair's stretch
   PRAC: 10,       // a unit past practical (rule 13)
   OVER5: 10,      // a key over five in one hand
@@ -83,13 +85,13 @@ export const COST = Object.freeze({
   THUMB_BLACK: 1, // the thumb on a black key (rule 8) — ×BEGIN
   THUMB_SIDE: 1,  // … beside another finger on a white key, before or after
   FIVE_SIDE: 1,   // 5 on a black key beside another finger on a white key (rule 9)
-  PASS: 1,        // the thumb passing or crossed on the same level (rule 10)
+  PASS: 1,        // the thumb passing or crossed on the same level (rule 10) — ×BEGIN
   PASS_BLACK: 3,  // … onto a black thumb from a white key (rule 11)
   SAME_KEY: 1,    // the same key again with another finger (rule 15)
   JUMP: 10,       // a unit the hand's anchor moves × urgency, where the hand can lift — ×BEGIN
   URGENT: 0.05,   // urgency = max(URGENT, URGENT s / gap)
   LIFT: 0.15,     // s between onsets from which the hand can lift
-  BEGIN: 2,       // beginner weights (hand "…b"): the thumb on black and hand jumps ×2
+  BEGIN: 2,       // beginner weights (hand "…b"): the thumb on black, the thumb passing and hand jumps ×2
 });
 
 const POS = [0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12]; // a semitone's place in the 14-unit octave
@@ -103,6 +105,7 @@ const black = (x) => (x & 1) === 1;
 const OFF = [0, 0, 2, 4, 6, 8]; // a finger's rest place from the thumb's: a five-finger position
 const QEPS = 1e-4; // quarters: notes this close start together
 const TOL = 1e-3;  // s: a key that ends this close to an onset isn't held through it
+const LEGATO = 0.05; // s: a key sounding to within this of the next onset joins it (no lift between them)
 const EPS = 1e-9;  // costs: strictly lower
 const MAXA = 256;  // Stage A's states at one onset (a one-staff piano, where every onset is open): the best kept
 const NONE = Object.freeze([]);
@@ -175,12 +178,12 @@ function prepare(items) {
   // (a total order: the same result whatever order the items come in)
   list.sort((a, b) => a.q - b.q || a.midi - b.midi || a.grace - b.grace || a.tied - b.tied || a.staff - b.staff || byId(a, b));
   const keys = [], slices = [], graces = [], link = new Map();
-  const last = new Map(); // midi → the latest key struck on it
+  const last = new Map(); // midi → the latest key struck on it; "midi|staff" → … by that staff (a tie continues its own staff's)
   let sl = null;
   for (const e of list) {
     if (e.grace) { graces.push(e); continue; }
     if (e.tied) {
-      const k = last.get(e.midi);
+      const k = last.get(`${e.midi}|${e.home}|${e.staff}`) ?? last.get(e.midi);
       if (k != null && keys[k].q < e.q - QEPS && keys[k].end > e.t - TOL) { link.set(e, k); continue; }
       // (a continuation whose start isn't here — a stretch starting mid-tie: struck)
     }
@@ -198,6 +201,7 @@ function prepare(items) {
     K.arp ||= e.arp;
     if (e.pin && !K.pin) K.pin = e.pin;
     last.set(e.midi, k);
+    last.set(`${e.midi}|${e.home}|${e.staff}`, k);
     link.set(e, k);
   }
   for (const s of slices) s.keys.sort((a, b) => keys[a].x - keys[b].x);
@@ -235,7 +239,9 @@ export function assignHands(items, opts = {}) {
   const breaks = (list, arp) => list.length > 5 || (!arp && list.length > 1 && X(list[list.length - 1]) - X(list[0]) > prac);
 
   // A hand's options at an onset: [{ cost, kept, let, c }] (struck and carried ascending by x).
-  const handOpts = (struck, carried, lastC) => {
+  // (left: the hand's outer side is its lowest keys — a held key let go there, beyond every key struck, is
+  // its bass; the right's, its highest: the tune — LET_TOP)
+  const handOpts = (struck, carried, lastC, left = false) => {
     if (!struck.length) return [{ cost: 0, kept: carried, let: [], c: lastC }];
     const arp = struck.some((k) => keys[k].arp);
     const c = (X(struck[0]) + X(struck[struck.length - 1])) / 2;
@@ -244,7 +250,9 @@ export function assignHands(items, opts = {}) {
     for (let tot = 0; tot <= h; tot++) for (let i = 0; i <= tot; i++) {
       const j = tot - i, kept = carried.slice(i, h - j), sp = spread(struck, kept, arp);
       if (out.some((o) => o.i <= i && o.j <= j && o.sp <= sp + EPS)) continue; // (dominated: let go later for the same)
-      out.push({ i, j, sp, cost: COST.LET * tot + sp + move, kept, let: [...carried.slice(0, i), ...carried.slice(h - j)], c });
+      const let_ = [...carried.slice(0, i), ...carried.slice(h - j)];
+      const outer = let_.filter((k) => (left ? X(k) < X(struck[0]) : X(k) > X(struck[struck.length - 1]))).length;
+      out.push({ i, j, sp, cost: COST.LET * tot + (COST.LET_TOP - COST.LET) * outer + sp + move, kept, let: let_, c });
     }
     return out;
   };
@@ -304,7 +312,7 @@ export function assignHands(items, opts = {}) {
       if (carR.length > 1) carR.sort((a, b) => X(a) - X(b));
       if (carL.length > 1) carL.sort((a, b) => X(a) - X(b));
       for (const sp of splits) {
-        const oR = handOpts(sp.r, carR, S.cR), oL = handOpts(sp.l, carL, S.cL);
+        const oR = handOpts(sp.r, carR, S.cR), oL = handOpts(sp.l, carL, S.cL, true);
         for (const a of oR) for (const b of oL) cands.push(S, sp, a, b, S.cost + sp.leave + a.cost + b.cost);
       }
     }
@@ -410,12 +418,14 @@ export function fingerHand(A, side, opts = {}) {
     return true;
   };
 
-  const pairCost = (xa, fa, xb, fb, lift, urg) => {
+  const pairCost = (xa, fa, xb, fb, lift, urg, leg) => {
     const d = xb - xa;
     // (where the hand can lift, the jump instead of the distance rules when it's cheaper: 5–5 on an
-    // octave bass is a lift, a thumb under in a scale a stretch)
+    // octave bass is a lift, a thumb under in a scale a stretch — but not in a line: one key struck, within
+    // a third of a key sounding up to it — legato: a finger takes it, never one finger sliding key to key
+    // nor one crossing the wrong way, the hand lifted)
     let c = look(T.dist, W, fa, fb, d);
-    if (lift) { const jump = COST.JUMP * urg * H.beg * Math.abs(xb - OFF[fb] - (xa - OFF[fa])); if (jump < c) c = jump; }
+    if (lift && !(leg && Math.abs(d) <= 4)) { const jump = COST.JUMP * urg * H.beg * Math.abs(xb - OFF[fb] - (xa - OFF[fa])); if (jump < c) c = jump; }
     const ba = black(xa), bb = black(xb);
     if ((fa === 3 && fb === 4) || (fa === 4 && fb === 3)) c += COST.THREE_FOUR;
     if ((fa === 3 && !ba && fb === 4 && bb) || (fa === 4 && ba && fb === 3 && !bb)) c += COST.FOUR_BLACK;
@@ -425,7 +435,7 @@ export function fingerHand(A, side, opts = {}) {
     if (fa === 5 && ba && fb !== 5 && !bb) c += COST.FIVE_SIDE;
     if ((fa === 1 && fb !== 1 && d < 0) || (fa !== 1 && fb === 1 && d > 0)) { // (the thumb passes under / is crossed)
       const thumb = fa === 1 ? ba : bb, other = fa === 1 ? bb : ba;
-      if (thumb === other) c += COST.PASS; else if (thumb) c += COST.PASS_BLACK;
+      if (thumb === other) c += COST.PASS * H.beg; else if (thumb) c += COST.PASS_BLACK;
     }
     if (d === 0 && fa !== fb) c += COST.SAME_KEY;
     return c;
@@ -439,7 +449,7 @@ export function fingerHand(A, side, opts = {}) {
   const U = new Map(), held = new Map(), layouts = new Map(), within = new Map(), at = new Map();
   const M = new Float64Array(625), row = new Float64Array(25);
   let fixedAt = new Int8Array(32);
-  let j = 0, B = null, nb = 0, last = false, numeric = true, A_ = null, na = 0, vt = vtab, cars = null;
+  let j = 0, B = null, nb = 0, last = false, numeric = true, A_ = null, na = 0, vt = vtab, cars = null, bTop = 0;
 
   // the sounding keys for a kept set: kept + struck, rising on x — one layout per kept set, for every state
   const layout = (ck, mask) => {
@@ -486,10 +496,12 @@ export function fingerHand(A, side, opts = {}) {
       fixedAt.fill(0, 0, U.size);
       for (let i = 0; i < c; i++) fixedAt[U.get(ck[i])] = cf[i];
       let found = -1; // the fewest let go that leaves a state, and one more
+      const letOf = (mask) => { let lc = 0; for (let i = 0; i < c; i++) if (mask & (1 << i)) lc += xp[ck[i]] > bTop ? COST.LET_TOP : COST.LET_B; return lc; };
       for (let lv = 0; lv <= c && (found < 0 || lv <= found + 1); lv++) {
         for (const mask of MASKS[c][lv]) {
           const L = layout(ck, mask);
           if (L.m > 5) continue;
+          const lc = letOf(mask);
           let any = false;
           for (const combo of COMBOS[L.m]) {
             let okc = true;
@@ -510,7 +522,7 @@ export function fingerHand(A, side, opts = {}) {
             let w = within.get(full);
             if (w === undefined) within.set(full, (w = inside(L, combo)));
             if (na) { for (let u = 0; u < L.m; u++) if (L.isB[u]) pc += row[L.bi[u] * 5 + combo[u] - 1]; pc /= na * nb; }
-            const cost = P.cost + pc + w + COST.LET * lv;
+            const cost = P.cost + pc + w + lc;
             const ex = at.get(cd);
             if (ex !== undefined && !(cost < next[ex].cost - EPS)) continue;
             const state = { k: L.K, f: combo, cost, back: P };
@@ -526,6 +538,7 @@ export function fingerHand(A, side, opts = {}) {
   for (j = 0; j < steps.length; j++) {
     const st = steps[j], prev = j ? steps[j - 1] : null;
     B = st.b; nb = B.length; last = j === steps.length - 1;
+    bTop = -Infinity; for (const k of B) bTop = Math.max(bTop, xp[k]);
     U.clear(); held.clear(); layouts.clear(); within.clear();
     for (let i = 0; i < nb; i++) U.set(B[i], i);
     cars = cur.map((P) => {
@@ -545,8 +558,11 @@ export function fingerHand(A, side, opts = {}) {
     A_ = prev ? prev.b : null; na = A_ ? A_.length : 0;
     let lift = false, urg = 0;
     if (prev) { const gap = st.t - prev.t; lift = gap >= COST.LIFT; urg = lift ? Math.max(COST.URGENT, COST.URGENT / gap) : 0; }
-    for (let ai = 0; ai < na; ai++) for (let fa = 1; fa <= 5; fa++) for (let bi = 0; bi < nb; bi++) for (let fb = 1; fb <= 5; fb++)
-      M[((ai * 5 + fa - 1) * nb + bi) * 5 + fb - 1] = pairCost(xp[A_[ai]], fa, xp[B[bi]], fb, lift, urg);
+    for (let ai = 0; ai < na; ai++) {
+      const leg = nb === 1 && keys[A_[ai]].end > st.t - LEGATO; // (a line: one key struck, this one sounding up to it)
+      for (let fa = 1; fa <= 5; fa++) for (let bi = 0; bi < nb; bi++) for (let fb = 1; fb <= 5; fb++)
+        M[((ai * 5 + fa - 1) * nb + bi) * 5 + fb - 1] = pairCost(xp[A_[ai]], fa, xp[B[bi]], fb, lift, urg, leg);
+    }
     vt = st.arp ? T.vertArp : vtab;
     let next = run(true);
     if (!next.length) next = run(false); // (printed fingers that leave no state: not forced here)
@@ -576,19 +592,32 @@ const MASKS = Array.from({ length: 6 }, (_, c) => {
 });
 
 // ---------------------------------------------------------------------------------------------------
-// Positions for the ghost hand: a hand's path cut into frames — the key each finger rests on: the played
+// Positions for the drawn hand: a hand's path cut into frames — the key each finger rests on: the played
 // fingers (struck and held) on their keys, the others at their rest offsets between them, snapped to the
-// nearest key, a white one first. An onset keeps the frame while every played finger is within 1 unit
-// of its rest key; else a new frame. path: fingerHand's ([{ q, m: [midis], f: [fingers] }], rising on the
-// hand's x). → { frames: [{ q0, keys: [m1…m5] }], p: Int32Array (the frame of each path step) }
-export function framesOf(path, side) {
+// nearest key of the song's scale (`scale`: its pitch classes — none: a white key first, as v99). An
+// onset keeps the frame while every played finger is within 1 unit of its rest key; a finger that hadn't
+// played in it yet takes the key it plays there (its rest was a guess: the frame shows where it plays — a
+// thumb on B♭, not the B beside it); else a new frame. path: fingerHand's ([{ q, m: [midis], f: [fingers] }],
+// rising on the hand's x). → { frames: [{ q0, keys: [m1…m5] }], p: Int32Array (the frame of each path step) }
+export function framesOf(path, side, scale = null) {
   const sg = side === "l" ? -1 : 1;
   const frames = [], p = new Int32Array(path.length);
-  let rest = null; // x (the hand's own: −x for the left) per finger 1–5
+  let rest = null, real = null; // x (the hand's own: −x for the left) per finger 1–5; played in this frame
   for (let j = 0; j < path.length; j++) {
     const fs = path[j].f, xs = path[j].m.map((m) => sg * keyX(m));
-    if (rest && fs.every((fg, i) => Math.abs(xs[i] - rest[fg]) <= 1)) { p[j] = frames.length - 1; continue; }
-    rest = restOf(xs, fs, sg);
+    if (rest && fs.every((fg, i) => Math.abs(xs[i] - rest[fg]) <= 1)) {
+      const fr = frames[frames.length - 1];
+      fs.forEach((fg, i) => {
+        if (real[fg]) return;
+        real[fg] = true;
+        if (xs[i] !== rest[fg]) { rest[fg] = xs[i]; fr.keys[fg - 1] = midiOfX(sg * xs[i]); }
+      });
+      p[j] = frames.length - 1;
+      continue;
+    }
+    rest = restOf(xs, fs, sg, scale);
+    real = [false, false, false, false, false, false];
+    for (const fg of fs) real[fg] = true;
     frames.push({ q0: path[j].q, keys: rest.slice(1).map((x) => midiOfX(sg * x)) });
     p[j] = frames.length - 1;
   }
@@ -596,10 +625,11 @@ export function framesOf(path, side) {
 }
 
 // The rest key of every finger (index 1–5, the hand's own x) from the played ones.
-function restOf(xs, fs, sg) {
+function restOf(xs, fs, sg, scale = null) {
   const at = [null, null, null, null, null, null];
   fs.forEach((fg, i) => { at[fg] = xs[i]; });
   const real = (x) => midiOfX(sg * x) != null;
+  const inScale = (x) => !!scale && scale[((midiOfX(sg * x) % 12) + 12) % 12];
   for (let fg = 1; fg <= 5; fg++) {
     if (at[fg] != null) continue;
     let lo = -1, hi = -1;
@@ -609,18 +639,20 @@ function restOf(xs, fs, sg) {
     if (lo > 0 && hi > 0) target = at[lo] + ((OFF[fg] - OFF[lo]) * (at[hi] - at[lo])) / (OFF[hi] - OFF[lo]);
     else if (lo > 0) target = at[lo] + OFF[fg] - OFF[lo];
     else target = at[hi] - (OFF[hi] - OFF[fg]);
-    // between its neighbours: the nearest white key, else the nearest black one, else its lower neighbour's;
-    // as near either way: above the played fingers the higher (an open hand: 3 on E♭ → 4 F, 5 G), the
-    // thumb the higher too (tucked under: 2 on D♭ → the thumb on C), else the lower
+    // between its neighbours: the nearest key of the scale, else the nearest white key, else the nearest
+    // black one, else its lower neighbour's; as near either way: above the played fingers the higher (an
+    // open hand: 3 on E♭ → 4 F, 5 G), the thumb the higher too (tucked under: 2 on D♭ → the thumb on C),
+    // else the lower
     const floor = lo > 0 ? at[lo] : -Infinity, ceil = hi > 0 ? at[hi] : Infinity, up = hi < 0 || lo < 0;
     const from = Math.floor(Math.max(floor + 1, target - 8)), to = Math.ceil(Math.min(ceil - 1, target + 8));
     const better = (x, b) => { if (b == null) return true; const d = Math.abs(x - target), e = Math.abs(b - target); return d < e - EPS || (d <= e + EPS && up && x > b); };
-    let pick = null, pickW = null;
+    let pick = null, pickW = null, pickS = null;
     for (let x = from; x <= to; x++) {
       if (!real(x)) continue;
+      if (inScale(x) && Math.abs(x - target) <= 2 && better(x, pickS)) pickS = x;
       if (!black(x)) { if (better(x, pickW)) pickW = x; } else if (better(x, pick)) pick = x;
     }
-    at[fg] = pickW ?? pick ?? (lo > 0 ? at[lo] : at[hi]);
+    at[fg] = pickS ?? pickW ?? pick ?? (lo > 0 ? at[lo] : at[hi]);
   }
   return at;
 }
@@ -636,9 +668,13 @@ export function fingerNotes(items, opts = {}) {
   const frameAt = {}; // hand → (q) → its frame index
   const letQ = new Float64Array(keys.length).fill(Infinity); // the onset a key was let go early at (Stage A or B)
   for (let k = 0; k < keys.length; k++) if (A.let[k] >= 0) letQ[k] = slices[A.let[k]].q;
+  // the song's scale for the hand's resting fingers: the pitch classes struck in ≥ 4 % of its keys
+  const pcs = new Array(12).fill(0);
+  for (const k of keys) pcs[((k.midi % 12) + 12) % 12]++;
+  const scale = keys.length ? pcs.map((n) => n >= 0.04 * keys.length) : null;
   for (const side of ["r", "l"]) {
     const R = fingerHand(A, side, opts);
-    const F = framesOf(R.path, side);
+    const F = framesOf(R.path, side, scale);
     frames[side] = F.frames;
     for (let j = 0; j < R.path.length; j++) R.path[j].p = F.p[j];
     stage[side] = { ...R, frames: F };

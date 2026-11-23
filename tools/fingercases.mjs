@@ -62,7 +62,7 @@ const shuffled = (a, seed) => { const r = rng(seed), b = a.slice(); for (let i =
 
 // ---- the cases ----------------------------------------------------------------------------------------
 const CASES = []; // { name, items, check(res, hand) → [ok, what] list (only for the hands in `on`), on }
-const add = (name, items, check, on = ["sb"]) => CASES.push({ name, items, check, on });
+const add = (name, items, check, on = ["sb"], known = []) => CASES.push({ name, items, check, on, known }); // (known: reported, not judged)
 
 // A five-finger tune: C D E F G F E D C → 1 2 3 4 5 4 3 2 1.
 {
@@ -170,6 +170,66 @@ const add = (name, items, check, on = ["sb"]) => CASES.push({ name, items, check
   add("tie after a restrike", re, (res) => {
     const t = res.notes.get("reCt");
     return [[t.h === "r" && t.f === 0 && t.x === "t" && res.notes.get("reD").f > 0, `C4's continuation r0t, D4 fingered (${show(res, re)})`]];
+  }, SIZES);
+}
+// ALG 3 — the pianist review of the owner's songs (docs/FINGERING.md "Review of the owner's songs"):
+// synthetic figures of the patterns it confirmed, not the songs.
+// (a) A line stepping down over held notes: another finger each step, never one finger sliding key to
+// key (killing-1/2: 5 slid G–F♯–E while 1 and 2 held the chord under it).
+{
+  const it = [N("slA", 0, 4, M.A3, "r"), N("slD", 0, 4, M.D4, "r"), ...line("sl", "r", 1, [[M.G4, 1], [M.Fs4, 1], [M.E4, 1]])];
+  add("a line over held notes", it, (res) => {
+    const f = fingersOf(res, ["sl0", "sl1", "sl2"]), held = fingersOf(res, ["slA", "slD"]);
+    return [[f[0] > f[1] && f[1] > f[2] && f[2] > held[1], `G F♯ E on three fingers stepping down, above the held A3 D4 (${held.join(" ")} | ${f.join(" ")})`],
+      [res.debug.r.let.length === 0, `the held notes kept (${res.debug.r.let.length} let go)`]];
+  }, ["mb", "lb"]); // (a small hand holds A3–G4, a seventh, only past its relaxed spans: it lets go — D3)
+}
+// (b) A held tune note over the chords struck under it: the tune keeps its finger, the chords take the
+// others (longesttime-1/2/4: 5 held E♭5 and struck the chord's B♭4 too, so the tune was cut).
+{
+  const it = [N("vtE", 0, 4, M.E5 - 1, "r"), ...line("vc", "r", 1, [[[M.E4 - 1, M.G4, M.As4], 1], [M.As4, 1], [[M.E4 - 1, M.G4, M.As4], 1]])];
+  add("a held tune over its chords", it, (res) => {
+    const top = res.notes.get("vtE").f, ch = fingersOf(res, ["vc0.63", "vc0.67", "vc0.70", "vc2.63", "vc2.67", "vc2.70"]);
+    return [[top === 5 && ch.every((x) => x > 0 && x < 5), `E♭5 5, the chords under it with 1–4 (${top} | ${ch.join(" ")})`],
+      [res.debug.r.let.length === 0, `the tune not let go (${JSON.stringify(res.debug.r.let)})`]];
+  }, [], SIZES); // (known, ALG 3: the chord packed under a held 5 pays the relaxed-span rules twice — rule 14 —
+  // more than letting the tune go; a small hand's octave is its practical limit too, D3)
+}
+// (c) A walk up a fourth in the left hand fits one position: no 2-1-2-1 crawl (killing-3, songbird-2/7).
+{
+  const it = line("wk", "l", 0, [[M.A2, 0.5], [M.B2, 0.5], [M.C3, 0.5], [M.D3, 0.5], [M.D3, 2]]);
+  add("a walk up a fourth (LH)", it, (res) => {
+    const f = fingersOf(res, ids(it).slice(0, 4));
+    return [[f[0] > f[1] && f[1] > f[2] && f[2] > f[3], `A B C D on falling fingers — one position, no crossing (${f.join(" ")})`]];
+  }, SIZES);
+}
+// (d) Rising thirds: a new pair of fingers each, not the same two sliding up (stumblin-1, yellowsub-5).
+{
+  const it = line("th", "r", 0, [[[M.A4, M.C5], 0.5], [[M.B4, M.D5], 0.5], [[M.C5, M.E5], 0.5], [[M.C5, M.E5], 1.5]]);
+  add("rising thirds", it, (res) => {
+    const f = [0, 1, 2].map((i) => fingersOf(res, ids(it).slice(2 * i, 2 * i + 2)).join(""));
+    return [[f[0] !== f[1] && f[1] !== f[2], `three different finger pairs (${f.join(" · ")})`]];
+  });
+}
+// (e) The shown position puts a played finger on the key it plays: the thumb on B♭3, not the B3 beside
+// it (gybr-12, toosweet-8) — and a resting finger on the song's scale, not a natural it never plays
+// (longesttime-5, yellowsub-6: E♭ major — 4 on A♭, not A).
+{
+  const it = line("ps", "r", 0, [[M.As4 - 12, 1], [M.C4, 1], [M.D4, 1], [M.E4 - 1, 1], [M.F4, 1], [M.G4, 1], [M.E4 - 1, 1], [M.As4 - 12, 1], [M.Gs4 - 12, 1], [M.As4 - 12, 2]]);
+  add("positions on the keys played", it, (res) => {
+    const fr = res.frames.r, f0 = res.notes.get("ps0");
+    const p = fr[f0.p], scale = new Set([10, 0, 2, 3, 5, 7, 8]);
+    return [[p && p.keys[f0.f - 1] === 58, `B♭3's finger ${f0.f} rests on B♭3 in its position (${JSON.stringify(p?.keys)})`],
+      [fr.every((x) => x.keys.every((m) => scale.has(m % 12))), `every resting key in E♭ major (${JSON.stringify(fr.map((x) => x.keys))})`]];
+  });
+}
+// (f) A tie continues its own staff's key: the left hand striking the tied G4 again mid-tie doesn't
+// make the right hand's continuation "moved" (the E7 review's fuzz finding).
+{
+  const it = [N("tsG", 0, 4, M.G4, "r"), N("tsGt", 2, 2, M.G4, "r", { tied: true }), N("tsL", 1, 2, M.G4, "l"), N("tsC", 0, 4, M.C3, "l")];
+  add("a tie keeps its staff's key", it, (res) => {
+    const t = res.notes.get("tsGt");
+    return [[t.h === "r" && !/m/.test(t.x) && /t/.test(t.x), `G4's continuation r, t, not m (${show(res, it)})`]];
   }, SIZES);
 }
 // A 6-note chord: one inner key w (the right hand's lowest), the rest 1–5.
@@ -379,6 +439,7 @@ async function main() {
       allBad += bad.length;
       if (bad.length) ok(false, `${c.name} [${hand}]: invariants — ${bad.slice(0, 4).join("; ")}${bad.length > 4 ? ` (+${bad.length - 4})` : ""}`);
       if (c.on.includes(hand)) for (const [cond, what] of c.check(res, hand)) ok(cond, `${c.name} [${hand}]: ${what}`);
+      if (c.known?.includes(hand)) for (const [cond, what] of c.check(res, hand)) console.log(`${cond ? "info  (now passes)" : "info  known limit"} ${c.name} [${hand}]: ${what}`);
       hashes[`${c.name} [${hand}]`] = hash(serial(res));
       if (VERBOSE) console.log(`  ${c.name} [${hand}] ${show(res, c.items)}`);
     }

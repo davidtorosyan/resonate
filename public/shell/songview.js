@@ -92,6 +92,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     quiet: () => !!sing.state()?.take,
     busy: () => !!(sing.state()?.busy || score.state()?.busy),
     score: { press: (m, e) => score.press(m, e), lift: (pk) => score.lift(pk), changed: () => score.keysChanged(), fingers: () => score.fingersChanged() },
+    resized: () => { if (isOpen && mods.score) frame().then(() => score.resize({ keep: true })); }, // (the drawn hand's band came or went: the Score's bars kept)
   });
   const setTitle = (t, id = current) => { title = t || ""; titleId = title ? id : null; pill.querySelector(".t").textContent = title || "…"; };
 
