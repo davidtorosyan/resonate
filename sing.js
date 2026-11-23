@@ -2,25 +2,25 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=101";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=101";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=101";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=101";
-import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=101";
-import * as P from "./practice.js?v=101";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=101";
-import { startCapture, playVoice } from "./capture.js?v=101";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=101";
-import { makeFeatures, findClicks, tolOn } from "./rhythm.js?v=101";
-import * as TR from "./takerhythm.js?v=101";
-import { listSongs, getSong, addSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=101";
-import { SAMPLES, songXml, songRev, songInfo } from "./catalog.js?v=101";
-import { forgetSong } from "./forget.js?v=101";
-import { activeProfile } from "./profiles.js?v=101";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=101";
-import { DATA_KEYS } from "./space.js?v=101";
-import { spaceChanged } from "./nav.js?v=101";
-import { shareSong, takeStarted, lineDone, takeEnded, remote, paintRemote } from "./assist.js?v=101";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=102";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=102";
+import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=102";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=102";
+import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=102";
+import * as P from "./practice.js?v=102";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=102";
+import { startCapture, playVoice } from "./capture.js?v=102";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=102";
+import { makeFeatures, findClicks, tolOn } from "./rhythm.js?v=102";
+import * as TR from "./takerhythm.js?v=102";
+import { listSongs, getSong, addSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=102";
+import { SAMPLES, songXml, songRev, songInfo } from "./catalog.js?v=102";
+import { forgetSong } from "./forget.js?v=102";
+import { activeProfile } from "./profiles.js?v=102";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=102";
+import { DATA_KEYS } from "./space.js?v=102";
+import { spaceChanged } from "./nav.js?v=102";
+import { shareSong, takeStarted, lineDone, takeEnded, remote, paintRemote } from "./assist.js?v=102";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");
@@ -504,6 +504,7 @@ async function selectSong(id, { remember = true } = {}) {
   }
   songWent = ask;
   stopLoop();
+  earStop(); // (Ear's phrase, note or attempt: its sound and mic stop too)
   stopGuided();
   stopSession();
   $("taptempo").hidden = true; // (their taps belong to the song they were opened on)
@@ -1818,7 +1819,7 @@ function cursorToLine(li) {
 // listen → your turn → result — until practice.js says it's secured, moves on or asks.
 // Nothing here decides: practice.js does (pure), this file plays, listens and shows.
 
-const PK = { doc: "resonate.sing.practice", session: "resonate.sing.session", guided: "resonate.sing.guided" };
+const PK = { doc: "resonate.sing.practice", session: "resonate.sing.session", guided: "resonate.sing.ear" };
 let guidedOn = recall(PK.guided) !== "off";
 let pdoc = null;      // this song's practice doc (practice.js), saved per song under PK.doc
 let psess = null;     // the practice session (device only, PK.session)
@@ -4134,6 +4135,7 @@ function sleepPage() {
   if (cancelGetReady()) remoteTake = null;
   for (const key of [...keys.values()]) dropKey(key, true, 0.002); // (cut, not damped: the context is suspended next, and a tail would ring on when it resumes)
   stopLoop();
+  earStop(); // (Ear's phrase, note or attempt: its sound and mic stop too)
   stopGuided();
   if (mon) {
     monitorOff();
@@ -4253,6 +4255,7 @@ async function stopAll() {
   for (let i = 0; i < 160 && starting; i++) await sleep(50); // (a take or Listen still starting: it starts, then stops)
   stopKeys();
   stopLoop();
+  earStop(); // (Ear's phrase, note or attempt: its sound and mic stop too)
   stopGuided();
   monitorOff();
   if (session?.kind === "sing") await stopSing();
