@@ -305,9 +305,10 @@ function baseAt(P, t, g, rm) {
 // The whole pose: the knuckles, the wrist (LAG_W late) and the elbow (LAG_E late) — the same function
 // evaluated earlier, so the forearm swings after the knuckles with no state —, the hand's axis from the
 // wrist to the knuckles, each finger's joints (inverse kinematics in its own plane). null: not shown.
-export function poseAt(P, t, g, rm = false) {
+// visT: when its visibility is read (a hand held still before its notes — a selection — still rises in).
+export function poseAt(P, t, g, rm = false, visT = t) {
   if (!P || !P.frames.length) return null;
-  const vis = visAt(P, t);
+  const vis = visAt(P, visT);
   if (vis <= 0) return null;
   const k = g.k, K = baseAt(P, t, g, rm), nW = g.whites.length, centreX = nW / 2;
   const elbowAt = (bx) => ({ x: centreX + P.side * 0.16 * nW + (bx - centreX) * 0.5, z: -13 * k });

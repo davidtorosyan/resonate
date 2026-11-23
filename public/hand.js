@@ -417,7 +417,7 @@ export function mountHands(host) {
     const poses = {};
     for (const h of ["l", "r"]) {
       const tt = freeze[h] != null ? Math.min(t, freeze[h]) : t;
-      poses[h] = plans[h] ? poseAt(plans[h], tt, G, rm) : null;
+      poses[h] = plans[h] ? poseAt(plans[h], tt, G, rm, t) : null;
       if (poses[h]) poses[h].t = tt;
     }
     yieldHands(poses.l, poses.r, G);
@@ -565,7 +565,7 @@ export function mountHands(host) {
         }
         const at = t + (from ? clamp(0.12 + 0.035 * dist, 0.15, 0.3) : 0.2) + LEAD;
         lists[h] = (want.down || []).map((d) => ({ h, f: d.f, midi: d.midi, keys: want.keys, fid: "s" + seq, t: at, d: want.strike ? 3600 : 0.05 }));
-        opt[h] = { start: from ? { keys: from, t } : null, anchor: t, until: -Infinity };
+        opt[h] = { start: from ? { keys: from, t } : null, anchor: t, until: want.strike ? -Infinity : Infinity }; // (a selection's hand stays shown)
         freeze[h] = want.strike ? null : at - 0.2;
       }
       if (!any) return;
