@@ -166,6 +166,35 @@
       .map-strip i[data-new="true"] { animation: map-new 1.2s ease-out 2; }
       @keyframes map-new { 50% { filter: brightness(1.8); } }
       @media (prefers-reduced-motion: reduce) { .map-strip i[data-new="true"] { animation: none; } #coach { transition: none; } }
+      /* Ear (E8 prototype): one phrase, Sing · Beats · Notes — no lane, no colours, by ear */
+      #ear { display: flex; flex-direction: column; gap: 0.7rem; padding: 0.6rem 0.2rem 0.4rem; }
+      #ear[hidden] { display: none; }
+      body[data-ear="true"] #lyrics, body[data-ear="true"] #lane, body[data-ear="true"] #map, body[data-ear="true"] #coach, body[data-ear="true"] #results { display: none !important; }
+      .ear-top { display: flex; align-items: center; justify-content: center; gap: 1rem; }
+      .ear-nav { font: inherit; font-size: 1.4rem; width: 44px; height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05); color: #e8e8f0; cursor: pointer; }
+      .ear-nav:disabled { opacity: 0.35; cursor: default; }
+      #ear-name { color: rgba(255,255,255,0.55); font-size: 0.85rem; }
+      #ear-words { text-align: center; font-size: clamp(1.3rem, 5vw, 1.9rem); font-weight: 600; line-height: 1.3; color: #fff; }
+      .ear-modes { display: flex; justify-content: center; gap: 0; }
+      .ear-modes button { font: inherit; font-size: 0.95rem; padding: 0.5rem 1.1rem; min-height: 40px; border: 1px solid rgba(255,255,255,0.2); background: transparent; color: #cfcfe0; cursor: pointer; }
+      .ear-modes button:first-child { border-radius: 999px 0 0 999px; }
+      .ear-modes button:last-child { border-radius: 0 999px 999px 0; }
+      .ear-modes button[aria-pressed="true"] { background: #a64fff; border-color: #a64fff; color: #fff; font-weight: 600; }
+      .ear-modes button:disabled { opacity: 0.5; }
+      #ear-acts { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.5rem; }
+      #ear-acts button, .ear-cue .chip, .ear-names button { font: inherit; font-size: 0.9rem; color: #e8e8f0; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; padding: 0.4rem 0.9rem; min-height: 38px; cursor: pointer; }
+      #ear-res { text-align: center; display: flex; flex-direction: column; gap: 0.35rem; min-height: 2.2rem; }
+      .ear-counts { font-size: 1.15rem; font-weight: 600; }
+      .ear-win { color: #4ade80; font-weight: 600; }
+      .ear-cue { color: #ffe6a0; }
+      .ear-names { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.4rem; }
+      .ear-names button[data-state="cur"] { background: #a64fff; border-color: #a64fff; color: #fff; font-weight: 700; }
+      .ear-names button[data-state="done"] { border-color: #4ade80; color: #4ade80; }
+      .ear-names button[data-state="todo"] { border-color: rgba(166,79,255,0.7); }
+      .ear-msg { text-align: center; color: #ffe6a0; min-height: 1.3rem; margin-top: 0.4rem; }
+      #ear-ring { display: flex; justify-content: center; }
+      #ear-ring[hidden] { display: none; }
+      .ear-ring { --lv: 0; width: 64px; height: 64px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.15); box-shadow: 0 0 0 calc(var(--lv) * 14px) rgba(74,222,128,0.35); transition: box-shadow 60ms linear; }
       /* Guided: the step's card replaces the results row, the play bar and the chips (More → Tools has them). */
       body[data-guided="true"] .results-head, body[data-guided="true"] #playbar, body[data-guided="true"] #chips, body[data-guided="true"] #loopbar { display: none; }
       /* (from More → Tools: a loop shows its bar instead of the card; 🎤 Pitch its readout) */
@@ -461,6 +490,23 @@
         <div class="co-top"><span id="co-title"></span><button id="co-more" class="co-link" type="button">More ›</button></div>
         <div id="co-res" hidden><span id="co-win"></span><span id="co-cue"></span><button id="co-play" class="co-chip" type="button" hidden>▶</button></div>
         <div id="co-btns" hidden></div>
+      </section>
+      <section id="ear" hidden aria-live="polite">
+        <div class="ear-top">
+          <button id="ear-prev" class="ear-nav" type="button" aria-label="Previous phrase">‹</button>
+          <span id="ear-name" class="mono"></span>
+          <button id="ear-next" class="ear-nav" type="button" aria-label="Next phrase">›</button>
+        </div>
+        <div id="ear-words"></div>
+        <div class="ear-modes" role="group" aria-label="Exercise">
+          <button type="button" data-ear="sing">Sing</button>
+          <button type="button" data-ear="beats">Beats</button>
+          <button type="button" data-ear="notes">Notes</button>
+        </div>
+        <div id="ear-notes" hidden></div>
+        <div id="ear-ring" hidden></div>
+        <div id="ear-res"></div>
+        <div id="ear-acts"></div>
       </section>
       <section id="results">
         <div id="loopbar" hidden>
