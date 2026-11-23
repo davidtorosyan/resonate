@@ -71,8 +71,8 @@ export const COST = Object.freeze({
   // Stage A — hands
   LEAVE: 3,       // a key moved off its staff's hand
   LET: 2,         // a held key let go early (the pedal holds it) — Stage B: LET_B
-  LET_TOP: 10,     // … a held key beyond every key struck with it, on the hand's outer side (the tune over its chords, the bass under them)
-  LET_B: 10,       // Stage B: a held key let go to free a finger (a line over held notes: 4 slid while the chord under it was dropped)
+  LET_TOP: 4,     // … a held key beyond every key struck with it, on the hand's outer side (the tune over its chords, the bass under them; 10 held a tied tune note against the line that takes over from it)
+  LET_B: 10,      // Stage B: a held key let go to free a finger (a line over held notes: 5 slid while the chord under it was dropped)
   COMF: 2,        // a unit past comfortable (rule 1); a hand's spread, a finger pair's stretch
   PRAC: 10,       // a unit past practical (rule 13)
   OVER5: 10,      // a key over five in one hand
@@ -421,11 +421,13 @@ export function fingerHand(A, side, opts = {}) {
   const pairCost = (xa, fa, xb, fb, lift, urg, leg) => {
     const d = xb - xa;
     // (where the hand can lift, the jump instead of the distance rules when it's cheaper: 5–5 on an
-    // octave bass is a lift, a thumb under in a scale a stretch — but not in a line: one key struck, within
-    // a third of a key sounding up to it — legato: a finger takes it, never one finger sliding key to key
-    // nor one crossing the wrong way, the hand lifted)
+    // octave bass is a lift, a thumb under in a scale a stretch — but not in a line, one key struck after
+    // a key sounding up to it (legato), where the lift would be one finger sliding a second to the next
+    // key, or a finger crossing the wrong way within a third (3 then 4 below it): another finger takes it.
+    // A wider rule — any move within a third — kept the hand from lifting into a new position too: the
+    // owner's songs' judges found 35 bars made worse by it)
     let c = look(T.dist, W, fa, fb, d);
-    if (lift && !(leg && Math.abs(d) <= 4)) { const jump = COST.JUMP * urg * H.beg * Math.abs(xb - OFF[fb] - (xa - OFF[fa])); if (jump < c) c = jump; }
+    if (lift && !(leg && ((fa === fb && d !== 0 && Math.abs(d) <= 2) || (Math.abs(d) <= 4 && fa !== 1 && fb !== 1 && ((d < 0 && fb > fa) || (d > 0 && fb < fa)))))) { const jump = COST.JUMP * urg * H.beg * Math.abs(xb - OFF[fb] - (xa - OFF[fa])); if (jump < c) c = jump; }
     const ba = black(xa), bb = black(xb);
     if ((fa === 3 && fb === 4) || (fa === 4 && fb === 3)) c += COST.THREE_FOUR;
     if ((fa === 3 && !ba && fb === 4 && bb) || (fa === 4 && ba && fb === 3 && !bb)) c += COST.FOUR_BLACK;
@@ -605,15 +607,23 @@ export function framesOf(path, side, scale = null) {
   let rest = null, real = null; // x (the hand's own: −x for the left) per finger 1–5; played in this frame
   for (let j = 0; j < path.length; j++) {
     const fs = path[j].f, xs = path[j].m.map((m) => sg * keyX(m));
-    if (rest && fs.every((fg, i) => Math.abs(xs[i] - rest[fg]) <= 1)) {
-      const fr = frames[frames.length - 1];
-      fs.forEach((fg, i) => {
-        if (real[fg]) return;
-        real[fg] = true;
-        if (xs[i] !== rest[fg]) { rest[fg] = xs[i]; fr.keys[fg - 1] = midiOfX(sg * xs[i]); }
-      });
-      p[j] = frames.length - 1;
-      continue;
+    // (a finger that played in it already: on the same key; one whose rest was guessed: within a key)
+    if (rest && fs.every((fg, i) => (real[fg] ? xs[i] === rest[fg] : Math.abs(xs[i] - rest[fg]) <= 1))) {
+      const next = rest.slice(), nreal = real.slice();
+      fs.forEach((fg, i) => { if (!nreal[fg]) { nreal[fg] = true; next[fg] = xs[i]; } });
+      const rf = [], rx = [];
+      for (let g = 1; g <= 5; g++) if (nreal[g]) { rf.push(g); rx.push(next[g]); }
+      // (the played fingers on keys of their own, in order: the guessed ones placed again around them —
+      // never two fingers on a key; else a new frame)
+      if (rx.every((x, i) => i === 0 || x > rx[i - 1])) {
+        if (next.some((x, g) => g > 0 && x !== rest[g])) {
+          rest = restOf(rx, rf, sg, scale);
+          frames[frames.length - 1].keys = rest.slice(1).map((x) => midiOfX(sg * x));
+        }
+        real = nreal;
+        p[j] = frames.length - 1;
+        continue;
+      }
     }
     rest = restOf(xs, fs, sg, scale);
     real = [false, false, false, false, false, false];
@@ -639,10 +649,11 @@ function restOf(xs, fs, sg, scale = null) {
     if (lo > 0 && hi > 0) target = at[lo] + ((OFF[fg] - OFF[lo]) * (at[hi] - at[lo])) / (OFF[hi] - OFF[lo]);
     else if (lo > 0) target = at[lo] + OFF[fg] - OFF[lo];
     else target = at[hi] - (OFF[hi] - OFF[fg]);
-    // between its neighbours: the nearest key of the scale, else the nearest white key, else the nearest
-    // black one, else its lower neighbour's; as near either way: above the played fingers the higher (an
-    // open hand: 3 on E♭ → 4 F, 5 G), the thumb the higher too (tucked under: 2 on D♭ → the thumb on C),
-    // else the lower
+    // between its neighbours: the nearest white key, else the nearest black one, else its lower
+    // neighbour's — a white key the song never plays (`scale`) gives way to its nearest key that it does,
+    // within a step of the target (E♭ major: A♭, not A); as near either way: above the played fingers the
+    // higher (an open hand: 3 on E♭ → 4 F, 5 G), the thumb the higher too (tucked under: 2 on D♭ → the
+    // thumb on C), else the lower
     const floor = lo > 0 ? at[lo] : -Infinity, ceil = hi > 0 ? at[hi] : Infinity, up = hi < 0 || lo < 0;
     const from = Math.floor(Math.max(floor + 1, target - 8)), to = Math.ceil(Math.min(ceil - 1, target + 8));
     const better = (x, b) => { if (b == null) return true; const d = Math.abs(x - target), e = Math.abs(b - target); return d < e - EPS || (d <= e + EPS && up && x > b); };
@@ -652,7 +663,7 @@ function restOf(xs, fs, sg, scale = null) {
       if (inScale(x) && Math.abs(x - target) <= 2 && better(x, pickS)) pickS = x;
       if (!black(x)) { if (better(x, pickW)) pickW = x; } else if (better(x, pick)) pick = x;
     }
-    at[fg] = pickS ?? pickW ?? pick ?? (lo > 0 ? at[lo] : at[hi]);
+    at[fg] = (pickW != null && scale && !inScale(pickW) ? pickS : null) ?? pickW ?? pick ?? (lo > 0 ? at[lo] : at[hi]);
   }
   return at;
 }

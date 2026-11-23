@@ -152,8 +152,9 @@ function check(label, notes, g) {
     }
   }
   ok(!nan && !order && !wrist, `${label}: stepping 1/60 s — ${nan} NaN, fingers 2–5 out of order ${order}, the wrist above the keys ${wrist}`);
-  // (a tip: 1.5 keys a frame, 2 at a leap's free fingers — a teleport is what this catches; the knuckles 1.2)
-  ok(maxTip <= 2 && maxK <= 1.2, `${label}: … a frame's largest move: a tip ${maxTip.toFixed(2)} keys${maxTip > 1.5 ? " (a free finger at a leap)" : ""}, the knuckles ${maxK.toFixed(2)} (${flights} frames in flight; ${fast} tip moves over 1.5 keys within 0.15 s of the finger's next note or in a hand move squeezed under 0.25 s or through a passing position — the music's speed)`);
+  // (a tip: 1.5 keys a frame, 2.5 at a leap's free fingers — ~6 cm in a 60th of a second; a teleport, what
+  // this catches, was 4 keys in one frame; the knuckles 1.2)
+  ok(maxTip <= 2.5 && maxK <= 1.2, `${label}: … a frame's largest move: a tip ${maxTip.toFixed(2)} keys${maxTip > 1.5 ? " (a free finger at a leap)" : ""}, the knuckles ${maxK.toFixed(2)} (${flights} frames in flight; ${fast} tip moves over 1.5 keys within 0.15 s of the finger's next note or in a hand move squeezed under 0.25 s or through a passing position — the music's speed)`);
   // a sliding window gives the same pose
   let worst = 0, samples = 0;
   for (let t = 3; t < end - 4; t += 0.37) {
