@@ -625,7 +625,7 @@ v1 keeps this locally only. It is in `DATA_KEYS`, so spaces shelve and park it, 
 
 **Session** (`resonate.sing.session`, device only, in `DATA_KEYS`, not synced): `{ songId, start, lastAt, steps, moved: [[key, mark, at]], stopShown, left: { [mk]: untilStep }, rotations: { [mk]: n }, last: { mk, stage } }`. A new session starts after 3 h without practice.
 
-**Device pref:** `resonate.sing.guided` (`"off"` = v75). It isn't shelved, like guide and view.
+**Device pref:** `resonate.sing.ear` (v102; `resonate.sing.guided` until v101) (`"off"` = v75). It isn't shelved, like guide and view.
 
 **Constants:**
 

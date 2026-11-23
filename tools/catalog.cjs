@@ -67,7 +67,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++
   const conv = scores.find((x) => /<software>\s*Audiveris/.test(x.xml.slice(0, 4000)) && x.name.startsWith('wichita')) || scores[0];
   if (conv) {
     const id = await page.evaluate(async (xml) => { const L = await import('./library.js?v=76'); return L.addSong('Catalog sing test', xml); }, conv.xml);
-    await page.evaluate((id) => { localStorage.setItem('resonate.sing.song', id); localStorage.setItem('resonate.sing.guided', 'off'); }, id);
+    await page.evaluate((id) => { localStorage.setItem('resonate.sing.song', id); localStorage.setItem('resonate.sing.ear', 'off'); }, id);
     await page.goto(BASE + 'sing.html');
     await page.waitForFunction(() => window.resonateDebug?.()?.notes?.length > 0, null, { timeout: 30000 }).catch(() => {});
     const d = await page.evaluate(async (id) => { const L = await import('./library.js?v=76'); await new Promise((r) => setTimeout(r, 500)); const s = await L.getSong(id); const dbg = window.resonateDebug(); return { notes: dbg.notes.length, title: dbg.title ?? document.querySelector('#song-select option:checked')?.textContent, ver: s.clean?.ver }; }, id);
@@ -79,7 +79,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++
     const dlText = dl ? fs.readFileSync(await dl.path(), 'utf8') : '';
     const cleanNow = await page.evaluate(async (id) => { const L = await import('./library.js?v=76'); const s = await L.getSong(id); return s.clean?.xml ?? s.xml; }, id);
     ok(!!dl && dlText === cleanNow && /\.musicxml$/.test(dl.suggestedFilename()), `⤓ downloads the cleaned song (${dl?.suggestedFilename()}, ${dlText.length} B)`);
-    await page.evaluate(async (id) => { const L = await import('./library.js?v=76'); await L.removeSong(id); localStorage.removeItem('resonate.sing.song'); localStorage.removeItem('resonate.sing.guided'); }, id);
+    await page.evaluate(async (id) => { const L = await import('./library.js?v=76'); await L.removeSong(id); localStorage.removeItem('resonate.sing.song'); localStorage.removeItem('resonate.sing.ear'); }, id);
   }
   ok(!errs.length, 'no page errors ' + JSON.stringify(errs.slice(0, 3)));
   await browser.close();

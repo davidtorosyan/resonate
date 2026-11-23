@@ -98,7 +98,7 @@ function sim() { // (in the page)
   const ctx = await b.newContext({ viewport: { width: 820, height: 1180 } });
   const errs = [];
   await ctx.addInitScript(sim);
-  await ctx.addInitScript(() => { try { localStorage.setItem('resonate.sing.guided', 'off'); } catch {} });
+  await ctx.addInitScript(() => { try { localStorage.setItem('resonate.sing.ear', 'off'); } catch {} });
   const page = async (url, mode, more = {}) => {
     const p = await ctx.newPage();
     p.on('pageerror', (e) => errs.push(`${url}: ${e.message}`));

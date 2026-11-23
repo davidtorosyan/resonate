@@ -1,7 +1,7 @@
 // node -r ./guidedoff.cjs <test>.cjs — runs a v75-era Sing page test with guided practice off
-// (the v75 screen and flow), as every page the test opens starts with resonate.sing.guided = "off".
+// (the v75 screen and flow), as every page the test opens starts with resonate.sing.ear = "off".
 const pw = require('playwright');
-const off = () => { try { localStorage.setItem('resonate.sing.guided', 'off'); } catch {} };
+const off = () => { try { localStorage.setItem('resonate.sing.ear', 'off'); } catch {} };
 const launch = pw.chromium.launch.bind(pw.chromium);
 pw.chromium.launch = async (...a) => {
   const b = await launch(...a);

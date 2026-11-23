@@ -434,7 +434,7 @@ async function linked(p, sz) {
 async function takeSilent() {
   const sz = SIZES[0];
   console.log('\n=== take (phone)');
-  const ctx = await context(sz, { 'resonate.sing.song': 'amazing-grace', 'resonate.sing.guided': 'off', 'resonate.shell.modules': JSON.stringify({ phone: ['sing', 'piano'] }) });
+  const ctx = await context(sz, { 'resonate.sing.song': 'amazing-grace', 'resonate.sing.ear': 'off', 'resonate.shell.modules': JSON.stringify({ phone: ['sing', 'piano'] }) });
   const p = await ctx.newPage();
   await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner);
@@ -495,7 +495,7 @@ async function reducedMotion() {
 async function raceOpen() {
   const sz = SIZES[0];
   console.log('\n=== race (phone)');
-  const ctx = await context(sz, { 'resonate.sing.song': 'amazing-grace', 'resonate.sing.guided': 'off', 'resonate.shell.modules': JSON.stringify({ phone: ['sing'] }) });
+  const ctx = await context(sz, { 'resonate.sing.song': 'amazing-grace', 'resonate.sing.ear': 'off', 'resonate.shell.modules': JSON.stringify({ phone: ['sing'] }) });
   const p = await ctx.newPage();
   await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner);
@@ -538,7 +538,7 @@ async function raceOpen() {
 async function pitchHush() {
   const sz = SIZES[0];
   console.log('\n=== pitch (phone)');
-  const ctx = await context(sz, { 'resonate.sing.song': 'amazing-grace', 'resonate.sing.guided': 'off', 'resonate.shell.modules': JSON.stringify({ phone: ['sing', 'piano'] }) });
+  const ctx = await context(sz, { 'resonate.sing.song': 'amazing-grace', 'resonate.sing.ear': 'off', 'resonate.shell.modules': JSON.stringify({ phone: ['sing', 'piano'] }) });
   const p = await ctx.newPage();
   await p.goto(BASE + 'index.html');
   await p.waitForFunction(() => window.resonateDebug?.().tuner);

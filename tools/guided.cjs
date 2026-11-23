@@ -67,7 +67,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process
     };
   }, BLEED);
   await p.goto('http://localhost:8097/resonate/sing.html'); await p.waitForTimeout(1500);
-  await p.evaluate(() => { for (const k of ['resonate.sing.history', 'resonate.sing.practice', 'resonate.sing.session', 'resonate.sing.guided']) localStorage.removeItem(k); });
+  await p.evaluate(() => { for (const k of ['resonate.sing.history', 'resonate.sing.practice', 'resonate.sing.session', 'resonate.sing.ear']) localStorage.removeItem(k); });
   await p.reload(); await p.waitForTimeout(2000);
   const dbg = () => p.evaluate(() => { const d = window.resonateDebug(); return { pr: d.practice, session: d.session, rate: d.rate, laneMode: d.laneMode, nowT: d.nowT, btn: document.getElementById('sing').textContent, review: !document.getElementById('review').hidden }; });
   const card = async () => (await dbg()).pr.card;

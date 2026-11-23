@@ -163,7 +163,7 @@ const center = (p, sel) => p.$eval(sel, (e) => { e.scrollIntoView({ block: 'near
 
 async function sing() {
   console.log('\n=== sing.html');
-  const p = await page({ 'resonate.sing.guided': 'off', 'resonate.profiles': JSON.stringify(PROFILE) });
+  const p = await page({ 'resonate.sing.ear': 'off', 'resonate.profiles': JSON.stringify(PROFILE) });
   await p.goto(BASE + 'sing.html');
   await until(p, () => window.resonateDebug?.().notes?.length > 0);
   await p.waitForTimeout(500);
@@ -310,7 +310,7 @@ async function shell() {
   ok(await until(p, () => window.resonateDebug().song?.open && window.resonateSing?.debug?.().score?.title === 'Amazing Grace', 15000), 'Amazing Grace opens with Sing');
   await p.waitForTimeout(500);
   await p.click('#listen');
-  ok(await until(p, () => window.resonateSing.debug().session?.kind === 'listen' && window.resonateSing.debug().nowT > 1.5), "Sing's Listen plays");
+  ok(await until(p, () => { const d = window.resonateSing.debug(); return d.ear?.on ? d.ear.run === 'play' && window.__z.ctxs.some((c) => c.state === 'running') : d.session?.kind === 'listen' && d.nowT > 1.5; }), "Sing's Listen plays (Ear: ▶ Hear)");
   await hide(p);
   await asleep(p, 'shell Listen hidden');
   const n = await front(p, 'shell Listen');
