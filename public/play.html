@@ -91,7 +91,7 @@
       .pager { display: flex; align-items: center; gap: 0.25rem; margin-left: auto; }
       #pg { min-width: 4.6rem; text-align: center; font-size: 0.85rem; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.75); white-space: nowrap; }
       #prev, #next { font-size: 1.3rem; line-height: 1; padding: 0; }
-      #version { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; color: #a64fff; opacity: 0.9; }
+      #version { font-size: 0.66rem; font-weight: 600; letter-spacing: 0; color: #a64fff; opacity: 0.9; } /* (v100: one digit more — the bar at its width limit kept its row only this way) */
       /* The AI button (signed in, approved, sync on, once an assistant has connected): an assistant
          may control this page — small, by the badge, so the bar keeps its rows (on the pages' row
          under 1100 px); its mark as tall as the line the emoji it replaced took */
@@ -114,6 +114,8 @@
       }
       /* (one row up to 1199 px with the fewer-names chip: its question gives way, as with 📄) */
       @media (min-width: 1100px) and (max-width: 1199px) { #bar:has(#remote-btn:not([hidden])) #offer > span { display: none; } }
+      /* (…and on touch, whose 44 px buttons leave the row a few px short: v100's badge, a digit wider, broke the row at 1100) */
+      @media (min-width: 1100px) and (max-width: 1199px) and (any-pointer: coarse) { #offer > span { display: none; } }
       .brk { display: none; }
       @media (any-pointer: coarse) {
         #bar select, #bar button { min-height: 44px; }
