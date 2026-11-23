@@ -1,0 +1,24 @@
+export const meta = {
+  name: 'review-v100-hand',
+  description: 'One review pass over the drawn hand (hand.js, handplan.js, play/pianoview/keyboard hooks) and finger.js ALG 3: find, then adversarially verify',
+  phases: [{ title: 'Find', detail: 'four areas' }, { title: 'Verify', detail: 'a skeptic per finding' }],
+}
+const AREAS = [
+  { key: 'plan', prompt: 'public/handplan.js (new, pure) — the plan and pose maths: planHand (positions by fid, moves, blocking, waits, the in-order clamp, squeezed moves merged via `from`, the gone/GAP case, visibility with anchor/until/start), poseAt/fingerAt/baseAt/frameAt. Look for wrong results on real input: NaN, a finger not on its key at its onset, jumps, positions out of order, wrong vis, crashes on edge cases (one note, chords of 5, notes out of the keyboard range, zero-length notes, a note list starting mid-position, start without notes).' },
+  { key: 'draw', prompt: 'public/hand.js (new, DOM) — drawing and lifecycle: layout (canvas sizes, dpr), the redraw-skip signature, clearing of old drawings (boxes, canvas offsets), the idle loop (kick, STILL, quietAt), notes/cut/clear/tick/show semantics (clock offsets, per-hand showKey/showUp, stopAt, freeze), destroy, memory, anything that leaves a stale or stuck hand on screen or a loop that never stops, WebKit performance traps (no CSS/WAAPI animation, no SVG animation).' },
+  { key: 'hooks', prompt: 'The integration: public/play.js (handPose, handsOn, handShow, handFeed, tvNow, the hooks in pump/frame/reschedule/stopPlay/fingChanged/drawKeys), public/shell/pianoview.js (syncHands, band, resized, forScore().hands/fingers/draw), public/shell/songview.js (resized → score.resize keep), public/keyboard.js (hand mode letters, removed rings, geo), public/index.html (.pianobar[data-hand]). Look for: the hand not following ▶ (loops, speed changes, chip mutes, one-hand views, muted parts), the band flipping and relaying the Score repeatedly, hand mode with no hand fitting, play.html (no shell) breaking, numbers/off mode behaving differently than v99, stale hands after a song or view change or 📄, errors when the Piano is off.' },
+  { key: 'alg3', prompt: 'public/finger.js ALG 3 changes vs git HEAD (git diff public/finger.js): the legato-line no-lift rule (pairCost leg, LEGATO), PASS × beginner, LET_TOP/LET_B and Stage A outer-key let cost, framesOf (scale-preferring rests, guessed-rest refinement mutating frames[last].keys), the tie continuation per staff (last map keyed midi|home|staff). Look for: invariant violations (two keys one finger, fingers not rising, a held key changing finger), nondeterminism (order dependence), frames whose keys are no longer real keys or are out of order, performance blowups, the scale computed from keys of both hands, mutation of a frame after its keys were used.' },
+]
+const FIND = { type: 'object', properties: { findings: { type: 'array', items: { type: 'object', properties: {
+  title: { type: 'string' }, file: { type: 'string' }, line: { type: 'integer' }, severity: { type: 'string', enum: ['bug', 'risk', 'nit'] },
+  scenario: { type: 'string', description: 'concrete input/state → wrong output' }, fix: { type: 'string' } }, required: ['title', 'file', 'severity', 'scenario', 'fix'] } } }, required: ['findings'] }
+const VERDICT = { type: 'object', properties: { real: { type: 'boolean' }, severity: { type: 'string', enum: ['bug', 'risk', 'nit'] }, evidence: { type: 'string' }, fix: { type: 'string' } }, required: ['real', 'severity', 'evidence', 'fix'] }
+const out = await pipeline(AREAS,
+  (a) => agent(`Review this area of the Resonate repo (/home/user/resonate; uncommitted changes vs HEAD are the new work — \`git diff HEAD\` and the new files public/hand.js, public/handplan.js, tools/handcases.mjs). Context: docs/FINGERING.md "The drawn hand (E7+) — as built" (read it first). Area: ${a.prompt}
+Find real defects only, each with a concrete failing scenario. You may run node (tools/handcases.mjs, tools/fingercases.mjs run in seconds; write scratch scripts outside the repo, e.g. <scratch>/review-${a.key}/). Do not edit repository files. At most 8 findings, most severe first.`, { label: `find:${a.key}`, phase: 'Find', schema: FIND }),
+  (r, a) => parallel((r?.findings || []).filter((f) => f.severity !== 'nit').map((f) => () => agent(`Adversarially verify a code-review finding in /home/user/resonate (uncommitted work vs HEAD). Try to REFUTE it: read the code, and where possible reproduce it with a scratch script outside the repo (node for public/handplan.js / public/finger.js; do not edit repo files). Default to real=false if you can't show the failure.
+Finding (${a.key}): ${f.title}
+File: ${f.file}:${f.line ?? ''}
+Scenario: ${f.scenario}
+Proposed fix: ${f.fix}`, { label: `verify:${a.key}`, phase: 'Verify', schema: VERDICT }).then((v) => ({ ...f, area: a.key, verdict: v })))))
+return out.flat().filter(Boolean)

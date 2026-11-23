@@ -14,22 +14,22 @@
 //
 // A PDF only (added, not converted yet: docs/LIBRARY.md) opens straight into its PDF (📄's view, no
 // Verovio): ‹ › and the pedals turn its pages, the keyboard stays under it, ⟳ reads Convert.
-import { spaceChanged } from "./nav.js?v=99";
-import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=99";
-import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=99";
-import { decorate, fullName, labelOf } from "./playnames.js?v=99";
-import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=99";
-import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=99";
-import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=99";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=99";
-import * as lib from "./library.js?v=99"; // (getSong; getPages where this library has it)
-import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=99";
-import { mountKeyboard } from "./keyboard.js?v=99";
-import { chordMoments } from "./chords.js?v=99";
-import { barsText, sliceMeasures, spanInfo, placeOf, textLegend } from "./scoretext.js?v=99";
-import { remote, hasAssistant, shareFocus, shareFingering } from "./assist.js?v=99";
-import { fingerText } from "./fingertext.js?v=99";
-import { fingeringFor, stats as fingStats } from "./fingering.js?v=99";
+import { spaceChanged } from "./nav.js?v=100";
+import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=100";
+import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=100";
+import { decorate, fullName, labelOf } from "./playnames.js?v=100";
+import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=100";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=100";
+import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=100";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=100";
+import * as lib from "./library.js?v=100"; // (getSong; getPages where this library has it)
+import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=100";
+import { mountKeyboard } from "./keyboard.js?v=100";
+import { chordMoments } from "./chords.js?v=100";
+import { barsText, sliceMeasures, spanInfo, placeOf, textLegend } from "./scoretext.js?v=100";
+import { remote, hasAssistant, shareFocus, shareFingering } from "./assist.js?v=100";
+import { fingerText } from "./fingertext.js?v=100";
+import { fingeringFor, stats as fingStats } from "./fingering.js?v=100";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
@@ -1594,6 +1594,7 @@ function peekEnd(pk) {
   if (!ac || ac.state !== "running") getCtx("tap");
   if (pk.notes) { letGo(pk, Math.max(pk.a.currentTime, pk.t0 + MIN_PRESS)); keepAwake(pk.a); }
   pk.hide = setTimeout(() => hidePeek(pk), pk.kb ? 0 : HIDE_AFTER); // (a key on the keyboard comes up with the finger)
+  if (!pk.kb) handShow(); // (the drawn hand lets the chord go too)
 }
 // The press moved off: it's a drag — cut the sound, hide at once.
 function peekCancel(pk) {
@@ -1987,8 +1988,8 @@ function handFeed(list) {
 // to the audio clock whenever they're more than 20 ms apart.
 const VC = { off: 0 };
 function tvNow() {
-  const p = performance.now() / 1000, a = PB.a;
-  if (PB.state !== "idle" && a && a.state === "running") {
+  const p = performance.now() / 1000, a = PB.state !== "idle" ? PB.a : ac; // (idle too: one clock for a press's hand and ▶'s)
+  if (a && a.state === "running") {
     const at = a.currentTime - (a.outputLatency || a.baseLatency || 0);
     if (Math.abs(p + VC.off - at) > 0.02) VC.off = at - p;
   }
@@ -3046,6 +3047,7 @@ async function playStart(kind, loop = false) {
   if (window.resonatePlay?.quiet?.()) return; // (the one-page shell: Sing records)
   window.resonatePlay?.beforeSound?.(); // (the shell's tuner gives its mic up first, and Sing stops)
   stopPlay();
+  handsOn()?.clear(tvNow()); // (a hand shown idle — a stretch, a press — lets go, and ▶'s glides on from where it is)
   const gen = ++PB.gen;
   const a = getCtx("tap"); // (in the tap: iOS starts audio only from one — the session first)
   let tr, args;
@@ -4234,7 +4236,7 @@ async function songMap(doc) {
     const kept = S.st.pdfMusic;
     if (kept && kept.n === n && Array.isArray(kept.music) && kept.music.length >= last) music = kept.music;
     else {
-      const { findStaves } = await import("./omr/pdfprep.js?v=99");
+      const { findStaves } = await import("./omr/pdfprep.js?v=100");
       const t0 = performance.now();
       music = await musicPages(doc, findStaves, { need: last });
       S.t.pdfMusic = ms(t0);
