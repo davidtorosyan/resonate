@@ -102,8 +102,8 @@ if [ "$TIER" = main ]; then
   run --info chipkeys 600 node -r ./guidedoff.cjs chipkeys.cjs # (note chips as piano keys: printed, read by eye)
   # Guide me — on by default — from a clean slate on Amazing Grace, a simulated singer; BLEED=1 puts the page's
   # sound into the fake mic (a phone speaker's click bleed) and fails on any rhythm / practice warning.
-  run guided 1200 node guided.cjs
-  run guided:bleed 1200 env BLEED=1 node guided.cjs
+  # (v101: Ear — the E8 prototype — replaced the guided card; guided.cjs tested the card, kept for its history)
+  run ear 600 node ear.cjs                        # Ear (E8): the free attempt, Beats, Notes with a simulated singer
   run voicetest 600 node voicetest.cjs            # Voice: the range test with a simulated singer, no note over a live mic
   run quietvoice 600 env SHOTS=0 node quietvoice.cjs # a distant singer (−25 dB, room noise) calibrates and is heard; noise alone never (E4)
   run sleep 900 env SHOTS=0 node sleep.cjs        # every page asleep when hidden: contexts, sources, tracks, the session
@@ -139,9 +139,10 @@ if [ "$TIER" = main ]; then
   run reprocess 900 node reprocess.cjs            # Reconvert: the same song id, settings kept, a reload mid-run, the shell
   run jankchrome 1500 env SHOTS=0 node jankchrome.cjs
   run jank 1500 env SHOTS=0 node -r ./harness/noshots.cjs jank.cjs
-  for t in cutover shell shellmods shellscore shellsing shellplaces; do
+  for t in cutover shell shellmods shellscore shellplaces; do
     run "$t" 1500 env SHOTS=0 node -r ./harness/noshots.cjs "$t.cjs"
   done
+  run shellsing 1500 env SHOTS=0 node -r ./harness/noshots.cjs -r ./guidedoff.cjs shellsing.cjs # (Sing's classic screen in the shell: guided off since v101's Ear hides the lane)
   for t in playpdfonly singpdf; do run "$t" 600 node "$t.cjs"; done
 
   # ---- WebKitGTK (Xvfb :99 + WebKitWebDriver on :4444, CLAUDE.md "a fresh container") ----------------------
