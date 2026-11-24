@@ -5,11 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 
-export const fixtureNames = () => fs.readdirSync(DIR).filter((f) => f.endsWith(".json")).map((f) => f.replace(/\.json$/, ""));
+// (dir: another folder of dumps — the owner's songs, dumped outside the repo: OUT=<dir> node dumpnotes.cjs)
+export const fixtureNames = (dir = DIR) => fs.readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => f.replace(/\.json$/, ""));
 
 // → { fx, notes, lines, opts } for one verse. rate: the tempo % (t/d scale; never the grouping).
-export function loadSong(name, { verse = null, rate = 1, bpm = null } = {}) {
-  const fx = JSON.parse(fs.readFileSync(path.join(DIR, `${name}.json`), "utf8"));
+export function loadSong(name, { verse = null, rate = 1, bpm = null, dir = DIR } = {}) {
+  const fx = JSON.parse(fs.readFileSync(path.join(dir, `${name}.json`), "utf8"));
   const v = verse ?? fx.verses[0];
   const { notes: raw, lines } = fx.byVerse[v];
   const notes = raw.map((n) => ({ ...n, t: n.t / rate, d: n.d / rate }));

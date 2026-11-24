@@ -636,6 +636,104 @@ async function singPage(browser) {
   ts = await tsel();
   const left = await page.evaluate(() => ({ t: JSON.parse(localStorage.getItem('resonate.sing.timing') || '{}')['amazing-grace'] || null, sp: JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}')['amazing-grace']?.sp ?? null }));
   ok(ts.v === 'r:1' && ts.rate === 1 && !left.t && left.sp === null && (await speedRow()) === 'Normal* Slow Slower', `7: ♩=80 from the menu — the score's tempo again, nothing left (${JSON.stringify(left)})`);
+  // 8. (WP6) the lines: ‹ the dots › → the Lines sheet → a line opens, kept across a reload; Pick words → a line of the
+  // singer's own (a diamond, ★ in the sheet), judged as any; ♩ ♪ secured after 2 of 3 “all” — the dot fills (and
+  // pulses once), the sheet's marks green, “Spot on — twice running”; a mark stays after a bad attempt; “Last time”
+  // from the store after a reload; ✕ (two taps) takes the own line away
+  const nav = () => page.evaluate(() => ({ dots: [...document.querySelectorAll('#ear-name .eld')].map((d) => `${d.hasAttribute('data-own') ? '◆' : '●'}${d.dataset.sec || ''}${d.hasAttribute('data-cur') ? '*' : ''}${d.hasAttribute('data-new') ? '!' : ''}`).join(' '), label: document.getElementById('ear-lines').getAttribute('aria-label'), off: document.getElementById('ear-lines').disabled }));
+  const sheetRows = () => page.$$eval('#el-list .el-row', (xs) => xs.map((x) => ({ text: x.querySelector('.el-go').textContent, cur: x.hasAttribute('data-cur'), marks: [...x.querySelectorAll('.el-marks .ear-ic')].map((i) => i.hasAttribute('data-on')), x: x.querySelector('.el-x')?.textContent || null })));
+  let n8 = await nav();
+  e = await ear();
+  ok(n8.dots.split(' ').length === 4 && n8.dots.split(' ')[e.p].replace('!', '').endsWith('*') && n8.label === `Lines: ${e.p + 1} of 4`, `8: the dots — ${n8.dots} (“${n8.label}”)`);
+  await page.click('#ear-lines');
+  await page.waitForFunction(() => window.resonateDebug().ear.linesOpen, null, { timeout: 3000 });
+  let elRows = await sheetRows();
+  ok(elRows.length === 4 && elRows.map((r) => r.text).join(' | ') === LINES.map((l) => l[2]).join(' | ') && elRows.filter((r) => r.cur).length === 1 && elRows.every((r) => r.marks.length === 2), `8: the Lines sheet — ${elRows.map((r) => `${r.cur ? '*' : ''}${r.text}`).join(' | ')}`);
+  await page.click('#el-list .el-row:nth-child(3) .el-go');
+  await sleep(200);
+  e = await ear();
+  ok(!e.linesOpen && e.p === 2 && e.ph.words === LINES[2][2] && (await nav()).dots.split(' ')[2].endsWith('*'), `8: a row tapped — the sheet closes, line ${e.p + 1} (“${e.ph.words}”)`);
+  await page.reload();
+  await ready();
+  e = await ear();
+  ok(e.p === 2, `8: a reload — line ${e.p + 1} again`);
+  // Pick words: “sweet” … “sound!” → its own line
+  await page.click('#ear-lines');
+  await page.click('#earlines button[data-act="pick"]');
+  const words = await page.$$eval('#el-pick .el-words button', (xs) => xs.map((x) => [x.dataset.t, x.textContent]));
+  const wt = (w) => words.find((x) => x[1] === w)[0];
+  ok(words.length === 26 && (await page.textContent('#el-pick .el-hint')) === 'Tap the first word, then the last', `8: Pick words — ${words.length} words, “${await page.textContent('#el-pick .el-hint')}”`);
+  await page.click(`#el-pick button[data-t="${wt('sweet')}"]`);
+  const far = await page.$$eval('#el-pick .el-words button[data-far]', (xs) => xs.map((x) => x.textContent));
+  ok((await page.textContent('#el-pick .el-hint')) === '…then the last' && far.includes('Amazing') && far.includes('found;') && !far.includes('sound!') && !far.includes('me!'), `8: the first word picked — the words it can't end on dimmed (${far.join(' ')})`);
+  await page.click(`#el-pick button[data-t="${wt('sound!')}"]`);
+  await sleep(200);
+  e = await ear();
+  n8 = await nav();
+  const dot = (n, i) => n.dots.split(' ')[i];
+  ok(!e.linesOpen && e.ph.j0 === 8 && e.ph.j1 === 11 && e.ph.words === 'sweet the sound!' && e.lines.length === 5 && e.lines[1].own && e.p === 1 && dot(n8, 1) === '◆*' && n8.dots.split(' ').length === 5 && (await page.textContent('#ear-words')) === 'sweet the sound!', `8: “sweet the sound!” — its own line, after the line it's in (${n8.dots}; “${e.ph.words}”, notes ${e.ph.j0}–${e.ph.j1 - 1})`);
+  const own0 = await page.evaluate(() => JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}')['amazing-grace']?.own);
+  ok(own0?.length === 1 && own0[0].j0 === 8 && own0[0].j1 === 11 && own0[0].wk === e.ph.wk, `8: kept for the song (${JSON.stringify(own0)})`);
+  // secured: two attempts with every note and start right — the 2nd “Spot on — twice running”, the dot full and pulsing once
+  e = await attempt({});
+  const r1 = e.res;
+  n8 = await nav();
+  ok(r1.counts?.notesAll && r1.counts?.beatsAll && r1.win?.kind === 'spot' && dot(n8, 1) === '◆*', `8: its first attempt — “${e.ui}”, not secured yet (${n8.dots})`);
+  e = await attempt({});
+  n8 = await nav();
+  ok(e.res.win?.kind === 'spot' && e.res.win.sub === 'again' && /Spot on — twice running/.test(e.ui) && dot(n8, 1) === '◆bn*!' && e.lines[1].sec === 'bn', `8: the second — “${e.ui}”; secured: ${n8.dots}`);
+  await page.click('#ear-lines');
+  elRows = await sheetRows();
+  ok(elRows.length === 5 && elRows[1].text === '★ sweet the sound!' && elRows[1].cur && elRows[1].marks.every(Boolean) && elRows[1].x === '✕' && elRows.filter((r) => r.x).length === 1, `8: the sheet — ${elRows.map((r) => `${r.text}${r.marks.map((m, i) => (m ? '♩♪'[i] : '')).join('')}`).join(' | ')}`);
+  await page.click('#el-close');
+  // a bad attempt: the marks stay
+  e = await attempt({ cents: { 1: 200 } });
+  n8 = await nav();
+  ok(e.res.cue?.kind === 'pitch' && dot(n8, 1).replace('!', '') === '◆bn*', `8: then “the” sung high — “${e.res.cue?.text}”; the marks stay (${n8.dots})`);
+  // after a reload: the own line open, “Last time” from the store (its cue), and what judges compares with it
+  await page.reload();
+  await ready();
+  e = await ear();
+  ok(e.p === 1 && e.ph.words === 'sweet the sound!' && e.shown?.old && e.old && /^Last time/.test(e.ui) && /“the” — aim lower/.test(e.ui) && !(await page.$('#ear-res .ear-chips')), `8: a reload — its own line open, “${e.ui}”`);
+  e = await attempt({ cents: { 2: -150 } });
+  ok(e.res.win?.kind === 'fixed' && /“the” right on it now/.test(e.ui) && e.res.cue?.j === 10, `8: then “the” right (“sound” low) — compared with the stored attempt: “${e.ui}”`);
+  // ✕: two taps — "Remove?" first (it lapses after 3 s), then gone: the line it was in open
+  await page.click('#ear-lines');
+  await page.click('#el-list .el-x');
+  const arm = await page.textContent('#el-list .el-x');
+  await sleep(3300);
+  const lapsed = await page.textContent('#el-list .el-x');
+  await page.click('#el-list .el-x');
+  await page.click('#el-list .el-x');
+  await sleep(200);
+  e = await ear();
+  elRows = await sheetRows();
+  const own1 = await page.evaluate(() => JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}')['amazing-grace']?.own);
+  ok(arm === 'Remove?' && lapsed === '✕' && elRows.length === 4 && e.lines.length === 4 && e.p === 0 && !own1?.length, `8: ✕ — “${arm}”, lapsed “${lapsed}”, then removed: line ${e.p + 1} open, ${elRows.length} elRows`);
+  await page.click('#el-close');
+  // more than 10 lines (seven of the singer's own here): the open line's first words ▾ — with its dot when it has a mark
+  const v8 = await page.evaluate(() => document.getElementById('version').textContent.trim().replace(/^v/, ''));
+  const setOwn = (spans) => page.evaluate(async ([v, spans]) => {
+    const P = await import(`./practice.js?v=${v}`), notes = window.resonateDebug().notes, all = JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}');
+    all['amazing-grace'] = { ...all['amazing-grace'], own: spans.map(([a, b]) => ({ j0: a, j1: b, wk: P.phraseKeys(notes, Array.from({ length: b - a }, (_, k) => a + k)).wk })), p: null, pi: 0 };
+    localStorage.setItem('resonate.sing.eardata', JSON.stringify(all));
+  }, [v8, spans]);
+  await setOwn([[0, 6], [6, 8], [8, 11], [11, 14], [13, 17], [17, 21], [21, 24]]);
+  await page.reload();
+  await ready();
+  e = await ear();
+  const many = await page.evaluate(() => ({ w: document.querySelector('#ear-name .elw')?.textContent, v: document.querySelector('#ear-name .elv')?.textContent, sec: document.querySelector('#ear-name .eld')?.dataset.sec || null, label: document.getElementById('ear-lines').getAttribute('aria-label') }));
+  ok(e.lines.length === 11 && e.p === 0 && many.w === '“Amazing grace…”' && many.v === '▾' && many.sec === e.lines[0].sec && many.label === 'Lines: 1 of 11', `8: 11 lines — the first words ▾ (${JSON.stringify(many)})`);
+  await page.click('#ear-next');
+  const many2 = await page.evaluate(() => document.querySelector('#ear-name .elw')?.textContent);
+  ok(/^★ “Amazing/.test(many2 || ''), `8: › — the next, one of the singer's own: “${many2}”`);
+  await setOwn([]);
+  await page.reload();
+  await ready();
+  ok((await ear()).lines.length === 4, '8: the own lines gone again — 4 lines');
+  // the store goes with the song (forget.js; sync.js's tombstones: synclib.mjs)
+  ok(await page.evaluate(() => JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}')['amazing-grace']?.ph != null), '8: attempts kept per line');
+  // (Lower the song in section 6 checks ▶ Hear and the next attempt in the new key)
   // 5. ⚙: only Ear's switch while it shows
   await page.click('#options-btn');
   const sheet = () => page.evaluate(() => ({ whole: getComputedStyle(document.getElementById('op-whole')).display !== 'none', label: document.querySelector('#guided-on').closest('label').textContent.trim(), on: document.getElementById('guided-on').checked }));
@@ -663,6 +761,15 @@ async function singPage(browser) {
   await page.click('#ear-res button[data-act="cue-key"]');
   await sleep(300);
   const factA = (await ear()).fact;
+  // (WP6.4: Lower the song after an attempt 3 semitones down — the Key menu −3, ▶ Hear plays the line 3 semitones lower,
+  // and the same singing again — now in the song's key — is in tune: ♪ all)
+  await page.click('#listen');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'play' && window.resonateDebug().ear.playing?.length, null, { timeout: 5000 });
+  const lowPlay = await page.evaluate(() => { const d = window.resonateDebug(); return { got: d.ear.playing.slice(0, 3), want: d.notes.slice(d.ear.ph.j0, d.ear.ph.j0 + 3).map((n) => n.wmidi - 3 + d.ear.oct) }; });
+  await page.click('#listen');
+  await idle();
+  e = await attempt({ all: -300 - 100 * (await page.evaluate(() => Number(document.getElementById('key-select').value))) });
+  ok(factA === 'Key A♭ → F' && JSON.stringify(lowPlay.got) === JSON.stringify(lowPlay.want) && e.res.counts?.notesAll && !e.res.key?.kind && e.res.win?.kind === 'spot', `6: Lower the song — ▶ Hear 3 semitones lower (${lowPlay.got} — written ${lowPlay.want.map((m) => m + 3)}); the same singing again: “${e.ui}”`);
   await page.evaluate((id) => { const k = JSON.parse(localStorage.getItem('resonate.sing.keys') || '{}'); k[id] = -3; localStorage.setItem('resonate.sing.keys', JSON.stringify(k)); }, id2);
   await page.click('#ear-next'); await page.click('#ear-next');
   ok((await ear()).p === 2, '6: line 3 open on Amazing Grace');
@@ -838,6 +945,22 @@ async function shell(browser, dev) {
     await sleep(400);
     L = await look();
     ok(L.ear && !L.tuner && L.caption === 'Hear', `${dev}: on again — the tuner hidden, “${L.caption}”`);
+    // (WP6) the Lines sheet in the shell: in Sing's layer, over the dock; a row opens its line; Back closes the sheet,
+    // not the song; a tap on the nav doesn't stop the Score's ▶ (a silent control)
+    await page.click('#ear-lines');
+    await page.waitForFunction(() => window.resonateSing.debug().ear.linesOpen, null, { timeout: 3000 });
+    const sh = await page.evaluate(() => { const el = document.getElementById('earlines'), r = el.querySelector('.sheet').getBoundingClientRect(), dock = document.querySelector('.dock').getBoundingClientRect(); return { inLayer: !!el.closest('#sing-layer'), rows: el.querySelectorAll('.el-row').length, over: r.bottom >= dock.top, topEl: document.elementFromPoint(dock.left + 10, dock.top + 10)?.closest('#earlines') != null }; });
+    ok(sh.inLayer && sh.rows === 4 && sh.topEl, `${dev}: the Lines sheet in Sing's layer, over the dock (${sh.rows} rows)`);
+    await page.click('#el-list .el-row:nth-child(2) .el-go');
+    await sleep(200);
+    let le = await page.evaluate(() => window.resonateSing.debug().ear);
+    ok(!le.linesOpen && le.p === 1, `${dev}: a row — line ${le.p + 1} open, the sheet closed`);
+    await page.click('#ear-lines');
+    await page.waitForFunction(() => window.resonateSing.debug().ear.linesOpen, null, { timeout: 3000 });
+    await page.goBack();
+    await sleep(400);
+    le = await page.evaluate(() => window.resonateSing.debug().ear);
+    ok(!le.linesOpen && (await page.evaluate(() => window.resonateDebug().song.open)), `${dev}: Back — the sheet closes, the song stays open`);
     // the song closed: the tuner back, full
     await page.click('#song-close');
     await page.waitForFunction(() => { const s = window.resonateDebug().song; return !s.open && !s.moving && !s.closing; }, null, { timeout: 10000 });

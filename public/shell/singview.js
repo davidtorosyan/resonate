@@ -14,7 +14,7 @@ import { staleShell, pageOpen } from "./chrome.js?v=102";
 
 const $ = (id) => document.getElementById(id);
 // Controls in Sing that can't start sound or a mic: a touch there leaves the tuner listening.
-const SILENT = "select, #options-btn, #op-close, #co-more, #mo-close, #rv-close, #rv-save, #tt-close, #ta-close, #save-song, #remove-song, #review-btn, #map, #remote-btn, #tt-pad, #ta-pad, #ta-undo, #ta-prevline, #ta-nextline";
+const SILENT = "select, #options-btn, #op-close, #co-more, #mo-close, #rv-close, #rv-save, #tt-close, #ta-close, #save-song, #remove-song, #review-btn, #map, #remote-btn, #tt-pad, #ta-pad, #ta-undo, #ta-prevline, #ta-nextline, #ear-prev, #ear-next, #ear-lines, #earlines button";
 
 // The shell's own look for Sing's insides (after the scoped sing.html CSS: same specificity, later wins).
 const OVERRIDES = `
@@ -107,7 +107,7 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
     const layer = document.createElement("div");
     layer.className = "sing-scope";
     layer.id = "sing-layer";
-    for (const id of ["drop", "getready", "options", "taptempo", "tapalong", "more", "review"]) layer.append(take(`#${id}`));
+    for (const id of ["drop", "getready", "options", "earlines", "taptempo", "tapalong", "more", "review"]) layer.append(take(`#${id}`));
     document.body.insertBefore(layer, $("places")); // (before Record / Voice / Assistants: sing.js finds its own ids first)
 
     // A touch that can start sound or a mic parks the tuner and stops the Score first (capture:
@@ -134,13 +134,13 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
   }
   // Back: Sing's own topmost sheet first (→ true: one closed, the page stays).
   function closeSheet() {
-    for (const [sheet, btn] of [["getready", null], ["tapalong", "ta-close"], ["taptempo", "tt-close"], ["options", "op-close"], ["more", "mo-close"], ["review", "rv-close"]]) {
+    for (const [sheet, btn] of [["getready", null], ["tapalong", "ta-close"], ["taptempo", "tt-close"], ["options", "op-close"], ["earlines", "el-close"], ["more", "mo-close"], ["review", "rv-close"]]) {
       const el = $(sheet);
       if (el && !el.hidden) { btn ? $(btn).click() : el.click(); return true; }
     }
     return false;
   }
-  const sheetOpen = () => ["getready", "tapalong", "taptempo", "options", "more", "review"].some((id) => { const el = $(id); return el && !el.hidden; });
+  const sheetOpen = () => ["getready", "tapalong", "taptempo", "options", "earlines", "more", "review"].some((id) => { const el = $(id); return el && !el.hidden; });
   // Shown or not (the region, its dock buttons, the AI button): the shell's layout decides.
   function show(on) {
     region.hidden = !on;

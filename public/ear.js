@@ -91,6 +91,9 @@ export const EAR_FREE = {
                        //   lastMin, never past its written length): in free time nothing comes after it — a long
                        //   last note let go early, or ■ Done tapped while it's still sung, is that note sung
   conf: 0.3,           // a measured start: an onset this sure (rhythm.js conf)
+  hitMin: 0.15,        // a hit's slot has at least this share of its frames within 50¢ (hitOf)
+  shortLine: 4,        // counted notes at most: a short line (Pick words) — its fit's ties go to the tempo nearer the one heard
+  fewSlack: 0.05,      // a start judged on the singer's line (fewer than 3 others measured): this × its time from the first more room
   onsetStep: 0.5,      // findOnsets' prior against a change of timing between joined notes (per s; Sing's 1.5
                        //   smooths a held note's late next start away — here each start is timed on its own)
   clean: 50,           // ¢: a win's note — its voiced pitch's spread (median absolute deviation) under this, and
@@ -101,7 +104,11 @@ export const EAR_FREE = {
 const F = EAR_FREE;
 
 export const phraseJs = (ph) => { const out = []; for (let j = ph.j0; j < ph.j1; j++) out.push(j); return out; };
-export const hitOf = (g) => !!g && (g.status === "good" || g.status === "ok");
+// A note hit: its slot's median within 50¢ (grade.js good / ok) — and some of its frames really there: a slot over two
+// wrong notes either side of the target has its median between them, "on" the note with none of it sung (a short
+// line's last note, as long as the singer held it, laid over "the" and a flat "sound": a tempo 26 % off "fitted"
+// all three).
+export const hitOf = (g) => !!g && (g.status === "good" || g.status === "ok") && !(g.hit < F.hitMin);
 // A note's length at the song's own tempo (the count sets are fixed per line: the speed never changes them).
 const lenOf = (n, spq0) => (spq0 && n.dq != null ? n.dq * spq0 : n.d);
 // The count sets: ♪ counts the notes ≥ 0.12 s, ♩ the starts — the line's first note and every note that isn't a
@@ -324,6 +331,9 @@ export function keyOffset(ph, notes, frames) {
 // Grade the line placed at t = a + b·(written t − its start), pitches + off (¢): → the candidate.
 function placer(ph, notes, frames, endT, counted) {
   const js = phraseJs(ph), T0 = notes[ph.j0].t, cset = new Set(counted), last = js.length - 1;
+  // (a short line — a few notes of the singer's own — fits as well at a tempo far from the one heard, one note off:
+  // there a tie goes to the tempo nearer the speed heard too — |ln b| × the line's seconds, as a slot's move would)
+  const lineSec = notes[js[last]].t - T0, short = counted.length <= F.shortLine;
   // (the line's last note: as long as the singer held it — F.lastMin)
   const lastV = frames.reduce((m, f) => (f.midi != null ? f.t : m), -Infinity);
   return (a, b, off) => {
@@ -333,8 +343,8 @@ function placer(ph, notes, frames, endT, counted) {
     });
     const g = gradeTake(ns, frames, { endT });
     let s = 0, sh = 0, hits = 0, offs = 0;
-    g.forEach((x, k) => { if (hitOf(x)) { s += 1 + 0.25 * (x.hit || 0); sh += Math.abs(x.shift || 0); if (cset.has(js[k])) hits++; } else if (x?.status === "off") offs++; });
-    return { s: s - F.moveCost * sh - F.offCost * offs, sh, hits, g, ns, a, b, off };
+    g.forEach((x, k) => { if (hitOf(x)) { s += 1 + 0.25 * (x.hit || 0); sh += Math.abs(x.shift || 0); if (cset.has(js[k])) hits++; } else if (x?.status === "off" || x?.status === "good" || x?.status === "ok") offs++; });
+    return { s: s - F.moveCost * sh - F.offCost * offs, sh, k: sh + (short ? Math.abs(Math.log(b)) * lineSec : 0), hits, g, ns, a, b, off };
   };
 }
 // The best of some candidates: the best score; among those within `tie` of it, the one sitting closest to the
@@ -343,7 +353,7 @@ function pick(cs) {
   let top = -Infinity;
   for (const c of cs) if (c && c.s > top) top = c.s;
   let best = null;
-  for (const c of cs) if (c && c.s >= top - F.tie - 1e-9 && (!best || c.sh < best.sh - 1e-9 || (Math.abs(c.sh - best.sh) <= 1e-9 && c.s > best.s))) best = c;
+  for (const c of cs) if (c && c.s >= top - F.tie - 1e-9 && (!best || c.k < best.k - 1e-9 || (Math.abs(c.k - best.k) <= 1e-9 && c.s > best.s))) best = c;
   return best;
 }
 // The coarse search from an anchor (rule 4): the tempo over bMin…bMax in log steps, the start just before
@@ -415,7 +425,7 @@ function theilSen(pts) {
 // or cut short, the beat kept after it. pts: [x, y, k, tol] in order. → { k (the first start after the step, in
 // the line), d (s: + = late), a, b (the line before it) } | null
 function stepIn(pts) {
-  if (pts.length < 3) return null;
+  if (pts.length < 4) return null; // (three starts: a step and a tempo can't be told apart — one start before it sets no beat)
   const one = theilSen(pts);
   if (!one) return null;
   const sum1 = pts.reduce((s, [x, y]) => s + Math.abs(y - one.a - one.b * x), 0);
@@ -492,10 +502,15 @@ function judgeStarts(ph, fit, grades, frames, endT, ctx, starts, reached) {
   if (!m) return null;
   const { out, pts, live } = m;
   const nMeasured = pts.length;
+  // (a short line — the singer's own two or three words — has too few others for leave-one-out: the singer's line,
+  // whose tempo is loose there — the pitch fit of a 3-note line is good to ~5 % —, with that much more room the
+  // further a start is from the first: a start well off still is, the fit's own slack never reads as one)
+  const x0 = pts.length ? Math.min(...pts.map((p) => p[0])) : 0;
   for (const [x, y, k] of pts) {
     const others = pts.filter((p) => p[2] !== k);
     const line = others.length >= 3 ? theilSen(others) : null;
     out[k].r = line ? y - line.a - line.b * x : y - x - (m.lead ?? 0);
+    if (!line) out[k].tol += F.fewSlack * Math.abs(x - x0);
   }
   // (a step — one note held long or cut short, the beat kept after it — is one start off: the first after it;
   // the rest are judged on the beat as it went on)
@@ -970,6 +985,104 @@ export function holdVerdict(h, { tries = 1, top = false, bottom = false, refOct 
   const text = `${size === "touch" ? "A touch " : size === "much" ? "Much " : ""}${size === "plain" ? dir[0].toUpperCase() + dir.slice(1) : dir}`;
   if (v.along && ((top && dir === "higher") || (bottom && dir === "lower"))) v.key = { dir: dir === "higher" ? "lower" : "higher", s: Math.max(1, Math.min(6, Math.round(Math.abs(r)))), text: dir === "higher" ? "Too high for now?" : "Too low for now?" };
   return { ...v, kind: "dir", r, dir, size, text };
+}
+
+// --- The store (the fix plan's Data: sing.js resonate.sing.eardata, device-only) -------------------------
+// Per song: { v: 1, p (the line open: its wk), pi, oct, sp, own: [{ j0, j1, wk }] (Pick words: the singer's own
+// lines), ph: { [wk]: { h (▶ Hear played it: at), hk (in that key), a: [attempts], sec: { b, n } (secure) } } } — a line's record by its wk
+// (music + words: a repeat shares it, a transpose keeps it). An attempt is a whole one Ear could count (heard,
+// followed, sung to the end — a silent one, one it couldn't follow or one stopped early isn't "last time"):
+// { at, k: "line" | "beats", sp (the ♩ menu's rate), tr (the key), b / n (♩ / ♪ counts; absent: not judged),
+// ab / an (all of them), w (the win: { kind, k (its note's offset in the line), k2, sub }), c (the cue: { kind, k,
+// dir, size, s, end }) } — the last `keep` of each kind.
+export const EAR_STORE = {
+  keep: 6,           // attempts kept per line and kind
+  secure: 2, of: 3,  // secured (D6): "all" in `secure` of the line's last `of` counting attempts (♪: Line; ♩: Line and Beats)
+  heard: 3 * 3600e3, // ms: a line heard (▶ Hear) this long ago still counts as heard — "Now ● Sing" (a session, as practice's)
+  own: 20,           // own lines kept per song
+  ownMax: 16,        // syllables at most in an own line (two printed lines' worth: Ear's lines are ≤ 8)
+};
+const ST = EAR_STORE;
+const compact = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null && v !== false));
+// An attempt for the store (res: judgeFree's / judgeBeats's; ph: its line), or null (not one to keep).
+export function attemptOf(res, ph, { at = Date.now(), kind = res?.kind, rate = 1, tr = 0 } = {}) {
+  if (!res?.whole || !res.counts || !ph) return null;
+  const off = (j) => (j == null ? null : j - ph.j0), c = res.counts, w = res.win, q = res.cue;
+  return compact({
+    at, k: kind, sp: rate, tr,
+    b: c.beats ?? null, ab: !!c.beatsAll, n: kind === "line" ? c.notes ?? null : null, an: kind === "line" && !!c.notesAll,
+    w: w ? compact({ kind: w.kind, k: off(w.j), k2: off(w.j2), sub: w.sub ?? null }) : null,
+    c: q ? compact({ kind: q.kind, k: off(q.j), dir: q.dir ?? null, size: q.size ?? null, s: q.s ?? null, end: q.end ?? null }) : null,
+  });
+}
+// The line's record with this attempt added (the last `keep` of its kind kept).
+export function addAttempt(rec, e) {
+  const a = [...(rec?.a || []), e], keep = [], n = {};
+  for (let i = a.length - 1; i >= 0; i--) if ((n[a[i].k] = (n[a[i].k] || 0) + 1) <= ST.keep) keep.unshift(a[i]);
+  return { ...(rec || {}), a: keep };
+}
+// Secured (D6): { beats, notes } — "all" in 2 of the last 3 attempts that counted it.
+export function securedOf(rec) {
+  const a = rec?.a || [];
+  const of = (judged, all) => { const xs = a.filter(judged).slice(-ST.of); return xs.filter(all).length >= ST.secure; };
+  return { beats: of((x) => x.b != null, (x) => !!x.ab), notes: of((x) => x.k === "line" && x.n != null, (x) => !!x.an) };
+}
+// The record with its marks: sec { b (♩), n (♪): when it was first secured } — a mark once earned stays (v76's
+// rule: what the singer has done isn't taken back by a bad day).
+export function secure(rec, at = Date.now()) {
+  const s = securedOf(rec), sec = { ...(rec?.sec || {}) };
+  if (s.beats && !sec.b) sec.b = at;
+  if (s.notes && !sec.n) sec.n = at;
+  return Object.keys(sec).length ? { ...rec, sec } : rec;
+}
+// An attempt back as a result (the counts, the win, the cue — the notes where they are now in line ph) …
+function resOf(e, ph) {
+  const j = (k) => (k == null ? null : ph.j0 + k), inLine = (k) => k == null || (k >= 0 && ph.j0 + k < ph.j1);
+  const w = e.w && inLine(e.w.k) && inLine(e.w.k2) ? compact({ kind: e.w.kind, j: j(e.w.k), j2: j(e.w.k2), sub: e.w.sub }) : null;
+  const c = e.c && inLine(e.c.k) ? compact({ kind: e.c.kind, j: j(e.c.k), dir: e.c.dir, size: e.c.size, s: e.c.s, end: e.c.end }) : null;
+  return { counts: { beats: e.b ?? null, beatsAll: !!e.ab, notes: e.n ?? null, notesAll: !!e.an }, win: w, cue: c, whole: true };
+}
+// … as judgeFree's / judgeBeats's ctx.prev: the last whole attempt here of that kind at that speed (rate), or null.
+export function prevFrom(rec, kind, rate, ph) {
+  const e = (rec?.a || []).filter((x) => x.k === kind && Math.abs((x.sp ?? 1) - rate) < 1e-9).pop();
+  if (!e) return null;
+  const r = resOf(e, ph);
+  return { counts: r.counts, whole: true, win: r.win && { kind: r.win.kind, j: r.win.j ?? null, sub: r.win.sub ?? null }, cue: r.cue && { kind: r.cue.kind, j: r.cue.j ?? null } };
+}
+// … as "Last time" (earText old): the latest attempt here of that kind sung in this key, or null.
+export function lastFrom(rec, kind, tr, ph) {
+  const e = (rec?.a || []).filter((x) => x.k === kind && (x.tr ?? 0) === tr).pop();
+  return e ? { ...resOf(e, ph), kind, tr, rate: e.sp ?? 1, at: e.at, stored: true } : null;
+}
+
+// Pick words (D2 "your own"): the words of notes [j0, j1) — [{ j0, j1 (through the note before the next word's:
+// its syllables and their held notes), text }]; a song without words: a note each, named by `name(j)`.
+export function wordTokens(notes, j0, j1, name = (j) => String(j)) {
+  const words = notes.some((n) => n.text), out = [];
+  let cur = null;
+  for (let j = j0; j < j1; j++) {
+    const n = notes[j];
+    const cont = cur && (words ? !n.text || n.melisma || (cur.open && /^(middle|end)$/.test(n.syllabic || "")) : false);
+    if (!cont) {
+      if (cur) out.push(cur);
+      cur = { j0: j, j1: j + 1, text: words ? (n.text || "").replace(/[-‿]/g, "").trim() : name(j), open: false };
+    } else {
+      cur.j1 = j + 1;
+      if (n.text && !n.melisma) cur.text += n.text.replace(/[-‿]/g, "").trim();
+    }
+    if (words && n.text && !n.melisma) cur.open = /^(begin|middle)$/.test(n.syllabic || "");
+  }
+  if (cur) out.push(cur);
+  return out.filter((t) => !words || t.text).map(({ open, ...t }) => t); // (a held note before the first word: not a word)
+}
+// An own line from word a to word b of `tokens` (a ≤ b): its notes [j0, j1), or null — ≥ 2 words, at most
+// `ownMax` syllables (a note that isn't a held one).
+export function ownSpan(notes, tokens, a, b) {
+  if (a == null || b == null || b <= a || !tokens[a] || !tokens[b]) return null;
+  const j0 = tokens[a].j0, j1 = tokens[b].j1;
+  let syl = 0;
+  for (let j = j0; j < j1; j++) if (!notes[j].melisma) syl++;
+  return syl > ST.ownMax ? null : { j0, j1, syl };
 }
 
 // A result as resonateDebug() shows it: everything but the recording and the fitted notes (the grades,

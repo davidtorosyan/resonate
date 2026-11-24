@@ -176,7 +176,38 @@
       .ear-top { display: flex; align-items: center; justify-content: center; gap: 1rem; }
       .ear-nav { font: inherit; font-size: 1.4rem; width: 44px; height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05); color: #e8e8f0; cursor: pointer; }
       .ear-nav:disabled { opacity: 0.35; cursor: default; }
-      #ear-name { color: rgba(255,255,255,0.55); font-size: 0.85rem; }
+      /* the lines: ‹ the dots (≤ 10 lines; the singer's own a diamond; ♩ or ♪ secured dim green, both bright; the open
+         one larger) or the open line's first words ▾ › — a tap opens the Lines sheet */
+      .ear-lines { font: inherit; display: inline-flex; align-items: center; justify-content: center; min-width: 96px; max-width: min(62vw, 22rem); min-height: 44px; padding: 0 0.9rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05); color: #e8e8f0; cursor: pointer; }
+      .ear-lines:disabled { opacity: 0.6; cursor: default; }
+      #ear-name { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; color: rgba(255,255,255,0.8); font-size: 0.9rem; }
+      .eld { display: block; flex: none; width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.5); box-sizing: border-box; }
+      .eld[data-own] { border-radius: 1.5px; transform: rotate(45deg) scale(0.86); }
+      .eld[data-sec="b"], .eld[data-sec="n"] { background: rgba(74,222,128,0.4); border-color: #4ade80; }
+      .eld[data-sec="bn"] { background: #4ade80; border-color: #4ade80; }
+      .eld[data-cur] { width: 13px; height: 13px; border: 2px solid #fff; }
+      .eld[data-cur]:not([data-sec]) { background: rgba(255,255,255,0.85); }
+      .eld[data-new] { animation: eldnew 0.8s ease-out 2; }
+      @keyframes eldnew { 50% { box-shadow: 0 0 0 6px rgba(74,222,128,0.5); } }
+      @media (prefers-reduced-motion: reduce) { .eld[data-new] { animation: none; } }
+      .elw { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .elv { flex: none; font-size: 0.75rem; color: rgba(255,255,255,0.55); }
+      /* the Lines sheet: a row a line (♩ ♪ green once secured, ✕ on the singer's own); Pick words: the song's words */
+      .el-row { display: flex; align-items: center; gap: 0.4rem; border-bottom: 1px solid rgba(255,255,255,0.07); }
+      .el-go { flex: 1; min-width: 0; min-height: 44px; text-align: left; font: inherit; font-size: 0.95rem; line-height: 1.3; background: none; border: 0; color: #e8e8f0; padding: 0.35rem 0.15rem; cursor: pointer; }
+      .el-row[data-cur] .el-go { color: #d0a6ff; font-weight: 600; }
+      .el-marks { flex: none; display: inline-flex; gap: 0.15rem; color: rgba(255,255,255,0.22); font-size: 1.05rem; }
+      .el-marks .ear-ic[data-on] { color: #4ade80; }
+      .el-x { flex: none; font: inherit; font-size: 0.85rem; min-width: 44px; min-height: 44px; border-radius: 10px; border: 1px solid transparent; background: none; color: rgba(255,255,255,0.55); cursor: pointer; }
+      .el-x[data-arm] { color: #ffe6a0; border-color: rgba(255,230,160,0.5); padding: 0 0.6rem; }
+      .el-foot { display: flex; justify-content: center; margin-top: 0.8rem; }
+      .el-foot:empty { display: none; }
+      .el-hint { text-align: center; color: #d0a6ff; margin: 0.2rem 0 0.5rem; }
+      .el-words { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.4rem 0; border-bottom: 1px solid rgba(255,255,255,0.07); }
+      .el-words button { font: inherit; font-size: 0.95rem; min-height: 40px; padding: 0.3rem 0.6rem; border-radius: 10px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05); color: #e8e8f0; cursor: pointer; }
+      .el-words button[data-a] { background: #a64fff; border-color: #a64fff; color: #fff; font-weight: 600; }
+      .el-words button[data-far] { opacity: 0.38; }
+      #earlines .chip { font: inherit; font-size: 0.9rem; color: #e8e8f0; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; padding: 0.4rem 1rem; min-height: 44px; cursor: pointer; }
       #ear-words { text-align: center; font-size: clamp(1.3rem, 5vw, 1.9rem); font-weight: 600; line-height: 1.3; color: #fff; }
       .ear-modes { display: flex; justify-content: center; gap: 0; }
       .ear-modes button { font: inherit; font-size: 0.95rem; padding: 0.5rem 1.1rem; min-height: 40px; border: 1px solid rgba(255,255,255,0.2); background: transparent; color: #cfcfe0; cursor: pointer; }
@@ -278,6 +309,9 @@
       #ear[data-big] .ear-tempo, #ear[data-big] #ear-tip, #ear[data-big] .ear-last { font-size: 1rem; }
       #ear[data-big] #ear-name { font-size: 1rem; }
       #ear[data-big] .ear-nav { width: 48px; height: 48px; }
+      #ear[data-big] .ear-lines { min-height: 48px; }
+      #ear[data-big] .eld { width: 11px; height: 11px; }
+      #ear[data-big] .eld[data-cur] { width: 15px; height: 15px; }
       #ear[data-big] .ear-modes button, #ear[data-big] #ear-acts button, #ear[data-big] .chip { min-height: 48px; font-size: 1.1rem; }
       #ear[data-big] .ear-modes button { padding: 0.5rem 1.5rem; }
       #ear[data-big] .ear-names button { min-height: 48px; min-width: 3.9rem; }
@@ -587,7 +621,7 @@
       <section id="ear" hidden aria-live="polite">
         <div class="ear-top">
           <button id="ear-prev" class="ear-nav" type="button" aria-label="Previous line">‹</button>
-          <span id="ear-name" class="mono"></span>
+          <button id="ear-lines" class="ear-lines" type="button" aria-haspopup="dialog"><span id="ear-name"></span></button>
           <button id="ear-next" class="ear-nav" type="button" aria-label="Next line">›</button>
         </div>
         <div id="ear-words"></div>
@@ -659,6 +693,18 @@
             <option value="none">None</option>
           </select>
         </div>
+      </div>
+    </div>
+    <!-- (Ear's lines: a row each — ♩ ♪ once secured, the singer's own ★ —, Pick words…: sing.js "The Lines sheet") -->
+    <div id="earlines" class="overlay" hidden>
+      <div class="sheet" role="dialog" aria-labelledby="el-title">
+        <div class="rv-head">
+          <span id="el-title" class="op-title">Lines</span>
+          <button id="el-close" class="tool-btn" type="button" aria-label="Close">✕</button>
+        </div>
+        <div id="el-list"></div>
+        <div id="el-pick" hidden></div>
+        <div class="el-foot"></div>
       </div>
     </div>
     <div id="taptempo" class="overlay" hidden>

@@ -25,6 +25,8 @@
 //   JOBS=n: cases sung on n threads, default 3 — the page's pitch detector over an attempt takes ~2.5 s a run)
 import { Worker, isMainThread, parentPort } from 'node:worker_threads';
 import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
 import { sing } from './rhythmsynth.mjs';
 import { features, frames } from './rhythmharness.mjs';
 import { loadSong, fixtureNames } from './fixturelib.mjs';
@@ -36,10 +38,12 @@ import { gradeTake, MAX_SHIFT } from '../public/grade.js';
 import { MIN_RMS, ANALYSIS_LAG, FFT_SIZE } from '../public/pitch.js';
 import { noteName } from '../public/music.js';
 import { PRACTICE, groupPhrases } from '../public/practice.js';
-import { EAR_PHRASE, judgeFree, judgeBeats, wordOf, countSets, gateFrames, EAR_HOLD, holdStart, holdStep, holdVerdict, noteTargets, earText, plainOf } from '../public/ear.js';
+import { EAR_PHRASE, judgeFree, judgeBeats, wordOf, countSets, gateFrames, EAR_HOLD, holdStart, holdStep, holdVerdict, noteTargets, earText, plainOf,
+  EAR_STORE, attemptOf, addAttempt, securedOf, secure, prevFrom, lastFrom, wordTokens, ownSpan } from '../public/ear.js';
+import { phraseKeys } from '../public/practice.js';
 
 const { segments } = earsinger;
-const DONE = new Set(['WP0', 'WP1', 'WP2', 'WP3', 'WP4', 'WP5']); // the work packages landed: their cases are judged
+const DONE = new Set(['WP0', 'WP1', 'WP2', 'WP3', 'WP4', 'WP5', 'WP6']); // the work packages landed: their cases are judged
 const V = !!process.env.V, ONLY = process.env.ONLY ? new RegExp(process.env.ONLY) : null, SHOW_TODO = process.env.TODO !== '0';
 
 let pass = 0, fail = 0;
@@ -50,8 +54,8 @@ const check = (name, ok, detail = '') => { if (ok) pass++; else { fail++; consol
 // The songs and their lines
 
 const PLAN_PHRASE = { ...EAR_PHRASE, maxSyl: 8 }; // the fix plan's lines (Q-A default: the printed line, ≤ 8 syllables; WP1.12)
-function songOf(name) {
-  const s = loadSong(name);
+function songOf(name, dir) {
+  const s = loadSong(name, dir ? { dir } : {});
   const fx = s.fx;
   const group = (params) => { const keep = { ...PRACTICE.phrase }; Object.assign(PRACTICE.phrase, params); try { return groupPhrases(s.notes, s.lines, s.opts).phrases; } finally { Object.assign(PRACTICE.phrase, keep); } };
   const score = { measures: fx.measures, meters: fx.meters, length: fx.length, measureOf: fx.measureOf, tempo: fx.tempo };
@@ -66,6 +70,20 @@ if (isMainThread) for (const name of fixtureNames()) {
   if (JSON.stringify(S.page.map((p) => [p.j0, p.j1])) !== JSON.stringify(S.plan.map((p) => [p.j0, p.j1]))) {
     console.log(`  the fix plan's lines (maxSyl ${PLAN_PHRASE.maxSyl}) — the cases below use these:`);
     S.plan.forEach((ph, i) => console.log(`  L${i} ${lineText(S, ph)}`));
+  }
+}
+// The owner's songs (PLAY_SCORES: their converted MusicXML, never in the repo), dumped as the page reads them —
+// OUT=$PLAY_SCORES/notes node dumpnotes.cjs $PLAY_SCORES/*.musicxml (or EAR_NOTES=<dir>): each song's lines, their
+// lengths at a glance (every line with V=1; the long and the short ones always).
+const OWN_DIR = process.env.EAR_NOTES || (process.env.PLAY_SCORES ? path.join(process.env.PLAY_SCORES, 'notes') : null);
+if (isMainThread && OWN_DIR) {
+  const names = fs.existsSync(OWN_DIR) ? fixtureNames(OWN_DIR) : [];
+  if (!names.length) console.log(`skip: the owner's songs' lines — no dumps in ${OWN_DIR} (OUT=${OWN_DIR} node dumpnotes.cjs $PLAY_SCORES/*.musicxml first)`);
+  for (const name of names) {
+    const S = songOf(name, OWN_DIR), ls = S.page;
+    const sec = ls.map((ph) => S.notes[ph.j1 - 1].t + S.notes[ph.j1 - 1].d - S.notes[ph.j0].t), mid = [...sec].sort((a, b) => a - b)[Math.floor(sec.length / 2)];
+    console.log(`${S.title} (${name}): ${ls.length} lines · ${Math.min(...sec).toFixed(1)}–${Math.max(...sec).toFixed(1)} s (median ${mid?.toFixed(1)}) · ${Math.min(...ls.map((p) => p.syl))}–${Math.max(...ls.map((p) => p.syl))} syl${ls.length <= 10 ? ' — the dots' : ' — the first words ▾'}`);
+    ls.forEach((ph, i) => { if (V || sec[i] > 12 || sec[i] < 2) console.log(`  L${i} ${lineText(S, ph)}${sec[i] > 12 ? '  (long)' : sec[i] < 2 ? '  (short)' : ''}`); });
   }
 }
 const AG = songOf('amazing-grace');
@@ -104,6 +122,42 @@ if (isMainThread) {
   // (rule 1 alone: a frame under MIN_RMS before gateUntil isn't sung, after it is)
   const g = gateFrames([{ t: 0.1, midi: 63, rms: 0.008 }, { t: 0.2, midi: 63, rms: 0.02 }, { t: 0.6, midi: 63, rms: 0.008 }], 0.5);
   check('gateFrames: our own ▶’s tail out until gateUntil', g[0].midi === null && g[1].midi === 63 && g[2].midi === 63);
+}
+
+// ---------------------------------------------------------------------------
+// The store and the lines (WP6): attempts kept per line (by its wk), secured marks, "last time" read back,
+// Pick words' words and spans — the page's own code (sing.js earShow / earPrev / earShown, the Lines sheet)
+
+if (isMainThread) {
+  const ph = AG.plan[0];
+  const R = (all, b = all) => ({ whole: true, counts: { notes: all ? 11 : 9, notesAll: all, beats: b ? 8 : 6, beatsAll: b }, win: all ? { kind: 'spot' } : { kind: 'high', j: ph.j0 + 6 }, cue: all ? null : { kind: 'pitch', j: ph.j0 + 8, dir: 'higher', size: 'aim' } });
+  let at = 1;
+  const rec = (seq, kind = 'line') => seq.reduce((r, x) => secure(addAttempt(r, attemptOf(x, ph, { kind, rate: 1, tr: 0, at: at++ })), at), null);
+  const sec = (r) => { const x = securedOf(r); return `${x.beats ? '♩' : ''}${x.notes ? '♪' : ''}`; };
+  check('store: secured after 2 of the last 3 “all” (♩ and ♪)', sec(rec([R(true), R(false), R(true)])) === '♩♪' && sec(rec([R(true), R(false), R(false)])) === '' && sec(rec([R(false), R(true), R(true)])) === '♩♪', [sec(rec([R(true), R(false), R(true)])), sec(rec([R(true), R(false), R(false)]))].join(' / '));
+  const kept = rec([R(true), R(true), R(false), R(false), R(false)]);
+  check('store: a mark once earned stays (a bad day doesn’t take it back)', !securedOf(kept).notes && !!kept.sec?.n && !!kept.sec?.b, JSON.stringify(kept.sec));
+  check('store: ♩ from Beats too, ♪ only from Line', (() => { const r = rec([R(true), R(true)], 'beats'); return securedOf(r).beats && !securedOf(r).notes; })());
+  check('store: a key sung elsewhere doesn’t secure ♪', (() => { const k = { ...R(true), counts: { notes: null, notesAll: false, beats: 8, beatsAll: true } }; const r = rec([k, k, k]); return securedOf(r).beats && !securedOf(r).notes && attemptOf(k, ph).n === undefined; })());
+  const many = rec(Array.from({ length: 9 }, () => R(true)));
+  check(`store: the last ${EAR_STORE.keep} of each kind kept`, many.a.length === EAR_STORE.keep && addAttempt(many, attemptOf(R(true), ph, { kind: 'beats', at: 99 })).a.length === EAR_STORE.keep + 1);
+  check('store: not kept — not whole, nothing counted', attemptOf({ ...R(true), whole: false }, ph) === null && attemptOf({ whole: true, counts: null }, ph) === null);
+  // (read back: the win and the cue's notes as offsets — on another place of the same line, a repeat, they're there)
+  const one = addAttempt(null, attemptOf(R(false), ph, { kind: 'line', rate: 1, tr: 0, at: 5 }));
+  const rep = { j0: 100, j1: 111 }, pv = prevFrom(one, 'line', 1, rep);
+  check('store: last time read back on a repeat of the line (its notes there)', pv?.win?.j === 106 && pv?.cue?.j === 108 && pv.counts.notes === 9 && pv.whole, JSON.stringify(pv));
+  check('store: last time at another speed isn’t this one', prevFrom(one, 'line', 0.8, ph) === null && prevFrom(one, 'beats', 1, ph) === null);
+  const lt = lastFrom(one, 'line', 0, ph);
+  check('store: “Last time” — its words as the page says them, in that key only', lastFrom(one, 'line', -3, ph) === null && plainOf(earText(lt, { notes: AG.notes, name: (m) => noteName(m, AG.flats), old: true }).cue) === '“sweet” — aim higher', JSON.stringify(lt));
+  // Pick words: the words of a line, whole; a span from the first to the last, ≥ 2 words, ≤ ownMax syllables
+  const tok = wordTokens(AG.notes, 0, AG.notes.length);
+  check('Pick words: the song’s words, whole (a melisma’s notes in its word)', tok.length === 26 && tok[0].text === 'Amazing' && tok[0].j0 === 0 && tok[0].j1 === 6 && tok[1].text === 'grace!' && tok.map((w) => w.text).slice(3, 6).join(' ') === 'sweet the sound!', tok.map((w) => `${w.text}[${w.j0}-${w.j1 - 1}]`).slice(0, 8).join(' '));
+  const sp = ownSpan(AG.notes, tok, 3, 5);
+  check('Pick words: “sweet” … “sound!” → a line of 3 notes', sp?.j0 === 8 && sp.j1 === 11 && sp.syl === 3, JSON.stringify(sp));
+  check(`Pick words: ≥ 2 words, ≤ ${EAR_STORE.ownMax} syllables`, ownSpan(AG.notes, tok, 3, 3) === null && ownSpan(AG.notes, tok, 5, 3) === null && ownSpan(AG.notes, tok, 3, 18)?.syl === 16 && ownSpan(AG.notes, tok, 3, 19) === null);
+  const js = [8, 9, 10];
+  check('Pick words: its own key (music + words) — not a printed line’s', phraseKeys(AG.notes, js).wk !== ph.wk && phraseKeys(AG.notes, js).wk === phraseKeys(AG.notes, js).wk);
+  check('Pick words: a song without words — a note each', (() => { const ns = AG.notes.slice(0, 6).map((n) => ({ ...n, text: undefined, syllabic: undefined })); const t = wordTokens(ns, 0, 6, (j) => `n${j}`); return t.length === 6 && t[2].text === 'n2'; })());
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +393,15 @@ LINE.push(
   { name: 'spot on twice running', line: 0, before: {}, plan: {}, wp: 'WP2', want: [X.win('spot'), ['twice', (r) => r.win?.sub === 'again'], X.say({ win: '✓ Spot on — twice running' })] },
   { name: 'never the same win twice (“the” off both times)', line: 0, before: { cents: { 9: -150 } }, plan: { cents: { 9: -150 } }, wp: 'WP2', want: [['a win, not the one before', (r, ph, R) => !!r.win && !!R.before?.win && (r.win.kind !== R.before.win.kind || r.win.j !== R.before.win.j)], X.cue('pitch', 9, 'higher')] },
   { name: 'not compared after an early stop', line: 0, before: { stop: 6 }, plan: { cents: { 8: -150 } }, wp: 'WP2', want: [['no rose', (r) => r.win?.kind !== 'rose' && !r.up?.notes && !r.up?.beats]] },
+  // (WP6: a line of the singer's own — Pick words: “sweet the sound!”, “That saved” — judged as any line; span: its notes)
+  { name: 'own “sweet the sound!” all right', line: 0, span: [8, 11], plan: {}, wp: 'WP6', want: [X.notesAll, X.beatsAll, X.win('spot'), X.say({ win: '✓ Spot on', counts: ['♩ all on the beat', '♪ all in tune'], cue: null })] },
+  { name: 'own “sweet the sound!”, “the” +200¢', line: 0, span: [8, 11], w: 1, word: 'the', plan: { cents: { 1: 200 } }, wp: 'WP6', want: [X.notNotesAll, X.cue('pitch', 1, 'lower'), X.say({ cue: '“the” — aim lower' }), ['the starts sung on time on (a short line: the fit\'s slack isn\'t a start off)', (r) => r.starts?.[0]?.on && r.starts?.[2]?.on]] },
+  { name: 'own “sweet the sound!”, “sound” in 0.4 s late', line: 0, span: [8, 11], w: 2, word: 'sound!', plan: { starts: { 2: 0.4 } }, wp: 'WP6', want: [X.notesAll, X.cue('timing', 2, 'sooner'), X.say({ cue: 'Come in sooner on “sound”' })] },
+  { name: 'own “sweet the sound!” spot on twice running (the store)', line: 0, span: [8, 11], before: {}, plan: {}, wp: 'WP6', want: [X.win('spot'), ['twice', (r) => r.win?.sub === 'again']] },
+  { name: 'own “sweet the sound!”, “sound” −150¢', line: 0, span: [8, 11], w: 2, word: 'sound!', plan: { cents: { 2: -150 } }, wp: 'WP6', want: [X.cue('pitch', 2, 'higher'), X.beatsAll, ['the tempo heard (±8 %)', (r) => Math.abs((r.fit?.b ?? 0) - 1) <= 0.08]] },
+  { name: 'own “sweet the sound!” all right ×1.4 (slower: the tempo found, not the one heard)', line: 0, span: [8, 11], plan: { f: 1.4 }, wp: 'WP6', want: [X.notesAll, X.beatsAll, ['b ×1.4 (±8 %)', (r) => Math.abs((r.fit?.b ?? 0) / 1.4 - 1) <= 0.08]] },
+  { name: 'own “sweet the sound!” all right ×0.8', line: 0, span: [8, 11], plan: { f: 0.8 }, wp: 'WP6', want: [X.notesAll, X.beatsAll, ['b ×0.8 (±8 %)', (r) => Math.abs((r.fit?.b ?? 0) / 0.8 - 1) <= 0.08]] },
+  { name: 'own “That saved” (two words) all right', line: 1, span: [11, 14], plan: {}, wp: 'WP6', want: [X.notesAll, ['no cue', (r) => !r.cue]] },
   // (the personas' other singers: none of these changes the answer)
   { name: 'quiet (vol 0.03)', line: 0, plan: { vol: 0.03 }, wp: 'WP0', want: [X.notesAll, X.beatsAll] },
   { name: 'a hum 0.4 s before', line: 0, plan: { hum: { m: 57, d: 0.4 } }, wp: 'WP0', want: [X.notesAll, X.beatsAll] },
@@ -473,17 +536,19 @@ function notesCases() {
 // The same singing again: the frames half a frame later (rAF never lands where it did), other room noise.
 const VARIANTS = [{ phase: 0, seed: 7 }, { phase: 1 / 120, seed: 11 }];
 const CASES = [...LINE.map((c) => ['Line', c]), ...BEATS.map((c) => ['Beats', c])];
-const labelOf = ([mode, c]) => `${mode} L${c.line} ${c.name}`;
+const labelOf = ([mode, c]) => `${mode} ${c.span ? `own ${c.span[0]}–${c.span[1] - 1}` : `L${c.line}`} ${c.name}`;
 
 // One case: → { out (lines to print), checks [[name, ok, detail]], todo (its package, when not landed), ms }.
 function evalCase(k) {
   const [mode, c] = CASES[k], label = labelOf(CASES[k]);
   const out = [], checks = [];
-  const ph = AG.plan[c.line];
+  const ph = c.span ? { j0: c.span[0], j1: c.span[1] } : AG.plan[c.line]; // (span: a line of the singer's own — Pick words)
   if (c.word !== undefined && (AG.notes[ph.j0 + c.w].text || '') !== c.word) return { out, checks: [[`${label}: note ${c.w} is “${c.word}”`, false, `it is “${AG.notes[ph.j0 + c.w].text}”`]], todo: null, ms: 0 };
   const round = mode === 'Line' ? lineRound : beatsRound;
-  // (a case `before` another attempt: that one's result kept as the page keeps it — EAR.last, only a whole attempt)
-  const lastOf = (x) => (x?.whole ? { counts: x.counts, whole: true, win: x.win && { kind: x.win.kind, j: x.win.j, sub: x.win.sub }, cue: x.cue && { kind: x.cue.kind, j: x.cue.j } } : null);
+  // (a case `before` another attempt: that one's result kept as the page keeps it — the store, ear.js attemptOf: only a
+  // whole attempt; read back as the page's earPrev does)
+  const kind = mode === 'Line' ? 'line' : 'beats';
+  const lastOf = (x) => { const e = attemptOf(x, ph, { kind, rate: 1, tr: 0, at: 1 }); return e ? prevFrom(addAttempt(null, e), kind, 1, ph) : null; };
   const runs = VARIANTS.map((v) => { const b = c.before ? round(AG, ph, c.before, v).res : null, x = round(AG, ph, c.plan, b ? { ...v, prev: lastOf(b) } : v); x.before = b; return x; });
   const R = runs[0], r = R.res;
   R.beats = mode === 'Beats';

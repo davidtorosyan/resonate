@@ -190,6 +190,26 @@ async function walk(dev, ctxOpts, modules) {
   await shot('phrase-2', 'tapped › (next line)');
   for (let k = 0; k < 6; k++) { const b = await page.$('#ear-next:not([disabled])'); if (!b) break; await b.click(); await sleep(200); }
   await shot('phrase-last', 'the last line');
+  // the Lines sheet (the dots / first words ▾), Pick words → a line of your own
+  if (await page.$('#ear-lines:not([disabled])')) {
+    await page.click('#ear-lines'); await sleep(400);
+    await shot('lines-sheet', 'tapped the dots (the line nav): the Lines sheet — ♩ ♪ green once secured');
+    const pick = await page.$('#earlines button[data-act="pick"]');
+    if (pick) {
+      await pick.click(); await sleep(300);
+      await shot('pick-words', 'tapped Pick words…');
+      const ws = await page.$$('#el-pick .el-words button');
+      if (ws.length > 5) {
+        await ws[3].click(); await sleep(200);
+        await shot('pick-first', 'tapped a first word: the words it can end on stay lit');
+        await page.click('#el-pick .el-words button[data-t="5"]'); await sleep(500); // (the words are drawn again after the first: a fresh handle)
+        await shot('own-line', 'tapped a last word: a line of your own, open (a diamond among the dots)');
+        await page.click('#ear-lines'); await sleep(400);
+        await shot('lines-own', 'the Lines sheet with it (★, ✕)');
+        await page.click('#el-close').catch(() => {}); await sleep(200);
+      }
+    } else await page.click('#el-close').catch(() => {});
+  }
   // ⚙
   const gear = await page.$('#options-btn, #opts, button[aria-label*="ptions"], button[title*="ptions"]');
   if (gear) { await gear.click(); await sleep(500); await shot('options', 'opened ⚙'); }

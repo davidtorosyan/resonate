@@ -1,7 +1,7 @@
 #!/bin/bash
 # Resonate's regression run: one verdict per suite, a table at the end, exit 1 if anything failed.
 #
-#   tools/regress.sh fast    node only, no server (~4 min; npm test in tools/): the analysis modules (grading,
+#   tools/regress.sh fast    node only, no server (~7 min; npm test in tools/): the analysis modules (grading,
 #                            tapped timing, tempo marks, coaching words, guided practice, rhythm, Ear), the engine
 #                            trace, the import event contract, the sync engine against a fake cloud, the MCP
 #                            catalogue, the ?v= stamps (vcheck). Run it before every push.
@@ -77,7 +77,7 @@ run tempomark 60 node tempomark.mjs             # pdfprep.js tempoMark: "= 104",
 run coachcases 60 node coachcases.mjs           # coach.js: every verdict's words; no digits, %, fail, score
 run practicecases 120 node practicecases.mjs    # practice.js: phrases, verdicts, the ladder, a 500-step fuzz
 run guidedverdicts 300 node guidedverdicts.mjs  # synthetic rounds through features → grades → verdicts → words
-run earcases 600 node earcases.mjs              # Ear (E8): synthetic singers → ear.js judgeFree / judgeBeats; the fix plan's cases (todo until their package lands)
+run earcases 900 node earcases.mjs              # Ear (E8): synthetic singers → ear.js judgeFree / judgeBeats / holds; the store, Pick words (~5 min; PLAY_SCORES: the owner's songs' lines)
 run rhythmcases 600 node rhythmcases.mjs        # rhythm.js on a synthetic singer (+ the guided cases)
 run fingercases 120 node fingercases.mjs        # finger.js (E7): hands + fingers, R6, invariants, 3000 notes, golden
 run fingersurvey 120 node fingersurvey.mjs      # finger.js on dumpkeys.cjs's Amazing Grace (+ PLAY_SCORES's dumps): invariants, every hand
@@ -104,7 +104,7 @@ if [ "$TIER" = main ]; then
   # Guide me — on by default — from a clean slate on Amazing Grace, a simulated singer; BLEED=1 puts the page's
   # sound into the fake mic (a phone speaker's click bleed) and fails on any rhythm / practice warning.
   # (v101: Ear — the E8 prototype — replaced the guided card; guided.cjs tested the card, kept for its history)
-  run ear 600 node ear.cjs                        # Ear (E8): the free attempt, Beats, Notes with a simulated singer; the shell around it (~1.5 min)
+  run ear 1200 node ear.cjs                       # Ear (E8): Line, Beats, Notes with a simulated singer; the lines, own lines, secured marks; the shell around it
   run voicetest 600 node voicetest.cjs            # Voice: the range test with a simulated singer, no note over a live mic
   run quietvoice 600 env SHOTS=0 node quietvoice.cjs # a distant singer (−25 dB, room noise) calibrates and is heard; noise alone never (E4)
   run sleep 900 env SHOTS=0 node sleep.cjs        # every page asleep when hidden: contexts, sources, tracks, the session

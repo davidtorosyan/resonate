@@ -143,6 +143,7 @@ check(!meta().held[P4.id] && row('song', P4.id)?.data.xml?.path && row('song', P
 // 9. A delete elsewhere: gone in the event, practice cleared.
 device('C');
 localStorage.setItem('resonate.sing.practice', JSON.stringify({ [P1.id]: { x: 1 } }));
+localStorage.setItem('resonate.sing.eardata', JSON.stringify({ [P1.id]: { v: 1, p: 'x' }, keep: { v: 1 } })); // (Ear's store: device-only, goes with the song)
 device('A');
 await lib.removeSong(P1.id);
 await pass();
@@ -151,6 +152,7 @@ device('C'); events = [];
 C.queue = [P1.id, 's000zzz1']; C.jobs = [{ id: 'j1', replace: P1.id }, { id: 'j2', replace: 's000zzz1' }]; // (Convert all waiting for it; a kept job of it)
 await pass();
 check(!C.songs.has(P1.id) && events.some((e) => e.gone?.includes(P1.id)) && !(P1.id in JSON.parse(localStorage.getItem('resonate.sing.practice'))), `9: C deletes it, says gone, drops practice (${JSON.stringify(events.map((e) => e.gone))})`);
+check(!(P1.id in JSON.parse(localStorage.getItem('resonate.sing.eardata'))) && 'keep' in JSON.parse(localStorage.getItem('resonate.sing.eardata')), `9: …and Ear's store of it, the others kept (${localStorage.getItem('resonate.sing.eardata')})`);
 check(JSON.stringify(C.queue) === '["s000zzz1"]' && JSON.stringify(C.jobs.map((j) => j.id)) === '["j2"]', `9: out of C's conversion queue, its stored job deleted, the others kept (${JSON.stringify(C.queue)}, ${JSON.stringify(C.jobs)})`);
 
 // 9b. The space changes while the delete is applied (signed out in another tab): the queue and jobs are

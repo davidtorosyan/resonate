@@ -3,7 +3,7 @@
 // practice simulator. Built inside the page from the page's own modules (musicxml.js,
 // music.js, omr/fixscore.js), at the score's tempo (rate 1, no tapped map), no transpose.
 //
-// usage: node dumpnotes.cjs [file.musicxml …]
+// usage: [OUT=<dir>] node dumpnotes.cjs [file.musicxml …]
 //   no arguments: the bundled samples + the owner's converted scores found under /tmp/claude-0
 //   (Audiveris output with a real title, newest file per title). Those are local fixtures only:
 //   never copy them into the repo.
@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 
 const BASE = 'http://localhost:8097/resonate/';
-const OUT = path.join(__dirname, 'fixtures');
+const OUT = process.env.OUT || path.join(__dirname, 'fixtures'); // (OUT=<dir>: the owner's songs dumped outside the repo — earcases.mjs PLAY_SCORES)
 const BUNDLED = [{ id: 'amazing-grace', title: 'Amazing Grace', url: 'songs/amazing-grace.musicxml' }];
 
 function findConverted() {
