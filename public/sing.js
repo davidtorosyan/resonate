@@ -2481,15 +2481,19 @@ function earRegroup(newSong, was) {
     EAR.pick = null;
     EAR.secNew = null;
     closeEarLines(); // (its rows were the last song's)
+    // (the record may hold no line yet — ▶ Hear, an attempt or Slow write it before ‹ › ever does)
     const s = readAll(EK)[songId];
-    EAR.p = s && ps[s.pi]?.wk === s.p ? s.pi : Math.max(0, s?.p ? find(s.p, -1) : 0);
+    EAR.p = s?.p && Number.isInteger(s.pi) && ps[s.pi]?.wk === s.p ? s.pi : Math.max(0, s?.p ? find(s.p, -1) : 0);
     EAR.oct = [-24, -12, 12, 24].includes(s?.oct) ? s.oct : 0;
     EAR.octWas = EAR.oct;
   } else if (was && (ps[EAR.p]?.wk !== was.wk || ps[EAR.p]?.j0 !== was.j0)) {
-    const i = find(was.wk, was.j0);
+    // (not there by its wk — another verse's words —: the printed line at its place, not whatever line has its
+    // index now: the singer's own lines come and go with their words)
+    let i = find(was.wk, was.j0);
+    if (i < 0) i = ps.findIndex((p) => !p.own && p.j0 <= was.j0 && was.j0 < p.j1);
     if (i >= 0) EAR.p = i;
   }
-  if (EAR.p >= ps.length) EAR.p = 0;
+  if (!(EAR.p >= 0 && EAR.p < ps.length)) EAR.p = 0;
 }
 // The device's attempts so far (the first times' hints: ▶ Hear it first …).
 function earCount(kind) {
@@ -3228,6 +3232,7 @@ function renderEarNav(busy) {
     EAR.secNew = null;
   }
   const p = ps[EAR.p];
+  btn.toggleAttribute("data-words", !dots);
   btn.setAttribute("aria-label", `Lines: ${p ? `${p.own ? "your line " : ""}${EAR.p + 1} of ${ps.length}` : ""}`);
   btn.disabled = busy;
 }
@@ -3396,7 +3401,7 @@ function renderEar() {
   earRoom();
   if (!EAR.list.length) earBuildList();
   const ps = EAR.list;
-  if (EAR.p >= ps.length) EAR.p = 0;
+  if (!(EAR.p >= 0 && EAR.p < ps.length)) EAR.p = 0;
   const ph = earPh();
   const k = EAR.run?.kind, beatsTake = earBeatsTake();
   const busy = !!EAR.run || !!gblock;

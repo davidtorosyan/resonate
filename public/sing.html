@@ -174,12 +174,13 @@
       #ear[hidden] { display: none; }
       body[data-ear="true"] #lyrics, body[data-ear="true"] #lane, body[data-ear="true"] #map, body[data-ear="true"] #coach, body[data-ear="true"] #results { display: none !important; }
       .ear-top { display: flex; align-items: center; justify-content: center; gap: 1rem; }
-      .ear-nav { font: inherit; font-size: 1.4rem; width: 44px; height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05); color: #e8e8f0; cursor: pointer; }
+      .ear-nav { flex: none; font: inherit; font-size: 1.4rem; width: 44px; height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05); color: #e8e8f0; cursor: pointer; }
       .ear-nav:disabled { opacity: 0.35; cursor: default; }
       /* the lines: ‹ the dots (≤ 10 lines; the singer's own a diamond; ♩ or ♪ secured dim green, both bright; the open
          one larger) or the open line's first words ▾ › — a tap opens the Lines sheet */
       .ear-lines { font: inherit; display: inline-flex; align-items: center; justify-content: center; min-width: 96px; max-width: min(62vw, 22rem); min-height: 44px; padding: 0 0.9rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05); color: #e8e8f0; cursor: pointer; }
       .ear-lines:disabled { opacity: 0.6; cursor: default; }
+      .ear-lines[data-words] { width: min(62vw, 22rem); } /* (one width whatever the words: ‹ › stay under the thumb from line to line) */
       #ear-name { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; color: rgba(255,255,255,0.8); font-size: 0.9rem; }
       .eld { display: block; flex: none; width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.5); box-sizing: border-box; }
       .eld[data-own] { border-radius: 1.5px; transform: rotate(45deg) scale(0.86); }

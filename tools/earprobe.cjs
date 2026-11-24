@@ -3,6 +3,7 @@
 // the same plans in node).
 //   PLANS='[{"name":"late 3rd","mode":"free","f":1.1,"starts":{"2":0.3}}]' node earprobe.cjs
 //   PLANS=@file.json node earprobe.cjs            SONG=amazing-grace (default)   SHOTS=<dir> (a screenshot each)
+//   OWN='[[8,11]]'                                 (lines of the singer's own first — Pick words: notes [j0, j1); `phrase` counts them in)
 // A plan: { name, phrase (0-based, default 0), mode: "free" | "beats" | "hold" | "talk", ... } and the singer's
 //   fields (tools/lib/earsinger.cjs: every note index is the note's index in the phrase, 0-based) —
 //   free:  f (tempo factor: 1.2 = 20 % slower), wait (ms after ■ Done shows, default 1000), cents {i: ¢},
@@ -42,6 +43,19 @@ const SHOTS = process.env.SHOTS || '';
   page.on('pageerror', (e) => errs.push('pageerror ' + e.message));
   await page.goto(BASE + 'sing.html');
   await page.waitForFunction(() => window.resonateDebug?.().ear?.on && document.getElementById('ear-words').textContent, null, { timeout: 30000 });
+  // OWN='[[8,11]]': lines of the singer's own first (Pick words: notes [j0, j1) of the song) — a plan's `phrase` then
+  // counts them in, in song order (resonateDebug().ear.lines)
+  if (process.env.OWN) {
+    await page.evaluate(async (spans) => {
+      const v = document.getElementById('version').textContent.trim().replace(/^v/, '');
+      const P = await import(`./practice.js?v=${v}`), notes = window.resonateDebug().notes, song = window.resonateDebug().songId || localStorage.getItem('resonate.sing.song');
+      const all = JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}');
+      all[song] = { ...(all[song] || {}), own: spans.map(([a, b]) => ({ j0: a, j1: b, wk: P.phraseKeys(notes, Array.from({ length: b - a }, (_, k) => a + k)).wk })) };
+      localStorage.setItem('resonate.sing.eardata', JSON.stringify(all));
+    }, JSON.parse(process.env.OWN));
+    await page.reload();
+    await page.waitForFunction(() => window.resonateDebug?.().ear?.on && document.getElementById('ear-words').textContent, null, { timeout: 30000 });
+  }
   const S = (fn, arg) => page.evaluate(fn, arg);
   const until = (fn, ms = 20000, arg) => page.waitForFunction(fn, arg, { timeout: ms, polling: 50 });
   let k = 0;

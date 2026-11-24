@@ -638,7 +638,7 @@ async function singPage(browser) {
   ok(ts.v === 'r:1' && ts.rate === 1 && !left.t && left.sp === null && (await speedRow()) === 'Normal* Slow Slower', `7: ♩=80 from the menu — the score's tempo again, nothing left (${JSON.stringify(left)})`);
   // 8. (WP6) the lines: ‹ the dots › → the Lines sheet → a line opens, kept across a reload; Pick words → a line of the
   // singer's own (a diamond, ★ in the sheet), judged as any; ♩ ♪ secured after 2 of 3 “all” — the dot fills (and
-  // pulses once), the sheet's marks green, “Spot on — twice running”; a mark stays after a bad attempt; “Last time”
+  // pulses twice), the sheet's marks green, “Spot on — twice running”; a mark stays after a bad attempt; “Last time”
   // from the store after a reload; ✕ (two taps) takes the own line away
   const nav = () => page.evaluate(() => ({ dots: [...document.querySelectorAll('#ear-name .eld')].map((d) => `${d.hasAttribute('data-own') ? '◆' : '●'}${d.dataset.sec || ''}${d.hasAttribute('data-cur') ? '*' : ''}${d.hasAttribute('data-new') ? '!' : ''}`).join(' '), label: document.getElementById('ear-lines').getAttribute('aria-label'), off: document.getElementById('ear-lines').disabled }));
   const sheetRows = () => page.$$eval('#el-list .el-row', (xs) => xs.map((x) => ({ text: x.querySelector('.el-go').textContent, cur: x.hasAttribute('data-cur'), marks: [...x.querySelectorAll('.el-marks .ear-ic')].map((i) => i.hasAttribute('data-on')), x: x.querySelector('.el-x')?.textContent || null })));
@@ -674,7 +674,20 @@ async function singPage(browser) {
   ok(!e.linesOpen && e.ph.j0 === 8 && e.ph.j1 === 11 && e.ph.words === 'sweet the sound!' && e.lines.length === 5 && e.lines[1].own && e.p === 1 && dot(n8, 1) === '◆*' && n8.dots.split(' ').length === 5 && (await page.textContent('#ear-words')) === 'sweet the sound!', `8: “sweet the sound!” — its own line, after the line it's in (${n8.dots}; “${e.ph.words}”, notes ${e.ph.j0}–${e.ph.j1 - 1})`);
   const own0 = await page.evaluate(() => JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}')['amazing-grace']?.own);
   ok(own0?.length === 1 && own0[0].j0 === 8 && own0[0].j1 === 11 && own0[0].wk === e.ph.wk, `8: kept for the song (${JSON.stringify(own0)})`);
-  // secured: two attempts with every note and start right — the 2nd “Spot on — twice running”, the dot full and pulsing once
+  // (another verse: its words aren't the own line's — the printed line at its place opens, not whatever line has its
+  // index there; back in verse 1 from verse 2's 2nd line, that line's place again — not the own line at that index)
+  const verse8 = async (v) => { await page.evaluate((v) => { const s = document.getElementById('verse-select'); s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); }, v); await sleep(400); return ear(); };
+  const v2 = await verse8('2');
+  await page.click('#ear-next');
+  await sleep(150);
+  const v2b = await ear();
+  const v1 = await verse8('1');
+  ok(v2.p === 0 && !v2.ph.own && v2.ph.j0 <= 8 && v2.ph.j1 > 8 && v2b.p === 1 && v1.ph.j0 === v2b.ph.j0 && !v1.lines[v1.p].own && v1.ph.words === LINES[1][2], `8: verse 2 from the own line — “${v2.ph.words}”; back in verse 1 from verse 2's 2nd line — “${v1.ph.words}”`);
+  await page.click('#ear-prev');
+  await sleep(150);
+  e = await ear();
+  ok(e.p === 1 && e.ph.words === 'sweet the sound!', `8: ‹ — the own line again (“${e.ph.words}”)`);
+  // secured: two attempts with every note and start right — the 2nd “Spot on — twice running”, the dot full and pulsing (twice)
   e = await attempt({});
   const r1 = e.res;
   n8 = await nav();
@@ -724,13 +737,25 @@ async function singPage(browser) {
   e = await ear();
   const many = await page.evaluate(() => ({ w: document.querySelector('#ear-name .elw')?.textContent, v: document.querySelector('#ear-name .elv')?.textContent, sec: document.querySelector('#ear-name .eld')?.dataset.sec || null, label: document.getElementById('ear-lines').getAttribute('aria-label') }));
   ok(e.lines.length === 11 && e.p === 0 && many.w === '“Amazing grace…”' && many.v === '▾' && many.sec === e.lines[0].sec && many.label === 'Lines: 1 of 11', `8: 11 lines — the first words ▾ (${JSON.stringify(many)})`);
-  await page.click('#ear-next');
+  // (‹ › stay where they are whatever the words: tapped again and again, they're under the thumb)
+  const arrows = () => page.evaluate(() => ['ear-prev', 'ear-next'].map((id) => { const r = document.getElementById(id).getBoundingClientRect(); return `${Math.round(r.left)},${Math.round(r.top)}`; }).join(' '));
+  const at0 = [];
+  for (let i = 0; i < 4; i++) { at0.push(await arrows()); await page.click('#ear-next'); await sleep(60); }
+  for (let i = 0; i < 3; i++) { await page.click('#ear-prev'); await sleep(60); }
+  ok(new Set(at0).size === 1, `8: ‹ › don't move from line to line (${[...new Set(at0)].join(' / ')})`);
   const many2 = await page.evaluate(() => document.querySelector('#ear-name .elw')?.textContent);
   ok(/^★ “Amazing/.test(many2 || ''), `8: › — the next, one of the singer's own: “${many2}”`);
   await setOwn([]);
   await page.reload();
   await ready();
   ok((await ear()).lines.length === 4, '8: the own lines gone again — 4 lines');
+  // (a record with no line open yet — a first ▶ Hear or attempt writes the line's record before ‹ › ever saves one: Ear
+  // opens on the first line, not on nothing)
+  await page.evaluate(() => { const all = JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}'); const { p, pi, oct, ...rest } = all['amazing-grace'] || {}; all['amazing-grace'] = rest; localStorage.setItem('resonate.sing.eardata', JSON.stringify(all)); });
+  await page.reload();
+  await ready();
+  e = await ear();
+  ok(e.p === 0 && (await page.textContent('#ear-words')) === LINES[0][2], `8: a record with no line open yet — line ${e.p + 1} (“${await page.textContent('#ear-words')}”)`);
   // the store goes with the song (forget.js; sync.js's tombstones: synclib.mjs)
   ok(await page.evaluate(() => JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}')['amazing-grace']?.ph != null), '8: attempts kept per line');
   // (Lower the song in section 6 checks ▶ Hear and the next attempt in the new key)
