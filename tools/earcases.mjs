@@ -32,7 +32,8 @@
 //   cases sung with the browser's voice too, ONLY=owner: the owner's; TODO=0: hide the todo lines; VOICES=saw (or synth,saw): every
 //   case sung with those voices — a survey: what the browser's voice changes (judged as each case's saw tag, else its wp);
 //   JOBS=n: cases sung on n threads, default 3 — the page's pitch detector over an attempt takes ~2.5 s a run;
-//   PLANS='[…]' or @file.json: earprobe's plans in node instead of the cases — below)
+//   PLANS='[…]' or @file.json: earprobe's plans in node instead of the cases — below; MORE=1: the `more` cases too —
+//   round 2's variants, run with EAR_NOTES or ONLY as well)
 import { Worker, isMainThread, parentPort } from 'node:worker_threads';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -47,16 +48,17 @@ import * as TR from '../public/takerhythm.js';
 import { clickWave, CLICK_GAIN } from '../public/piano.js';
 import { gradeTake, MAX_SHIFT } from '../public/grade.js';
 import { MIN_RMS, ANALYSIS_LAG, FFT_SIZE } from '../public/pitch.js';
-import { noteName } from '../public/music.js';
+import { noteName, keyName, transposeKey } from '../public/music.js';
 import { PRACTICE, groupPhrases } from '../public/practice.js';
-import { EAR_PHRASE, judgeFree, judgeBeats, wordOf, countSets, gateFrames, EAR_HOLD, holdStart, holdStep, holdVerdict, noteTargets, earText, plainOf,
+import { EAR_PHRASE, judgeFree, judgeBeats, wordOf, countSets, gateFrames, EAR_HOLD, holdStart, holdStep, holdVerdict, noteTargets, earText, plainOf, hitOf,
   EAR_STORE, attemptOf, addAttempt, securedOf, secure, prevFrom, lastFrom, wordTokens, ownSpan } from '../public/ear.js';
 import { phraseKeys } from '../public/practice.js';
 
 const { segments, render, madeOf } = earsinger;
 const { summary, spotWhy } = earsum;
-// the work packages landed: their cases are judged (round 1's WP0–WP6; round 2's R2-0 … R2-3 — the Ear fix plan, round 2)
-const DONE = new Set(['WP0', 'WP1', 'WP2', 'WP3', 'WP4', 'WP5', 'WP6', 'R2-0']);
+// the work packages landed: their cases are judged (round 1's WP0–WP6; round 2's R2-0 … R2-3 — the Ear fix plan, round 2;
+// its WP1 in two: R2-1a — items 1–8, the judgment's first part —, R2-1b — items 9–15, the rest and the words)
+const DONE = new Set(['WP0', 'WP1', 'WP2', 'WP3', 'WP4', 'WP5', 'WP6', 'R2-0', 'R2-1a']);
 const V = !!process.env.V, ONLY = process.env.ONLY ? new RegExp(process.env.ONLY) : null, SHOW_TODO = process.env.TODO !== '0';
 const VOICES = process.env.VOICES ? process.env.VOICES.split(',') : null;
 
@@ -74,7 +76,7 @@ function songOf(name, dir) {
   const group = (params) => { const keep = { ...PRACTICE.phrase }; Object.assign(PRACTICE.phrase, params); try { return groupPhrases(s.notes, s.lines, s.opts).phrases; } finally { Object.assign(PRACTICE.phrase, keep); } };
   const score = { measures: fx.measures, meters: fx.meters, length: fx.length, measureOf: fx.measureOf, tempo: fx.tempo };
   const flats = (fx.fifths ?? 0) < 0;
-  return { name, title: fx.title, notes: s.notes, lines: s.lines, score, spq: fx.spq, flats, page: group(EAR_PHRASE), plan: group(PLAN_PHRASE) };
+  return { name, title: fx.title, notes: s.notes, lines: s.lines, score, spq: fx.spq, flats, fifths: fx.fifths ?? 0, page: group(EAR_PHRASE), plan: group(PLAN_PHRASE) };
 }
 const lineText = (S, ph) => `${ph.j0}–${ph.j1 - 1} ${(S.notes[ph.j1 - 1].t + S.notes[ph.j1 - 1].d - S.notes[ph.j0].t).toFixed(1)} s ${ph.syl} syl “${ph.words || ''}”`;
 if (isMainThread) for (const name of fixtureNames()) {
@@ -222,6 +224,9 @@ const loudOf = (plan) => (plan.vol != null ? (0.56 * plan.vol) / 0.075 : 1);
 // talk (or mode 'talk'): the browser's noise bursts instead of singing, either voice — from ■ Done showing (earprobe sets
 // the talk plan then; its noise doesn't wait for `wait`) to ■ Done.
 const talking = (plan) => plan.mode === 'talk' || !!plan.talk;
+// The Key menu as sing.js hands it to judgeFree (ctx.shiftOk) and earText (shift, keyName): the song already moved
+// `tr` semitones (a plan's tr — node only), ±12 at most. (octave: the singer's octave, EAR.oct — ctx.oct)
+const menuOf = (plan) => (s) => !!s && Math.abs((plan?.tr || 0) + s) <= 12;
 const tickOf = (seed) => (seed * 0.00137) % 0.005; // (where the singer's 5 ms ticks fall: another seed, another phase)
 function lineRound(S, ph, plan, { phase = 0, seed = 7, prev = null, voice = 'synth' } = {}) {
   const f = plan.f || 1, lead = plan.wait != null ? SHOWN + plan.wait / 1000 : LEAD;
@@ -240,7 +245,7 @@ function lineRound(S, ph, plan, { phase = 0, seed = 7, prev = null, voice = 'syn
   if (saw || talking(plan)) render(saw ? plan : { mode: 'talk' }, saw && segs.length ? madeOf(segs) : null, { audio: r.audio, sr: r.sr, t0: lead, from: talking(plan) ? SHOWN : 0, to: endT, free: true, tick: tickOf(seed), rand: rng(seed) });
   const fr = frames(r.audio, r.sr, { songT0: 0, latency: 0, fps: 60, from: FFT_SIZE / r.sr + phase, to: endT, gate: plan.gate });
   const ctx = { notes: S.notes, spq: S.spq, spq0: S.spq, name: (m) => noteName(m, S.flats), score: S.score, qToT: (q) => q * S.spq, feat: features(r.audio, r.sr), start: 0,
-    gateUntil: tail && plan.gateUntil !== false ? tail.t + tail.d + 0.1 : undefined, prev };
+    gateUntil: tail && plan.gateUntil !== false ? tail.t + tail.d + 0.1 : undefined, prev, oct: plan.octave || 0, shiftOk: menuOf(plan) };
   const t0 = performance.now();
   const res = judgeFree(ph, fr, endT, ctx);
   return { res, ms: performance.now() - t0, frames: fr, sung, truth: truthOf(plan, ns, segs, sung, false), voice };
@@ -346,7 +351,8 @@ const XS = {
 // able to move the song, the line's tempo heard — the score's ♩). R.S: the case's song, R.lines its lines.
 function wordsOf(r, ph, R) {
   const S = R.S || AG, lines = R.lines || AG.plan;
-  const T = earText({ ...r, kind: R.beats ? 'beats' : 'line', youAt: [0, 1] }, { notes: S.notes, name: (m) => noteName(m, S.flats), bpm: 60 / S.spq, voice: true, shift: (s) => Math.abs(s) <= 12, lastLine: lines.findIndex((x) => x.j0 === ph.j0) === lines.length - 1 });
+  const tr = R.plan?.tr || 0;
+  const T = earText({ ...r, kind: R.beats ? 'beats' : 'line', youAt: [0, 1] }, { notes: S.notes, name: (m) => noteName(m, S.flats), bpm: 60 / S.spq, voice: true, shift: menuOf(R.plan), keyName: (s) => keyName(transposeKey(S.fifths ?? 0, tr + s).fifths, false), lastLine: lines.findIndex((x) => x.j0 === ph.j0) === lines.length - 1 });
   return { win: T.win && plainOf(T.win), cue: T.cue && plainOf(T.cue), counts: T.counts.map((c) => `${c.icon === 'beat' ? '♩' : '♪'} ${c.text}`), tempo: T.tempo?.text ?? null,
     sounds: T.sounds.map((x) => x.label), next: T.next?.label ?? null, u: [...(T.win || []), ...(T.cue || [])].filter((x) => typeof x !== 'string').map((x) => x.u), T };
 }
@@ -380,12 +386,19 @@ const TRUTH = [
 
 // The cases. line: the fix plan's line (PLAN_PHRASE's); word: the text of the note at index `w` the case is about —
 // checked, so a case and its line can't drift apart.
+// (round 2's WP1a: the first note sung off — nothing cued or won on note 1; “grace” in early — “zing”'s last note, cut
+// short and sung right, never cued, drilled or counted off)
+const NOTE1 = ['nothing cued or won on note 1', (r, ph) => r.cue?.j !== ph.j0 + 1 && r.win?.j !== ph.j0 + 1];
+const NOT5 = ['note 5 sung right: hit or not judged, never cued or drilled', (r, ph) => { const g = r.fit?.g?.[5]; return r.cue?.j !== ph.j0 + 5 && !(r.drill || []).includes(5) && (hitOf(g) || g?.status === 'unclear'); }];
 const LINE = [];
 // (wp 'WP0': today's code already gets it right — a guard while WP2–WP4 rebuild the judgments)
 // (saw: the browser's voice too — a few of round 1's cases, guards that it agrees; ~15 in all, so the fast tier keeps its time)
 for (const f of [0.9, 1, 1.1, 1.3, 1.7, 2]) LINE.push({ name: `all right ×${f}`, line: 0, plan: { f }, wp: [0.9, 1.3].includes(f) ? 'WP0' : 'WP2', ...(f === 1 ? { saw: true } : {}), want: [X.notesAll, X.beatsAll, X.win('spot'), X.b(f), X.say({ win: '✓ Spot on', counts: ['♩ all on the beat', '♪ all in tune'], cue: null, sounds: ['▶ You'], next: 'Next line ›', tempo: Math.abs(1 / f - 1) <= 0.1 ? null : new RegExp(`^You sang it at ♩=(${[-1, 0, 1].map((d) => Math.round(80 / f) + d).join('|')})$`) })] });
 for (const f of [1, 1.1, 1.2, 1.4]) LINE.push({ name: `L2 all right ×${f}`, line: 2, plan: { f }, wp: [1, 1.2].includes(f) ? 'WP0' : 'WP2', want: [X.notesAll, X.beatsAll, X.noTiming] });
-for (const c of [-300, -500, 200, 100]) LINE.push({ name: `all ${c > 0 ? '+' : ''}${c}¢ (another key)`, line: 0, plan: { all: c }, wp: 'WP2', want: [X.noNotes, X.win('key'), X.cue('key', null, c < 0 ? 'lower' : 'higher'), X.keyS(c / 100), X.say({ win: '✓ The tune was right', cue: c < 0 ? 'Started lower than the piano' : 'Started higher than the piano', sounds: ['▶ You', c < 0 ? 'Lower the song' : 'Raise the song'], counts: /^(♩ (all|\d+) on the beat)?$/, next: null })] });
+// (round 2, WP1a: the button names the key it moves the song to — A♭ −3: F)
+const AGKEY = { '-10': 'B♭', '-9': 'B', '-7': 'D♭', '-5': 'E♭', '-3': 'F', '-2': 'G♭', 1: 'A', 2: 'B♭', 7: 'E♭' };
+const keyBtn = (s) => `${s < 0 ? 'Lower' : 'Raise'} the song to ${AGKEY[s]}`;
+for (const c of [-300, -500, 200, 100]) LINE.push({ name: `all ${c > 0 ? '+' : ''}${c}¢ (another key)`, line: 0, plan: { all: c }, wp: 'WP2', want: [X.noNotes, X.win('key'), X.cue('key', null, c < 0 ? 'lower' : 'higher'), X.keyS(c / 100), X.say({ win: '✓ The tune was right', cue: c < 0 ? 'Started lower than the piano' : 'Started higher than the piano', sounds: ['▶ You', keyBtn(c / 100)], counts: /^(♩ (all|\d+) on the beat)?$/, next: null })] });
 LINE.push(
   { name: 'all −70¢', line: 0, plan: { all: -70 }, wp: 'WP2', want: [X.cue('offset', null, 'higher'), X.beatsAll, X.say({ cue: 'A little low all the way', sounds: ['▶ You'], next: null })] },
   { name: 'all +45¢', line: 0, plan: { all: 45 }, wp: 'WP2', want: [X.notesAll, X.cue('sag', null, 'lower'), X.say({ cue: 'A touch high all the way', sounds: ['▶ You'], next: null })] },
@@ -394,13 +407,40 @@ LINE.push(
   { name: '“zing” +100¢', line: 0, w: 3, word: 'zing', plan: { cents: { 3: 100 } }, wp: 'WP2', saw: true, want: [X.cue('pitch', 3, 'lower'), X.beatsAll, X.say({ cue: '“Amazing” — aim lower', u: ['zing'], sounds: ['▶ Piano', '▶ You'], next: 'Practise that note ›', counts: ['♩ all on the beat', '♪ 10 in tune'] })] },
   { name: 'L2 “but” +200¢ (on the next note’s F4)', line: 2, w: 6, word: 'but', plan: { cents: { 6: 200 } }, wp: 'WP2', want: [X.notNotesAll, X.cue('pitch', 6, 'lower'), X.beatsAll, X.say({ cue: '“but” — aim lower', u: [] })] },
   // (the browser's voice: B2's blocker below, one run in two — “Was” (second note) — much lower)
-  { name: 'L3 “Was” +200¢ (on F4)', line: 3, w: 0, word: 'Was', plan: { cents: { 0: 200 } }, wp: 'WP2', saw: 'R2-1', want: [X.notNotesAll, X.cue('pitch', 0, 'lower'), X.beatsAll, X.say({ cue: '“Was” — aim lower', next: 'Practise that note ›' })] },
+  { name: 'L3 “Was” +200¢ (on F4)', line: 3, w: 0, word: 'Was', plan: { cents: { 0: 200 } }, wp: 'WP2', saw: 'R2-1a', want: [X.notNotesAll, X.cue('pitch', 0, 'lower'), X.beatsAll, X.say({ cue: '“Was” — aim lower', next: 'Practise that note ›' })] },
   // (round 2, B2's blocker — only with the browser's voice: a first note sung off had its start searched at the
   // pitch after it, the "step" that made took one start before it, and the notes before it were regraded onto their
   // neighbours: "“Amazing” (second note) — much lower" for a note sung right. rhythmsynth's voice glides into a
   // melisma's next note, the browser's gives it an attack of its own)
-  { name: 'the first note −300¢', line: 0, w: 0, word: 'A', plan: { cents: { 0: -300 } }, wp: 'R2-0', saw: 'R2-1', want: [X.cue('pitch', 0, 'higher'), X.beatsAll, ['nothing cued or won on note 1', (r, ph) => r.cue?.j !== ph.j0 + 1 && r.win?.j !== ph.j0 + 1], X.say({ cue: '“Amazing” — much higher', u: ['A'] })] },
-  { name: '“That” −300¢', line: 1, w: 0, word: 'That', plan: { cents: { 0: -300 } }, wp: 'R2-0', saw: 'R2-1', want: [X.cue('pitch', 0, 'higher'), X.say({ cue: '“That” — much higher' })] },
+  { name: 'the first note −300¢', line: 0, w: 0, word: 'A', plan: { cents: { 0: -300 } }, wp: 'R2-0', saw: 'R2-1a', want: [X.cue('pitch', 0, 'higher'), X.beatsAll, ['nothing cued or won on note 1', (r, ph) => r.cue?.j !== ph.j0 + 1 && r.win?.j !== ph.j0 + 1], X.say({ cue: '“Amazing” — much higher', u: ['A'] })] },
+  { name: '“That” −300¢', line: 1, w: 0, word: 'That', plan: { cents: { 0: -300 } }, wp: 'R2-0', saw: 'R2-1a', want: [X.cue('pitch', 0, 'higher'), X.say({ cue: '“That” — much higher' })] },
+  // (round 2's WP1a — the fix plan's WP1 table, items 1–8; `more`: run with MORE=1 or EAR_NOTES — kept out of the fast tier)
+  // WP1.1: a first note sung off is looked for at the singer's first sound, never on the note that has its pitch
+  ...[['+300', { 0: 300 }, 'lower', false], ['−500', { 0: -500 }, 'higher', true], ['−300, slower (×1.1)', { 0: -300 }, 'higher', true, { f: 1.1 }], ['−300, 2.5 s before singing', { 0: -300 }, 'higher', true, { wait: 2500 }]].map(([n, cents, dir, more, extra]) => ({ name: `the first note ${n}`, line: 0, w: 0, word: 'A', plan: { cents, ...extra }, wp: 'R2-1a', more, want: [X.cue('pitch', 0, dir), X.beatsAll, NOTE1, X.say({ cue: `“Amazing” — much ${dir}`, u: ['A'] })] })),
+  { name: 'the first two notes −300¢', line: 0, w: 0, word: 'A', plan: { cents: { 0: -300, 1: -300 } }, wp: 'R2-1a', saw: true, want: [['the cue on note 0 or 1, pointing higher', (r, ph) => r.cue?.kind === 'pitch' && [0, 1].includes(at(r, ph)) && r.cue.dir === 'higher'], X.beatsAll] },
+  { name: 'notes 0–5 −300¢, back by “grace” (sung so twice)', line: 0, before: { cents: { 0: -300, 1: -300, 2: -300, 3: -300, 4: -300, 5: -300 } }, plan: { cents: { 0: -300, 1: -300, 2: -300, 3: -300, 4: -300, 5: -300 } }, wp: 'R2-1a', want: [['no “right on it now”', (r) => r.win?.kind !== 'fixed'], ['the cue points higher', (r) => r.cue?.dir === 'higher'], X.beatsAll] },
+  // WP1.3: another key, decided on quality — a tone either way on every line (the written key's fit bent the tempo to
+  // take half the notes: the tune a tone down maps onto itself)
+  ...[0, 1, 2, 3].flatMap((line) => [-200, 200].map((c) => ({ name: `L${line} all ${c > 0 ? '+' : '−'}200¢`, line, plan: { all: c }, wp: 'R2-1a', saw: line === 0, more: line > 0, want: [X.cue('key', null, c < 0 ? 'lower' : 'higher'), X.keyS(c / 100), X.b(1), X.noNotes, X.win('key'), X.say({ win: '✓ The tune was right', sounds: ['▶ You', keyBtn(c / 100)] })] }))),
+  { name: 'all −300¢ with three notes further off', line: 0, plan: { all: -300, cents: { 2: -150, 6: 150, 9: -200 } }, wp: 'R2-1a', want: [X.cue('key', null, 'lower'), X.keyS(-3), ['no “The tune was right”', (r) => !['key', 'tune'].includes(r.win?.kind)]] },
+  { name: 'all −300¢ with two notes a little off', line: 0, plan: { all: -300, cents: { 3: 100, 8: 150 } }, wp: 'R2-1a', more: true, want: [X.cue('key', null, 'lower'), X.keyS(-3)] },
+  // WP1.4: the key's direction from the register sung (known gap 1: a fifth below read "higher", Raise)
+  ...[[-700, 'lower', -7], [-900, 'lower', -9], [-1000, 'lower', -10], [700, 'higher', 7]].map(([c, dir, sv]) => ({ name: `all ${c > 0 ? '+' : '−'}${Math.abs(c)}¢ (the direction from the register)`, line: 0, plan: { all: c }, wp: 'R2-1a', more: c === -1000 || c === -900, want: [X.cue('key', null, dir), X.keyS(sv), X.say({ cue: dir === 'lower' ? 'Started lower than the piano' : 'Started higher than the piano', sounds: ['▶ You', keyBtn(sv)] })] })),
+  // (the menu at its end: the song already 8 lower — only a shift the other way is left: "Sang it in another key")
+  { name: 'all −700¢, the song already 8 lower (the menu’s end)', line: 0, plan: { all: -700, tr: -8 }, wp: 'R2-1a', want: [X.cue('key', null, 'lower'), X.keyS(5), X.say({ cue: 'Sang it in another key', sounds: ['▶ You', 'Move the song to you'] })] },
+  // (the singer's octave: a man an octave down, the piano played there — EAR.oct −12)
+  { name: 'all −1400¢, the singer’s octave −12 (a tone lower than the piano heard)', line: 0, plan: { all: -1400, octave: -12 }, wp: 'R2-1a', more: true, want: [X.cue('key', null, 'lower'), X.keyS(-2)] },
+  // WP1.5: a pitch miss never costs a ♩
+  { name: '“grace” −250¢ and “sweet” +150¢: ♩ all', line: 0, plan: { cents: { 6: -250, 8: 150 } }, wp: 'R2-1a', want: [X.beatsAll] },
+  { name: 'L1 “me” −300¢ (on C5, the note before’s pitch)', line: 1, w: 9, word: 'me!', plan: { cents: { 9: -300 } }, wp: 'R2-1a', want: [X.beatsAll, X.cue('pitch', 9, 'higher')] },
+  // WP1.6 / 1.7: ♪ on each note's own span — an early start isn't the note before's pitch; a late short one isn't its own
+  ...[-0.15, -0.25].map((v) => ({ name: `“grace” in ${-v} s early (“zing”’s last note cut short)`, line: 0, w: 6, word: 'grace!', plan: { starts: { 6: v } }, wp: 'R2-1a', saw: v === -0.15, want: [X.cue('timing', 6, 'later'), NOT5] })),
+  ...[false, true].map((gap) => ({ name: `L1 “a” in 0.15 s late${gap ? ' (a breath before it)' : ''}`, line: 1, w: 3, word: 'a', plan: { starts: { 3: 0.15 }, ...(gap ? { gap: true } : {}) }, wp: 'R2-1a', more: gap, want: [X.cue('timing', 3, 'sooner'), ['“a” not cued nor drilled on pitch', (r, ph) => !(r.drill || []).includes(3) && r.cue?.kind !== 'pitch']] })),
+  { name: '“sound” alone in 0.4 s late (a lone late last start is cued)', line: 0, w: 10, word: 'sound!', plan: { starts: { 10: 0.4 } }, wp: 'R2-1a', want: [X.cue('timing', 10, 'sooner')] },
+  // WP1.8: a written fermata (Amazing Grace's on “ma”) leaves its note and the start after it to the singer
+  { name: '“ma” held on (its fermata): “zing” in 0.15 s late — not cued', line: 0, w: 3, word: 'zing', plan: { starts: { 3: 0.15 } }, wp: 'R2-1a', want: [X.noTiming, X.beatsAll] },
+  // WP1.8: a ritardando into the line's end is left alone (known gap 2)
+  ...[[3, { 6: 0.1, 7: 0.25, 8: 0.45 }], [0, { 8: 0.1, 9: 0.25, 10: 0.45 }], [0, { 9: 0.15, 10: 0.4 }], [0, { 9: 0.08, 10: 0.2 }]].flatMap(([line, starts], i) => [1, 1.1].map((f) => ({ name: `L${line} slowing into the end ${JSON.stringify(starts)}${f !== 1 ? ` ×${f}` : ''}`, line, plan: { starts: Object.fromEntries(Object.entries(starts).map(([k, v]) => [k, v * f])), f }, wp: 'R2-1a', more: f !== 1 || i === 1 || i === 2, want: [X.noTiming, X.beatsAll, ['rit set', (r) => r.rit != null]] }))),
   { name: '“grace” in 0.25 s late', line: 0, w: 6, word: 'grace!', plan: { starts: { 6: 0.25 } }, wp: 'WP2', saw: true, want: [X.cue('timing', 6, 'sooner'), X.say({ cue: 'Come in sooner on “grace”', sounds: ['▶ Piano', '▶ You'], next: 'Try it with the clicks ›' })] },
   { name: '“grace” in 0.4 s late', line: 0, w: 6, word: 'grace!', plan: { starts: { 6: 0.4 } }, wp: 'WP2', want: [X.cue('timing', 6, 'sooner'), X.say({ cue: 'Come in sooner on “grace”' })] },
   { name: '“the” in 0.25 s late', line: 0, w: 9, word: 'the', plan: { starts: { 9: 0.25 } }, wp: 'WP2', want: [X.cue('timing', 9, 'sooner'), X.say({ cue: 'Come in sooner on “the”' })] },
@@ -426,7 +466,7 @@ LINE.push(
   { name: '■ Done 1 s before “sound!” ends, still singing', line: 0, plan: { done: -1 }, wp: 'WP2', want: [X.notesAll, X.beatsAll, X.win('spot')] },
   { name: 'silent', line: 0, plan: { silent: true }, wp: 'WP0', want: [X.cue('silent'), ['no counts', (r) => !r.counts], X.say({ cue: 'Didn\'t hear you — sing a bit louder', counts: [], win: null, sounds: [], next: null })] },
   // (round 2, WP1.11: talking — the browser singer's noise bursts — isn't silence)
-  { name: 'talking (loud, no pitch)', line: 0, plan: { talk: true }, wp: 'R2-1', want: [X.cue('talk'), ['no counts', (r) => !r.counts]] },
+  { name: 'talking (loud, no pitch)', line: 0, plan: { talk: true }, wp: 'R2-1b', want: [X.cue('talk'), ['no counts', (r) => !r.counts]] },
   // (rule 4: what can't be followed says so — no counts, no win, nothing to fix that isn't there)
   { name: 'another tune (every note a few semitones off)', line: 0, plan: { wrong: { 0: 5, 1: -4, 2: 6, 3: -3, 4: 4, 5: 7, 6: -5, 7: 3, 8: -6, 9: 5, 10: 4 } }, wp: 'WP2', want: [X.cue('nofit'), ['no counts, no win', (r) => !r.counts && !r.win], X.say({ cue: 'Couldn\'t follow that one', sounds: ['▶ Hear'], counts: [], next: null })] },
   { name: 'far too slow (×2.6)', line: 0, plan: { f: 2.6 }, wp: 'WP2', want: [X.cue('nofit'), ['no counts, no win', (r) => !r.counts && !r.win]] },
@@ -501,23 +541,23 @@ const BEATS = [
 // The owner's songs (round 2's WP0; EAR_NOTES: their dumps, outside the repo — no words of theirs here): { song (its
 // dump), j (a note, by its index in the song: the case is on Ear's line holding it), mode (Line / Beats), plan (the
 // singer's — its note indices the SONG's; the line's taken from them), want, wp, saw }. The rows of the fix plan's
-// WP1 / WP2 tables (R2-1 / R2-2: judged once those land); the count-in row is WP2's own (partCountIn).
+// WP1 / WP2 tables (R2-1a / R2-2: judged once those land); the count-in row is WP2's own (partCountIn).
 const OWN = [
   // WP1.3: another key, decided on quality (a tone low)
-  { song: 'daniel-krieger-tyler-mehlenbacher-and-daniel-tannenbaum', j: 21, name: 'all −200¢', plan: { all: -200 }, wp: 'R2-1', want: [X.cue('key', null, 'lower'), X.keyS(-2)] },
+  { song: 'daniel-krieger-tyler-mehlenbacher-and-daniel-tannenbaum', j: 21, name: 'all −200¢', plan: { all: -200 }, wp: 'R2-1a', want: [X.cue('key', null, 'lower'), X.keyS(-2)] },
   // WP1.2: a syllable left out of a run of one pitch — the tempo held near the one heard
-  ...[1, 2].map((j) => ({ song: 'x-f', j, name: `#${j} not sung (a run of one pitch)`, plan: { drop: [j] }, wp: 'R2-1', saw: true, want: [X.b(1, 0.05), XS.cue('missed', j), ['no pitch cue', (r) => r.cue?.kind !== 'pitch'], ['♩ ≥ the starts − 1', (r, ph, R) => (r.counts?.beats ?? -1) >= countSets(ph, R.S.notes, R.S.spq).starts.length - 1]] })),
-  { song: 'piano-man', j: 10, name: '#10 not sung (a run of one pitch)', plan: { drop: [10] }, wp: 'R2-1', want: [X.b(1, 0.05), XS.cue('missed', 10)] },
+  ...[1, 2].map((j) => ({ song: 'x-f', j, name: `#${j} not sung (a run of one pitch)`, plan: { drop: [j] }, wp: 'R2-1a', saw: true, want: [X.b(1, 0.05), XS.cue('missed', j), ['no pitch cue', (r) => r.cue?.kind !== 'pitch'], ['♩ ≥ the starts − 1', (r, ph, R) => (r.counts?.beats ?? -1) >= countSets(ph, R.S.notes, R.S.spq).starts.length - 1]] })),
+  { song: 'piano-man', j: 10, name: '#10 not sung (a run of one pitch)', plan: { drop: [10] }, wp: 'R2-1a', want: [X.b(1, 0.05), XS.cue('missed', 10)] },
   // WP1.6: a flat note between equal pitches — ♪ on each note's own span
-  { song: 'piano-man', j: 237, name: '#237 −70¢ (between equal pitches)', plan: { cents: { 237: -70 } }, wp: 'R2-1', saw: true, want: [XS.cue('pitch', 237, 'higher'), ['“a touch higher”', (r) => r.cue?.size === 'touch']] },
-  ...[246, 247, 250].map((j) => ({ song: 'piano-man', j, name: `#${j} −100¢ (in a run of equal pitches)`, plan: { cents: { [j]: -100 } }, wp: 'R2-1', saw: true, want: [XS.cue('pitch', j, 'higher')] })),
-  { song: 'piano-man', j: 250, name: '#250 −100¢, sung so twice (no “right on it now”)', before: { cents: { 250: -100 } }, plan: { cents: { 250: -100 } }, wp: 'R2-1', saw: true, want: [XS.cue('pitch', 250, 'higher'), ['no “fixed” win', (r) => r.win?.kind !== 'fixed']] },
+  { song: 'piano-man', j: 237, name: '#237 −70¢ (between equal pitches)', plan: { cents: { 237: -70 } }, wp: 'R2-1a', saw: true, want: [XS.cue('pitch', 237, 'higher'), ['“a touch higher”', (r) => r.cue?.size === 'touch']] },
+  ...[246, 247, 250].map((j) => ({ song: 'piano-man', j, name: `#${j} −100¢ (in a run of equal pitches)`, plan: { cents: { [j]: -100 } }, wp: 'R2-1a', saw: true, want: [XS.cue('pitch', j, 'higher')] })),
+  { song: 'piano-man', j: 250, name: '#250 −100¢, sung so twice (no “right on it now”)', before: { cents: { 250: -100 } }, plan: { cents: { 250: -100 } }, wp: 'R2-1a', saw: true, want: [XS.cue('pitch', 250, 'higher'), ['no “fixed” win', (r) => r.win?.kind !== 'fixed']] },
   // WP1.8: an accelerando over the line isn't a note held
-  { song: '55-cg', j: 0, name: 'speeding up 8 % over the line', plan: { curve: -0.08 }, wp: 'R2-1', want: [['no held cue', (r) => r.cue?.kind !== 'held']] },
+  { song: '55-cg', j: 0, name: 'speeding up 8 % over the line', plan: { curve: -0.08 }, wp: 'R2-1a', want: [['no held cue', (r) => r.cue?.kind !== 'held']] },
   // WP1.5 / Q2-2: a late start on a repeated pitch (legato: the note before held into it)
-  { song: 'piano-man', j: 91, name: '#91 in 0.25 s late, legato on one pitch', plan: { starts: { 91: 0.25 } }, wp: 'R2-1', want: [XS.notSpot, ['a timing cue on it, or ♩ all and “Every note in tune”', (r) => (r.cue?.kind === 'timing' && r.cue.j === 91) || (!!r.counts?.beatsAll && r.win?.kind === 'every')]] },
-  { song: 'blzmaj7', j: 31, name: '#31 in 0.2 s late (a run of one pitch)', plan: { starts: { 31: 0.2 } }, wp: 'R2-1', want: [XS.notSpot] },
-  { song: 'daniel-krieger-tyler-mehlenbacher-and-daniel-tannenbaum', j: 90, name: '#90 in 0.12 s late', plan: { starts: { 90: 0.12 } }, wp: 'R2-1', want: [['♩ 3', (r) => r.counts?.beats === 3], XS.cue('timing', 90, 'sooner')] },
+  { song: 'piano-man', j: 91, name: '#91 in 0.25 s late, legato on one pitch', plan: { starts: { 91: 0.25 } }, wp: 'R2-1a', want: [XS.notSpot, ['a timing cue on it, or ♩ all and “Every note in tune”', (r) => (r.cue?.kind === 'timing' && r.cue.j === 91) || (!!r.counts?.beatsAll && r.win?.kind === 'every')]] },
+  { song: 'blzmaj7', j: 31, name: '#31 in 0.2 s late (a run of one pitch)', plan: { starts: { 31: 0.2 } }, wp: 'R2-1a', want: [XS.notSpot] },
+  { song: 'daniel-krieger-tyler-mehlenbacher-and-daniel-tannenbaum', j: 90, name: '#90 in 0.12 s late', plan: { starts: { 90: 0.12 } }, wp: 'R2-1a', want: [['♩ 3', (r) => r.counts?.beats === 3], XS.cue('timing', 90, 'sooner')] },
   // WP2: Beats
   { song: 'hey-little-songbird-p-6', j: 0, mode: 'Beats', name: 'every start 0.15 s late', plan: { late: 0.15 }, wp: 'R2-2', want: [['one verdict (every start one class)', (r) => { const st = Object.values(r.starts || {}).filter((x) => x.reached && !x.missing); return st.every((x) => x.on === st[0]?.on); }], ['no “Came in on time” beside a take-wide cue', (r) => !(r.win?.kind === 'entry' && ['steady', 'hair', 'slip', 'drift'].includes(r.cue?.kind))]] },
   { song: 'x-f', j: 16, mode: 'Beats', name: 'on the click, three notes off pitch', plan: { wrong: { 16: -3, 19: 2, 21: -2 } }, wp: 'R2-2', saw: true, want: [X.beatsAll, X.noTiming, ['#16 not missing', (r, ph) => !r.starts?.[16 - ph.j0]?.missing]] },
@@ -664,7 +704,7 @@ function evalCase(k) {
   for (const voice of VOICES || (c.saw ? ['synth', 'saw'] : ['synth'])) {
     const runs = VARIANTS.map((v) => { const vv = { ...v, voice }, b = before ? round(S, ph, before, vv).res : null, x = round(S, ph, plan, b ? { ...vv, prev: lastOf(b) } : vv); x.before = b; return x; });
     const R = runs[0], r = R.res;
-    Object.assign(R, { beats: mode === 'Beats', S, lines, j: c.j });
+    Object.assign(R, { beats: mode === 'Beats', S, lines, j: c.j, plan });
     const failed = [...c.want, ...TRUTH, ...WORDS].filter(([, fn]) => !fn(r, ph, R)).map(([w]) => w);
     const same = runs.every((x) => verdict(x.res) === verdict(r));
     const wp = voice === 'saw' && typeof c.saw === 'string' ? c.saw : c.wp;
@@ -704,7 +744,10 @@ if (!isMainThread) {
     if (DONE.has('WP1')) check('Ear’s lines are the printed lines (WP1.12)', same);
     else { (todo.WP1 ||= []).push('lines'); if (SHOW_TODO) console.log(`todo WP1  Ear's lines are the printed lines (WP1.12): ${same ? 'passes now — make it a check' : `${AG.page.length} lines here (maxSyl ${EAR_PHRASE.maxSyl})`}`); }
   }
-  const ks = CASES.map((_, k) => k).filter((k) => !ONLY || ONLY.test(labelOf(CASES[k])));
+  // (`more` cases — variants of the round-2 rows: other tempi, lines, waits — run with MORE=1, EAR_NOTES or ONLY)
+  const MORE_ON = process.env.MORE === '1' || !!OWN_DIR || !!ONLY;
+  const ks = CASES.map((_, k) => k).filter((k) => (!ONLY || ONLY.test(labelOf(CASES[k]))) && (MORE_ON || !CASES[k][1].more));
+  const moreLeft = MORE_ON ? 0 : CASES.filter(([, c]) => c.more).length;
   const jobs = Math.max(1, Math.min(Number(process.env.JOBS) || Math.min(3, os.availableParallelism?.() ?? os.cpus().length), ks.length));
   const results = new Array(CASES.length);
   let next = 0, shown = 0, skipped = 0;
@@ -734,6 +777,7 @@ if (!isMainThread) {
   console.log(`(the slowest judgment ${slowest.toFixed(0)} ms)`);
   if (!PLANS && (!ONLY || ONLY.test('Notes'))) notesCases();
   const todos = Object.entries(todo).map(([k, v]) => `${k} ${v.length}`).join(', ');
+  if (moreLeft) console.log(`(${moreLeft} more cases — variants of round 2's rows — not run: MORE=1 or EAR_NOTES runs them)`);
   if (skipped) console.log(`skip: ${skipped} of the owner's cases — EAR_NOTES=<dir of their dumps> (OUT=<dir> node dumpnotes.cjs <their MusicXML>) runs them; a skip is a gap to close before shipping`);
   console.log(`${pass} passed, ${fail} failed${skipped ? `, ${skipped} skipped` : ''}${todos ? `, todo: ${todos}` : ''}`);
   process.exitCode = fail ? 1 : 0;

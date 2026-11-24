@@ -277,6 +277,7 @@ function applySong() {
     pass: n.pass ?? 1, // the verse pass of the repeat it's sung in (musicxml.js unfold)
     measure: n.measure, // written measure
     mi: measureAt(n.onset), // played measure index (score.measureOf[mi] = its written one)
+    ...(n.fermata ? { fermata: true } : {}), // (a written fermata: Ear doesn't time it or the start after it)
   }));
   lines = lyricLines(notesForVerse(score, verse));
   lineOf = [];
@@ -2420,7 +2421,9 @@ const earRefMidi = (j) => earMidi(j) + EAR.oct;
 const earNoteName = (j, oct = EAR.oct) => (notes[j].name || noteName(earMidi(j))).replace(/(-?\d+)$/, (d) => String(Number(d) + Math.round(oct / 12)));
 // (the judgments are ear.js's, on the song's notes as they're shown: tools/earcases.mjs runs the same code —
 // the count sets at the song's own tempo, the meter on the singer's clock)
-const earCtx = (more = {}) => ({ notes, spq: secPerQuarter(), spq0: songSpq(), name: noteName, score, qToT, ...more });
+// (oct: the singer's octave — the key's direction is where the voice was against the piano heard; shiftOk: the Key
+// menu can move the song s semitones — ear.js picks the key's shift from those)
+const earCtx = (more = {}) => ({ notes, spq: secPerQuarter(), spq0: songSpq(), name: noteName, score, qToT, oct: EAR.oct || 0, shiftOk: (s) => earCanShift(s), ...more });
 const earSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // A line of this song (two with the same tune and words are one), a view (+ the mode), the key it's heard in.
 const earLineKey = (ph) => `${songId}|${ph.wk || ph.mk || ph.j0}`;
@@ -3162,6 +3165,7 @@ function earNextPrinted() {
 const earTextOf = (res, old = false) => E.earText(res, {
   notes, name: noteName, old, bpm: res.bpm ?? null, lastLine: earNextPrinted() < 0,
   voice: !!res.voice && (res.kind !== "beats" || !!res.youAt), shift: (s) => earCanShift(s) && !session && !gblock,
+  keyName: (s) => (typeof transpose === "number" ? keyOf(transpose + s) : null), // ("Lower the song to F")
 });
 // Normal · Slow · Slower: which one the ♩ menu holds (100 / 80 / 70 % of the song's own tempo), or null.
 function earSpeedNow() {

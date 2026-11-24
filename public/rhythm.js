@@ -453,6 +453,16 @@ export function findOnsets(notes, feat, start, frames, metric, { songT0, rt, lat
   return { notes: out, lead, leadN, leadBy: by, seed: seedBest > 0 ? (seed + seedEnd) / 2 : null };
 }
 
+// The vowel-band attacks of a recording (findOnsets' own: a ≥ 6 dB rise that holds), on the clock its first
+// sample sits at `start` (Ear's free attempt: the attempt's s; nothing moved by a trip) → [{ t, s (dB) }] in time
+// order. Ear's line fit lines the singer's starts up with them (repeated pitches are told apart only by their attacks).
+export function attackTimes(feat, start) {
+  if (!feat?.mid?.length) return [];
+  const t = hopTimes(feat, start, 0, 0);
+  const { L, floor } = envelope(feat.mid);
+  return attacks(t, L, floor).map((a) => ({ t: a.t, s: a.s }));
+}
+
 // ---------------------------------------------------------------------------
 // Guided spans (COACHING.md §3.3): the first sound, and whether anything was sung at all —
 // from the recording alone, never from the pitch grading (a note sung a beat late can be graded

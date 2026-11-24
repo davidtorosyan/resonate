@@ -97,6 +97,7 @@ const slug = (s) => s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-'
             measure: n.measure,
             mi,
             barQ: barQOf(mi),
+            fermata: n.fermata || undefined,
           };
         });
         byVerse[verse] = { notes, lines: lyricLines(ns) };

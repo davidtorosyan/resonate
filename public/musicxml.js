@@ -165,6 +165,8 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
       }
 
       const tieTypes = [...el.querySelectorAll(":scope > tie")].map((t) => t.getAttribute("type"));
+      // (a written fermata: Ear leaves the note and the start after it to the singer's own time)
+      const fermata = !!el.querySelector(":scope > notations > fermata");
       const verses = {};
       const own = [...el.querySelectorAll(":scope > lyric")];
       const ownNums = new Set(own.map((ly) => ly.getAttribute("number") || "1"));
@@ -188,6 +190,7 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
       if (tieTypes.includes("stop") && last && last.midi === midi && last.tieOpen) {
         last.dur += dur;
         last.tieOpen = tieTypes.includes("start");
+        if (fermata) last.fermata = true;
         lineStart = false;
         continue;
       }
@@ -199,11 +202,12 @@ export function parseMusicXml(xmlText, fallbackName = "Untitled") {
           Object.keys(last.verses).length && Math.abs(last.onset + last.dur - onset) < 1e-6) {
         last.dur += dur;
         last.tieOpen = tieTypes.includes("start");
+        if (fermata) last.fermata = true;
         lineStart = false;
         continue;
       }
       lineStart = false;
-      notes.push({ midi, letter, alter, onset, dur, measure: mNum, mi, verses, restBefore: restPending, tieOpen: tieTypes.includes("start") });
+      notes.push({ midi, letter, alter, onset, dur, measure: mNum, mi, verses, restBefore: restPending, tieOpen: tieTypes.includes("start"), ...(fermata ? { fermata: true } : {}) });
       restPending = false;
     }
     measureStart += maxPos;
@@ -511,7 +515,7 @@ export function notesForVerse(score, verse) {
   let lastSyl = null;
   return score.notes.map((n) => {
     const v = n.verses[verse];
-    const base = { midi: n.midi, letter: n.letter, alter: n.alter, onset: n.onset, dur: n.dur, measure: n.measure, restBefore: n.restBefore, pass: n.pass ?? 1 };
+    const base = { midi: n.midi, letter: n.letter, alter: n.alter, onset: n.onset, dur: n.dur, measure: n.measure, restBefore: n.restBefore, pass: n.pass ?? 1, ...(n.fermata ? { fermata: true } : {}) };
     if (v) {
       lastSyl = v;
       return { ...base, text: v.text, syllabic: v.syllabic, melisma: false };

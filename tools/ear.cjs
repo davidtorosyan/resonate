@@ -4,10 +4,12 @@
 //   0 the lines are the printed lines (the fix plan's WP1.12, Q-A): Amazing Grace's four hymn lines; ▶ pulses
 //   1 the free attempt — on its own time, 15 % slower, its 3rd note 2 semitones flat: the tempo found
 //     (within 6 %), ♪ one short with the cue on that note ("· higher"), ♩ 7 or more, an answer in < 1.5 s
-//   1b the tune right 3 semitones down (WP2): "The tune was right", "Started lower than the piano", no ♪, key −3;
-//     ♩ from the starts; judged in ≤ 400 ms
+//   1b the tune right 3 semitones down (WP2): "The tune was right", "Started lower than the piano", no ♪, key −3,
+//     "Lower the song to F"; ♩ from the starts; judged in ≤ 600 ms
 //   1c line 3 (a same-pitch repeat: “once was” on E♭5s), 20 % slower, every note right: all of them, no cue
 //   1d line 4, its last note (“see.”, 6 s) let go after 1.5 s, ■ Done tapped while it still sounds: all of them
+//   1e round 2's WP1a: the first note 300¢ low — the cue on it, "much higher", ♩ all; a fifth below — "Started lower
+//     than the piano", "Lower the song to D♭" (the key's direction from the register)
 //   2 again, 10 % faster, every note right: "♩ all of them · ♪ all of them" — ● Sing tapped as ▶ First note ends:
 //     the attempt keeps the note's tail out (gated at MIN_RMS until it's gone: the fix plan's rule 1)
 //   2b Line → Notes → Line: that result again, dimmed under "Last time" (WP1.9)
@@ -164,9 +166,9 @@ async function singPage(browser) {
   e = await attempt({ all: -300 });
   r = e.res;
   ok(r.key?.kind === 'key' && r.key.s === -3 && r.counts?.notes === null && r.win?.kind === 'key' && r.cue?.kind === 'key' && r.cue.dir === 'lower', `1b: 3 semitones down — key ${JSON.stringify(r.key)}, ♪ ${r.counts?.notes}, win ${r.win?.kind}, cue ${r.cue?.kind} ${r.cue?.dir}`);
-  ok(/The tune was right/.test(e.ui) && /lower than the piano/.test(e.ui) && !/in tune/.test(e.ui) && e.words.sounds.join(' · ') === '▶ You · Lower the song' && !e.words.next, `1b: on screen — “${e.ui}”, ${JSON.stringify(e.words.sounds)}`);
+  ok(/The tune was right/.test(e.ui) && /lower than the piano/.test(e.ui) && !/in tune/.test(e.ui) && e.words.sounds.join(' · ') === '▶ You · Lower the song to F' && !e.words.next, `1b: on screen — “${e.ui}”, ${JSON.stringify(e.words.sounds)}`);
   ok(r.counts?.beatsAll && r.onsets?.measured >= 4, `1b: ♩ judged from the starts all the same (${JSON.stringify(r.onsets)}, ♩ ${r.counts?.beatsAll ? 'all' : r.counts?.beats})`);
-  ok(typeof r.ms === 'number' && r.ms <= 400, `1b: judged in ${r.ms} ms (two fits: at 0 and at the offset)`);
+  ok(typeof r.ms === 'number' && r.ms <= 600, `1b: judged in ${r.ms} ms (up to four fits: at 0 and at the key's candidates)`);
   // (Lower the song: the Key menu −3 — "Key A♭ → F" in the result's place, that result gone with the old key, ▶ Hear it
   // first again; back in the written key, the result there again — dimmed)
   await page.click('#ear-res button[data-act="cue-key"]');
@@ -200,6 +202,16 @@ async function singPage(browser) {
   r = e.res;
   ok(e.p === 3 && r.counts?.notesAll && r.counts?.beatsAll && r.win?.kind === 'spot' && !r.cue && Math.abs(r.fit?.b - 1) < 0.04, `1d: line 4, its long last note let go early and ■ Done while it sounds — “${e.ui}” (b ${r.fit?.b?.toFixed(2)})`);
   await page.click('#ear-prev'); await page.click('#ear-prev'); await page.click('#ear-prev');
+  // 1e. round 2's WP1a, with the browser's voice (where B2 found them): the first note sung 300¢ low is that note's
+  // ("“Amazing” — much higher", ♩ all — it blamed the next note, "much lower"); a fifth below reads lower, and the
+  // button names the key ("Lower the song to D♭" — it said "higher", Raise)
+  e = await attempt({ cents: { 0: -300 } });
+  r = e.res;
+  const a0 = await page.evaluate(() => window.resonateDebug().ear.ph.j0);
+  ok(e.p === 0 && r.cue?.kind === 'pitch' && r.cue.j === a0 && r.cue.dir === 'higher' && e.words.cue === '“Amazing” — much higher' && r.counts?.beatsAll, `1e: the first note 300¢ low — “${e.ui}” (cue ${r.cue?.kind} @${r.cue?.j - a0} ${r.cue?.dir})`);
+  e = await attempt({ all: -700 });
+  r = e.res;
+  ok(r.cue?.kind === 'key' && r.cue.dir === 'lower' && r.key?.s === -7 && /Started lower than the piano/.test(e.ui) && e.words.sounds.includes('Lower the song to D♭'), `1e: a fifth below — “${e.ui}”, ${JSON.stringify(e.words.sounds)} (key ${JSON.stringify(r.key)})`);
   // 2. again, all right → all of them; ● Sing tapped the moment ▶ First note has played: its tail kept out
   await page.evaluate(() => { window.__sing = null; });
   await page.click('#ear-acts button[data-act="first"]');
