@@ -6,7 +6,8 @@
 //         dev(j) → seconds early (−) / late (+) for note j's vowel onset, rel(j) → seconds the
 //         release moves (− = cut short), silent: Set of j, clicks: [song times] (count-in + guide),
 //         clickLevel, piano: level of the melody guide bleeding in, noise, vibrato (cents),
-//         breathy: Set of j (slow 120 ms attack), until (song time to stop).
+//         breathy: Set of j (slow 120 ms attack), loud(j) → the syllable's level (1: as recorded; its
+//         consonant too), until (song time to stop).
 // The "true" onset is the vowel onset (where a sung syllable's beat is felt); consonants come
 // before it: unvoiced ones as a noise burst, voiced ones as a quiet hum.
 
@@ -62,20 +63,20 @@ export function sing(notes, o = {}) {
     if (off <= on + 0.03) continue;
     truth.push({ j, onset: on - rt, release: off - rt });
     for (let m = j + 1; m <= k; m++) truth.push({ j: m, onset: notes[m].t + dev(m) - 0.02, glide: true }); // (the middle of its 40 ms pitch move)
-    // Consonant before the vowel.
-    const txt = n.text || '';
+    // Consonant before the vowel (at the syllable's level: loud(j)).
+    const txt = n.text || '', lv = o.loud?.(j) ?? 1;
     if (UNVOICED.test(txt)) {
       const len = 0.05 + 0.03 * rand(), hpf = biquad('hp', 2500, 0.7);
-      for (let i = at(on - len); i < at(on); i++) { const e = Math.sin(Math.PI * (i - at(on - len)) / (len * sr)); audio[i] += 0.05 * e * hpf(rand() * 2 - 1); }
+      for (let i = at(on - len); i < at(on); i++) { const e = Math.sin(Math.PI * (i - at(on - len)) / (len * sr)); audio[i] += lv * 0.05 * e * hpf(rand() * 2 - 1); }
     } else if (VOICED.test(txt)) {
       // m n l w…: a hum at the note's pitch, strong below 500 Hz (the fundamental and its
       // 2nd harmonic), humDb under the vowel's level, for 60 ms.
-      const len = 0.06, f = hz(n.midi), g = 0.12 * 0.35 * 2.2 * 10 ** (-(o.humDb ?? 6) / 20);
+      const len = 0.06, f = hz(n.midi), g = lv * 0.12 * 0.35 * 2.2 * 10 ** (-(o.humDb ?? 6) / 20);
       for (let i = at(on - len); i < at(on); i++) { const e = Math.min(1, (i - at(on - len)) / (0.015 * sr)); audio[i] += g * e * (Math.sin(2 * Math.PI * f * (i / sr)) + 0.5 * Math.sin(4 * Math.PI * f * (i / sr))); }
     }
     // The vowel.
     const attack = o.breathy?.has(j) ? 0.12 : 0.03, decay = 0.05;
-    const amp = 0.12 * (o.loud?.(j) ?? 1);
+    const amp = 0.12 * lv;
     for (let i = at(on); i < at(off); i++) {
       const t = i / sr - songT0, age = t - on;
       let env = Math.min(1, age / attack);

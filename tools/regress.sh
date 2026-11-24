@@ -1,8 +1,8 @@
 #!/bin/bash
 # Resonate's regression run: one verdict per suite, a table at the end, exit 1 if anything failed.
 #
-#   tools/regress.sh fast    node only, no server (~2 min; npm test in tools/): the analysis modules (grading,
-#                            tapped timing, tempo marks, coaching words, guided practice, rhythm), the engine
+#   tools/regress.sh fast    node only, no server (~4 min; npm test in tools/): the analysis modules (grading,
+#                            tapped timing, tempo marks, coaching words, guided practice, rhythm, Ear), the engine
 #                            trace, the import event contract, the sync engine against a fake cloud, the MCP
 #                            catalogue, the ?v= stamps (vcheck). Run it before every push.
 #   tools/regress.sh [main]  the fast tier, then the browser suites against the test server (BASE), the
@@ -77,6 +77,7 @@ run tempomark 60 node tempomark.mjs             # pdfprep.js tempoMark: "= 104",
 run coachcases 60 node coachcases.mjs           # coach.js: every verdict's words; no digits, %, fail, score
 run practicecases 120 node practicecases.mjs    # practice.js: phrases, verdicts, the ladder, a 500-step fuzz
 run guidedverdicts 300 node guidedverdicts.mjs  # synthetic rounds through features → grades → verdicts → words
+run earcases 600 node earcases.mjs              # Ear (E8): synthetic singers → ear.js judgeFree / judgeBeats; the fix plan's cases (todo until their package lands)
 run rhythmcases 600 node rhythmcases.mjs        # rhythm.js on a synthetic singer (+ the guided cases)
 run fingercases 120 node fingercases.mjs        # finger.js (E7): hands + fingers, R6, invariants, 3000 notes, golden
 run fingersurvey 120 node fingersurvey.mjs      # finger.js on dumpkeys.cjs's Amazing Grace (+ PLAY_SCORES's dumps): invariants, every hand

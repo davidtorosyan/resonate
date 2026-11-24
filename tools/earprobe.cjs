@@ -1,15 +1,24 @@
 // Ear probe: run attempts with a simulated singer and print what Ear made of each — for checking its
-// judgments (sing.js "Ear"; docs/EAR.md). Not a pass/fail suite.
-//   PLANS='[{"name":"late 3rd","mode":"free","f":1.1,"jit":{"2":0.3}}]' node earprobe.cjs
+// judgments (sing.js "Ear", public/ear.js; docs/EAR.md). Not a pass/fail suite (tools/earcases.mjs judges
+// the same plans in node).
+//   PLANS='[{"name":"late 3rd","mode":"free","f":1.1,"starts":{"2":0.3}}]' node earprobe.cjs
 //   PLANS=@file.json node earprobe.cjs            SONG=amazing-grace (default)   SHOTS=<dir> (a screenshot each)
-// A plan: { name, phrase (0-based, default 0), mode: "free" | "beats" | "hold" | "talk", ... } —
-//   free:  f (tempo factor: 1.2 = 20 % slower), wait (ms after ■ Done shows, default 1000), cents {i: ¢} (i = the
-//          note's index in the phrase, 0-based), all (¢ every note), oct (semitones), jit {i: s late}, drop [i],
-//          scoop (¢ a note starts flat by, for 100 ms), silent: true
-//   beats: late (s every note), cents, all, oct, slow (0.9 / 0.8 / 0.7: Beats' Slower first)
-//   hold:  by (semitones off the target), cents; target (index in Notes' targets, default the current)
-// Prints one JSON line per plan: the plan, the result on screen, the counts, the win, the cue, the fitted
-// tempo (b) and start (a), and per note: its text, the target, the grade's status and its deviation (¢).
+// A plan: { name, phrase (0-based, default 0), mode: "free" | "beats" | "hold" | "talk", ... } and the singer's
+//   fields (tools/lib/earsinger.cjs: every note index is the note's index in the phrase, 0-based) —
+//   free:  f (tempo factor: 1.2 = 20 % slower), wait (ms after ■ Done shows, default 1000), cents {i: ¢},
+//          all (¢ every note), wrong {i: semitones}, oct, drift (¢ by the end), vib (¢), scoop (¢),
+//          jit {i: s late, the whole note}, starts {i: s, only its start} (+ gap: true), drop [i], stop: i,
+//          false {n, gap}, extra: n, hum {m, d}, vol, silent: true. ■ Done is tapped 0.7 s after the singer's
+//          last note.
+//   beats: late (s every note), f, cents, all, oct, drift, vib, jit, starts, drop, vol; slow (0.9 / 0.8 / 0.7:
+//          Beats' Slower first)
+//   hold:  by (semitones off the target), cents, vib; target (index in Notes' targets, default the current)
+// Prints one JSON line per plan: the plan, the result on screen, the counts, the win and the cue (text, kind,
+// dir, note), the fitted tempo (b) and start (a), the onsets measured (of the starts), the key offset found
+// (c, ¢) and the notes not reached — each null where this build's judgment doesn't give it — and per note:
+// its text, the target, where the singer started it (sung: s after the phrase's start, moved: s off its
+// written place × f — a false start's restart counted from the restart), the grade's status and its
+// deviation (¢), Beats' class.
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
@@ -55,14 +64,18 @@ const SHOTS = process.env.SHOTS || '';
         await until(() => document.getElementById('sing').textContent.includes('Done'), 10000);
         const wait = plan.wait ?? 1000;
         const sung = plan.mode === 'talk' ? { mode: 'talk' } : plan.silent ? null : { ...plan, mode: 'free' };
+        await S(() => { window.__sung = null; });
         await S(([p, w]) => { window.__sing = p && { ...p, at: performance.now() + w }; }, [sung, wait]);
         const dur = await S(() => { const d = window.resonateDebug(); const a = d.ear.ph.j0, z = d.ear.ph.j1; return d.notes[z - 1].t + d.notes[z - 1].d - d.notes[a].t; });
-        await sleep(wait + dur * (plan.f || 1) * 1000 + 700);
+        // (the singer's own last note: a false start, `extra`, `stop` move it)
+        await sleep(100);
+        const last = sung && sung.mode === 'free' ? await S(() => { const u = window.__sung; return u && u.segs.length ? Math.max(...u.segs.map((o) => o.e)) : null; }) : null;
+        await sleep(Math.max(0, wait - 100 + (last ?? dur * (plan.f || 1)) * 1000 + 700));
         await page.click('#sing');
         await until(() => { const e = window.resonateDebug().ear; return e.res && e.run === null; }, 15000);
       } else if (mode === 'beats') {
         for (let s = 0; s < 3 && plan.slow && (await S(() => window.resonateDebug().ear.slow ?? 1)) > plan.slow + 1e-6; s++) { await page.click('#ear-acts button[data-act="slow"]'); await sleep(80); }
-        await S((p) => { window.__sing = { ...p, mode: 'beats' }; }, plan);
+        await S((p) => { window.__sung = null; window.__sing = { ...p, mode: 'beats' }; }, plan);
         await page.click('#sing');
         await until(() => !!window.resonateDebug().session, 10000);
         await until(() => !window.resonateDebug().session && window.resonateDebug().ear.run === null, 60000);
@@ -86,14 +99,20 @@ const SHOTS = process.env.SHOTS || '';
       const notesUi = document.getElementById('ear-notes').hidden ? '' : document.getElementById('ear-notes').innerText.replace(/\s*\n\s*/g, ' ').trim();
       const ph = e.ph;
       const fit = r?.fit;
-      const take = d.take;
+      const u = window.__sung; // the singer's plan as sung (its last time through a note: a false start's restart)
+      const sungOf = (i) => { const o = u?.segs ? [...u.segs].reverse().find((x) => x.i === i) : null; return o ? { s: +o.s.toFixed(3), moved: +(o.s - o.w).toFixed(3) } : null; };
       const perNote = ph ? Array.from({ length: ph.j1 - ph.j0 }, (_, i) => {
         const j = ph.j0 + i, n = d.notes[j];
         const g = r?.grades?.[i] || null;
         const rn = r?.kind === 'beats' ? (r.rn?.[i] || null) : null;
-        return { i, text: n.text || '', d: +n.d.toFixed(2), target: n.midi + (n.shift || 0), status: g?.status ?? null, dev: g?.dev != null ? Math.round(g.dev * 100) : null, shift: g?.shift != null ? +g.shift.toFixed(3) : null, beat: rn ? { cls: rn.cls, dev: rn.dev != null ? +rn.dev.toFixed(3) : null, rdev: rn.rdev != null ? +rn.rdev.toFixed(3) : null } : undefined };
+        const su = u ? sungOf(i) : undefined;
+        return { i, text: n.text || '', t: +n.t.toFixed(3), mel: !!n.melisma, d: +n.d.toFixed(2), target: n.midi + (n.shift || 0), sung: su, status: g?.status ?? null, dev: g?.dev != null ? Math.round(g.dev * 100) : null, shift: g?.shift != null ? +g.shift.toFixed(3) : null, beat: rn ? { cls: rn.cls, dev: rn.dev != null ? +rn.dev.toFixed(3) : null, rdev: rn.rdev != null ? +rn.rdev.toFixed(3) : null } : undefined };
       }) : [];
-      return { phrase: e.p, words: document.getElementById('ear-words').textContent, ui, notesUi, counts: r?.counts || null, win: r?.win?.text || null, cue: r?.cue?.text || null, fit: fit ? { a: +fit.a.toFixed(3), b: +fit.b.toFixed(3) } : null, notes: e.notes ? { msg: e.notes.msg, done: e.notes.done, targets: e.notes.targets } : null, perNote };
+      const { win, cue } = r || {};
+      return { phrase: e.p, words: document.getElementById('ear-words').textContent, ui, notesUi, counts: r?.counts || null,
+        win: win?.text || null, winKind: win?.kind ?? null, cue: cue?.text || null, cueKind: cue?.kind ?? null, cueDir: cue?.dir ?? null, cueAt: cue?.j != null && ph ? cue.j - ph.j0 : null,
+        fit: fit ? { a: +fit.a.toFixed(3), b: +fit.b.toFixed(3) } : null, onsets: r?.onsets ?? null, offset: r?.key?.c ?? null, key: r?.key ?? null, notReached: r?.notReached ?? null,
+        notes: e.notes ? { msg: e.notes.msg, done: e.notes.done, targets: e.notes.targets } : null, perNote };
     }));
     if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); const f = path.join(SHOTS, `probe-${String(k).padStart(2, '0')}.png`); await page.screenshot({ path: f }); out.shot = f; }
     console.log(JSON.stringify(out));
