@@ -303,13 +303,15 @@ function voicings(frames, shiftT) {
 const KIND_W = { attack: 1, glide: 0.9, voicing: 0.6 };
 
 // One onset per note (or none), in order, near where the score puts it, close to the take's
-// steady lead and preferring strong cues — dynamic programming over the notes.
-function align(notes, cands, lead) {
+// steady lead and preferring strong cues — dynamic programming over the notes. costs: { dev,
+// step, stepRest } (per second; the defaults DEV_COST, STEP_COST, STEP_COST_REST).
+function align(notes, cands, lead, costs = {}) {
   const n = notes.length;
   if (!n) return [];
+  const devCost = costs.dev ?? DEV_COST, stepCost = costs.step ?? STEP_COST, stepRest = costs.stepRest ?? STEP_COST_REST;
   const opts = notes.map((nt, j) => [...cands[j].map((x) => ({ ...x, dev: x.t - nt.t })), { none: true, t: nt.t + lead, dev: null, s: 0 }]);
   const reward = (x) => (x.none ? 0 : (Math.min(x.s, 24) / 8) * KIND_W[x.kind]);
-  const local = (x) => (x.none ? 0 : DEV_COST * Math.abs(x.dev - lead)) - reward(x);
+  const local = (x) => (x.none ? 0 : devCost * Math.abs(x.dev - lead)) - reward(x);
   const cost = opts.map((o) => o.map(() => Infinity)), from = opts.map((o) => o.map(() => -1));
   opts[0].forEach((x, a) => { cost[0][a] = local(x); });
   for (let j = 1; j < n; j++) {
@@ -320,7 +322,7 @@ function align(notes, cands, lead) {
         if (cost[j - 1][a] === Infinity) return;
         if (!x.none && !y.none && x.t < y.t + MIN_GAP) return;
         let c = cost[j - 1][a] + lx;
-        if (!x.none && !y.none) c += (joined ? STEP_COST : STEP_COST_REST) * Math.abs(x.dev - y.dev);
+        if (!x.none && !y.none) c += (joined ? stepCost : stepRest) * Math.abs(x.dev - y.dev);
         if (c < cost[j][b]) { cost[j][b] = c; from[j][b] = a; }
       });
     });
@@ -345,13 +347,15 @@ export const tolFlag = (u) => Math.min(0.16, Math.max(0.08, 0.33 * u));
 // time), and for guided spans (COACHING.md §3.3; the defaults are the whole take's):
 // loose (glides on wrong pitches, In time rounds), seedRange (s: where the first guess at the
 // lead may lie — −0.15…+0.25 in a calibrated round; a whole take allows an unmeasured
-// Bluetooth delay).
+// Bluetooth delay), costs (align's prior, per second: { dev, step, stepRest } — Ear's free attempt
+// times each start on its own, a held note's step not smoothed away), keep(j, t) (whether an attack or a
+// voicing at t may be note j's — Ear: not one followed by the note before's pitch).
 // → { notes: [{ dev (s, + = late) | null, conf, kind, rel? (release − written end, s) }], lead,
 //     leadN (on-beat, non-entry attacks the lead is the median of; 0 when it came from other
 //     cues), leadBy ("on" | "any" | "glide" — which notes set it — | "seed" | null),
 //     seed (the grid search's best offset, s — the middle of its best run; null when no attack
 //     lined up: compare with lead to see the lead wasn't locked a division off) }
-export function findOnsets(notes, feat, start, frames, metric, { songT0, rt, latency, endT = Infinity, unsung = null, loose = false, seedRange = [-0.15, 0.45] }) {
+export function findOnsets(notes, feat, start, frames, metric, { songT0, rt, latency, endT = Infinity, unsung = null, loose = false, seedRange = [-0.15, 0.45], costs = undefined, keep = null }) {
   const trip = rt ?? latency;
   const hopS = feat.hop / feat.sr;
   const t = hopTimes(feat, start, songT0, trip);
@@ -378,9 +382,9 @@ export function findOnsets(notes, feat, start, frames, metric, { songT0, rt, lat
       if (!live[j]) return [];
       const lo = n.t + lead - win[j].early, hi = n.t + lead + win[j].late;
       const c = [];
-      if (!n.melisma) for (const a of att) if (a.t >= lo && a.t <= hi) c.push(a);
+      if (!n.melisma) for (const a of att) if (a.t >= lo && a.t <= hi && (!keep || keep(j, a.t))) c.push(a);
       if (gl.has(j)) c.push(gl.get(j));
-      if (!n.melisma) for (const v of voi) if (v.t >= lo && v.t <= hi) c.push(v);
+      if (!n.melisma) for (const v of voi) if (v.t >= lo && v.t <= hi && (!keep || keep(j, v.t))) c.push(v);
       return c;
     });
   };
@@ -411,12 +415,12 @@ export function findOnsets(notes, feat, start, frames, metric, { songT0, rt, lat
     else if (inBest && score >= seedBest - 1e-9) seedEnd = off;
     else inBest = false;
   }
-  let lead = seedBest > 0 ? seed : 0, pick = align(notes, candsFor(lead), lead);
+  let lead = seedBest > 0 ? seed : 0, pick = align(notes, candsFor(lead), lead, costs);
   let by = seedBest > 0 ? "seed" : null, leadN = 0;
   const l1 = steadyLead(pick);
   if (l1 !== null) {
     lead = l1.lead;
-    pick = align(notes, candsFor(lead), lead);
+    pick = align(notes, candsFor(lead), lead, costs);
     const l2 = steadyLead(pick) ?? l1;
     lead = l2.lead;
     by = l2.by;

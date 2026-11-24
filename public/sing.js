@@ -4,7 +4,7 @@
 
 import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=102";
 import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=102";
-import { openMic, createReader, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=102";
+import { openMic, createReader, soundGone, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=102";
 import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=102";
 import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=102";
 import * as P from "./practice.js?v=102";
@@ -2275,7 +2275,14 @@ const EAR = {
   notesBy: {},      // song|line → Notes' state: { targets: [offsets in the line], i, done: Set (of target i), tries, said8, msg }
   flash: "",        // a word on the stage instead of a result: "Stopped — not counted"
   heard: new Set(), // song|line|key: ▶ Hear has played it (the round ▶ stops pulsing)
+  sound: null,      // our own ▶'s sound: { ac, end } (its context's time it has stopped) — a mic opened right after
+                    //   hears its tail (pitch.js soundGone): the attempt gates at MIN_RMS until it's gone
 };
+// (a playPiano note rings on RELEASE × 6 after its end: piano.js)
+const EAR_TAIL = 0.72;
+// Our own ▶'s tail: until when (performance.now() ms) a mic may still hear it (a context put to sleep or closed
+// mid-sound stopped it: its clock stands still).
+const earSettle = () => (EAR.sound && EAR.sound.ac.state === "running" ? Math.min(soundGone(EAR.sound.ac, EAR.sound.end), performance.now() + 3000) : 0);
 let earFresh = true; // (a score just loaded: earRegroup starts Ear afresh)
 const EK = "resonate.sing.eardata"; // { songId: { v: 1, p: the line open (its wk), pi: its index } } — device only (DATA_KEYS: shelved with the account; forget.js)
 const EH = "resonate.sing.earhint"; // { line, beats, hold: attempts judged on this device } — a device pref: the first times' hints
@@ -2285,8 +2292,9 @@ const earActive = () => guiding() && !drill;
 const earPh = () => psong?.phrases[Math.min(EAR.p, psong.phrases.length - 1)] || null;
 const earJs = E.phraseJs;
 const earMidi = (j) => notes[j].midi + (notes[j].shift || 0);
-// (the judgments are ear.js's, on the song's notes as they're shown: tools/earcases.mjs runs the same code)
-const earCtx = () => ({ notes, spq: secPerQuarter(), name: noteName });
+// (the judgments are ear.js's, on the song's notes as they're shown: tools/earcases.mjs runs the same code —
+// the count sets at the song's own tempo, the meter on the singer's clock)
+const earCtx = (more = {}) => ({ notes, spq: secPerQuarter(), spq0: songSpq(), name: noteName, score, qToT, ...more });
 const earSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // A line of this song (two with the same tune and words are one), a view (+ the mode), the key it's heard in.
 const earLineKey = (ph) => `${songId}|${ph.wk || ph.mk || ph.j0}`;
@@ -2382,7 +2390,10 @@ async function earPlay({ first = false, click = false, midi = null, dur = 1.2, k
   if (attempt) EAR.flash = "Stopped — not counted";
   const ph = earPh();
   if (!ph && midi == null) return false;
-  const run = (EAR.run = { kind, nodes: [], stop() { for (const n of this.nodes) { try { n.stop?.(); } catch {} try { n.disconnect?.(); } catch {} } } });
+  const run = (EAR.run = { kind, nodes: [], stop() {
+    for (const n of this.nodes) { try { n.stop?.(); } catch {} try { n.disconnect?.(); } catch {} }
+    if (this.sound && EAR.sound === this.sound) this.sound.end = Math.min(this.sound.end, this.sound.ac.currentTime + 0.02); // (cut: gone at once)
+  } });
   if (midi == null && !first && EAR.mode === "line") EAR.heard.add(earHeardKey(ph));
   updateButtons();
   renderEar();
@@ -2394,12 +2405,14 @@ async function earPlay({ first = false, click = false, midi = null, dur = 1.2, k
   if (!piano) { earEnd(run); return false; }
   const t0 = ac.currentTime + 0.15;
   let end = t0;
+  run.sound = EAR.sound = { ac, end: t0 };
   if (midi != null) {
     const h = holdPiano(ac, piano, t0, midi, 2.0);
     h.release(t0 + dur);
     run.nodes.push({ stop: () => h.release(ac.currentTime, 0.02) });
     end = t0 + dur + 0.3;
     run.stopsAt = () => h.stopsAt();
+    run.sound.end = h.stopsAt();
   } else {
     const js = first ? [ph.j0] : earJs(ph);
     const T0 = notes[ph.j0].t;
@@ -2416,7 +2429,9 @@ async function earPlay({ first = false, click = false, midi = null, dur = 1.2, k
       const n = notes[j], when = t0 + lead + (n.t - T0), d = first ? Math.min(1.5, n.d) : n.d;
       playPiano(ac, piano, when, d, earMidi(j), 1.4, run.nodes);
       end = Math.max(end, when + d + 0.3);
+      run.sound.end = Math.max(run.sound.end, when + Math.max(0.12, d) + EAR_TAIL);
     }
+    if (click) run.sound.end = Math.max(run.sound.end, end); // (a click is gone in ~30 ms)
   }
   const left = Math.max(0, end - ac.currentTime) * 1000;
   run.done = earSleep(left);
@@ -2450,12 +2465,19 @@ async function earFree() {
   }
   micWasOpen = true;
   if (EAR.run !== run) { mic.close(); ac.close().catch(() => {}); return; }
-  const cap = await startCapture(ac, mic.source, {}).catch(() => null);
-  const t0 = ac.currentTime;
+  // (the recording's energy as it comes, for the starts: rhythm.js features, as a take's)
+  const features = makeFeatures(ac.sampleRate);
+  const cap = await startCapture(ac, mic.source, { onChunk: (c) => features.push(c) }).catch(() => null);
+  const t0 = ac.currentTime, p0 = performance.now();
   const dur = notes[ph.j1 - 1].t + notes[ph.j1 - 1].d - ph.t0;
+  // Our own ▶ may still ring in the mic: until it's gone a frame counts only above MIN_RMS (this device's
+  // calibrated gate can be under it — the tail would read as the note sung: the line starts on the ▶'s last).
+  const gate0 = mic.read.gate, settle = earSettle();
+  run.gateUntil = settle > p0 ? (settle - p0) / 1000 - ANALYSIS_LAG : -Infinity;
   let raf = 0, firstAt = null;
   const tick = () => {
     if (EAR.run !== run) return;
+    mic.read.gate = performance.now() < settle ? Math.max(gate0, MIN_RMS) : gate0;
     const r = mic.read();
     const t = ac.currentTime - t0 - ANALYSIS_LAG;
     run.frames.push({ t, midi: r.midi, rms: r.rms });
@@ -2477,7 +2499,7 @@ async function earFree() {
     const voice = await cap?.finish().catch(() => null);
     mic.close();
     if (voice) voice.start -= t0; // (the attempt's clock: frame times)
-    return { frames: run.frames, voice, endT: ac.currentTime - t0 };
+    return { frames: run.frames, voice, endT: ac.currentTime - t0, feat: voice ? features.result() : null };
   };
   run.stop = () => { run.finish(); ac.close().catch(() => {}); };
 }
@@ -2486,11 +2508,12 @@ async function earDone() {
   if (!run || run.kind !== "free" || !run.ready) return;
   const think = (EAR.run = { kind: "think" });
   renderEar(); updateButtons();
-  const { frames, voice, endT } = await run.finish();
+  const { frames, voice, endT, feat } = await run.finish();
   run.ac.close().catch(() => {});
   await earSleep(50);
   if (EAR.run !== think) return; // (stopped meanwhile: another song, the page hidden)
-  const res = E.judgeFree(run.ph, frames, endT, earCtx());
+  const prev = EAR.last[`${earViewKey("line", run.ph)}|${rate}`] || null;
+  const res = E.judgeFree(run.ph, frames, endT, earCtx({ feat, start: voice ? voice.start : null, gateUntil: run.gateUntil, prev }));
   res.voice = voice;
   earShow(run.ph, "line", res);
   earCount("line");
@@ -2528,15 +2551,19 @@ async function earBeats() {
   flushRemote();
 }
 
-// The result of an attempt, kept for its line and mode: counts with ↑ against the last one of the same kind at
-// the same tempo.
+// The result of an attempt, kept for its line and mode: counts with ↑ against the last whole one of the same
+// kind at the same tempo (EAR.last: what judgeFree compares with — its counts, win and cue; a silent attempt,
+// one Ear couldn't follow or one stopped early isn't a baseline).
 function earShow(ph, kind, res) {
   const view = earViewKey(kind, ph), base = `${view}|${rate}`;
   const prev = EAR.last[base];
-  res.up = { beats: prev?.counts?.beats != null && res.counts?.beats != null && res.counts.beats > prev.counts.beats, notes: !!(prev?.counts && res.counts && res.counts.notes > prev.counts.notes) };
+  if (kind !== "line") {
+    res.up = { beats: prev?.counts?.beats != null && res.counts?.beats != null && res.counts.beats > prev.counts.beats, notes: false };
+    res.whole = !!res.counts;
+  }
   res.kind = kind;
   res.view = view;
-  EAR.last[base] = { counts: res.counts };
+  if (res.whole) EAR.last[base] = { counts: res.counts, whole: true, win: res.win && { kind: res.win.kind, j: res.win.j ?? null, sub: res.win.sub ?? null }, cue: res.cue && { kind: res.cue.kind, j: res.cue.j ?? null } };
   EAR.latest[view] = res;
   EAR.res = res;
 }
@@ -2734,20 +2761,19 @@ function renderEar() {
     const res = shown.res;
     if (shown.old) { out.toggleAttribute("data-old", true); out.append(Object.assign(document.createElement("div"), { className: "ear-last", textContent: "Last time" })); }
     if (res.counts) {
-      const c = document.createElement("div");
-      c.className = "ear-counts";
+      // (a count not judged — another key's ♪, too few starts measured — or at 0 is left out)
       const up = shown.old ? {} : res.up || {};
-      const beats = res.counts.beats == null ? "♩ —" : res.counts.beatsAll ? "♩ all of them" : `♩ ${res.counts.beats}${up.beats ? " ↑" : ""}`;
-      const tune = res.kind === "beats" ? "" : res.counts.notesAll ? "♪ all of them" : `♪ ${res.counts.notes}${up.notes ? " ↑" : ""}`;
-      c.textContent = [beats, tune].filter(Boolean).join("  ·  ");
-      out.append(c);
+      const beats = !res.counts.beats && !res.counts.beatsAll ? "" : res.counts.beatsAll ? "♩ all of them" : `♩ ${res.counts.beats}${up.beats ? " ↑" : ""}`;
+      const tune = res.kind === "beats" || (!res.counts.notes && !res.counts.notesAll) ? "" : res.counts.notesAll ? "♪ all of them" : `♪ ${res.counts.notes}${up.notes ? " ↑" : ""}`;
+      const text = [beats, tune].filter(Boolean).join("  ·  ");
+      if (text) out.append(Object.assign(document.createElement("div"), { className: "ear-counts", textContent: text }));
     }
     if (res.win) out.append(Object.assign(document.createElement("div"), { className: "ear-win", textContent: `✓ ${res.win.text}` }));
     if (res.cue) {
       const c = document.createElement("div");
       c.className = "ear-cue";
       c.append(res.cue.text);
-      if (res.cue.j != null && notes[res.cue.j]) c.append(" ", earButton("▶ note", "cue-note", "chip"));
+      if (res.cue.j != null && notes[res.cue.j] && res.cue.kind !== "short") c.append(" ", earButton("▶ note", "cue-note", "chip")); // (the rest's ▶: WP5)
       if (res.cue.at && res.voice && res.kind === "line") c.append(" ", earButton("▶ you", "cue-you", "chip"));
       out.append(c);
     }

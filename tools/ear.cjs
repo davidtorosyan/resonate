@@ -4,6 +4,9 @@
 //   0 the lines are the printed lines (the fix plan's WP1.12, Q-A): Amazing Grace's four hymn lines; ▶ pulses
 //   1 the free attempt — on its own time, 15 % slower, its 3rd note 2 semitones flat: the tempo found
 //     (within 6 %), ♪ one short with the cue on that note ("· higher"), ♩ 7 or more, an answer in < 1.5 s
+//   1b the tune right 3 semitones down (WP2): "The tune was right", "Started lower than the piano", no ♪, key −3;
+//     ♩ from the starts; judged in ≤ 400 ms
+//   1c line 3 (a same-pitch repeat: “once was” on E♭5s), 20 % slower, every note right: all of them, no cue
 //   2 again, 10 % faster, every note right: "♩ all of them · ♪ all of them"
 //   2b Line → Notes → Line: that result again, dimmed under "Last time" (WP1.9)
 //   2c ▶ First note, then the dock's ▶, in the middle of an attempt (the song, key, tempo and ⚙ locked): it
@@ -96,6 +99,30 @@ async function singPage(browser) {
   ok(ms < 1500, `1: the answer in ${ms} ms`);
   ok(!(await page.evaluate(() => getComputedStyle(document.getElementById('lane')).display !== 'none')), '1: no lane shown');
   ok(!(await btns()).pulse && (await ear()).hints.line === 1, `1: sung — ▶ no longer pulses; the device's Line attempts: ${(await ear()).hints.line}`);
+  // 1b. the tune right, 3 semitones down (another key — WP2 rule 3): its own words, no ♪, the key it was in
+  const attempt = async (plan, lead = 900) => {
+    await page.click('#sing');
+    await page.waitForFunction(() => document.getElementById('sing').textContent === '■ Done', null, { timeout: 10000 });
+    await page.evaluate(([p, w]) => { window.__sing = { ...p, mode: 'free', at: performance.now() + w }; }, [plan, lead]);
+    const d = await page.evaluate(() => { const x = window.resonateDebug(); const a = x.ear.ph.j0, z = x.ear.ph.j1; return x.notes[z - 1].t + x.notes[z - 1].d - x.notes[a].t; });
+    await sleep(lead + d * (plan.f || 1) * 1000 + 800);
+    await page.click('#sing');
+    await page.waitForFunction(() => { const x = window.resonateDebug().ear; return x.res && x.run === null; }, null, { timeout: 15000 });
+    await page.evaluate(() => { window.__sing = null; });
+    return ear();
+  };
+  e = await attempt({ all: -300 });
+  r = e.res;
+  ok(r.key?.kind === 'key' && r.key.s === -3 && r.counts?.notes === null && r.win?.kind === 'key' && r.cue?.kind === 'key' && r.cue.dir === 'lower', `1b: 3 semitones down — key ${JSON.stringify(r.key)}, ♪ ${r.counts?.notes}, win ${r.win?.kind}, cue ${r.cue?.kind} ${r.cue?.dir}`);
+  ok(/The tune was right/.test(e.ui) && /lower than the piano/.test(e.ui) && !/♪/.test(e.ui), `1b: on screen — “${e.ui}”`);
+  ok(r.counts?.beatsAll && r.onsets?.measured >= 4, `1b: ♩ judged from the starts all the same (${JSON.stringify(r.onsets)}, ♩ ${r.counts?.beatsAll ? 'all' : r.counts?.beats})`);
+  ok(typeof r.ms === 'number' && r.ms <= 400, `1b: judged in ${r.ms} ms (two fits: at 0 and at the offset)`);
+  // 1c. line 3 (“I once was lost…”: three E♭5s running — a same-pitch repeat), 20 % slower, every note right
+  await page.click('#ear-next'); await page.click('#ear-next');
+  e = await attempt({ f: 1.2 });
+  r = e.res;
+  ok(e.p === 2 && r.counts?.notesAll && r.counts?.beatsAll && r.win?.kind === 'spot' && !r.cue, `1c: line 3 at its own speed, all right — “${e.ui}” (b ${r.fit?.b?.toFixed(2)}, onsets ${JSON.stringify(r.onsets)})`);
+  await page.click('#ear-prev'); await page.click('#ear-prev');
   // 2. again, all right → all of them
   await page.evaluate(() => { window.__sing = null; });
   await page.click('#sing');
@@ -107,6 +134,7 @@ async function singPage(browser) {
   e = await ear();
   r = e.res;
   ok(r.counts?.notesAll && r.counts?.beatsAll && /all of them.*all of them/.test(e.ui) && !e.old, `2: every note right — “${e.ui}”`);
+  const nLine = e.hints.line;
   // 2b. Line → Notes → Line: the result kept, dimmed under "Last time"
   await page.click('.ear-modes button[data-ear="notes"]');
   await page.click('.ear-modes button[data-ear="line"]');
@@ -134,7 +162,7 @@ async function singPage(browser) {
     await sleep(400);
     const snd = await page.evaluate(() => { window.__watch = false; return { starts: window.__atStart, live: window.__tracks.filter((t) => t.readyState === 'live').length, session: navigator.audioSession.type }; });
     ok(snd.starts.length && snd.starts.every((s) => !s.live && s.session === 'playback') && !snd.live && snd.session === 'playback', `2c: ${what}: the mic stopped and the session “playback” before the piano (${JSON.stringify(snd.starts.slice(0, 2))}; now ${snd.session}, ${snd.live} live)`);
-    ok(e.hints.line === 2 && JSON.stringify(e.shown?.res ?? null) === kept && !(await page.evaluate(() => window.resonateDebug().session)), `2c: ${what}: nothing judged or stored (the device's attempts ${e.hints.line}, the result kept)`);
+    ok(e.hints.line === nLine && JSON.stringify(e.shown?.res ?? null) === kept && !(await page.evaluate(() => window.resonateDebug().session)), `2c: ${what}: nothing judged or stored (the device's attempts ${e.hints.line}, the result kept)`);
     await page.evaluate(() => { window.__sing = null; });
     await idle();
   }

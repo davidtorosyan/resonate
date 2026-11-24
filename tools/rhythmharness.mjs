@@ -13,7 +13,8 @@ export function features(audio, sr) {
 }
 
 // frames as sing.js records them: ctx time τ every 1/fps s → { t: τ − songT0 − ANALYSIS_LAG − latency, midi, rms }
-export function frames(audio, sr, { songT0, latency, fps = 60, from = -1, to = Infinity }) {
+// gate: the reader's loudness gate (rms; MIN_RMS — a device whose volume isn't calibrated — unless given)
+export function frames(audio, sr, { songT0, latency, fps = 60, from = -1, to = Infinity, gate = MIN_RMS }) {
   const yin = createYin(sr, FFT_SIZE);
   const out = [];
   for (let ct = Math.max(FFT_SIZE / sr, songT0 + from); ct < audio.length / sr && ct < songT0 + to; ct += 1 / fps) {
@@ -22,7 +23,7 @@ export function frames(audio, sr, { songT0, latency, fps = 60, from = -1, to = I
     const rms = Math.sqrt(s / FFT_SIZE);
     let ts = 0; for (let i = FFT_SIZE - TAIL_SAMPLES; i < FFT_SIZE; i++) ts += buf[i] * buf[i];
     let midi = null;
-    if (rms > MIN_RMS && Math.sqrt(ts / TAIL_SAMPLES) > MIN_RMS) {
+    if (rms > gate && Math.sqrt(ts / TAIL_SAMPLES) > gate) {
       const d = yin(buf);
       if (d && d.clarity > MIN_CLARITY && d.freq >= MIN_FREQ && d.freq <= MAX_FREQ) midi = 69 + 12 * Math.log2(d.freq / 440);
     }
