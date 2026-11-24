@@ -16,7 +16,7 @@
 // is its own <canvas>, moved by a transform and faded by its opacity, and drawn again only when its
 // shape changed; the landing badges are HTML (transform / opacity). Nothing here animates by CSS or
 // WAAPI. A budget watchdog lowers the detail when frames come late.
-import { handGeo, planHand, poseAt, frameAt, yieldHands, nailStates, keyU, clamp, lerp, MOFF, MARCH, MH, WID, LEAD, XFADE } from "./handplan.js?v=103";
+import { handGeo, planHand, poseAt, frameAt, yieldHands, nailStates, keyU, clamp, lerp, MOFF, MARCH, MH, WID, LEAD, XFADE } from "./handplan.js?v=104";
 
 const COL = { r: "#a64fff", l: "#4f7cff" };
 const INK = { r: "#6f25d6", l: "#2652d6" }; // (a digit on a white nail: the hand's colour, darker)

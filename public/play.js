@@ -14,22 +14,22 @@
 //
 // A PDF only (added, not converted yet: docs/LIBRARY.md) opens straight into its PDF (📄's view, no
 // Verovio): ‹ › and the pedals turn its pages, the keyboard stays under it, ⟳ reads Convert.
-import { spaceChanged } from "./nav.js?v=103";
-import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=103";
-import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=103";
-import { decorate, fullName, labelOf } from "./playnames.js?v=103";
-import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=103";
-import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=103";
-import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=103";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=103";
-import * as lib from "./library.js?v=103"; // (getSong; getPages where this library has it)
-import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=103";
-import { mountKeyboard } from "./keyboard.js?v=103";
-import { chordMoments } from "./chords.js?v=103";
-import { barsText, sliceMeasures, spanInfo, placeOf, textLegend } from "./scoretext.js?v=103";
-import { remote, hasAssistant, shareFocus, shareFingering } from "./assist.js?v=103";
-import { fingerText } from "./fingertext.js?v=103";
-import { fingeringFor, stats as fingStats } from "./fingering.js?v=103";
+import { spaceChanged } from "./nav.js?v=104";
+import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=104";
+import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=104";
+import { decorate, fullName, labelOf } from "./playnames.js?v=104";
+import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=104";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=104";
+import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=104";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=104";
+import * as lib from "./library.js?v=104"; // (getSong; getPages where this library has it)
+import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=104";
+import { mountKeyboard } from "./keyboard.js?v=104";
+import { chordMoments } from "./chords.js?v=104";
+import { barsText, sliceMeasures, spanInfo, placeOf, textLegend } from "./scoretext.js?v=104";
+import { remote, hasAssistant, shareFocus, shareFingering } from "./assist.js?v=104";
+import { fingerText } from "./fingertext.js?v=104";
+import { fingeringFor, stats as fingStats } from "./fingering.js?v=104";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
@@ -173,6 +173,7 @@ const S = {
   vrv: null,        // the Verovio page last set: { scale, pageWidth, pageHeight }
   pages: 0, page: 1,
   at: 0,            // written measure index the shown place is anchored to
+  from: null,       // the written measure index the layout starts at (a bar step: Verovio's selection, that bar to the end), or null: the whole song
   items: [],        // decorate() items of the shown pages (heads with their facts and boxes)
   counted: new Map(), // page → notes with a head drawn (this layout)
   lgen: 0,          // layout generation: the page cache and prefetches belong to one
@@ -476,6 +477,7 @@ async function loadView(gen) {
   const tr = /<transpose\b/.test(v.xml);
   // (the MEI below is already at sounding pitch: loaded without transposing again)
   tk.setOptions({ transposeToSoundingPitch: tr && !v.mei, ...(score ? CONDENSE.score : CONDENSE.other) });
+  S.from = null; // (loading data drops Verovio's selection: the whole song)
   try {
     ok = tk.loadData(v.mei || v.xml);
     // The full score's endings once, over the top staff, as printed: Verovio draws an ending over
@@ -744,9 +746,66 @@ function relayout() {
   clearPeek();
   setPageSize(L);
   const t = performance.now();
+  if (S.from != null) tk.select({}); // (the fit is judged on the whole song's pages)
+  tk.redoLayout();
+  const L2 = settle(L);
+  if (S.from != null) { selectFrom(S.from); tk.redoLayout(); }
+  S.t.layout = ms(t);
+  placed(L2);
+}
+
+// ---------------------------------------------------------------------------
+// One bar at a time (the owner: "I see measures 12, 13, 14 … it would be nice if I could see
+// measure 15 and on"): a held ‹ › (or Shift + ← →) moves the page by one bar — the song is laid
+// out from that bar to its end (Verovio's selection), so the page starts there; − / +, a rotation
+// keep it. A turn back from its first page, the music (▶) or a jump to a bar before it lay the
+// whole song out again, at the page holding that bar. Another view or song: the whole song.
+function selectFrom(mi) {
+  const ms_ = S.v?.measures || [];
+  if (!ms_.length) return;
+  tk.select({ start: "m" + mi, end: "m" + ms_[ms_.length - 1] });
+}
+// Lay the song out from bar mi (null / the first bar: the whole song) and show its first page —
+// or, with at, the page holding bar at.
+function startAt(mi, at = mi) {
+  if (!S.ready || !tk || !S.v || S.loaded !== S.v || pdf.on) return false;
+  const list = S.v.measures || [];
+  if (mi != null && (!list.length || mi <= list[0])) mi = null;
+  if (mi === S.from && at === S.at) return false;
+  clearPeek();
+  const t = performance.now();
+  if (mi == null) tk.select({}); else selectFrom(mi);
   tk.redoLayout();
   S.t.layout = ms(t);
-  placed(settle(L));
+  S.from = mi;
+  if (at != null) { S.at = at; S.st.at = at; saveSoon(); }
+  placed({ W: S.W, H: S.H, spread: S.spread, pw: S.spread ? Math.floor(S.W / 2) : S.W, cap: S.cap, sp: S.sp, base: S.base, scale: S.scale, mode: S.mode, auto: S.auto });
+  return true;
+}
+// d = +1: the page starts a bar later than the first bar shown; −1: a bar earlier.
+function stepBar(d) {
+  if (pdf.on || !S.ready || !S.v) return false;
+  const list = S.v.measures || [];
+  const first = firstMeasureShown() ?? S.at;
+  const i = list.indexOf(first);
+  if (i < 0) return false;
+  const j = i + d;
+  if (j < 0 || j >= list.length) return false;
+  const ok = startAt(list[j]);
+  if (ok) { flashBar(list[j]); activity("turn"); }
+  return ok;
+}
+// The bar the page now starts at, for a moment in place of the page number.
+let barFlash = 0;
+function flashBar(mi) {
+  clearTimeout(barFlash);
+  pgEl.textContent = "b." + numberOf(mi);
+  barFlash = setTimeout(() => { barFlash = 0; pager(); }, 1200);
+}
+// Bar mi isn't laid out (before the bar the layout starts at): the whole song again.
+function wholeFor(mi) {
+  if (S.from == null || mi >= S.from) return false;
+  return startAt(null, mi);
 }
 // The keyboard coming or going under the music (the one-page shell's Piano — resonatePlay.resize
 // with keep): what's shown stays. Laid out again for the shorter stage, Verovio fills every page
@@ -826,8 +885,8 @@ function show() {
 function pager() {
   if (pdf.on) return pdfPager();
   const list = shownPages();
-  pgEl.textContent = (list.length > 1 ? `${list[0]}–${list[1]}` : `${list[0]}`) + ` / ${S.pages}`;
-  prevBtn.disabled = S.page <= 1;
+  if (!barFlash) pgEl.textContent = (list.length > 1 ? `${list[0]}–${list[1]}` : `${list[0]}`) + ` / ${S.pages}`;
+  prevBtn.disabled = S.page <= 1 && S.from == null;
   nextBtn.disabled = S.page >= lastPage();
   sizeButtons();
   remote.changedSoon();
@@ -846,6 +905,13 @@ function firstMeasureShown() {
 function turn(d) {
   if (pdf.on) return pdfTurn(d);
   if (!S.ready) return false;
+  if (d < 0 && S.page <= 1 && S.from != null) {
+    // (back from a page started at a bar: the whole song, at the page holding the bar before it)
+    const list = S.v?.measures || [], i = list.indexOf(S.from);
+    const ok = startAt(null, list[Math.max(0, i - 1)] ?? 0);
+    if (ok) activity("turn");
+    return ok;
+  }
   const p = Math.max(1, Math.min(lastPage(), S.page + d * (S.spread ? 2 : 1)));
   if (p === S.page) return false;
   goPage(p);
@@ -1127,8 +1193,22 @@ function resize(dir) {
 }
 smallerBtn.addEventListener("click", () => resize(-1));
 biggerBtn.addEventListener("click", () => resize(1));
-prevBtn.addEventListener("click", () => turn(-1));
-nextBtn.addEventListener("click", () => turn(1));
+// A tap turns a page; held (HOLD_MS) the page moves by a bar, and again every BAR_MS while held.
+const HOLD_MS = 450, BAR_MS = 450;
+for (const [btn, d] of [[prevBtn, -1], [nextBtn, 1]]) {
+  let timer = 0, held = false;
+  const end = () => { clearTimeout(timer); timer = 0; };
+  btn.addEventListener("pointerdown", (e) => {
+    if (e.button || btn.disabled) return;
+    held = false;
+    end();
+    timer = setTimeout(function step() { held = true; stepBar(d); timer = setTimeout(step, BAR_MS); }, HOLD_MS);
+  });
+  for (const t of ["pointerup", "pointercancel", "pointerleave", "lostpointercapture"]) btn.addEventListener(t, end);
+  btn.addEventListener("contextmenu", (e) => e.preventDefault()); // (a long press isn't a menu)
+  btn.addEventListener("click", () => { if (held) { held = false; return; } turn(d); });
+  btn.addEventListener("pointerup", () => { if (held) setTimeout(() => { held = false; }, 300); }); // (no click after a hold that slid off)
+}
 
 songSel.addEventListener("change", () => {
   const id = songSel.value;
@@ -1191,7 +1271,8 @@ window.addEventListener("keydown", (e) => {
   if (!d) return;
   if (own && t?.closest("button, a")) return; // (a control reached with Tab keeps its keys)
   e.preventDefault();
-  turn(d);
+  if (e.shiftKey && e.key.startsWith("Arrow") && !pdf.on) stepBar(d); // (Shift + ← →: a bar)
+  else turn(d);
 });
 
 // A press on the music: on a note (nearHead) it strikes — every finger its own (two fingers, two
@@ -3157,6 +3238,7 @@ function frame() {
 // waits for the lift (afterPress).
 function follow(mi) {
   if (!S.ready || pdf.on || !S.v || S.loaded !== S.v) return;
+  if (S.from != null && mi < S.from && !gests.size) { autoTurn = true; try { wholeFor(mi); } finally { autoTurn = false; } }
   let p = PB.pageOf.get(mi);
   if (p === undefined) {
     try { p = tk.getPageWithElement("m" + S.v.firstMeasureAtOrAfter(mi)) || 0; } catch { p = 0; }
@@ -4236,7 +4318,7 @@ async function songMap(doc) {
     const kept = S.st.pdfMusic;
     if (kept && kept.n === n && Array.isArray(kept.music) && kept.music.length >= last) music = kept.music;
     else {
-      const { findStaves } = await import("./omr/pdfprep.js?v=103");
+      const { findStaves } = await import("./omr/pdfprep.js?v=104");
       const t0 = performance.now();
       music = await musicPages(doc, findStaves, { need: last });
       S.t.pdfMusic = ms(t0);
@@ -4773,6 +4855,7 @@ const pdfOnlyFailed = () => (S.failed === "nopdf" ? FAILS.nopdf : "Its PDF didn'
 // Show the page holding written bar mi (the place kept there).
 function goBar(mi) {
   if (!S.ready || !tk || !S.v) return false;
+  wholeFor(mi);
   const p0 = tk.getPageWithElement("m" + S.v.firstMeasureAtOrAfter(mi)) || 1;
   if (!shownPages().includes(p0)) {
     clearPeek();
@@ -5038,7 +5121,7 @@ window.resonateDebug = () => {
       pages: S.pages, page: S.page, shown: shownPages(), spread: S.spread, sp: S.sp, scale: S.scale, step: S.step, size: S.step ? S.sp : null,
       sizeAuto: !S.step, auto: S.auto, sizes: JSON.parse(JSON.stringify(S.sizes)), cap: S.cap, base: S.base, mode: S.mode, device: device(), fitLog: S.fitLog.map((x) => ({ ...x })),
       hold: S.hold ? { at: [S.hold.W, S.hold.H], from: [S.hold.from.W, S.hold.from.H], scale: S.hold.L.scale, fromScale: S.hold.from.vrv.scale } : null, vrv: S.vrv && { ...S.vrv },
-      W: S.W, H: S.H, names: S.names, at: S.at,
+      W: S.W, H: S.H, names: S.names, at: S.at, from: S.from, stepBar, firstShown: firstMeasureShown(),
       counts: { rendered, pitched: S.v?.pitched ?? 0, pages: S.counted.size }, countAll,
       get facts() { return S.P ? Object.fromEntries(S.P.facts) : {}; },
       state: { ...S.st },
