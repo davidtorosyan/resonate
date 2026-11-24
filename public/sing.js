@@ -2290,6 +2290,8 @@ const EAR = {
   latest: {},       // view (song|line|mode) → the latest result there: "Last time", once you've moved away and back
   last: {},         // view|tempo → the counts of the latest attempt there (what ↑ compares with: like with like)
   notesBy: {},      // song|line → Notes' state (earNotesOf): { targets: [offsets in the line], cur, done: Set (of offsets), tries, v, … }
+  drillFrom: {},    // song|line → the latest Line result there Ear could follow (its drill: Notes' "Off last time" targets —
+                    //   a silent attempt or one it couldn't follow after it says nothing about the notes)
   flash: "",        // a word on the stage instead of a result: "Stopped — not counted"
   heard: new Set(), // song|line|key: ▶ Hear has played it (the round ▶ stops pulsing)
   sound: null,      // our own ▶'s sound: { ac, end } (its context's time it has stopped) — a mic opened right after
@@ -2361,6 +2363,7 @@ function earRegroup(newSong, was) {
     if (EAR.count && !EAR.count.run) EAR.count = null;
     EAR.latest = {};
     EAR.notesBy = {};
+    EAR.drillFrom = {};
     EAR.heard.clear();
     const s = readAll(EK)[songId];
     EAR.p = s && ps[s.pi]?.wk === s.p ? s.pi : Math.max(0, s?.p ? ps.findIndex((p) => p.wk === s.p) : 0);
@@ -2684,6 +2687,7 @@ function earShow(ph, kind, res) {
   res.kind = kind;
   res.view = view;
   if (res.whole) EAR.last[base] = { counts: res.counts, whole: true, win: res.win && { kind: res.win.kind, j: res.win.j ?? null, sub: res.win.sub ?? null }, cue: res.cue && { kind: res.cue.kind, j: res.cue.j ?? null } };
+  if (kind === "line" && Array.isArray(res.drill)) EAR.drillFrom[earLineKey(ph)] = res;
   EAR.latest[view] = res;
   EAR.res = res;
 }
@@ -2696,13 +2700,15 @@ function earShow(ph, kind, res) {
 // A newer Line attempt at the line (one Ear could follow) makes them again, the done marks kept for pitches still
 // targeted.
 function earNotesOf(ph) {
-  const key = earLineKey(ph), last = EAR.latest[earViewKey("line", ph)] || null;
+  // (the latest Line attempt Ear could follow: a silent one, or one it couldn't follow, says nothing about the notes)
+  const key = earLineKey(ph), last = EAR.drillFrom[key] || null;
   const old = EAR.notesBy[key];
   if (old && old.from === last) return old;
-  if (old && last && !last.fit) { old.from = last; return old; } // (an attempt not heard or not followed says nothing about the notes)
   const m = (k) => earMidi(ph.j0 + k);
   const T = E.noteTargets(ph, notes, last, earMidi);
-  const heldM = new Set(old ? [...old.done].map(m) : []);
+  // (held before and not off in this attempt: still held — a note held in Notes, then off again in the line, is
+  // "Off last time" again, not done)
+  const offM = new Set(T.off.map(m)), heldM = new Set(old ? [...old.done].map(m).filter((x) => !offM.has(x)) : []);
   const N = (EAR.notesBy[key] = { targets: T.targets, off: new Set(T.off), lo: T.lo, hi: T.hi, done: new Set(T.targets.filter((k) => heldM.has(m(k)))), cur: null, tries: 0, v: null, fact: "", complete: false, from: last });
   N.cur = T.targets.find((k) => !N.done.has(k)) ?? T.targets[0];
   N.complete = !!old && T.targets.every((k) => N.done.has(k));
@@ -2734,6 +2740,7 @@ function earNextTarget(N) {
 function earPractise(j) {
   const ph = earPh();
   if (!ph || j == null || j < ph.j0 || j >= ph.j1) return;
+  if (EAR.run?.kind === "play") earStop(); // (a ▶ of the line's still sounding: it doesn't go on into Notes)
   EAR.mode = "notes";
   EAR.res = null;
   EAR.flash = "";

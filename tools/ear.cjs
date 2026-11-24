@@ -21,14 +21,16 @@
 //     click — sing right on it" with ▶ Click and ▶ You, which play — ▶ You with the take's own clicks after the ♩
 //     menu changed; ■ Stop in the count-in: the row gone at once, a double tap doesn't sing again; no count-in or dB
 //     in #status (WP1.3–4)
-//   4 Notes (WP4) — a Line attempt with “sweet” a tone sharp, its "Practise that note ›": Notes on A♭4, "Off last
-//     time", the row low → high with the syllable under each and “sweet” marked; ● Match: "■ Stop" on both buttons
+//   4 Notes (WP4) — a Line attempt with “sweet” a tone sharp, its "Practise that note ›" (tapped while ▶ Hear plays: it
+//     stops): Notes on A♭4, "Off last time", the row low → high with the syllable under each and “sweet” marked;
+//     ● Match: "■ Stop" on both buttons
 //     while the note plays (WP1.7), "Now sing it — keep it going" and the ring's arc emptying (neutral); a tone sharp:
 //     "Not yet" with a real ▶ Try again, then "Lower", then ▶ Sing along (4 s, no live mic) · Next note ›; E♭4 an
 //     octave down: "✓ Same note, in your lower voice" (green), EAR.oct −12, the note again and Line's ▶ Hear an
 //     octave down, "Octave down" pressed; C5 a tone flat ×3: "Too high for now?" [Lower the song] → the key −2, "Key
 //     A♭ → G♭"; every target held: stays in Notes, "✓ Those notes — now the whole line", ● Sing → Line with the mic
-//     open; the octave chip toggles back
+//     open; the octave chip toggles back; “sweet” off again in the line: Notes on it again ("Off last time", not held),
+//     and still after an attempt Ear couldn't follow
 //   5 ⚙ — while Ear shows only its switch, "Phrase by phrase" (WP1.10); turned off while ▶ Hear plays, it stops
 //   6 another song opens on its own line, nothing of the last one's; back, and after a reload, the line kept (WP1.8)
 // The shell (index.html, Sing alone), a phone 390×844 and an iPad 820×1180 (WP1.1–4):
@@ -333,6 +335,9 @@ async function singPage(browser) {
   await page.waitForFunction(() => { const x = window.resonateDebug().ear; return x.res && x.run === null; }, null, { timeout: 15000 });
   e = await ear();
   ok(e.res?.cue?.kind === 'pitch' && e.res.cue.j === 8 && (await page.$('#ear-res button[data-act="practise"]')), `4: “sweet” a tone sharp — “${e.ui}”, with “Practise that note ›”`);
+  // (tapped while ▶ Hear plays the line: it stops — nothing goes on sounding into Notes)
+  await page.click('#listen');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'play', null, { timeout: 5000 });
   await page.click('#ear-res button[data-act="practise"]');
   e = await ear();
   const row = () => page.$$eval('#ear-notes .ear-names button', (xs) => xs.map((x) => ({ name: x.querySelector('b')?.textContent, syl: x.querySelector('small')?.textContent || '', state: x.dataset.state, off: x.hasAttribute('data-off'), cur: x.getAttribute('aria-current') === 'true', j: +x.dataset.j })));
@@ -454,6 +459,36 @@ async function singPage(browser) {
   ok(p0 === 'false' && p1 === 'true' && o1 === -12 && e.oct === 0 && (await pressed()) === 'false', `4: “Octave down” — unpressed (${p0}), a tap: down again (${o1}, ${p1}), another: the written octave (${e.oct})`);
   await page.selectOption('#key-select', '0');
   await sleep(300);
+  // (“sweet” off again in the line after it was held: Notes has it to hold again — “Off last time”, not held, not
+  // “now the whole line”; the lowest and highest, held and not off this time, stay held)
+  await page.click('#sing');
+  await page.waitForFunction(() => document.getElementById('sing').textContent === '■ Done', null, { timeout: 10000 });
+  await page.evaluate(() => { window.__sing = { mode: 'free', at: performance.now() + 700, f: 1, cents: { 8: 200 } }; });
+  await sleep(700 + dur * 1000 + 800);
+  await page.click('#sing');
+  await page.waitForFunction(() => { const x = window.resonateDebug().ear; return x.res && x.run === null; }, null, { timeout: 15000 });
+  await page.evaluate(() => { window.__sing = null; });
+  e = await ear();
+  const again8 = e.res?.cue?.kind === 'pitch' && e.res.cue.j === 8;
+  await page.click('.ear-modes button[data-ear="notes"]');
+  e = await ear();
+  b = await btns();
+  ok(again8 && !e.notes.complete && e.notes.cur === 8 && !e.notes.done.includes(8) && e.notes.done.includes(0) && e.notes.done.includes(3) && e.notes.msg === 'Off last time' && b.sing === '● Match',
+    `4: “sweet” off again in the line — Notes on it again (current ${e.notes.cur}, held ${JSON.stringify(e.notes.done)}, “${e.notes.msg}”, “${b.sing}”)`);
+  await page.click('.ear-modes button[data-ear="line"]');
+  // (an attempt Ear couldn't follow says nothing about the notes: Notes keeps “sweet”)
+  await page.click('#sing');
+  await page.waitForFunction(() => document.getElementById('sing').textContent === '■ Done', null, { timeout: 10000 });
+  await page.evaluate(() => { window.__sing = { mode: 'free', at: performance.now() + 700, f: 1, wrong: { 0: 5, 1: -5, 2: 6, 3: -6, 4: 5, 5: -5, 6: 6, 7: -6, 8: 5, 9: -5, 10: 6 } }; });
+  await sleep(700 + dur * 1000 + 800);
+  await page.click('#sing');
+  await page.waitForFunction(() => { const x = window.resonateDebug().ear; return x.res && x.run === null; }, null, { timeout: 15000 });
+  await page.evaluate(() => { window.__sing = null; });
+  const nofit = (await ear()).res?.cue?.kind;
+  await page.click('.ear-modes button[data-ear="notes"]');
+  e = await ear();
+  ok(nofit === 'nofit' && e.notes.cur === 8 && e.notes.off.includes(8) && e.notes.msg === 'Off last time', `4: then one Ear couldn't follow (${nofit}) — Notes still on “sweet” (current ${e.notes.cur}, off ${JSON.stringify(e.notes.off)})`);
+  await page.click('.ear-modes button[data-ear="line"]');
   // 5. ⚙: only Ear's switch while it shows
   await page.click('#options-btn');
   const sheet = () => page.evaluate(() => ({ whole: getComputedStyle(document.getElementById('op-whole')).display !== 'none', label: document.querySelector('#guided-on').closest('label').textContent.trim(), on: document.getElementById('guided-on').checked }));
