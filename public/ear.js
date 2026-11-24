@@ -135,7 +135,7 @@ export function wordOf(j, notes) {
   const bare = word.replace(/[\s,.;:!?"“”«»()]+$/u, "").replace(/^[\s"“«(]+/u, "");
   const lead = word.length - word.replace(/^[\s"“«(]+/u, "").length;
   at = [Math.max(0, Math.min(bare.length, at[0] - lead)), Math.max(0, Math.min(bare.length, at[1] - lead))];
-  return { word: bare, syl: bare.slice(at[0], at[1]), at, k: j - s, n: e - s, j0: s };
+  return { word: bare, syl: bare.slice(at[0], at[1]), at, k: j - s, n: e - s, j0: s, w0, w1 };
 }
 const ORD = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"];
 const NUM = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
@@ -699,9 +699,13 @@ export function judgeBeats(ph, take, ctx) {
   // short, the click's beat kept after it: that note, not "slowing down")
   // (at least two starts before it, on their clicks: a late entry alone, the rest on the click, is the entry's)
   const step0 = judged && !steady ? stepIn(meas.map((j) => [notes[j].t, S[j - ph.j0].dev, j - ph.j0, S[j - ph.j0].tol])) : null;
-  const pre = step0 ? meas.filter((j) => j - ph.j0 < step0.k) : [];
-  const step = step0 && pre.length >= 2 && pre.every((j) => Math.abs(S[j - ph.j0].dev) <= S[j - ph.j0].tol) ? step0 : null;
-  const drifting = judged && !steady && !step && drift != null && Math.abs(drift) >= Math.max(tolM, BT.driftBeat * beat);
+  const onClick = (j) => Math.abs(S[j - ph.j0].dev) <= S[j - ph.j0].tol;
+  const pre = step0 ? meas.filter((j) => j - ph.j0 < step0.k) : [], post = step0 ? meas.filter((j) => j - ph.j0 >= step0.k) : [];
+  const step = step0 && pre.length >= 2 && pre.every(onClick) ? step0 : null;
+  // (…the other way round — off, then from one start on all on the click: in late (early) and caught up. Those
+  // starts are what to fix — the first of them — not "speeding up": the singer kept the click's tempo after it)
+  const caught = !step && !!step0 && post.length >= 2 && post.every(onClick) && pre.some((j) => !onClick(j));
+  const drifting = judged && !steady && !step && !caught && drift != null && Math.abs(drift) >= Math.max(tolM, BT.driftBeat * beat);
   // a counting slip: the first sound after the count-in ≥ max(0.6 beat, 0.25 s) off — unless every start kept
   // that lag and it's under ¾ of a beat (behind the click, not a count off); a lag every start keeps of ¾ beat
   // or more is a count off too
@@ -758,16 +762,23 @@ export function judgeBeats(ph, take, ctx) {
   if (res.up.beats) wins.push({ kind: "rose", sub: "beats" });
   if (counts && S[0]?.measured && S[0].on) wins.push({ kind: "entry", j: ph.j0 });
   if (counts) {
+    // (whole words: a run from “ma” isn't “Steady from “Amazing”” when its “A” came in late)
+    const wd = (j) => wordOf(j, notes), first = (j) => { const w = wd(j); return !w || w.w0 === w.j0; }, last = (j) => { const w = wd(j); return !w || w.w1 === w.j0; };
     let best = null, run = [];
+    const close = () => { const a = run.findIndex(first); let z = run.length - 1; while (z >= 0 && !last(run[z])) z--; const r = a >= 0 && z >= a ? run.slice(a, z + 1) : []; if (r.length >= BT.run && (!best || r.length > best.length)) best = r; };
     for (const j of starts) {
-      if (S[j - ph.j0].measured && S[j - ph.j0].on) run.push(j); else run = [];
-      if (run.length >= BT.run && (!best || run.length > best.length)) best = [...run];
+      if (S[j - ph.j0].measured && S[j - ph.j0].on) run.push(j); else { close(); run = []; }
     }
+    close();
     if (best) wins.push({ kind: "run", j: best[0], j2: best[best.length - 1] });
   }
   if (steady) wins.push({ kind: "even" });
   const same = (w, p) => !!p && w.kind === p.kind && (w.j ?? null) === (p.j ?? null) && (w.sub ?? null) === (p.sub ?? null);
-  res.win = wins.find((w) => w.kind === "spot" || !same(w, ctx.prev?.win)) || wins[0] || null;
+  // (never a win that names the word the cue is about: “Steady from “Amazing”…” over “Come in sooner on “Amazing””)
+  const wordKey = (j) => { const w = wordOf(j, notes); return w ? w.w0 : j; };
+  const clash = (w) => cue?.j != null && [w.j, w.j2].some((j) => j != null && wordKey(j) === wordKey(cue.j));
+  const ok = wins.filter((w) => !clash(w));
+  res.win = ok.find((w) => w.kind === "spot" || !same(w, ctx.prev?.win)) || ok[0] || null;
   return done(res);
 }
 // Per note of the line, for the probes: Beats' class against the click (on / early / late / missing / null),

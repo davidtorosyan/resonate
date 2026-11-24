@@ -18,7 +18,9 @@
 //     its count-in row lit as it plays; ● Sing with the click: the row lit from the take's clock (each dot on its
 //     click, the word at the entry), then the level ring moving (neutral, not green), 🎧 the first time (a touch
 //     device); on the click: "all of them", "Spot on with the click", ▶ You; 0.3 s late every note: "Behind the
-//     click — sing right on it" with ▶ Click and ▶ You, which play; no count-in or dB in #status (WP1.3–4)
+//     click — sing right on it" with ▶ Click and ▶ You, which play — ▶ You with the take's own clicks after the ♩
+//     menu changed; ■ Stop in the count-in: the row gone at once, a double tap doesn't sing again; no count-in or dB
+//     in #status (WP1.3–4)
 //   4 Notes — "■ Stop" on both buttons while the note plays (WP1.7); the first target held an octave down
 //     (matched, "an octave down — fine"), the next on pitch: every target done → back to the line
 //   5 ⚙ — while Ear shows only its switch, "Phrase by phrase" (WP1.10); turned off while ▶ Hear plays, it stops
@@ -276,6 +278,34 @@ async function singPage(browser) {
     e = await ear();
     ok(n >= 2 && !e.flash && e.res?.cue?.kind === 'steady', `3: ${chip} plays (${n} sources started in 0.7 s) and stops by itself, the result kept`);
   }
+  // ▶ You plays the take with the clicks it was sung to: the ♩ menu changed since doesn't move them
+  const takeClicks = e.res.clicks.map((c) => c.t);
+  const setRate = (v) => page.evaluate((x) => { const sel = document.getElementById('tempo-select'); sel.value = x; sel.dispatchEvent(new Event('change', { bubbles: true })); }, v);
+  await setRate('r:0.8');
+  await sleep(300);
+  await page.click('#ear-res button[data-act="cue-you"]');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'play', null, { timeout: 5000 });
+  const you = (await ear()).you || [];
+  await page.click('#listen'); // (■ Stop)
+  await idle();
+  await setRate('r:1');
+  await sleep(300);
+  const gaps = you.slice(1).map((t, i) => +(t - you[i]).toFixed(3));
+  ok(you.length >= 3 && you.every((t) => takeClicks.some((c) => Math.abs(c - t) < 1e-6)) && gaps.every((g) => Math.abs(g - 0.75) < 0.01), `3: ▶ You after the ♩ menu went to 80 % — the take's own clicks ${JSON.stringify(you)} (a beat apart at the take's ♩=80: ${JSON.stringify(gaps)})`);
+  // ■ Stop in the count-in: the take ends, not judged, and its row goes with it at once; a second tap right after
+  // it doesn't sing again
+  await page.evaluate(() => { window.__sing = null; });
+  await page.click('#sing');
+  await page.waitForFunction(() => window.resonateDebug().session?.kind === 'sing' && window.resonateDebug().ear.count?.lit >= 0, null, { timeout: 10000 });
+  await page.click('#sing'); // (■ Stop)
+  await sleep(100);
+  const rowGone = await page.evaluate(() => ({ hidden: document.getElementById('ear-count').hidden, count: window.resonateDebug().ear.count }));
+  await page.click('#sing'); // (a double tap)
+  await sleep(600);
+  const again = await page.evaluate(() => ({ session: !!window.resonateDebug().session, take: window.resonateSing.state().take }));
+  await idle();
+  e = await ear();
+  ok(rowGone.hidden && !rowGone.count && !again.session && !again.take && e.res?.cue?.kind === 'steady' && (await page.$eval('#ear-count', (x) => x.hidden)), `3: ■ Stop in the count-in — the row gone at once (${JSON.stringify(rowGone)}), a double tap doesn't sing again (${JSON.stringify(again)}), the last result kept`);
   // line 2 comes in on beat 3: the count-in bar, then its own bar's two beats, then “That”
   await page.click('#ear-next');
   await page.click('#listen');

@@ -250,6 +250,10 @@ const TRUTH = [
   ['a pitch cue’s note sung off, the way it points', (r, ph, R) => { if (r.cue?.kind !== 'pitch') return true; const t = named(r, ph, R, 'cue'); return !!t && Math.abs(t.dev) >= 0.4 && pointsAt(r.cue.dir, t.dev); }],
   ['a timing cue’s start sung off, the way it points', (r, ph, R) => { if (r.cue?.kind !== 'timing' || r.cue.j == null) return true; const t = named(r, ph, R, 'cue'); return !!t && Math.abs(t.moved) >= 0.1 && pointsAt(r.cue.dir, t.moved); }],
   ['a missed cue’s note not sung', (r, ph, R) => r.cue?.kind !== 'missed' || r.cue.j == null || named(r, ph, R, 'cue') === null],
+  // (Beats: a win naming the word its cue is about reads as a contradiction — “Steady from “Amazing”…” · “Come in
+  // sooner on “Amazing””; a run names whole words: from a word's first syllable to a word's last)
+  ['a Beats win never names the cue’s word', (r, ph, R) => { if (!R.beats || !r.win || r.cue?.j == null) return true; const k = (j) => wordOf(j, AG.notes)?.w0 ?? j; return [r.win.j, r.win.j2].every((j) => j == null || k(j) !== k(r.cue.j)); }],
+  ['a Beats run from a word’s start to a word’s end', (r) => { if (r.win?.kind !== 'run') return true; const a = wordOf(r.win.j, AG.notes), z = wordOf(r.win.j2, AG.notes); return (!a || a.w0 === a.j0) && (!z || z.w1 === z.j0); }],
 ];
 
 // The cases. line: the fix plan's line (PLAN_PHRASE's); word: the text of the note at index `w` the case is about —
@@ -335,6 +339,9 @@ const BEATS = [
   { name: 'at 80 %, on time', line: 0, plan: { slow: 0.8 }, wp: 'WP3', want: [X.beatsAll, X.win('spot')] },
   { name: 'at 80 %, 0.3 s late', line: 0, plan: { slow: 0.8, late: 0.3 }, wp: 'WP3', want: [X.notBeatsAll, X.cue('steady', null, 'sooner')] },
   { name: 'only the entry 0.25 s late', line: 0, w: 0, word: 'A', plan: { starts: { 0: 0.25 } }, wp: 'WP3', want: [X.cue('timing', 0, 'sooner'), ['not “Came in on time”', (r) => r.win?.kind !== 'entry']] },
+  // (in late and caught up: the late starts are what to fix — the first of them —, not "speeding up")
+  { name: 'in 0.3 s late on “Amazing”, on the click from “grace”', line: 0, w: 0, word: 'A', plan: { starts: { 0: 0.3, 1: 0.3, 2: 0.3, 3: 0.3 } }, wp: 'WP3', want: [X.cue('timing', 0, 'sooner')] },
+  { name: 'in 0.3 s early on “Amazing”, on the click from “grace”', line: 0, w: 0, word: 'A', plan: { starts: { 0: -0.3, 1: -0.3, 2: -0.3, 3: -0.3 } }, wp: 'WP3', want: [X.cue('timing', 0, 'later')] },
   { name: 'L1 the pickup left out: in a beat late on “saved”, the rest on the click', line: 1, plan: { drop: [0, 1] }, wp: 'WP3', want: [X.noBeats, X.cue('slip', null, 'sooner'), ['no win for the entry', (r) => r.win?.kind !== 'entry']] },
   { name: 'a beat early (0.75 s)', line: 1, plan: { late: -0.75 }, wp: 'WP3', want: [X.noBeats, X.cue('slip', null, 'later')] },
   { name: '“grace” held long, the rest late after it (rubato)', line: 0, w: 6, word: 'grace!', plan: { starts: { 7: 0.5, 8: 0.5, 9: 0.5, 10: 0.5 } }, wp: 'WP3', want: [X.notBeatsAll, X.cue('held', 6, 'sooner')] },
