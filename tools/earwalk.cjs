@@ -77,7 +77,8 @@ async function walk(dev, ctxOpts, modules) {
   await sleep(1500);
   await shot('open', 'opened Amazing Grace in the shell (Sing alone); Ear is the Sing screen');
   if (dev === 'ipad') {
-    await free({ f: 1.15, cents: { 2: -200 } }, 'result-mixed', 'sang 15 % slower, the 3rd note 2 semitones flat, then ■ Done');
+    await free({ f: 1.15, cents: { 2: -200 } }, 'result-mixed', 'sang 15 % slower, the 3rd note 2 semitones flat, then ■ Done', { shotMid: true });
+    await free({ f: 1.0 }, 'result-all-right', 'sang every note right, at the written tempo');
     await page.click('.ear-modes button[data-ear="beats"]'); await sleep(300);
     await shot('beats', 'tapped Beats');
     await page.click('.ear-modes button[data-ear="notes"]'); await sleep(300);
@@ -114,7 +115,7 @@ async function walk(dev, ctxOpts, modules) {
   const cueYou = await page.$('#ear-res button[data-act="cue-you"]');
   if (cueYou) { await cueYou.click(); await sleep(300); await shot('cue-you-playing', 'tapped the cue’s ▶ you (the attempt’s recording there)'); await idle(); }
   await free({ f: 1.0 }, 'result-all-right', 'sang every note right, at the written tempo');
-  const you = await page.$('#ear-acts button[data-act="you"]');
+  const you = await page.$('#ear-res button[data-act="you"]');
   if (you) { await you.click(); await sleep(300); await shot('you-playing', 'tapped ▶ You'); await idle(); }
   await free({ f: 1.05, cents: { 1: 30, 3: -35 } }, 'result-again-close', 'again, slightly sharp / flat inside 50¢ on two notes');
   await free(null, 'result-silent', 'tapped ● Sing, sang nothing, tapped ■ Done', { wait: 1500 });
@@ -124,9 +125,14 @@ async function walk(dev, ctxOpts, modules) {
   await free({ f: 1.0 }, 'result-late-start', 'waited 4 s after ■ Done showed, then sang it right', { wait: 4000 });
   await S(() => { window.__sing = { mode: 'talk' }; });
   await free(null, 'result-talking', 'talked (unpitched noise) instead of singing', { wait: 300 });
-  // Beats
-  await page.click('.ear-modes button[data-ear="beats"]'); await sleep(300);
-  await shot('beats', 'tapped Beats');
+  await free({ f: 1.0, starts: { 6: 0.4 } }, 'result-late-word', 'sang it right, but came in 0.4 s late on “grace”');
+  const stretch = await page.$('#ear-res button[data-act="cue-stretch"]');
+  if (stretch) { await stretch.click(); await sleep(400); await shot('cue-stretch-playing', 'tapped the cue’s ▶ Piano (the stretch up to “grace”, at the attempt’s tempo)'); await idle(); }
+  // Beats (by the result's next chip when it offers it)
+  const toBeats = await page.$('#ear-res button[data-act="beats"]');
+  if (toBeats) await toBeats.click(); else await page.click('.ear-modes button[data-ear="beats"]');
+  await sleep(300);
+  await shot('beats', toBeats ? 'tapped “Try it with the clicks ›”' : 'tapped Beats');
   await page.click('#listen'); await sleep(1200);
   await shot('beats-hear', 'tapped ▶ Hear in Beats: count-in clicks, then the line with the click');
   await idle();
@@ -144,9 +150,9 @@ async function walk(dev, ctxOpts, modules) {
   await until(() => !window.resonateSing.debug().session && window.resonateSing.debug().ear.run === null, 40000);
   await S(() => { window.__sing = null; }); await sleep(300);
   await shot('beats-result-on', 'the Beats result (on the click)');
-  await S(() => { const sel = document.getElementById('tempo-select'); sel.value = 'r:0.8'; sel.dispatchEvent(new Event('change', { bubbles: true })); }); await sleep(300);
-  await shot('beats-slower', 'the ♩ menu set to 80 % (Beats sings at its tempo)');
-  await S(() => { const sel = document.getElementById('tempo-select'); sel.value = 'r:1'; sel.dispatchEvent(new Event('change', { bubbles: true })); }); await sleep(200);
+  await page.click('#ear-acts .ear-speed button[data-f="0.7"]'); await sleep(300);
+  await shot('beats-slower', 'tapped Slower (the ♩ menu goes to 70 %: Beats, ▶ Hear and ▶ First note at it)');
+  await page.click('#ear-acts .ear-speed button[data-f="1"]'); await sleep(200);
   // Notes
   await page.click('.ear-modes button[data-ear="notes"]'); await sleep(300);
   await shot('notes', 'tapped Notes');

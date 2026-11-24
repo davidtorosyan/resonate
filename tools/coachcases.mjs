@@ -5,6 +5,7 @@
 import { loadSong } from "./fixturelib.mjs";
 import { groupPhrases, timeVerdict, tuneVerdict } from "../public/practice.js";
 import { roundResult, runResult, securedText, analyzeLines, feedback, rhythmText } from "../public/coach.js";
+import { earText, plainOf } from "../public/ear.js";
 
 let pass = 0, fail = 0;
 const texts = [];
@@ -260,6 +261,62 @@ const obs = (kind, extra = {}) => ({ kind, tone: "try", scope: "line", ...extra 
   check("pass: only a win", all.filter(([v]) => v === "pass").every(([, , r]) => r.win && !r.cue));
   check("unsure/unknown time: no fault", all.filter(([v, st]) => v === "unsure" || (v === "unknown" && st === "time")).every(([, , r]) => !r.cue || r.cue.kind === "again"));
   check("every result has something to show", all.every(([, , r]) => r.win || r.cue));
+}
+
+// Ear's words (ear.js earText, the fix plan's words tables): every win and cue kind, Line and Beats, each direction and
+// size, the next chips and the ▶s — into the same bans below. Its counts are counts with their units (never "—", "0",
+// "↑"; a count is all or a number) and the tempo line a tempo: those two may hold digits, nothing else.
+{
+  const L0 = AG.phrases[0], grace = L0.js.find((j) => N[j].text.replace(/[!,.;]/g, "") === "grace"), zing2 = L0.j0 + 4, how = J("how", L0);
+  const ctx = (o = {}) => ({ notes: N, name: (m) => `m${m}`, bpm: 80, voice: true, shift: () => true, lastLine: false, ...o });
+  const all = [];
+  const run = (kind, res, c) => { const T = earText({ kind, ...res }, ctx(c)); all.push([kind, res, T]); return T; };
+  const counts = { notes: 9, notesAll: false, beats: 7, beatsAll: false };
+  const wins = [["spot"], ["spot", { sub: "again" }], ["fixed", { sub: "note", j: zing2 }], ["fixed", { sub: "start", j: how }], ["rose", { sub: "notes" }], ["rose", { sub: "beats" }], ["rose", { sub: "both" }],
+    ["key"], ["tune"], ["high", { j: grace }], ["long", { j: grace }], ["first", { j: L0.j0 }], ["entry", { j: L0.j0 }], ["run", { j: L0.j0, j2: grace }], ["even"]];
+  const cues = [["silent", { sounds: ["first"] }], ["nofit", { sounds: ["hear"] }], ["key", { dir: "lower", s: -3, sounds: ["first", "you", "key"], at: [0, 1] }], ["key", { dir: "higher", s: 2, sounds: ["first", "you", "key"], at: [0, 1] }],
+    ["offset", { dir: "higher", sounds: ["first", "you"], at: [0, 1] }], ["offset", { dir: "lower", sounds: ["first", "you"], at: [0, 1] }], ["short", { j: L0.j1 - 1, from: grace, sounds: ["rest"] }],
+    ["missed", { j: zing2, sounds: ["note", "you"], at: [0, 1] }], ["missed", { j: grace, sounds: ["note", "you"], at: [0, 1] }],
+    ...["touch", "aim", "much"].flatMap((size) => ["higher", "lower"].map((dir) => ["pitch", { j: zing2, dir, size, sounds: ["note", "you"], at: [0, 1] }])),
+    ["unclear", { sounds: [] }], ["held", { j: grace, dir: "sooner", range: [L0.j0, grace + 1], sounds: ["stretch", "you"], at: [0, 1] }], ["held", { j: grace, dir: "later", range: [L0.j0, grace + 1], sounds: ["stretch", "you"], at: [0, 1] }],
+    ["timing", { j: how, dir: "sooner", range: [L0.j0 + 2, how], sounds: ["stretch", "you"], at: [0, 1] }], ["timing", { j: how, dir: "later", range: [L0.j0 + 2, how], sounds: ["stretch", "you"], at: [0, 1] }],
+    ["sag", { dir: "higher", end: false, sounds: ["first", "you"], at: [0, 1] }], ["sag", { dir: "lower", end: true, sounds: ["first", "you"], at: [0, 1] }]];
+  const bcues = [["silent", { sounds: [] }], ["slip", { j: L0.j0, dir: "sooner", sounds: ["hear"] }], ["slip", { j: L0.j0, dir: "later", sounds: ["hear"] }], ["unheard", { sounds: [] }],
+    ["steady", { dir: "sooner", range: [L0.j0, grace], sounds: ["click", "you"], at: [0, 1] }], ["steady", { dir: "later", range: [L0.j0, grace], sounds: ["click", "you"], at: [0, 1] }],
+    ["held", { j: grace, dir: "sooner", range: [L0.j0, grace + 1], sounds: ["click", "you"], at: [0, 1] }], ["drift", { dir: "sooner", range: [L0.j0, L0.j1 - 1], sounds: ["click", "you"], at: [0, 1] }],
+    ["drift", { dir: "later", range: [L0.j0, L0.j1 - 1], sounds: ["click", "you"], at: [0, 1] }], ["missed", { j: grace, range: [L0.j0, grace], sounds: ["click"], at: [0, 1] }],
+    ["timing", { j: how, dir: "sooner", range: [L0.j0 + 2, how], sounds: ["click", "you"], at: [0, 1] }]];
+  for (const [kind, w = {}] of wins) for (const m of ["line", "beats"]) run(m, { counts, win: { kind, ...w }, cue: null, up: { notes: true, beats: false } });
+  for (const [kind, c] of cues) run("line", { counts, win: null, cue: { kind, ...c }, fit: { b: 1.3 } });
+  for (const [kind, c] of bcues) run("beats", { counts: { beats: 5, beatsAll: false, notes: null }, win: null, cue: { kind, ...c } });
+  for (const k of [0, 1]) run("line", { counts: { notes: 11, notesAll: true, beats: 8, beatsAll: true }, win: { kind: "spot" }, cue: null }, { lastLine: !!k });
+  run("beats", { counts: { beats: 8, beatsAll: true, notes: null }, win: { kind: "spot" }, cue: null });
+  run("line", { counts: { notes: 0, notesAll: false, beats: null, beatsAll: false }, win: null, cue: { kind: "pitch", j: zing2, dir: "higher", size: "aim", sounds: ["note"] } });
+  for (const [, , T] of all) {
+    for (const p of [T.win, T.cue]) if (p) texts.push(plainOf(p));
+    for (const x of [...T.sounds, ...(T.next ? [T.next] : [])]) texts.push(x.label);
+  }
+  const cs = all.flatMap(([, , T]) => T.counts.map((c) => c.text));
+  check(`ear: counts are counts with units (${cs.length})`, cs.every((c) => /^(all|[1-9]\d*) (on the beat|in tune|on the click)$/.test(c)), [...new Set(cs)].join(" | "));
+  check("ear: a count at 0 or not judged is left out", all.every(([m, res, T]) => T.counts.length === [res.counts?.beatsAll || res.counts?.beats > 0, m !== "beats" && (res.counts?.notesAll || res.counts?.notes > 0)].filter(Boolean).length));
+  const tempos = all.map(([, , T]) => T.tempo?.text).filter(Boolean);
+  check("ear: the tempo line (the singer's own, well off the speed heard)", tempos.length > 0 && tempos.every((t) => t === "You sang it at ♩=62"), tempos.join(" | "));
+  const named = all.find(([m, res]) => m === "line" && res.cue?.kind === "pitch" && res.cue.size === "aim" && res.cue.dir === "higher")[2];
+  check("ear: a note named by its word, its syllable underlined — a melisma's later note says which", plainOf(named.cue) === "“Amazing” (second note) — aim higher" && named.cue.some((x) => x.u === "zing"), JSON.stringify(named.cue));
+  const nexts = all.map(([m, res, T]) => `${m}:${res.win?.kind || ""}/${res.cue?.kind || ""}→${T.next?.label || "–"}`);
+  check("ear: one next chip, by the cue", all.every(([m, res, T]) => {
+    const q = res.cue?.kind, nx = T.next?.label || null;
+    if (m === "beats") return nx === (res.counts?.beatsAll ? "Now on your own ›" : null);
+    if (q === "pitch" || q === "missed") return nx === "Practise that note ›";
+    if (q === "timing" || q === "held") return nx === "Try it with the clicks ›";
+    if (!q) return res.counts?.notesAll && res.counts?.beatsAll ? [null, "Next line ›"].includes(nx) : nx === "Try it with the clicks ›";
+    return nx === null;
+  }), nexts.join(" "));
+  const spots = all.filter(([m, res]) => m === "line" && !res.cue && res.counts?.notesAll && res.counts?.beatsAll).map(([, , T]) => T.next?.label || null);
+  check("ear: spot on → Next line ›, none on the last line", JSON.stringify(spots) === JSON.stringify(["Next line ›", null]), JSON.stringify(spots));
+  const firsts = all.filter(([, , T]) => T.sounds.some((x) => x.label === "▶ First note"));
+  check("ear: ▶ First note never a cue's (the action row has it)", !firsts.length);
+  check("ear: no ↑, no “—” count, no fraction", all.every(([, , T]) => T.counts.every((c) => !/↑|—|\//.test(c.text))));
 }
 
 // Banned words and digits (outside note names) in everything said above.

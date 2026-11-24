@@ -69,7 +69,7 @@ async function singPage(browser) {
     navigator.mediaDevices.getUserMedia = async (...a) => { const s = await g.apply(navigator.mediaDevices, a); window.__tracks.push(...s.getTracks()); return s; };
     const st = AudioBufferSourceNode.prototype.start;
     AudioBufferSourceNode.prototype.start = function (...a) {
-      if (window.__watch) window.__atStart.push({ live: window.__tracks.filter((t) => t.readyState === 'live').length, session: navigator.audioSession?.type });
+      if (window.__watch) window.__atStart.push({ live: window.__tracks.filter((t) => t.readyState === 'live').length, session: navigator.audioSession?.type, when: a[0] ?? 0, rate: this.playbackRate?.value });
       return st.apply(this, a);
     };
   });
@@ -82,6 +82,11 @@ async function singPage(browser) {
   await ready();
   const ear = () => page.evaluate(() => ({ ...window.resonateDebug().ear, ui: document.getElementById('ear-res').innerText.replace(/\n/g, ' | '), notesUi: document.getElementById('ear-notes').innerText.replace(/\n/g, ' '), old: document.getElementById('ear-res').hasAttribute('data-old') }));
   const btns = () => page.evaluate(() => { const l = document.getElementById('listen'), s = document.getElementById('sing'); return { listen: l.textContent, caption: l.dataset.caption || null, listenOff: l.disabled, sing: s.textContent, singOff: s.disabled, pulse: l.hasAttribute('data-pulse') }; });
+  // (WP5: the hint under the tabs — shown, its words, its line kept while quiet; ▶ First note's top; the result's
+  // words as ear.js earText gives them, and the syllables underlined on screen)
+  const hintOf = () => page.evaluate(() => { const h = document.getElementById('ear-hint'); return { on: !h.hidden, text: h.hidden || h.hasAttribute('data-quiet') ? '' : h.textContent, h: h.getBoundingClientRect().height }; });
+  const firstTop = () => page.evaluate(() => document.querySelector('#ear-acts button[data-act="first"]')?.getBoundingClientRect().top ?? null);
+  const shownU = () => page.$$eval('#ear-res u', (xs) => xs.map((x) => x.textContent));
   const idle = () => page.waitForFunction(() => { const d = window.resonateDebug(); return d.ear.run === null && !d.session; }, null, { timeout: 20000 });
   // 0. the lines
   let e = await ear();
@@ -90,6 +95,18 @@ async function singPage(browser) {
   ok(e.p === 0 && e.mode === 'line' && (await page.textContent('.ear-modes button[aria-pressed="true"]')) === 'Line', `0: line 1 open, the Line tab (${e.mode}; the tabs “${(await page.textContent('.ear-modes')).trim().split(/\s+/).join(' · ')}”)`);
   let b = await btns();
   ok(b.pulse && b.caption === 'Hear' && b.listen === '▶ Hear' && b.sing === '● Sing', `0: ▶ pulses (hear it first), the dock “${b.listen}” (${b.caption}) · “${b.sing}”`);
+  let hint = await hintOf();
+  ok(hint.on && hint.text === '▶ Hear it first' && e.hint === '▶ Hear it first', `0: the hint — “${hint.text}”`);
+  const top0 = await firstTop();
+  // (the speed: Normal pressed — the ♩ menu at the song's own tempo)
+  const speedRow = () => page.$$eval('#ear-acts .ear-speed button', (xs) => xs.map((x) => `${x.textContent}${x.getAttribute('aria-pressed') === 'true' ? '*' : ''}`).join(' '));
+  ok((await speedRow()) === 'Normal* Slow Slower' && e.speed === 1, `0: the action row's speed — ${await speedRow()}`);
+  await page.click('#listen');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'play', null, { timeout: 5000 });
+  hint = await hintOf();
+  ok(hint.text === 'Now ● Sing — at your own speed' && !(await btns()).pulse, `0: ▶ Hear — the hint “${hint.text}”, ▶ no longer pulses`);
+  await page.click('#listen'); // (■ Stop)
+  await page.waitForFunction(() => window.resonateDebug().ear.run === null, null, { timeout: 5000 });
   // 1. the free attempt: 1.5 s after the tap, 15% slower, the 3rd note flat
   await page.click('#sing');
   await page.waitForFunction(() => document.getElementById('sing').textContent === '■ Done', null, { timeout: 10000 });
@@ -97,6 +114,12 @@ async function singPage(browser) {
   const dur = await page.evaluate(() => { const d = window.resonateDebug(); const a = d.ear.ph.j0, z = d.ear.ph.j1; return d.notes[z - 1].t + d.notes[z - 1].d - d.notes[a].t; });
   b = await btns();
   ok(!b.pulse && !b.listenOff && b.caption === 'Hear', `1: listening — ▶ not pulsing, enabled (it ends the attempt, uncounted): “${b.listen}”, the primary “${b.sing}”`);
+  await sleep(300);
+  const ring = await page.evaluate(() => ({ t: document.querySelector('#ear-ring .ear-ring-t')?.textContent, h: document.querySelector('#ear-ring .ear-ring-hint')?.textContent, shown: !document.getElementById('ear-ring').hidden }));
+  hint = await hintOf();
+  const top1 = await firstTop();
+  ok(ring.shown && ring.t === 'Sing' && ring.h === 'Tap ■ Done at the end', `1: ready — “${ring.t}” in the ring, “${ring.h}” under it`);
+  ok(hint.on && !hint.text && hint.h > 10 && Math.abs(top1 - top0) <= 2, `1: the hint quiet, its line kept (${hint.h.toFixed(0)} px); ▶ First note where it was (${top0.toFixed(1)} → ${top1.toFixed(1)})`);
   await sleep(1500 + dur * 1.15 * 1000 + 800);
   const t0 = Date.now();
   await page.click('#sing');
@@ -111,6 +134,16 @@ async function singPage(browser) {
   const sung = await page.evaluate(() => { const u = window.__sung, d = window.resonateDebug(), a = d.ear.ph.j0; return u && u.segs.map((o) => ({ i: o.i, moved: o.s - o.w, off: Math.round((o.m - d.notes[a + o.i].midi) * 100) })); });
   ok(sung && sung.length === 11 && sung.every((o) => Math.abs(o.moved) < 1e-9 && o.off === (o.i === 2 ? -200 : 0)), `1: the singer sang the plan (${JSON.stringify(sung?.filter((o) => o.off || o.moved))})`);
   ok(r.counts?.beats >= 7, `1: ♩ ${r.counts?.beats} (a steady singer, one note flat)`);
+  // (WP5: the words — the cue naming the whole word with its syllable underlined, ▶ Piano · ▶ You, Practise that note ›,
+  // the counts with their units, the singer's tempo; nothing a grade)
+  let w = (await ear()).words;
+  const top2 = await firstTop();
+  ok(w.cue === '“Amazing” — aim higher' && JSON.stringify(await shownU()) === '["ma"]' && JSON.stringify(w.u) === '["ma"]', `1: the cue — “${w.cue}”, underlined ${JSON.stringify(await shownU())}`);
+  ok(w.sounds.join(' · ') === '▶ Piano · ▶ You' && w.next === 'Practise that note ›', `1: its ▶s ${w.sounds.join(' · ')}, next “${w.next}”`);
+  ok(w.counts.every((c) => /^[♩♪] (all|[1-9]\d*) (on the beat|in tune)$/.test(c)) && w.counts.length === 2 && /^You sang it at ♩=(6[6-9]|7[0-3])$/.test(w.tempo || ''), `1: the counts ${JSON.stringify(w.counts)}, “${w.tempo}” (sung ×1.15 of ♩=80)`);
+  ok(Math.abs(top2 - top0) <= 2, `1: ▶ First note where it was with the result (${top0.toFixed(1)} → ${top2.toFixed(1)})`);
+  const grade = (await ear()).ui;
+  ok(!/—\s*(·|$)|(^|\s)0(\s|$)|↑|%|\//.test(grade), `1: nothing grade-like on screen (“${grade}”)`);
   ok(ms < 1500, `1: the answer in ${ms} ms`);
   ok(!(await page.evaluate(() => getComputedStyle(document.getElementById('lane')).display !== 'none')), '1: no lane shown');
   ok(!(await btns()).pulse && (await ear()).hints.line === 1, `1: sung — ▶ no longer pulses; the device's Line attempts: ${(await ear()).hints.line}`);
@@ -130,17 +163,33 @@ async function singPage(browser) {
   e = await attempt({ all: -300 });
   r = e.res;
   ok(r.key?.kind === 'key' && r.key.s === -3 && r.counts?.notes === null && r.win?.kind === 'key' && r.cue?.kind === 'key' && r.cue.dir === 'lower', `1b: 3 semitones down — key ${JSON.stringify(r.key)}, ♪ ${r.counts?.notes}, win ${r.win?.kind}, cue ${r.cue?.kind} ${r.cue?.dir}`);
-  ok(/The tune was right/.test(e.ui) && /lower than the piano/.test(e.ui) && !/♪/.test(e.ui), `1b: on screen — “${e.ui}”`);
+  ok(/The tune was right/.test(e.ui) && /lower than the piano/.test(e.ui) && !/in tune/.test(e.ui) && e.words.sounds.join(' · ') === '▶ You · Lower the song' && !e.words.next, `1b: on screen — “${e.ui}”, ${JSON.stringify(e.words.sounds)}`);
   ok(r.counts?.beatsAll && r.onsets?.measured >= 4, `1b: ♩ judged from the starts all the same (${JSON.stringify(r.onsets)}, ♩ ${r.counts?.beatsAll ? 'all' : r.counts?.beats})`);
   ok(typeof r.ms === 'number' && r.ms <= 400, `1b: judged in ${r.ms} ms (two fits: at 0 and at the offset)`);
+  // (Lower the song: the Key menu −3 — "Key A♭ → F" in the result's place, that result gone with the old key, ▶ Hear it
+  // first again; back in the written key, the result there again — dimmed)
+  await page.click('#ear-res button[data-act="cue-key"]');
+  await sleep(300);
+  e = await ear();
+  hint = await hintOf();
+  const keyNow = await page.evaluate(() => document.getElementById('key-select').value);
+  ok(keyNow === '-3' && e.fact === 'Key A♭ → F' && e.ui === 'Key A♭ → F' && !e.shown && hint.text === '▶ Hear it first' && (await btns()).pulse, `1b: Lower the song — Key ${keyNow}, “${e.ui}”, the hint “${hint.text}” and ▶ pulsing again`);
+  await page.evaluate(() => { const x = document.getElementById('key-select'); x.value = '0'; x.dispatchEvent(new Event('change', { bubbles: true })); });
+  await sleep(300);
+  e = await ear();
+  ok(e.shown?.old && e.shown.res.key?.s === -3 && /The tune was right/.test(e.ui), `1b: the written key again — that attempt's result, dimmed (“${e.ui}”)`);
   // 1c. line 3 (“I once was lost…”: three E♭5s running — a same-pitch repeat), 20 % slower, every note right
   await page.click('#ear-next'); await page.click('#ear-next');
+  hint = await hintOf();
+  ok(hint.on && hint.text === '▶ Hear it first' && (await ear()).hints.line === 2, `1c: another line, not heard yet — “${hint.text}” again (2 Line attempts on this device)`);
   e = await attempt({ f: 1.2 });
   r = e.res;
   ok(e.p === 2 && r.counts?.notesAll && r.counts?.beatsAll && r.win?.kind === 'spot' && !r.cue, `1c: line 3 at its own speed, all right — “${e.ui}” (b ${r.fit?.b?.toFixed(2)}, onsets ${JSON.stringify(r.onsets)})`);
   // 1d. line 4: “see.” (6 s written) let go after 1.5 s, ■ Done while it still sounds — in free time the singer ends
   // the line: that note is sung, not missed (it read ♩ 5 · ♪ 8 with nothing to fix)
   await page.click('#ear-next');
+  hint = await hintOf();
+  ok(!hint.on && (await ear()).hints.line === 3 && !(await btns()).pulse, `1d: after 3 Line attempts the hint is gone, ▶ doesn't pulse (${JSON.stringify(hint)})`);
   e = await attempt({ held: 1.5 }, 900, 1.4);
   r = e.res;
   ok(e.p === 3 && r.counts?.notesAll && r.counts?.beatsAll && r.win?.kind === 'spot' && !r.cue && Math.abs(r.fit?.b - 1) < 0.04, `1d: line 4, its long last note let go early and ■ Done while it sounds — “${e.ui}” (b ${r.fit?.b?.toFixed(2)})`);
@@ -160,13 +209,19 @@ async function singPage(browser) {
   await page.waitForFunction(() => { const x = window.resonateDebug().ear; return x.res && x.run === null; }, null, { timeout: 15000 });
   e = await ear();
   r = e.res;
-  ok(r.counts?.notesAll && r.counts?.beatsAll && /all of them.*all of them/.test(e.ui) && !e.old, `2: every note right — “${e.ui}”`);
+  ok(r.counts?.notesAll && r.counts?.beatsAll && /all on the beat.*all in tune/.test(e.ui) && !e.old, `2: every note right — “${e.ui}”`);
+  ok(e.words.win === '✓ Spot on' || e.words.win === '✓ Spot on — twice running', `2: “${e.words.win}”, ${JSON.stringify(e.words.sounds)}, next “${e.words.next}”`);
+  ok(e.words.sounds.join() === '▶ You' && e.words.next === 'Next line ›', `2: ▶ You in the result, “Next line ›”`);
+  await page.click('#ear-res button[data-act="nextline"]');
+  e = await ear();
+  ok(e.p === 1 && e.run === null && e.mode === 'line', `2: “Next line ›” — line ${e.p + 1}, nothing started`);
+  await page.click('#ear-prev');
   const nLine = e.hints.line;
   // 2b. Line → Notes → Line: the result kept, dimmed under "Last time"
   await page.click('.ear-modes button[data-ear="notes"]');
   await page.click('.ear-modes button[data-ear="line"]');
   e = await ear();
-  ok(e.shown?.old && e.old && /^Last time \| .*all of them.*all of them/.test(e.ui) && e.shown.res.counts?.notesAll, `2b: Line → Notes → Line: the last result, dimmed — “${e.ui}”`);
+  ok(e.shown?.old && e.old && /^Last time \| .*all on the beat.*all in tune/.test(e.ui) && e.shown.res.counts?.notesAll && !(await page.$('#ear-res button')), `2b: Line → Notes → Line: the last result, dimmed, no chips — “${e.ui}”`);
   const kept = JSON.stringify(e.shown.res);
   await page.click('#ear-next'); await page.click('#ear-prev');
   e = await ear();
@@ -201,7 +256,8 @@ async function singPage(browser) {
   e = await ear();
   b = await btns();
   const acts = await page.$$eval('#ear-acts button', (xs) => xs.map((x) => x.textContent));
-  ok(!e.flash && !e.shown && b.sing === '● Sing' && b.caption === 'Hear' && JSON.stringify(acts) === '["▶ First note"]', `3: Beats — “${b.listen}” (${b.caption}) · “${b.sing}”, no result yet, the action row ${JSON.stringify(acts)}`);
+  ok(!e.flash && !e.shown && b.sing === '● Sing' && b.caption === 'Hear' && JSON.stringify(acts) === '["▶ First note","Normal","Slow","Slower"]', `3: Beats — “${b.listen}” (${b.caption}) · “${b.sing}”, no result yet, the action row ${JSON.stringify(acts)}`);
+  ok(e.hint === 'Sing along with the clicks', `3: the hint — “${e.hint}”`);
   // (the count-in row, sampled every 20 ms: its state, the clock it's lit from, the ring's level)
   const watch = () => page.evaluate(() => { window.__rows = []; window.__poll = setInterval(() => { const d = window.resonateDebug(), c = d.ear.count, ring = document.querySelector('#ear-ring'); window.__rows.push({ nowT: d.nowT, c: c && { lit: c.lit, wordOn: c.wordOn, gone: c.gone, shown: c.shown, play: c.play }, ring: !!ring && !ring.hidden, lv: Number(document.querySelector('.ear-ring')?.style.getPropertyValue('--lv') || 0), status: document.getElementById('status').textContent }); }, 20); });
   const unwatch = () => page.evaluate(() => { clearInterval(window.__poll); return window.__rows; });
@@ -256,11 +312,11 @@ async function singPage(browser) {
   ok(/rgba\(255, 255, 255, 0\.25\)/.test(ringColor), `3: the ring is neutral, not the win's green (${ringColor})`);
   e = await ear();
   r = e.res;
-  ok(r.counts?.beatsAll && r.win?.kind === 'spot' && /all of them/.test(e.ui) && /✓ Spot on with the click/.test(e.ui) && !r.cue, `3: on the click — “${e.ui}”`);
+  ok(r.counts?.beatsAll && r.win?.kind === 'spot' && /all on the click/.test(e.ui) && /✓ Spot on with the click/.test(e.ui) && !r.cue, `3: on the click — “${e.ui}”`);
   ok(r.onsets?.of === 8 && r.onsets.measured === 8 && Object.values(r.starts).every((x) => x.on && Math.abs(x.dev) < 0.08), `3: every start measured, each on its click (${JSON.stringify(r.onsets)}; dev ${Object.values(r.starts).map((x) => x.dev).join(' ')})`);
   ok(e.tip && !e.count, '3: 🎧 stays with its result; the row is gone');
-  const actsAll = await page.$$eval('#ear-acts button', (xs) => xs.map((x) => x.textContent));
-  ok(JSON.stringify(actsAll) === '["▶ First note","▶ You"]', `3: all on the click — ▶ You beside ▶ First note (${JSON.stringify(actsAll)})`);
+  const actsAll = await page.$$eval('#ear-res .ear-chips button, #ear-res .ear-next button', (xs) => xs.map((x) => x.textContent));
+  ok(JSON.stringify(actsAll) === '["▶ You","Now on your own ›"]', `3: all on the click — ▶ You, then “Now on your own ›” (${JSON.stringify(actsAll)})`);
   // behind the click (0.3 s late every note): said, with ▶ Click and ▶ You; 🎧 once only
   await page.evaluate(() => { window.__sing = { mode: 'beats', late: 0.3 }; });
   await page.click('#sing');
@@ -271,9 +327,9 @@ async function singPage(browser) {
   await page.evaluate(() => { window.__sing = null; });
   e = await ear();
   r = e.res;
-  const chips = await page.$$eval('#ear-res .ear-cue button', (xs) => xs.map((x) => x.textContent));
+  const chips = await page.$$eval('#ear-res .ear-chips button', (xs) => xs.map((x) => x.textContent));
   ok(r.cue?.kind === 'steady' && r.cue.dir === 'sooner' && !r.counts?.beatsAll && /Behind the click — sing right on it/.test(e.ui) && JSON.stringify(chips) === '["▶ Click","▶ You"]', `3: 0.3 s late on every note — “${e.ui}” ${JSON.stringify(chips)} (dev ${Object.values(r.starts).map((x) => x.dev).join(' ')})`);
-  ok(!/all of them/.test(e.ui) && !/Spot on|Came in on time/.test(e.ui), '3: no “all of them”, no win for the timing');
+  ok(!/all on the click/.test(e.ui) && !/Spot on|Came in on time/.test(e.ui) && !(await page.$('#ear-res .ear-next')), '3: no “all on the click”, no win for the timing, no next chip');
   // ▶ Click: the melody and the click over the cue's stretch; ▶ You: the take there with the click
   for (const [chip, act] of [['▶ Click', 'cue-click'], ['▶ You', 'cue-you']]) {
     await page.evaluate(() => { window.__atStart = []; window.__watch = true; });
@@ -489,6 +545,81 @@ async function singPage(browser) {
   e = await ear();
   ok(nofit === 'nofit' && e.notes.cur === 8 && e.notes.off.includes(8) && e.notes.msg === 'Off last time', `4: then one Ear couldn't follow (${nofit}) — Notes still on “sweet” (current ${e.notes.cur}, off ${JSON.stringify(e.notes.off)})`);
   await page.click('.ear-modes button[data-ear="line"]');
+  // 7. (WP5) a start late: its cue, ▶ Piano over the stretch at the attempt's own tempo, "Try it with the clicks ›" →
+  // Beats (nothing starts); Normal · Slow · Slower — the ♩ menu's own setting, never compounded; a song with its own
+  // tempo slowed as a share of it
+  e = await attempt({ starts: { 6: 0.4 } });
+  w = e.words;
+  const rg = e.res?.cue?.range;
+  ok(e.res?.cue?.kind === 'timing' && w.cue === 'Come in sooner on “grace”' && w.sounds.join(' · ') === '▶ Piano · ▶ You' && w.next === 'Try it with the clicks ›', `7: “grace” 0.4 s late — “${w.cue}” ${w.sounds.join(' · ')}, next “${w.next}”`);
+  await page.evaluate(() => { window.__atStart = []; window.__watch = true; });
+  await page.click('#ear-res button[data-act="cue-stretch"]');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'play', null, { timeout: 5000 });
+  const stretch = (await ear()).playing;
+  await idle();
+  const whens = await page.evaluate(() => { window.__watch = false; return window.__atStart.map((x) => x.when).filter((x) => x > 0); });
+  const writ = await page.evaluate(([a, z]) => window.resonateDebug().notes.slice(a, z + 1).map((n) => n.t), rg || [0, 0]);
+  const ratio = whens.length >= 2 ? (whens[whens.length - 1] - whens[0]) / (writ[writ.length - 1] - writ[0]) : null;
+  ok(rg && stretch?.length === rg[1] - rg[0] + 1 && whens.length === stretch.length && Math.abs(ratio / e.res.fit.b - 1) < 0.02, `7: ▶ Piano — the stretch ${rg?.join('…')} (${stretch?.length} notes), at the attempt's tempo (×${ratio?.toFixed(3)}, b ${e.res?.fit?.b?.toFixed(3)})`);
+  // (▶ The rest: a singer who stopped after “grace” — the piano from the first note not sung to the line's end)
+  e = await attempt({ stop: 6 });
+  w = e.words;
+  const from = e.res?.cue?.from;
+  ok(e.res?.cue?.kind === 'short' && w.cue === 'Keep going to “sound”' && w.sounds.join() === '▶ The rest' && !w.next, `7: stopped after “grace” — “${w.cue}” ${w.sounds.join(' · ')}`);
+  await page.click('#ear-res button[data-act="cue-rest"]');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'play', null, { timeout: 5000 });
+  const rest = (await ear()).playing, j1 = (await ear()).ph.j1;
+  await page.click('#listen'); // (■ Stop)
+  await idle();
+  ok(from != null && rest?.length === j1 - from, `7: ▶ The rest — ${rest?.length} notes, from note ${from} to the line's end`);
+  e = await attempt({ starts: { 6: 0.4 } });
+  await page.click('#ear-res button[data-act="beats"]');
+  e = await ear();
+  ok(e.mode === 'beats' && e.run === null && !(await page.evaluate(() => window.resonateDebug().session)), `7: “Try it with the clicks ›” → Beats, nothing started (${e.mode}, ${e.run})`);
+  const tsel = () => page.evaluate(() => { const x = document.getElementById('tempo-select'); return { v: x.value, t: x.selectedOptions[0]?.textContent, rate: window.resonateDebug().rate }; });
+  await page.click('#ear-acts .ear-speed button[data-f="0.7"]');
+  let ts = await tsel();
+  ok(ts.v === 'r:0.7' && ts.t === '♩=56 (70%)' && (await speedRow()) === 'Normal Slow Slower*' && (await ear()).speed === 0.7, `7: Slower — the ♩ menu “${ts.t}” (${ts.v}), ${await speedRow()}`);
+  await page.click('#listen');
+  await page.waitForFunction(() => window.resonateDebug().ear.count?.play, null, { timeout: 5000 });
+  const ccl = (await ear()).count.clicks.map((c) => c.t);
+  await page.click('#listen'); // (■ Stop)
+  await idle();
+  const cgaps = ccl.slice(1, 3).map((t, i) => t - ccl[i]);
+  ok(cgaps.length === 2 && cgaps.every((g) => Math.abs(g - 60 / 56) < 0.003), `7: Beats at Slower — ▶ Hear's count-in a beat of ♩=56 apart (${cgaps.map((g) => g.toFixed(3))}), not 70 % of 70 %`);
+  await page.click('.ear-modes button[data-ear="line"]');
+  await page.click('#ear-acts .ear-speed button[data-f="0.8"]');
+  ts = await tsel();
+  ok(ts.v === 'r:0.8' && ts.t === '♩=64 (80%)' && (await speedRow()) === 'Normal Slow* Slower', `7: Slow — “${ts.t}”, ${await speedRow()}`);
+  await page.evaluate(() => { window.__atStart = []; window.__watch = true; });
+  await page.click('#listen');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'play', null, { timeout: 5000 });
+  await sleep(2500);
+  await page.click('#listen');
+  await idle();
+  const hw = await page.evaluate(() => { window.__watch = false; return window.__atStart.map((x) => x.when).filter((x) => x > 0); });
+  const q3 = await page.evaluate(() => { const d = window.resonateDebug(), a = d.ear.ph.j0; return [d.notes[a].q, d.notes[a + 3].q]; });
+  const want3 = (q3[1] - q3[0]) * 60 / 64;
+  ok(hw.length >= 4 && Math.abs(hw[3] - hw[0] - want3) < 0.01, `7: ▶ Hear at Slow — its 4th note ${(hw[3] - hw[0]).toFixed(3)} s after the 1st (♩=64: ${want3.toFixed(3)})`);
+  // (a song with its own tempo — typed: ♩=100 — slowed: 80 % of it, the menu says so; the menu's own choice clears it)
+  page.once('dialog', (d) => d.accept('100'));
+  await page.evaluate(() => { const x = document.getElementById('tempo-select'); x.value = 'type'; x.dispatchEvent(new Event('change', { bubbles: true })); });
+  await sleep(300);
+  ts = await tsel();
+  ok(Math.abs(ts.rate - 1.25) < 1e-9 && (await speedRow()) === 'Normal* Slow Slower', `7: ♩=100 typed — the song's own tempo (${ts.t}), Normal`);
+  await page.click('#ear-acts .ear-speed button[data-f="0.8"]');
+  ts = await tsel();
+  const sp = await page.evaluate(() => JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}')['amazing-grace']?.sp);
+  ok(ts.v === 'o:0.8' && ts.t === '♩=80 (yours · 80%)' && Math.abs(ts.rate - 1) < 1e-9 && sp === 0.8 && (await speedRow()) === 'Normal Slow* Slower', `7: Slow on it — “${ts.t}” (${ts.v}, rate ${ts.rate}, kept ${sp})`);
+  await page.evaluate(() => { const x = document.getElementById('tempo-select'); x.value = 'o:1'; x.dispatchEvent(new Event('change', { bubbles: true })); });
+  await sleep(200);
+  ts = await tsel();
+  ok(Math.abs(ts.rate - 1.25) < 1e-9 && (await speedRow()) === 'Normal* Slow Slower', `7: the menu's “(yours)” — back to ♩=100, Normal (${ts.t})`);
+  await page.evaluate(() => { const x = document.getElementById('tempo-select'); x.value = 'r:1'; x.dispatchEvent(new Event('change', { bubbles: true })); });
+  await sleep(200);
+  ts = await tsel();
+  const left = await page.evaluate(() => ({ t: JSON.parse(localStorage.getItem('resonate.sing.timing') || '{}')['amazing-grace'] || null, sp: JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}')['amazing-grace']?.sp ?? null }));
+  ok(ts.v === 'r:1' && ts.rate === 1 && !left.t && left.sp === null && (await speedRow()) === 'Normal* Slow Slower', `7: ♩=80 from the menu — the score's tempo again, nothing left (${JSON.stringify(left)})`);
   // 5. ⚙: only Ear's switch while it shows
   await page.click('#options-btn');
   const sheet = () => page.evaluate(() => ({ whole: getComputedStyle(document.getElementById('op-whole')).display !== 'none', label: document.querySelector('#guided-on').closest('label').textContent.trim(), on: document.getElementById('guided-on').checked }));
@@ -567,10 +698,14 @@ async function shell(browser, dev) {
   const modeTo = (m) => page.click(`.ear-modes button[data-ear="${m}"]`);
   let L = await look();
   ok(L.ear && !L.tuner && !L.home && L.state.ear, `${dev}: Ear shows — the tuner hidden, its slot too (ear ${L.ear}, tuner ${L.tuner}, slot ${L.home})`);
+  const firstTop = () => page.evaluate(() => document.querySelector('#ear-acts button[data-act="first"]')?.getBoundingClientRect().top ?? null);
+  const top0 = await firstTop();
   ok(L.caption === 'Hear' && L.pulse && L.sing === '● Sing' && L.whole, `${dev}: the dock — ▶ “${L.caption}” (pulsing), “${L.sing}” whole`);
   // the labels, every mode (idle)
   const labels = [];
-  for (const m of ['beats', 'notes', 'line']) { await modeTo(m); await sleep(100); L = await look(); labels.push([m, L.caption, L.sing, L.whole]); }
+  const tabsAt = [];
+  for (const m of ['beats', 'notes', 'line']) { await modeTo(m); await sleep(100); L = await look(); labels.push([m, L.caption, L.sing, L.whole]); tabsAt.push(await page.evaluate(() => document.querySelector('.ear-modes').getBoundingClientRect().top)); }
+  ok(tabsAt.every((t) => Math.abs(t - tabsAt[0]) <= 2), `${dev}: the tabs stay put from mode to mode (${tabsAt.map((t) => t.toFixed(1)).join(', ')})`);
   ok(labels.every(([m, c, s, w]) => c === 'Hear' && w && s === { line: '● Sing', beats: '● Sing', notes: '● Match' }[m]), `${dev}: idle in each mode — ${labels.map(([m, c, s, w]) => `${m}: ${c} · “${s}”${w ? '' : ' (cut)'}`).join(', ')}`);
   // ▶ Hear: Stop while it plays; no pulse after
   await page.click('#listen');
@@ -593,6 +728,7 @@ async function shell(browser, dev) {
   L = await look();
   ok(L.state.take && L.state.busy && L.hold === 'take' && !L.live && !L.tuner && !L.home, `${dev}: during a free attempt — state().take ${L.state.take}, the tuner holds “${L.hold}”, its mic ${L.live ? 'live' : 'off'}, hidden`);
   ok(opening.whole && L.whole && L.caption === 'Hear' && ['Mic…', '■ Done'].includes(opening.sing) && L.sing === '■ Done', `${dev}: the attempt's labels whole — “${opening.sing}” → “${L.sing}”, ▶ “${L.caption}”`);
+  const top1 = await firstTop();
   const dur = await page.evaluate(() => { const d = window.resonateSing.debug(); const a = d.ear.ph.j0, z = d.ear.ph.j1; return d.notes[z - 1].t + d.notes[z - 1].d - d.notes[a].t; });
   await sleep(dur * 1000 + 300);
   await page.click('.dock #sing');
@@ -602,6 +738,19 @@ async function shell(browser, dev) {
   L = await look();
   const res = await page.evaluate(() => window.resonateSing.debug().ear.res);
   ok(res?.counts?.notesAll && !L.state.take && !L.state.busy && !L.hold && !L.tuner, `${dev}: judged (♪ ${res?.counts?.notesAll ? 'all' : res?.counts?.notes}) — no take any more, the tuner still hidden`);
+  const top2 = await firstTop();
+  ok([top1, top2].every((t) => Math.abs(t - top0) <= 2), `${dev}: ▶ First note stays put — empty ${top0?.toFixed(1)}, listening ${top1?.toFixed(1)}, a result ${top2?.toFixed(1)}`);
+  // (the iPad: read from a music stand — the words 2.4rem, the counts 1.6rem, every button ≥ 48 px; the column centred)
+  const size = await page.evaluate(() => {
+    const px = (el) => parseFloat(getComputedStyle(el).fontSize), rem = px(document.documentElement);
+    const bs = [...document.querySelectorAll('#ear button')].filter((b) => b.getClientRects().length);
+    const el = document.getElementById('ear'), ear = el.getBoundingClientRect(), main = el.parentElement.getBoundingClientRect();
+    // (the space it's centred in: from what shows above it — the controls row — to the region's end)
+    const over = Math.max(main.top, ...[...el.parentElement.children].filter((x) => x !== el && x.getClientRects().length && x.getBoundingClientRect().bottom <= ear.top + 1).map((x) => x.getBoundingClientRect().bottom));
+    return { words: px(document.getElementById('ear-words')) / rem, counts: px(document.querySelector('#ear-res .ear-counts')) / rem, small: bs.filter((b) => b.getBoundingClientRect().height < 47.5).map((b) => b.textContent), cut: bs.filter((b) => b.scrollWidth > b.clientWidth + 0.5).map((b) => b.textContent), above: ear.top - over, below: main.bottom - ear.bottom, n: bs.length };
+  });
+  if (dev === 'ipad') ok(size.words >= 2.4 && size.counts >= 1.6 && !size.small.length && !size.cut.length && Math.abs(size.above - size.below) < 40, `${dev}: words ${size.words}rem, counts ${size.counts}rem, ${size.n} buttons ≥ 48 px${size.small.length ? ` (not: ${size.small})` : ''}, centred (${size.above.toFixed(0)} above, ${size.below.toFixed(0)} below)`);
+  else ok(!size.cut.length, `${dev}: no Ear button cut short (${size.n})${size.cut.length ? ` — ${size.cut}` : ''}`);
   if (dev === 'phone') {
     // Beats: ● Sing → ■ Stop (cut short here), Notes: ● Match → ■ Stop while the note plays
     await modeTo('beats');

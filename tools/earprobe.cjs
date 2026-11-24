@@ -118,6 +118,7 @@ const SHOTS = process.env.SHOTS || '';
       return { phrase: e.p, words: document.getElementById('ear-words').textContent, ui, notesUi, counts: r?.counts || null,
         win: win?.text || null, winKind: win?.kind ?? null, cue: cue?.text || null, cueKind: cue?.kind ?? null, cueDir: cue?.dir ?? null, cueAt: cue?.j != null && ph ? cue.j - ph.j0 : null,
         fit: fit ? { a: +fit.a.toFixed(3), b: +fit.b.toFixed(3) } : null, onsets: r?.onsets ?? null, offset: r?.key?.c ?? null, key: r?.key ?? null, notReached: r?.notReached ?? null,
+        say: e.words ?? null, hint: e.hint ?? null, speed: e.speed ?? null, // (WP5: what the screen says — ear.js earText's words, the hint, Normal / Slow / Slower)
         notes: e.notes ? { msg: e.notes.msg, done: e.notes.done, targets: e.notes.targets, cur: e.notes.cur ?? null, off: e.notes.off ?? null, tries: e.notes.tries ?? null, v: e.notes.v ?? null, complete: e.notes.complete ?? null } : null, oct: e.oct ?? null, perNote };
     }));
     if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); const f = path.join(SHOTS, `probe-${String(k).padStart(2, '0')}.png`); await page.screenshot({ path: f }); out.shot = f; }

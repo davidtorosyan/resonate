@@ -28,7 +28,8 @@
 //              Line kinds, the first that applies: "silent" · "nofit" · "key" · "offset" · "short" · "missed" ·
 //              "pitch" · "unclear" · "held" · "timing" · "sag". Beats: "silent" · "slip" · "unheard" · "steady" ·
 //              "held" · "drift" · "missed" · "timing" (sounds "hear", "click", "you").
-//   text     the words are WP5's (earText); `text` on a win and a cue is their plain form meanwhile.
+//   text     a win's and a cue's words, plain (earText gives them with the syllable underlined, and the rest
+//            of what the screen says)
 //   fit      { a, b, off, anchor, g (grades — at the singer's line, written pitches; another key: in theirs),
 //              ns (the notes where the singer put them) } — Line
 //   key      { c (¢: the attempt's pitch classes against the line's), s, kind: "key" | "offset" | null } — Line
@@ -141,54 +142,125 @@ export function wordOf(j, notes) {
 }
 const ORD = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"];
 const NUM = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
-// The plain words for a note (WP5 underlines the syllable): “Amazing”, “Amazing” (second note), or its name.
-function named(j, ctx) {
-  const w = wordOf(j, ctx.notes);
-  if (!w) return ctx.name ? ctx.name(ctx.notes[j].midi) : "this note";
-  return w.n > 1 && w.k > 0 ? `“${w.word}” (${ORD[w.k] || `note ${w.k + 1}`} note)` : `“${w.word}”`;
-}
 
-// The plain form of a win or a cue (`text`, until WP5's earText words them with the syllable underlined).
-function winText(w, ctx) {
-  const nm = (j) => named(j, ctx);
+// --- The words (the fix plan's WP5: the words tables) -------------------------------------------------
+// A line of words is a list of parts: a string, or { u } — the syllable a note is sung on, underlined inside its
+// word ("“A·ma·zing”" with ma underlined). plainOf(parts): the words alone (res.win.text / res.cue.text, aria).
+export const plainOf = (parts) => (parts || []).map((x) => (typeof x === "string" ? x : x.u)).join("");
+// A note named for the singer: its whole word in quotes, the syllable underlined when the word has more than one
+// (one syllable: the word is the note), a melisma's later notes "(second note)"; a note without words: its name.
+// plain: a word, not a note (a run's ends, the word the count-in row lights, where to keep going to).
+function namedParts(j, ctx, { plain = false } = {}) {
+  const w = wordOf(j, ctx.notes);
+  if (!w) return [ctx.name ? ctx.name(ctx.notes[j].midi) : "this note"];
+  const word = plain || w.syl === w.word || !w.syl ? ["“", w.word, "”"] : ["“", w.word.slice(0, w.at[0]), { u: w.syl }, w.word.slice(w.at[1]), "”"].filter((x) => x !== "");
+  return !plain && w.n > 1 && w.k > 0 ? [...word, ` (${ORD[w.k] || `note ${w.k + 1}`} note)`] : word;
+}
+// (a word as the count-in row shows it: whole, no quotes inside a sentence that names it as a sign)
+const wordParts = (j, ctx) => namedParts(j, ctx, { plain: true });
+
+// A win's words (without its ✓): Line kinds, and Beats' (ctx.beats).
+function winParts(w, ctx) {
+  const nm = (j) => namedParts(j, ctx);
   switch (w.kind) {
-    case "spot": return `Spot on${ctx.beats ? " with the click" : ""}${w.sub === "again" ? " — twice running" : ""}`;
-    case "fixed": return w.sub === "start" ? `In on ${nm(w.j)} now` : `${nm(w.j)} right on it now`;
-    case "rose": return w.sub === "both" ? "More of both than last time" : w.sub === "beats" ? `More on the ${ctx.beats ? "click" : "beat"} than last time` : "More in tune than last time";
-    case "key": case "tune": return "The tune was right";
-    case "high": return `Hit the high note on ${nm(w.j)}`;
-    case "long": return `${nm(w.j)} held right on the note`;
-    case "first": return "Started on the note";
-    case "entry": return "Came in on time";
-    case "run": return `Steady from ${nm(w.j)} to ${nm(w.j2)}`;
-    case "even": return "Kept a steady beat";
-    default: return "";
+    case "spot": return [`Spot on${ctx.beats ? " with the click" : ""}${w.sub === "again" ? " — twice running" : ""}`];
+    case "fixed": return w.sub === "start" ? ["In on ", ...nm(w.j), " now"] : [...nm(w.j), " right on it now"];
+    case "rose": return [w.sub === "both" ? "More of both than last time" : w.sub === "beats" ? `More on the ${ctx.beats ? "click" : "beat"} than last time` : "More in tune than last time"];
+    case "key": case "tune": return ["The tune was right"];
+    case "high": return ["Hit the high note on ", ...nm(w.j)];
+    case "long": return [...nm(w.j), " held right on the note"];
+    case "first": return ["Started on the note"];
+    case "entry": return ["Came in on time"];
+    case "run": return ["Steady from ", ...wordParts(w.j, ctx), " to ", ...wordParts(w.j2, ctx)];
+    case "even": return ["Kept a steady beat"];
+    default: return [];
   }
 }
-function cueText(c, ctx) {
-  const nm = (j) => named(j, ctx);
+// A cue's words: the first that applies (Line, Beats), each an action.
+function cueParts(c, ctx) {
+  const nm = (j) => namedParts(j, ctx);
   switch (c.kind) {
-    case "silent": return "Didn't hear you — sing a bit louder";
-    case "nofit": return "Couldn't follow that one";
-    case "key": return c.dir === "lower" ? "Started lower than the piano" : "Started higher than the piano";
-    case "offset": return c.dir === "higher" ? "A little low all the way" : "A little high all the way";
-    case "short": return `Keep going to ${nm(c.j)}`;
-    case "slip": return c.dir === "sooner" ? `Came in late — start when ${nm(c.j)} lights` : `Came in early — wait for ${nm(c.j)} to light`;
-    case "unheard": return "Couldn't hear the starts — sing each word out";
-    case "steady": return c.dir === "sooner" ? "Behind the click — sing right on it" : "Ahead of the click — wait for it";
-    case "drift": return c.dir === "sooner" ? "Slowing down — stay with the click" : "Speeding up — stay with the click";
+    case "silent": return ["Didn't hear you — sing a bit louder"];
+    case "nofit": return ["Couldn't follow that one"];
+    case "key": return [c.dir === "lower" ? "Started lower than the piano" : "Started higher than the piano"];
+    case "offset": return [c.dir === "higher" ? "A little low all the way" : "A little high all the way"];
+    case "short": return ["Keep going to ", ...wordParts(c.j, ctx)];
+    case "slip": return c.dir === "sooner" ? ["Came in late — start when ", ...wordParts(c.j, ctx), " lights"] : ["Came in early — wait for ", ...wordParts(c.j, ctx), " to light"];
+    case "unheard": return ["Couldn't hear the starts — sing each word out"];
+    case "steady": return [c.dir === "sooner" ? "Behind the click — sing right on it" : "Ahead of the click — wait for it"];
+    case "drift": return [c.dir === "sooner" ? "Slowing down — stay with the click" : "Speeding up — stay with the click"];
     case "missed": {
-      if (ctx.beats) return `Sing out on ${nm(c.j)}`; // (Beats: a start not sung — its syllable's other notes aside)
+      if (ctx.beats) return ["Sing out on ", ...nm(c.j)]; // (Beats: a start not sung — its syllable's other notes aside)
       const w = wordOf(c.j, ctx.notes);
-      return w && w.n > 1 ? `“${w.word}” — sing ${w.n === 2 ? "both" : `all ${NUM[w.n - 1] || w.n}`} notes` : `Sing out on ${nm(c.j)}`;
+      // (a melisma: the word, its syllable underlined — every note of it)
+      if (w && w.n > 1) return [...namedParts(w.j0, ctx), ` — sing ${w.n === 2 ? "both" : `all ${NUM[w.n - 1] || "the"}`} notes`];
+      return ["Sing out on ", ...nm(c.j)];
     }
-    case "pitch": return `${nm(c.j)} — ${c.size === "touch" ? "a touch" : c.size === "much" ? "much" : "aim"} ${c.dir}`;
-    case "unclear": return "Closer to the mic";
-    case "held": return c.dir === "sooner" ? `${nm(c.j)} held long — keep the beat` : `${nm(c.j)} cut short — hold it longer`;
-    case "timing": return c.dir === "sooner" ? `Come in sooner on ${nm(c.j)}` : `Wait a bit before ${nm(c.j)}`;
-    case "sag": return c.end ? `A touch ${c.dir === "higher" ? "low" : "high"} by the end` : `A touch ${c.dir === "higher" ? "low" : "high"} all the way`;
-    default: return "";
+    case "pitch": return [...nm(c.j), ` — ${c.size === "touch" ? "a touch" : c.size === "much" ? "much" : "aim"} ${c.dir}`];
+    case "unclear": return ["Closer to the mic"];
+    case "held": return [...nm(c.j), c.dir === "sooner" ? " held long — keep the beat" : " cut short — hold it longer"];
+    case "timing": return c.dir === "sooner" ? ["Come in sooner on ", ...nm(c.j)] : ["Wait a bit before ", ...nm(c.j)];
+    case "sag": return [`A touch ${c.dir === "higher" ? "low" : "high"} ${c.end ? "by the end" : "all the way"}`];
+    default: return [];
   }
+}
+const winText = (w, ctx) => plainOf(winParts(w, ctx));
+const cueText = (c, ctx) => plainOf(cueParts(c, ctx));
+
+// What a result says on screen, in order (the fix plan's "Line, after an attempt": win, counts, cue, next):
+// res — judgeFree's / judgeBeats's (res.kind "line" | "beats"); ctx — { notes, name, lastLine (no line after this
+// one), bpm (♩ a minute the line was heard at: "You sang it at ♩=62"), voice (the attempt's recording is here:
+// ▶ You), shift(s) (the Key menu can move the song s semitones: Lower / Raise the song), old (a result from before:
+// "Last time" — nothing drawn as risen) }.
+// → { win: parts | null (with its ✓), counts: [{ icon: "beat" | "note", text, all, up }] (a count not judged, or 0,
+// left out; never "—", "0", "↑" or a fraction), tempo: { bpm, text } | null, cue: parts | null, sounds: [{ act,
+// label, s? }] (its ▶s: the cue's, or ▶ You after an attempt with every note), next: { act, label } | null (one chip:
+// it switches, nothing starts by itself) }.
+// The acts: cue-note (▶ Piano: the note), cue-stretch (▶ Piano: from two starts before through the cue's note, at the
+// attempt's tempo), cue-rest (▶ The rest: the piano from the first note not sung), cue-hear (▶ Hear), cue-click (▶
+// Click: the melody and the click over the stretch), cue-you (▶ You: the attempt there), you (▶ You: the attempt),
+// cue-key (Lower / Raise the song, s semitones); next: practise (Notes, on the cue's note), beats (Beats), line (Line),
+// nextline (the next line). ▶ First note is the action row's, never a cue's (it's right above).
+export function earText(res, ctx = {}) {
+  const beats = res?.kind === "beats";
+  const c = { ...ctx, beats };
+  const out = { win: null, counts: [], tempo: null, cue: null, sounds: [], next: null };
+  if (!res) return out;
+  if (res.win) out.win = ["✓ ", ...winParts(res.win, c)];
+  const n = res.counts, up = ctx.old ? {} : res.up || {};
+  if (n) {
+    if (n.beatsAll || n.beats > 0) out.counts.push({ icon: "beat", all: !!n.beatsAll, up: !!up.beats, text: `${n.beatsAll ? "all" : n.beats} on the ${beats ? "click" : "beat"}` });
+    if (!beats && (n.notesAll || n.notes > 0)) out.counts.push({ icon: "note", all: !!n.notesAll, up: !!up.notes, text: `${n.notesAll ? "all" : n.notes} in tune` });
+  }
+  // the singer's own tempo, when it was well off the speed heard (Line: the fit's b — the singer's seconds per the
+  // line's seconds)
+  if (!beats && n && res.fit?.b > 0 && ctx.bpm > 0) {
+    const bpm = Math.round(ctx.bpm / res.fit.b);
+    if (Math.abs(1 / res.fit.b - 1) > 0.1) out.tempo = { bpm, text: `You sang it at ♩=${bpm}` };
+  }
+  const q = res.cue;
+  if (q) {
+    out.cue = cueParts(q, c);
+    const sd = q.sounds || [];
+    const add = (act, label, more) => out.sounds.push({ act, label, ...more });
+    for (const s of sd) {
+      if (s === "note" && q.j != null) add("cue-note", "▶ Piano");
+      else if (s === "stretch" && q.range) add(beats ? "cue-click" : "cue-stretch", beats ? "▶ Click" : "▶ Piano");
+      else if (s === "click" && q.range) add("cue-click", "▶ Click");
+      else if (s === "rest" && q.from != null) add("cue-rest", "▶ The rest");
+      else if (s === "hear") add("cue-hear", "▶ Hear");
+      else if (s === "you" && ctx.voice && (q.at || beats)) add("cue-you", "▶ You");
+      else if (s === "key" && q.s && ctx.shift?.(q.s)) add("cue-key", q.s < 0 ? "Lower the song" : "Raise the song", { s: q.s });
+    }
+  } else if (ctx.voice && n && (beats ? n.beatsAll : n.notesAll)) out.sounds.push({ act: "you", label: "▶ You" });
+  // the next exercise (D9: the singer picks, the next is suggested) — one chip
+  if (!beats) {
+    if (q && (q.kind === "pitch" || q.kind === "missed") && q.j != null) out.next = { act: "practise", label: "Practise that note ›" };
+    else if (q && (q.kind === "timing" || q.kind === "held")) out.next = { act: "beats", label: "Try it with the clicks ›" };
+    else if (!q && n && n.notesAll && n.beatsAll) out.next = ctx.lastLine ? null : { act: "nextline", label: "Next line ›" };
+    else if (!q && n && !n.beatsAll) out.next = { act: "beats", label: "Try it with the clicks ›" };
+  } else if (n?.beatsAll) out.next = { act: "line", label: "Now on your own ›" };
+  return out;
 }
 
 // --- The singer's line ----------------------------------------------------------------------------------
