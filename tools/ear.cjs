@@ -33,6 +33,7 @@
 //     and still after an attempt Ear couldn't follow
 //   5 ⚙ — while Ear shows only its switch, "Phrase by phrase" (WP1.10); turned off while ▶ Hear plays, it stops
 //   6 another song opens on its own line, nothing of the last one's; back, and after a reload, the line kept (WP1.8)
+//   7 the singer itself: a plan's `label` is the fake mic track's (round 2's WP0: Beats' Bluetooth route check)
 // The shell (index.html, Sing alone), a phone 390×844 and an iPad 820×1180 (WP1.1–4):
 //   the tuner hidden while Ear shows, back with ⚙ off or the song closed; during a free attempt state().take,
 //   the tuner holds "take" and its mic is off; the dock's captions Hear / Stop and every primary label whole in
@@ -822,6 +823,17 @@ async function singPage(browser) {
   const stored = await page.evaluate((id) => JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}')[id], id2);
   const gone = await page.evaluate(async ([id, v]) => { await (await import(`./forget.js?v=${v}`)).forgetSong(id); return !(id in JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}')); }, [id2, v]);
   ok(stored?.p && gone, `6: kept per song (${JSON.stringify(stored)}), gone with the song`);
+  // 7. the singer itself (tools/lib/earsinger.cjs; round 2's WP0): a plan's `label` is the mic track's — kept once the
+  // plan is cleared (the take's route is read at its end), the track's own again under a plan without one
+  const lab = await page.evaluate(async () => {
+    window.__sing = { mode: 'beats', label: 'AirPods' };
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true }), t = s.getAudioTracks()[0], out = [t.label];
+    window.__sing = null; out.push(t.label);
+    window.__sing = { mode: 'free', at: 0 }; out.push(t.label);
+    window.__sing = null; t.stop();
+    return out;
+  });
+  ok(lab[0] === 'AirPods' && lab[1] === 'AirPods' && lab[2] !== 'AirPods', `7: the singer's mic track label follows the plan (${JSON.stringify(lab)})`);
   ok(!errs.length, `sing.html: no page errors ${JSON.stringify(errs.slice(0, 3))}`);
   await ctx.close();
 }

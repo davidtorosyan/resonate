@@ -8,18 +8,23 @@
 //                                                   profile; the owner's songs stay outside the repo)
 // A plan: { name, phrase (0-based, default 0), mode: "free" | "beats" | "hold" | "talk", ... } and the singer's
 //   fields (tools/lib/earsinger.cjs: every note index is the note's index in the phrase, 0-based) —
-//   free:  f (tempo factor: 1.2 = 20 % slower), wait (ms after ■ Done shows, default 1000), cents {i: ¢},
+//   free:  f (tempo factor: 1.2 = 20 % slower), curve (the tempo easing from 1 to 1 + curve across the line: a
+//          ritardando; − an accelerando), wait (ms after ■ Done shows, default 1000), cents {i: ¢},
 //          all (¢ every note), wrong {i: semitones}, oct, drift (¢ by the end), vib (¢), scoop (¢),
 //          jit {i: s late, the whole note}, starts {i: s, only its start} (+ gap: true), drop [i], stop: i,
 //          held (s: the last note held at most this), false {n, gap}, extra: n, hum {m, d}, vol, silent: true.
 //          ■ Done is tapped `done` s after the singer's last note (default 0.7; negative: while still singing).
-//   beats: late (s every note), f, cents, all, oct, drift, vib, jit, starts, drop, vol; slow (0.9 / 0.8 / 0.7:
-//          the ♩ menu set to that % of the song's tempo first; none: 100 %)
+//   talk:  noise bursts instead of singing (wait, f, done as free)
+//   beats: late (s every note), f, curve, cents, all, oct, drift, vib, jit, starts, drop, vol; slow (0.9 / 0.8 / 0.7:
+//          the ♩ menu set to that % of the song's tempo first; none: 100 %); label (the mic track's: "AirPods")
 //   hold:  by (semitones off the target), cents, vib; target (index in Notes' targets, default the current) — each
 //          hold plan is one more try at the note (the misses add up: Not yet → which way → ▶ Sing along …)
-// Prints one JSON line per plan: the plan, the result on screen, the counts, the win and the cue (text, kind,
-// dir, note), the fitted tempo (b) and start (a), the onsets measured (of the starts), the key offset found
-// (c, ¢) and the notes not reached — each null where this build's judgment doesn't give it — and per note:
+// Prints one JSON line per plan: the plan, `sum` (tools/lib/earsum.cjs — the line earcases.mjs prints for the same
+// plan in node), `spot` ("spot", or why not: notes / beats not all, another key, unmeasured, sag, hair …), the result
+// on screen, the counts, the win and the cue (text, kind, dir, size, note), the fitted tempo (b) and start (a), the
+// onsets measured (of the starts), the key offset found (c, ¢), its s and direction (keyS, keyDir — the build's
+// key.dir — and keyWord: the key / offset cue's lower / higher), rit, anchored, spotOk, Beats' tolerance (tol, u0)
+// and the notes not reached — each null where this build's judgment doesn't give it — and per note:
 // its text, the target, where the singer started it (sung: s after the phrase's start, moved: s off its
 // written place × f — a false start's restart counted from the restart), the grade's status and its
 // deviation (¢), Beats' class.
@@ -28,6 +33,7 @@ const fs = require('fs');
 const path = require('path');
 const { BASE } = require('./lib/paths.cjs');
 const { SINGER } = require('./lib/earsinger.cjs');
+const { summary, spotWhy } = require('./lib/earsum.cjs');
 const sleep = (t) => new Promise((r) => setTimeout(r, t));
 const SONG = process.env.SONG || 'amazing-grace';
 let PLANS = process.env.PLANS || '[{"name":"all right","mode":"free","f":1}]';
@@ -77,9 +83,11 @@ const SHOTS = process.env.SHOTS || '';
     k++;
     // the phrase and the mode
     const want = plan.phrase || 0;
-    for (let i = 0; i < 20; i++) {
+    // (‹ › one line at a time — an owner's song has 40-odd lines; stops where a tap moves nothing)
+    for (let i = 0, last = null; i < 400; i++) {
       const p = await S(() => window.resonateDebug().ear.p);
-      if (p === want) break;
+      if (p === want || p === last) break;
+      last = p;
       await page.click(p < want ? '#ear-next' : '#ear-prev');
       await sleep(80);
     }
@@ -138,19 +146,28 @@ const SHOTS = process.env.SHOTS || '';
       const perNote = ph ? Array.from({ length: ph.j1 - ph.j0 }, (_, i) => {
         const j = ph.j0 + i, n = d.notes[j];
         const g = r?.grades?.[i] || null;
-        const rn = r?.kind === 'beats' ? (r.rn?.[i] || null) : null;
+        const rn = r?.kind === 'beats' ? (r.rn?.[i] || null) : null, st = r?.starts?.[i] || null;
         const su = u ? sungOf(i) : undefined;
-        return { i, text: n.text || '', t: +n.t.toFixed(3), mel: !!n.melisma, d: +n.d.toFixed(2), target: n.midi + (n.shift || 0), sung: su, status: g?.status ?? null, dev: g?.dev != null ? Math.round(g.dev * 100) : null, shift: g?.shift != null ? +g.shift.toFixed(3) : null, beat: rn ? { cls: rn.cls, dev: rn.dev != null ? +rn.dev.toFixed(3) : null, rdev: rn.rdev != null ? +rn.rdev.toFixed(3) : null } : undefined };
+        return { i, text: n.text || '', t: +n.t.toFixed(3), mel: !!n.melisma, d: +n.d.toFixed(2), target: n.midi + (n.shift || 0), sung: su, status: g?.status ?? null, dev: g?.dev != null ? Math.round(g.dev * 100) : null, shift: g?.shift != null ? +g.shift.toFixed(3) : null, beat: rn ? { cls: rn.cls, dev: rn.dev != null ? +rn.dev.toFixed(3) : null, rdev: rn.rdev != null ? +rn.rdev.toFixed(3) : null, tol: st?.tol ?? null, u0: st?.u0 ?? null } : undefined, start: st && r?.kind !== 'beats' ? { on: st.on, measured: st.measured, r: st.r ?? null } : undefined };
       }) : [];
       const { win, cue } = r || {};
-      return { phrase: e.p, words: document.getElementById('ear-words').textContent, ui, notesUi, counts: r?.counts || null,
-        win: win?.text || null, winKind: win?.kind ?? null, cue: cue?.text || null, cueKind: cue?.kind ?? null, cueDir: cue?.dir ?? null, cueAt: cue?.j != null && ph ? cue.j - ph.j0 : null,
-        fit: fit ? { a: +fit.a.toFixed(3), b: +fit.b.toFixed(3) } : null, onsets: r?.onsets ?? null, offset: r?.key?.c ?? null, key: r?.key ?? null, notReached: r?.notReached ?? null,
+      // (the result as earsum.cjs reads it — summary and spotWhy, in node)
+      const slim = r ? { kind: r.kind, counts: r.counts || null, win: win ? { kind: win.kind, text: win.text, j: win.j ?? null } : null, cue: cue ? { kind: cue.kind, text: cue.text, j: cue.j ?? null, dir: cue.dir ?? null, size: cue.size ?? null } : null,
+        fit: fit ? { a: fit.a, b: fit.b } : null, onsets: r.onsets ?? null, key: r.key ?? null, notReached: r.notReached ?? null, rit: r.rit ?? null, anchored: r.anchored ?? null, spotOk: r.spotOk ?? null,
+        hair: r.hair ?? null, u0: r.u0 ?? null, starts: r.starts ? Object.fromEntries(Object.entries(r.starts).map(([k, x]) => [k, { on: !!x?.on, measured: !!x?.measured }])) : null } : null;
+      return { slim, ph: ph ? { j0: ph.j0, j1: ph.j1 } : null, phrase: e.p, words: document.getElementById('ear-words').textContent, ui, notesUi, counts: r?.counts || null,
+        win: win?.text || null, winKind: win?.kind ?? null, cue: cue?.text || null, cueKind: cue?.kind ?? null, cueDir: cue?.dir ?? null, cueSize: cue?.size ?? null, cueAt: cue?.j != null && ph ? cue.j - ph.j0 : null,
+        fit: fit ? { a: +fit.a.toFixed(3), b: +fit.b.toFixed(3) } : null, b: fit ? +fit.b.toFixed(3) : null, onsets: r?.onsets ?? null, offset: r?.key?.c ?? null, key: r?.key ?? null,
+        keyS: r?.key?.s ?? null, keyDir: r?.key?.dir ?? null, keyWord: cue && ['key', 'offset'].includes(cue.kind) ? (cue.text.match(/\b(lower|higher)\b/) || [])[1] ?? null : null,
+        rit: r?.rit ?? null, anchored: r?.anchored ?? null, spotOk: r?.spotOk ?? null, tol: r?.tol ?? null, u0: r?.u0 ?? null, notReached: r?.notReached ?? null,
         say: e.words ?? null, hint: e.hint ?? null, speed: e.speed ?? null, // (WP5: what the screen says — ear.js earText's words, the hint, Normal / Slow / Slower)
         notes: e.notes ? { msg: e.notes.msg, done: e.notes.done, targets: e.notes.targets, cur: e.notes.cur ?? null, off: e.notes.off ?? null, tries: e.notes.tries ?? null, v: e.notes.v ?? null, complete: e.notes.complete ?? null } : null, oct: e.oct ?? null, perNote };
     }));
     if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); const f = path.join(SHOTS, `probe-${String(k).padStart(2, '0')}.png`); await page.screenshot({ path: f }); out.shot = f; }
-    console.log(JSON.stringify(out));
+    // (the line earcases.mjs prints for this plan in node, and why it isn't "Spot on" — first, for a glance)
+    const { slim, ph: lph } = out;
+    delete out.slim; delete out.ph;
+    console.log(JSON.stringify({ name: out.name, sum: slim ? summary(slim, lph) : null, spot: slim ? spotWhy(slim, mode === 'beats') : null, ...out }));
   }
   if (errs.length) console.log(JSON.stringify({ pageErrors: errs.slice(0, 5) }));
   await browser.close();
