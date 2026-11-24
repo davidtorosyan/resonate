@@ -2489,7 +2489,7 @@ async function earBeats() {
     const worst = starts.filter((j) => rn[j]?.cls === "early" || rn[j]?.cls === "late").sort((x, y) => Math.abs(rn[y].rdev ?? rn[y].dev ?? 0) - Math.abs(rn[x].rdev ?? rn[x].dev ?? 0))[0];
     const cue = worst != null ? { text: `${earWord(worst)} · ${rn[worst].cls === "late" ? "sooner" : "later"}`, j: worst } : t.frames?.some((f) => f.midi != null) ? null : { text: "Didn't hear you" };
     const winJ = on[0];
-    earShow(ph, "beats", { counts: cue?.text === "Didn't hear you" ? null : counts, win: winJ != null && counts.beats != null ? { text: `In on ${earWord(winJ)}` } : null, cue, voice: t.voice, songT0: t.songT0 });
+    earShow(ph, "beats", { rn: Object.fromEntries(earJs(ph).map((j) => [j - ph.j0, rn[j] ? { cls: rn[j].cls, dev: rn[j].dev, rdev: rn[j].rdev } : null])), counts: cue?.text === "Didn't hear you" ? null : counts, win: winJ != null && counts.beats != null ? { text: `In on ${earWord(winJ)}` } : null, cue, voice: t.voice, songT0: t.songT0 });
   }
   renderAll();
   renderEar();
@@ -4280,7 +4280,7 @@ window.resonateSing = Object.assign(window.resonateSing || {}, {
 });
 
 // Debug hook for automated tests / devtools.
-window.resonateDebug = () => ({ ear: { on: earActive(), mode: EAR.mode, p: EAR.p, run: EAR.run?.kind || null, ph: earPh() && { j0: earPh().j0, j1: earPh().j1 }, res: EAR.res && { kind: EAR.res.kind, counts: EAR.res.counts, win: EAR.res.win, cue: EAR.res.cue && { text: EAR.res.cue.text, j: EAR.res.cue.j }, fit: EAR.res.fit && { a: EAR.res.fit.a, b: EAR.res.fit.b } }, notes: EAR.notes && { targets: EAR.notes.targets, i: EAR.notes.i, done: [...EAR.notes.done], msg: EAR.notes.msg } }, score, notes, lines, take, session: session && { kind: session.kind, line: session.line, mode: session.mode, count: session.count, beatSec: session.beatSec }, nowT, scrollT, practiceJ, reviewRows, rate, laneMode,
+window.resonateDebug = () => ({ ear: { on: earActive(), mode: EAR.mode, p: EAR.p, run: EAR.run?.kind || null, ph: earPh() && { j0: earPh().j0, j1: earPh().j1 }, res: EAR.res && { kind: EAR.res.kind, counts: EAR.res.counts, win: EAR.res.win, cue: EAR.res.cue && { text: EAR.res.cue.text, j: EAR.res.cue.j }, fit: EAR.res.fit && { a: EAR.res.fit.a, b: EAR.res.fit.b }, grades: EAR.res.fit?.g?.map((x) => x && { status: x.status, dev: x.dev, shift: x.shift }), rn: EAR.res.rn }, notes: EAR.notes && { targets: EAR.notes.targets, i: EAR.notes.i, done: [...EAR.notes.done], msg: EAR.notes.msg } }, score, notes, lines, take, session: session && { kind: session.kind, line: session.line, mode: session.mode, count: session.count, beatSec: session.beatSec }, nowT, scrollT, practiceJ, reviewRows, rate, laneMode,
   practice: { on: guiding(), doc: pdoc, session: psess, step: pstep, block: gblock && { phase: gblock.phase, step: gblock.step, setup: gblock.setup, round: gblock.round, last: gblock.last && { r: { ...gblock.last.r, notes: undefined }, tv: gblock.last.tv, uv: gblock.last.uv } },
     phrases: psong?.phrases.map((p) => ({ name: p.name, j0: p.j0, j1: p.j1, t0: p.t0, t1: p.t1, mk: p.mk, section: p.section, marks: P.phraseMarks(pdoc, p) })),
     card: { title: coTitle.textContent, win: coWin.textContent, cue: coCue.textContent, buttons: [...coBtns.querySelectorAll("button")].map((b) => b.textContent), hidden: coachEl.hidden }, thenNow: !!thenNow },
