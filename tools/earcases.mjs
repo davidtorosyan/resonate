@@ -209,6 +209,7 @@ function truthOf(plan, ns, segs, sung, beats) {
 }
 
 const LEAD = 1.3; // the singer's first note, s after the mic opened (earprobe: ■ Done shows, then 1 s — a plan's `wait` ms: 0.3 s + wait)
+const SHOWN = LEAD - 1; // (■ Done shows: earprobe gives the singer its plan then — talking starts there)
 // vol: the browser singer's gain — its sawtooth's RMS is ≈ 0.56 × vol (0.012: under MIN_RMS, never heard; 0.03:
 // heard) — as rhythmsynth's vowel level (RMS ≈ 0.075 in the singing range); none: rhythmsynth's own level.
 const loudOf = (plan) => (plan.vol != null ? (0.56 * plan.vol) / 0.075 : 1);
@@ -218,11 +219,12 @@ const loudOf = (plan) => (plan.vol != null ? (0.56 * plan.vol) / 0.075 : 1);
 // before the singer starts, on a calibrated device (the reader's gate under MIN_RMS: `gate`), with the page's
 // gateUntil (rule 1) at its end + 0.1 s — or, gateUntil: false, without it.
 // voice: 'synth' (rhythmsynth) or 'saw' (the browser's: earsinger render(), no room noise — the fake mic has none).
-// talk (or mode 'talk'): the browser's noise bursts instead of singing, either voice.
+// talk (or mode 'talk'): the browser's noise bursts instead of singing, either voice — from ■ Done showing (earprobe sets
+// the talk plan then; its noise doesn't wait for `wait`) to ■ Done.
 const talking = (plan) => plan.mode === 'talk' || !!plan.talk;
 const tickOf = (seed) => (seed * 0.00137) % 0.005; // (where the singer's 5 ms ticks fall: another seed, another phase)
 function lineRound(S, ph, plan, { phase = 0, seed = 7, prev = null, voice = 'synth' } = {}) {
-  const f = plan.f || 1, lead = plan.wait != null ? 0.3 + plan.wait / 1000 : LEAD;
+  const f = plan.f || 1, lead = plan.wait != null ? SHOWN + plan.wait / 1000 : LEAD;
   const ns = S.notes.slice(ph.j0, Math.min(S.notes.length, ph.j1 + (plan.extra || 0)));
   const segs = plan.silent || talking(plan) ? [] : segments(plan, ns, f);
   const sung = sungNotes(plan, ns, segs, lead);
@@ -235,7 +237,7 @@ function lineRound(S, ph, plan, { phase = 0, seed = 7, prev = null, voice = 'syn
   const saw = voice === 'saw';
   // (the saw: only our own ▶'s tail is rhythmsynth's — the singer, the hum and talking are rendered after)
   const r = sing(saw ? (tail ? [tail] : []) : sung, { songT0: 0, rt: 0, until: endT, vibrato: plan.vib ?? 0, noise: saw ? 0 : 0.002, seed, loud: (j) => (saw || sung[j]?.i === -2 ? plan.tail?.level ?? 1 : vol) });
-  if (saw || talking(plan)) render(saw ? plan : { mode: 'talk' }, saw && segs.length ? madeOf(segs) : null, { audio: r.audio, sr: r.sr, t0: lead, from: talking(plan) ? lead : 0, to: endT, free: true, tick: tickOf(seed), rand: rng(seed) });
+  if (saw || talking(plan)) render(saw ? plan : { mode: 'talk' }, saw && segs.length ? madeOf(segs) : null, { audio: r.audio, sr: r.sr, t0: lead, from: talking(plan) ? SHOWN : 0, to: endT, free: true, tick: tickOf(seed), rand: rng(seed) });
   const fr = frames(r.audio, r.sr, { songT0: 0, latency: 0, fps: 60, from: FFT_SIZE / r.sr + phase, to: endT, gate: plan.gate });
   const ctx = { notes: S.notes, spq: S.spq, spq0: S.spq, name: (m) => noteName(m, S.flats), score: S.score, qToT: (q) => q * S.spq, feat: features(r.audio, r.sr), start: 0,
     gateUntil: tail && plan.gateUntil !== false ? tail.t + tail.d + 0.1 : undefined, prev };
@@ -520,7 +522,7 @@ const OWN = [
   { song: 'hey-little-songbird-p-6', j: 0, mode: 'Beats', name: 'every start 0.15 s late', plan: { late: 0.15 }, wp: 'R2-2', want: [['one verdict (every start one class)', (r) => { const st = Object.values(r.starts || {}).filter((x) => x.reached && !x.missing); return st.every((x) => x.on === st[0]?.on); }], ['no “Came in on time” beside a take-wide cue', (r) => !(r.win?.kind === 'entry' && ['steady', 'hair', 'slip', 'drift'].includes(r.cue?.kind))]] },
   { song: 'x-f', j: 16, mode: 'Beats', name: 'on the click, three notes off pitch', plan: { wrong: { 16: -3, 19: 2, 21: -2 } }, wp: 'R2-2', saw: true, want: [X.beatsAll, X.noTiming, ['#16 not missing', (r, ph) => !r.starts?.[16 - ph.j0]?.missing]] },
   { song: 'daniel-krieger-tyler-mehlenbacher-and-daniel-tannenbaum', j: 6, mode: 'Beats', name: '#6 in 0.15 s late (the note before held into it)', plan: { starts: { 6: 0.15 } }, wp: 'R2-2', want: [XS.notSpot] },
-  { song: 'from-the-sara-bareilles-2013-album-brave-enough-live-at-the-variety-playhouse', j: 291, mode: 'Beats', name: 'the long melisma, its notes #297–299 in 0.15 s late', plan: { starts: { 297: 0.15, 298: 0.15, 299: 0.15 } }, wp: 'R2-2', want: [X.notBeatsAll, ['the cue on the melisma', (r, ph) => r.cue?.j != null && r.cue.j >= ph.j0 && r.cue.j < ph.j1]] },
+  { song: 'from-the-sara-bareilles-2013-album-brave-enough-live-at-the-variety-playhouse', j: 291, mode: 'Beats', name: 'the long melisma, its notes #297–299 in 0.15 s late', plan: { starts: { 297: 0.15, 298: 0.15, 299: 0.15 } }, wp: 'R2-2', want: [X.notBeatsAll, ['the cue on #297–#299 (the line is the melisma: on the notes sung late)', (r) => r.cue?.j != null && r.cue.j >= 297 && r.cue.j <= 299]] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -606,17 +608,20 @@ const VARIANTS = [{ phase: 0, seed: 7 }, { phase: 1 / 120, seed: 11 }];
 // prints as `sum`, and why it isn't "Spot on" — nothing judged; the cases aren't run. A plan as earprobe takes it
 // (phrase: Ear's line, mode free | beats | talk, the singer's fields, indices in the line); song: an owner's dump
 // (EAR_NOTES); a Beats plan without a rig: the browser's — its fake mic hears no click (uncalibrated) and its sound
-// reaches the page ~15 ms before the page's estimate says (earprobe, on the click: every start ≈ −0.014 s).
-const PROBE_RIG = { clickLevel: 0, rt: 0.025, est: 0.04 };
+// reaches the page before the page's estimate says: on the click a take's starts read 0 … −0.04 s, the take's own
+// offset drawn at each ● Sing (the median of 10 earprobe takes −0.03 s, here), and ±10 ms between the starts of one
+// take (the singer's 5 ms timer on the page's main thread; node's ticks are exact). So a Beats row within ~30 ms of
+// a band's edge can differ from one probe take: probe it three times. A hold plan (Notes) is skipped.
+const PROBE_RIG = { clickLevel: 0, rt: 0.01, est: 0.04 };
 let PLANS = process.env.PLANS || null;
 if (PLANS?.startsWith('@')) PLANS = fs.readFileSync(PLANS.slice(1), 'utf8');
 PLANS = PLANS ? JSON.parse(PLANS) : null;
-const PROBE = (PLANS || []).map((p, k) => [p.mode === 'beats' ? 'Beats' : 'Line', { name: p.name || `plan ${k + 1}`, probe: true, song: p.song, line: p.phrase || 0, want: [], saw: true,
+const PROBE = (PLANS || []).map((p, k) => [p.mode === 'beats' ? 'Beats' : p.mode === 'hold' ? 'Notes' : 'Line', { name: p.name || `plan ${k + 1}`, probe: true, song: p.song, line: p.phrase || 0, want: [], saw: true,
   plan: { ...(p.mode === 'beats' && !p.rig ? { rig: PROBE_RIG } : {}), ...p } }]);
 const CASES = PLANS ? PROBE : [...LINE.map((c) => ['Line', c]), ...BEATS.map((c) => ['Beats', c]), ...OWN.map((c) => [c.mode || 'Line', c])];
 const labelOf = ([mode, c]) => c.probe ? `${mode} ${c.song ? `${c.song.split('-').slice(0, 3).join('-')} ` : ''}L${c.line} ${c.name}` : `${mode} ${c.song ? `owner:${c.song.split('-').slice(0, 3).join('-')} j${c.j}` : c.span ? `own ${c.span[0]}–${c.span[1] - 1}` : `L${c.line}`} ${c.name}${c.saw ? ' · saw' : ''}`;
-// (the owner's songs, loaded once a thread)
-const OWN_OK = !!OWN_DIR && fs.existsSync(OWN_DIR) && CASES.every(([, c]) => !c.song || fs.existsSync(path.join(OWN_DIR, `${c.song}.json`)));
+// (the owner's songs, loaded once a thread; a case runs when its own song's dump is there)
+const ownOk = (song) => !!OWN_DIR && fs.existsSync(path.join(OWN_DIR, `${song}.json`));
 const songs = {};
 const songFor = (name) => (songs[name] ||= songOf(name, OWN_DIR));
 // An owner case's plan: its note indices are the song's — the singer's are the line's.
@@ -636,7 +641,8 @@ function toLine(P, ph) {
 function evalCase(k) {
   const [mode, c] = CASES[k], label = labelOf(CASES[k]);
   const out = [], checks = [];
-  if (c.song && !OWN_OK) return { out: [`skip ${label} — EAR_NOTES: no dump of ${c.song}`], checks: [], todo: null, skip: true, ms: 0 };
+  if (c.song && !ownOk(c.song)) return { out: [`skip ${label} — ${OWN_DIR ? `no dump of ${c.song} in ${OWN_DIR}` : 'EAR_NOTES unset'}`], checks: [], todo: null, skip: true, ms: 0 };
+  if (mode === 'Notes') return { out: [`skip ${label} — a hold: the Notes cases below sing those`], checks: [], todo: null, ms: 0 };
   const S = c.song ? songFor(c.song) : AG, lines = c.song ? S.page : AG.plan;
   // (span: a line of the singer's own — Pick words; an owner case: the line holding note j)
   const ph = c.span ? { j0: c.span[0], j1: c.span[1] } : c.song && !c.probe ? lines.find((x) => c.j >= x.j0 && c.j < x.j1) : lines[c.line];
@@ -661,19 +667,20 @@ function evalCase(k) {
     Object.assign(R, { beats: mode === 'Beats', S, lines, j: c.j });
     const failed = [...c.want, ...TRUTH, ...WORDS].filter(([, fn]) => !fn(r, ph, R)).map(([w]) => w);
     const same = runs.every((x) => verdict(x.res) === verdict(r));
-    if (c.probe) { out.push(`${label} [${voice}]: ${short(r, ph)} | ${spotWhy(r, mode === 'Beats')}`); ms = Math.max(ms, ...runs.map((x) => x.ms)); continue; }
     const wp = voice === 'saw' && typeof c.saw === 'string' ? c.saw : c.wp;
     const judged = DONE.has(wp);
     const name = voice === 'saw' ? `${label} [the browser's voice]` : label;
-    out.push(`${judged ? '     ' : 'todo '}${voice === 'saw' && out.length ? '  └ saw' : voice === 'saw' ? `${label} [saw]` : label}: ${short(r, ph)}${same ? '' : '  [again: ' + runs.slice(1).map((x) => short(x.res, ph)).join(' / ') + ']'}`);
-    if (V) {
+    if (c.probe) out.push(`${label} [${voice}]: ${short(r, ph)} | ${spotWhy(r, mode === 'Beats')}`);
+    else out.push(`${judged ? '     ' : 'todo '}${voice === 'saw' && out.length ? '  └ saw' : voice === 'saw' ? `${label} [saw]` : label}: ${short(r, ph)}${same ? '' : '  [again: ' + runs.slice(1).map((x) => short(x.res, ph)).join(' / ') + ']'}`);
+    if (V) { // (each note — a probe's too: earprobe's perNote beside it)
       const g = mode === 'Line' ? r.fit?.g : R.grades?.slice(ph.j0, ph.j1);
       for (let i = 0; i < ph.j1 - ph.j0; i++) {
         const n = S.notes[ph.j0 + i], x = g?.[i], rn = r.rn?.[i];
         const sx = r.starts?.[i];
-        out.push(`       ${i} ${(c.song ? `#${ph.j0 + i}` : n.text || '·').padEnd(8)} ${n.name.padEnd(4)} ${x ? `${x.status}${x.dev != null ? ` ${Math.round(x.dev * 100)}¢` : ''}${x.shift != null ? ` ${x.shift.toFixed(2)}s` : ''}` : '–'}${rn ? ` | ${rn.cls ?? '–'} dev ${rn.dev?.toFixed(3) ?? '–'} rdev ${rn.rdev?.toFixed(3) ?? '–'}` : ''}${sx ? ` | start ${sx.on ? 'on' : 'off'} ${sx.measured ? `${sx.kind} r ${sx.r?.toFixed(3)}` : 'unmeasured'}` : ''}`);
+        out.push(`       ${i} ${(c.song ? `#${ph.j0 + i}` : n.text || '·').padEnd(8)} ${n.name.padEnd(4)} ${x ? `${x.status}${x.dev != null ? ` ${Math.round(x.dev * 100)}¢` : ''}${x.shift != null ? ` ${x.shift.toFixed(2)}s` : ''}` : '–'}${rn ? ` | ${rn.cls ?? '–'} dev ${rn.dev?.toFixed(3) ?? '–'} rdev ${rn.rdev?.toFixed(3) ?? '–'}` : ''}${sx ? ` | start ${sx.on ? 'on' : 'off'} ${sx.measured ? `${sx.kind} ${sx.r != null ? `r ${sx.r.toFixed(3)}` : `dev ${sx.dev?.toFixed(3)}`}` : 'unmeasured'}` : ''}`);
       }
     }
+    if (c.probe) { ms = Math.max(ms, ...runs.map((x) => x.ms)); continue; }
     if (judged) {
       checks.push([name, !failed.length, `wanted ${failed.join(', ')}`]);
       checks.push([`${name}: the same singing, the same answer`, same, runs.map((x) => short(x.res, ph)).join(' / ')]);
