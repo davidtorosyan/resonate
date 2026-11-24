@@ -13,7 +13,9 @@
 // Each case names the work package that makes it so (DONE: those landed; "WP0": today's code already gets it
 // right — a guard): a case whose package hasn't landed is run and printed as "todo", not judged, and says so
 // when it already passes. WP2–WP4 turn theirs on (WP4 adds Notes' holds). The lines are the fix plan's (Q-A: the
-// printed lines, PLAN_PHRASE), compared with the page's own (ear.js EAR_PHRASE) as a WP1 case.
+// printed lines, PLAN_PHRASE), compared with the page's own (ear.js EAR_PHRASE) as a WP1 case. Every case also
+// checks a win or cue that names a note against what the singer did there (TRUTH: no win from a note sung wrong or
+// late, no cue pointing the wrong way or at a note sung right).
 // usage: node earcases.mjs   (V=1: each case's notes; ONLY=<regex>: some cases; TODO=0: hide the todo lines;
 //   JOBS=n: cases sung on n threads, default 3 — the page's pitch detector over an attempt takes ~2.5 s a run)
 import { Worker, isMainThread, parentPort } from 'node:worker_threads';
@@ -103,6 +105,19 @@ function sungNotes(plan, ns, segs, lead) {
   return out;
 }
 
+// What the singer really did with note i of the phrase (its last time through: a false start's restart): dev
+// (semitones off its written pitch, drift in), moved (s its start sat off its place — Line: on the singer's own
+// tempo f; Beats: on the click, `late` in) — or null: not sung.
+function truthOf(plan, ns, segs, sung, beats) {
+  const f = plan.f || 1, T0 = ns[0].t;
+  return (i) => {
+    const o = segs.findLast((x) => x.i === i), y = sung.findLast((x) => x.i === i);
+    if (!o || !y) return null;
+    const n = ns[i];
+    return { dev: y.midi - (n.midi + (n.shift || 0)), moved: beats ? o.s + (plan.late || 0) - (n.t - T0) : o.s - (n.t - T0) * f - (o.re || 0) };
+  };
+}
+
 const LEAD = 1.3; // the singer's first note, s after the mic opened (earprobe: ■ Done shows, then 1 s)
 // vol: the browser singer's gain — its sawtooth's RMS is ≈ 0.56 × vol (0.012: under MIN_RMS, never heard; 0.03:
 // heard) — as rhythmsynth's vowel level (RMS ≈ 0.075 in the singing range); none: rhythmsynth's own level.
@@ -122,7 +137,7 @@ function lineRound(S, ph, plan, { phase = 0, seed = 7 } = {}) {
   const ctx = { notes: S.notes, spq: S.spq, name: (m) => noteName(m, S.flats) };
   const t0 = performance.now();
   const res = judgeFree(ph, fr, endT, ctx);
-  return { res, ms: performance.now() - t0, frames: fr, sung };
+  return { res, ms: performance.now() - t0, frames: fr, sung, truth: truthOf(plan, ns, segs, sung, false) };
 }
 
 // ● Sing with the click (Beats) on a phrase, as startSing(part) runs it. rig: the phone's speaker by default
@@ -172,7 +187,7 @@ function beatsRound(S, ph, plan, { phase = 0, seed = 7 } = {}) {
   const ctx = { notes, spq, name: (mm) => noteName(mm, S.flats) };
   const t1 = performance.now();
   const res = judgeBeats(ph, { rhythm, frames: fr, grades }, ctx);
-  return { res, ms: performance.now() - t1, cal, rhythm, grades, sung };
+  return { res, ms: performance.now() - t1, cal, rhythm, grades, sung, truth: truthOf(plan, ns, segs, sung, true) };
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +209,19 @@ const X = {
   b: (f, tol = 0.03) => [`b ×${f} ±${Math.round(tol * 100)}%`, (r) => !!r.fit && Math.abs(r.fit.b / f - 1) <= tol],
   keyS: (sv) => [`key ${sv > 0 ? '+' : ''}${sv}`, (r) => r.key?.s === sv],
 };
+
+// Every case, whatever it's about: a win or a cue that names a note says what the singer really did there (the fix
+// plan: "no win from a note the fit borrowed"; cues that point the wrong way) — judged with the case's package.
+const named = (r, ph, R, kind) => { const x = kind === 'win' ? r.win : r.cue; return x?.j != null ? R.truth(x.j - ph.j0) : undefined; };
+const FIXES = { higher: -1, lower: 1, sooner: 1, later: -1 }; // (the sign of the error each instruction fixes: higher — sung low; sooner — came in late)
+const pointsAt = (dir, err) => Math.sign(err) === FIXES[dir];
+const TRUTH = [
+  ['a win’s note sung on its pitch', (r, ph, R) => !r.win || r.win.kind === 'key' || r.win.j == null || Math.abs(named(r, ph, R, 'win')?.dev ?? 99) <= 0.5],
+  ['a Beats win’s start sung on the click', (r, ph, R) => !R.beats || !r.win || r.win.j == null || Math.abs(named(r, ph, R, 'win')?.moved ?? 99) <= 0.15],
+  ['a pitch cue’s note sung off, the way it points', (r, ph, R) => { if (r.cue?.kind !== 'pitch') return true; const t = named(r, ph, R, 'cue'); return !!t && Math.abs(t.dev) >= 0.4 && pointsAt(r.cue.dir, t.dev); }],
+  ['a timing cue’s start sung off, the way it points', (r, ph, R) => { if (r.cue?.kind !== 'timing' || r.cue.j == null) return true; const t = named(r, ph, R, 'cue'); return !!t && Math.abs(t.moved) >= 0.1 && pointsAt(r.cue.dir, t.moved); }],
+  ['a missed cue’s note not sung', (r, ph, R) => r.cue?.kind !== 'missed' || r.cue.j == null || named(r, ph, R, 'cue') === null],
+];
 
 // The cases. line: the fix plan's line (PLAN_PHRASE's); word: the text of the note at index `w` the case is about —
 // checked, so a case and its line can't drift apart.
@@ -269,7 +297,8 @@ function evalCase(k) {
   const round = mode === 'Line' ? lineRound : beatsRound;
   const runs = VARIANTS.map((v) => round(AG, ph, c.plan, v));
   const R = runs[0], r = R.res;
-  const failed = c.want.filter(([, fn]) => !fn(r, ph)).map(([w]) => w);
+  R.beats = mode === 'Beats';
+  const failed = [...c.want, ...TRUTH].filter(([, fn]) => !fn(r, ph, R)).map(([w]) => w);
   const same = runs.every((x) => verdict(x.res) === verdict(r));
   const judged = DONE.has(c.wp);
   out.push(`${judged ? '     ' : 'todo '}${label}: ${short(r, ph)}${same ? '' : '  [again: ' + runs.slice(1).map((x) => short(x.res, ph)).join(' / ') + ']'}`);
@@ -316,12 +345,13 @@ if (!isMainThread) {
   if (jobs === 1) for (const k of ks) { results[k] = { k, ...evalCase(k) }; slowest = Math.max(slowest, results[k].ms); flush(); }
   else await new Promise((done, reject) => {
     let running = 0;
-    const start = (w) => { if (next >= ks.length) { w.terminate(); if (!--running) done(); return; } w.postMessage(ks[next++]); };
+    const start = (w) => { if (next >= ks.length) { w.ended = true; w.terminate(); if (!--running) done(); return; } w.postMessage(ks[next++]); };
     for (let i = 0; i < jobs; i++) {
       const w = new Worker(new URL(import.meta.url), { env: process.env });
       running++;
       w.on('message', (x) => { results[x.k] = x; slowest = Math.max(slowest, x.ms); flush(); start(w); });
       w.on('error', reject);
+      w.on('exit', (code) => { if (!w.ended) reject(new Error(`a worker stopped (exit ${code})`)); }); // (never a wait that doesn't end)
       start(w);
     }
   });

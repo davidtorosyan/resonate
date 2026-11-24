@@ -11,7 +11,7 @@
 //          false {n, gap}, extra: n, hum {m, d}, vol, silent: true. ■ Done is tapped 0.7 s after the singer's
 //          last note.
 //   beats: late (s every note), f, cents, all, oct, drift, vib, jit, starts, drop, vol; slow (0.9 / 0.8 / 0.7:
-//          Beats' Slower first)
+//          Beats' Slower set to it first; none: 100 %)
 //   hold:  by (semitones off the target), cents, vib; target (index in Notes' targets, default the current)
 // Prints one JSON line per plan: the plan, the result on screen, the counts, the win and the cue (text, kind,
 // dir, note), the fitted tempo (b) and start (a), the onsets measured (of the starts), the key offset found
@@ -58,13 +58,13 @@ const SHOTS = process.env.SHOTS || '';
     await page.click(`.ear-modes button[data-ear="${mode}"]`);
     await sleep(150);
     const out = { name: plan.name || `plan ${k}`, plan };
+    await S(() => { window.__sung = null; }); // (the singer's record of this plan only: a hold or talk sings none)
     try {
       if (mode === 'sing') {
         await page.click('#sing');
         await until(() => document.getElementById('sing').textContent.includes('Done'), 10000);
         const wait = plan.wait ?? 1000;
         const sung = plan.mode === 'talk' ? { mode: 'talk' } : plan.silent ? null : { ...plan, mode: 'free' };
-        await S(() => { window.__sung = null; });
         await S(([p, w]) => { window.__sing = p && { ...p, at: performance.now() + w }; }, [sung, wait]);
         const dur = await S(() => { const d = window.resonateDebug(); const a = d.ear.ph.j0, z = d.ear.ph.j1; return d.notes[z - 1].t + d.notes[z - 1].d - d.notes[a].t; });
         // (the singer's own last note: a false start, `extra`, `stop` move it)
@@ -74,8 +74,12 @@ const SHOTS = process.env.SHOTS || '';
         await page.click('#sing');
         await until(() => { const e = window.resonateDebug().ear; return e.res && e.run === null; }, 15000);
       } else if (mode === 'beats') {
-        for (let s = 0; s < 3 && plan.slow && (await S(() => window.resonateDebug().ear.slow ?? 1)) > plan.slow + 1e-6; s++) { await page.click('#ear-acts button[data-act="slow"]'); await sleep(80); }
-        await S((p) => { window.__sung = null; window.__sing = { ...p, mode: 'beats' }; }, plan);
+        // (Slower cycles 100 → 90 → 80 → 70 → 100 %: to the plan's speed, 100 % without one — a plan doesn't inherit the last one's)
+        const want = plan.slow || 1, speed = () => S(() => window.resonateDebug().ear.slow);
+        for (let s = 0; s < 4 && (await speed()) != null && Math.abs((await speed()) - want) > 1e-6; s++) { await page.click('#ear-acts button[data-act="slow"]'); await sleep(80); }
+        out.slow = await speed();
+        if (out.slow == null ? plan.slow : Math.abs(out.slow - want) > 1e-6) throw new Error(`Beats' speed is ${out.slow ?? 'not shown (resonateDebug().ear.slow)'}, not ${want}`);
+        await S((p) => { window.__sing = { ...p, mode: 'beats' }; }, plan);
         await page.click('#sing');
         await until(() => !!window.resonateDebug().session, 10000);
         await until(() => !window.resonateDebug().session && window.resonateDebug().ear.run === null, 60000);

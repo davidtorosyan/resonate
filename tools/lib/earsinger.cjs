@@ -69,9 +69,10 @@ const BODY = (segments, bend) => {
       setInterval(() => {
         const d = window.resonateSing?.debug?.() || window.resonateDebug?.(); const P = window.__sing; let m = null, noise = 0;
         if (!d || !P) { g.gain.setTargetAtTime(0, ac.currentTime, 0.005); ng.gain.setTargetAtTime(0, ac.currentTime, 0.005); return; }
-        // the plan's segments, made once an attempt (the notes don't change during one)
+        // the plan's segments, made once an attempt (the notes don't change during one; another tempo — Beats'
+        // Slower, the tempo menu — between two attempts of one plan makes them again)
         const plan = (a, z, extra) => {
-          const key = `${P.mode}|${a}|${z}`;
+          const key = `${P.mode}|${a}|${z}|${d.notes[a]?.t}|${d.notes[z - 1]?.t}`;
           if (!made || made.P !== P || made.key !== key) {
             const notes = d.notes.slice(a, Math.min(d.notes.length, z + (extra || 0)));
             const f = P.f || 1, segs = segments(P, notes, f);
@@ -91,7 +92,7 @@ const BODY = (segments, bend) => {
           if (P.hum && t < -0.3 && t >= -0.3 - P.hum.d) m = P.hum.m;
           else m = sungAt(M, t);
         } else if (P.mode === 'beats' && d.session?.kind === 'sing') {
-          const [a, z] = d.ear.ph ? [d.ear.ph.j0, d.ear.ph.j1] : d.take?.range || [0, d.notes.length];
+          const [a, z] = d.ear.on && d.ear.ph ? [d.ear.ph.j0, d.ear.ph.j1] : d.take?.range || [0, d.notes.length]; // (Ear's phrase; else the take's span)
           const M = plan(a, z, 0);
           m = sungAt(M, d.nowT - (P.late || 0) - M.base);
         } else if (P.mode === 'hold' && d.ear.run === 'hold') {
