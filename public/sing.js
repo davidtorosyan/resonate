@@ -2674,10 +2674,15 @@ async function earYou(res, at) {
   earStop();
   const ac = await getPlayCtx("tap");
   if (!ac || EAR.run) return;
-  const run = (EAR.run = { kind: "play", nodes: [], stop() { for (const n of this.nodes) try { n.stop?.(); } catch {} } });
+  const run = (EAR.run = { kind: "play", nodes: [], stop() {
+    for (const n of this.nodes) try { n.stop?.(); } catch {}
+    if (this.sound && EAR.sound === this.sound) this.sound.end = Math.min(this.sound.end, this.sound.ac.currentTime + 0.02);
+  } });
   renderEar(); updateButtons();
   const [a, b] = at || [res.voice.start, res.voice.start + Math.min(30, res.voice.data.length / res.voice.sampleRate)];
-  playVoice(ac, res.voice, ac.currentTime + 0.1, a, run.nodes);
+  const when = ac.currentTime + 0.1;
+  playVoice(ac, res.voice, when, a, run.nodes);
+  run.sound = EAR.sound = { ac, end: when + (b - a) + 0.3 }; // (your own voice is a ▶ too: the next attempt's mic gates it out)
   await earSleep((b - a + 0.3) * 1000);
   if (EAR.run === run) { run.stop(); earEnd(run); }
 }
@@ -2847,6 +2852,7 @@ function earDebug() {
   const ph = earPh(), sh = earActive() ? earShown() : null, N = ph && earActive() && EAR.mode === "notes" ? earNotesOf(ph) : ph ? EAR.notesBy[earLineKey(ph)] : null;
   return {
     on: earActive(), mode: EAR.mode, p: EAR.p, run: EAR.run?.kind || null, ph: ph && { j0: ph.j0, j1: ph.j1, wk: ph.wk, words: ph.words },
+    gate: EAR.run?.kind === "free" && Number.isFinite(EAR.run.gateUntil) ? EAR.run.gateUntil : null, // (s: our own ▶'s tail kept out of this attempt until then)
     res: E.debugRes(EAR.res), shown: sh && { old: sh.old, kind: sh.res.kind, res: E.debugRes(sh.res) }, flash: EAR.flash || null, pulse: listenBtn.hasAttribute("data-pulse"),
     // (Notes: targets as offsets in the line; js — the same notes' indices in the song)
     notes: N && { targets: N.targets, js: ph ? N.targets.map((k) => ph.j0 + k) : [], i: N.i, done: [...N.done], msg: N.msg },

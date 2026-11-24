@@ -156,7 +156,7 @@ function lineRound(S, ph, plan, { phase = 0, seed = 7, prev = null } = {}) {
   const tail = plan.tail && { t: LEAD - plan.tail.gap - plan.tail.d, d: plan.tail.d, midi: plan.tail.m, text: '', melisma: false, restBefore: true, i: -2 };
   if (tail) sung.unshift(tail);
   const lastE = segs.length ? Math.max(...segs.map((o) => o.e)) : (S.notes[ph.j1 - 1].t + S.notes[ph.j1 - 1].d - S.notes[ph.j0].t) * f;
-  const endT = LEAD + lastE + 0.7; // (■ Done 0.7 s after the singer's last note)
+  const endT = LEAD + lastE + (plan.done ?? 0.7); // (■ Done 0.7 s after the singer's last note — `done`: negative, while still singing)
   const vol = loudOf(plan);
   const r = sing(sung, { songT0: 0, rt: 0, until: endT, vibrato: plan.vib ?? 0, noise: 0.002, seed, loud: (j) => (sung[j]?.i === -2 ? plan.tail.level : vol) });
   const fr = frames(r.audio, r.sr, { songT0: 0, latency: 0, fps: 60, from: FFT_SIZE / r.sr + phase, to: endT, gate: plan.gate });
@@ -275,8 +275,19 @@ LINE.push(
   { name: '“sweet” held long (0.6 s; the rest in time after it)', line: 0, w: 8, word: 'sweet', plan: { starts: { 9: 0.6, 10: 0.6 } }, wp: 'WP2', want: [X.cue('held', 8, 'sooner'), X.notesAll] },
   { name: '“grace” cut short (the rest of the line in time after it)', line: 0, w: 6, word: 'grace!', plan: { starts: { 7: -0.4, 8: -0.4, 9: -0.4, 10: -0.4 } }, wp: 'WP2', want: [X.cue('held', 6, 'later')] },
   { name: '“zing”’s 2nd note dropped', line: 0, w: 4, word: '', plan: { drop: [4] }, wp: 'WP2', want: [X.cue('missed', 4)] },
+  // (a short note left out between two sung ones — their edges fill a third of its window, none of it its pitch)
+  { name: 'L1 “like”’s 2nd note dropped', line: 1, w: 8, word: '', plan: { drop: [8] }, wp: 'WP2', want: [X.cue('missed', 8), ['“both notes”', (r) => /sing both notes/.test(r.cue?.text || '')]] },
   { name: 'stops after note 6', line: 0, plan: { stop: 6 }, wp: 'WP2', want: [X.cue('short'), ['2+ not reached', (r) => r.notReached >= 2]] },
+  // (stopped early: the line's rest isn't squeezed into what was sung — a note or two more landing on a pitch by
+  // chance, nothing left "not reached", the attempt a baseline — and a share is of the notes reached)
+  { name: 'stops after note 2 (three notes sung)', line: 0, plan: { stop: 2 }, wp: 'WP2', want: [X.cue('short'), X.b(1)] },
+  { name: 'L1 stops after note 3', line: 1, plan: { stop: 3 }, wp: 'WP2', want: [X.cue('short'), X.b(1), ['not a baseline', (r) => !r.whole && r.notReached >= 2]] },
+  { name: 'all −300¢ (another key), stops after note 6', line: 0, plan: { all: -300, stop: 6 }, wp: 'WP2', want: [X.cue('key', null, 'lower'), X.keyS(-3), X.noNotes] },
   { name: 'a false start (3 notes, 1 s)', line: 0, plan: { false: { n: 3, gap: 1 } }, wp: 'WP2', want: [X.notesAll, X.beatsAll] },
+  // (in free time the singer ends the line: a long last note let go early, or ■ Done tapped while it still sounds, is
+  // that note sung — not missed, not a start off, and the singer's tempo isn't squeezed to fit it)
+  { name: 'L3 “see.” (6 s) let go after 1.2 s', line: 3, w: 8, word: 'see.', plan: { held: 1.2 }, wp: 'WP2', want: [X.notesAll, X.beatsAll, X.win('spot'), X.b(1)] },
+  { name: '■ Done 1 s before “sound!” ends, still singing', line: 0, plan: { done: -1 }, wp: 'WP2', want: [X.notesAll, X.beatsAll, X.win('spot')] },
   { name: 'silent', line: 0, plan: { silent: true }, wp: 'WP0', want: [X.cue('silent'), ['no counts', (r) => !r.counts]] },
   // (rule 4: what can't be followed says so — no counts, no win, nothing to fix that isn't there)
   { name: 'another tune (every note a few semitones off)', line: 0, plan: { wrong: { 0: 5, 1: -4, 2: 6, 3: -3, 4: 4, 5: 7, 6: -5, 7: 3, 8: -6, 9: 5, 10: 4 } }, wp: 'WP2', want: [X.cue('nofit'), ['no counts, no win', (r) => !r.counts && !r.win]] },

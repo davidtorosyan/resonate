@@ -8,8 +8,8 @@
 //   free:  f (tempo factor: 1.2 = 20 % slower), wait (ms after ■ Done shows, default 1000), cents {i: ¢},
 //          all (¢ every note), wrong {i: semitones}, oct, drift (¢ by the end), vib (¢), scoop (¢),
 //          jit {i: s late, the whole note}, starts {i: s, only its start} (+ gap: true), drop [i], stop: i,
-//          false {n, gap}, extra: n, hum {m, d}, vol, silent: true. ■ Done is tapped 0.7 s after the singer's
-//          last note.
+//          held (s: the last note held at most this), false {n, gap}, extra: n, hum {m, d}, vol, silent: true.
+//          ■ Done is tapped `done` s after the singer's last note (default 0.7; negative: while still singing).
 //   beats: late (s every note), f, cents, all, oct, drift, vib, jit, starts, drop, vol; slow (0.9 / 0.8 / 0.7:
 //          the ♩ menu set to that % of the song's tempo first; none: 100 %)
 //   hold:  by (semitones off the target), cents, vib; target (index in Notes' targets, default the current)
@@ -70,7 +70,7 @@ const SHOTS = process.env.SHOTS || '';
         // (the singer's own last note: a false start, `extra`, `stop` move it)
         await sleep(100);
         const last = sung && sung.mode === 'free' ? await S(() => { const u = window.__sung; return u && u.segs.length ? Math.max(...u.segs.map((o) => o.e)) : null; }) : null;
-        await sleep(Math.max(0, wait - 100 + (last ?? dur * (plan.f || 1)) * 1000 + 700));
+        await sleep(Math.max(0, wait - 100 + (last ?? dur * (plan.f || 1)) * 1000 + 1000 * (plan.done ?? 0.7)));
         await page.click('#sing');
         await until(() => { const e = window.resonateDebug().ear; return e.res && e.run === null; }, 15000);
       } else if (mode === 'beats') {

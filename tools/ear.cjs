@@ -7,7 +7,9 @@
 //   1b the tune right 3 semitones down (WP2): "The tune was right", "Started lower than the piano", no ♪, key −3;
 //     ♩ from the starts; judged in ≤ 400 ms
 //   1c line 3 (a same-pitch repeat: “once was” on E♭5s), 20 % slower, every note right: all of them, no cue
-//   2 again, 10 % faster, every note right: "♩ all of them · ♪ all of them"
+//   1d line 4, its last note (“see.”, 6 s) let go after 1.5 s, ■ Done tapped while it still sounds: all of them
+//   2 again, 10 % faster, every note right: "♩ all of them · ♪ all of them" — ● Sing tapped as ▶ First note ends:
+//     the attempt keeps the note's tail out (gated at MIN_RMS until it's gone: the fix plan's rule 1)
 //   2b Line → Notes → Line: that result again, dimmed under "Last time" (WP1.9)
 //   2c ▶ First note, then the dock's ▶, in the middle of an attempt (the song, key, tempo and ⚙ locked): it
 //     ends, uncounted — "Stopped — not counted", nothing stored, the note / the line plays (WP1.6), the mic's
@@ -100,12 +102,13 @@ async function singPage(browser) {
   ok(!(await page.evaluate(() => getComputedStyle(document.getElementById('lane')).display !== 'none')), '1: no lane shown');
   ok(!(await btns()).pulse && (await ear()).hints.line === 1, `1: sung — ▶ no longer pulses; the device's Line attempts: ${(await ear()).hints.line}`);
   // 1b. the tune right, 3 semitones down (another key — WP2 rule 3): its own words, no ♪, the key it was in
-  const attempt = async (plan, lead = 900) => {
+  // (■ Done 0.8 s after the line's written end at the plan's speed — or `doneIn` s after its last note starts)
+  const attempt = async (plan, lead = 900, doneIn = null) => {
     await page.click('#sing');
     await page.waitForFunction(() => document.getElementById('sing').textContent === '■ Done', null, { timeout: 10000 });
     await page.evaluate(([p, w]) => { window.__sing = { ...p, mode: 'free', at: performance.now() + w }; }, [plan, lead]);
-    const d = await page.evaluate(() => { const x = window.resonateDebug(); const a = x.ear.ph.j0, z = x.ear.ph.j1; return x.notes[z - 1].t + x.notes[z - 1].d - x.notes[a].t; });
-    await sleep(lead + d * (plan.f || 1) * 1000 + 800);
+    const [d, dl] = await page.evaluate(() => { const x = window.resonateDebug(); const a = x.ear.ph.j0, z = x.ear.ph.j1; return [x.notes[z - 1].t + x.notes[z - 1].d - x.notes[a].t, x.notes[z - 1].t - x.notes[a].t]; });
+    await sleep(lead + (doneIn != null ? (dl * (plan.f || 1) + doneIn) * 1000 : d * (plan.f || 1) * 1000 + 800));
     await page.click('#sing');
     await page.waitForFunction(() => { const x = window.resonateDebug().ear; return x.res && x.run === null; }, null, { timeout: 15000 });
     await page.evaluate(() => { window.__sing = null; });
@@ -122,11 +125,22 @@ async function singPage(browser) {
   e = await attempt({ f: 1.2 });
   r = e.res;
   ok(e.p === 2 && r.counts?.notesAll && r.counts?.beatsAll && r.win?.kind === 'spot' && !r.cue, `1c: line 3 at its own speed, all right — “${e.ui}” (b ${r.fit?.b?.toFixed(2)}, onsets ${JSON.stringify(r.onsets)})`);
-  await page.click('#ear-prev'); await page.click('#ear-prev');
-  // 2. again, all right → all of them
+  // 1d. line 4: “see.” (6 s written) let go after 1.5 s, ■ Done while it still sounds — in free time the singer ends
+  // the line: that note is sung, not missed (it read ♩ 5 · ♪ 8 with nothing to fix)
+  await page.click('#ear-next');
+  e = await attempt({ held: 1.5 }, 900, 1.4);
+  r = e.res;
+  ok(e.p === 3 && r.counts?.notesAll && r.counts?.beatsAll && r.win?.kind === 'spot' && !r.cue && Math.abs(r.fit?.b - 1) < 0.04, `1d: line 4, its long last note let go early and ■ Done while it sounds — “${e.ui}” (b ${r.fit?.b?.toFixed(2)})`);
+  await page.click('#ear-prev'); await page.click('#ear-prev'); await page.click('#ear-prev');
+  // 2. again, all right → all of them; ● Sing tapped the moment ▶ First note has played: its tail kept out
   await page.evaluate(() => { window.__sing = null; });
+  await page.click('#ear-acts button[data-act="first"]');
+  await page.waitForFunction(() => document.getElementById('listen').textContent === '■ Stop', null, { timeout: 5000 });
+  await page.waitForFunction(() => document.getElementById('listen').textContent === '▶ Hear', null, { timeout: 5000, polling: 10 });
   await page.click('#sing');
   await page.waitForFunction(() => document.getElementById('sing').textContent === '■ Done', null, { timeout: 10000 });
+  const gate = (await ear()).gate;
+  ok(gate > 0.2 && gate < 2, `2: ● Sing right after ▶ First note — its tail kept out of the attempt until ${gate?.toFixed(2)} s`);
   await page.evaluate(() => { window.__sing = { mode: 'free', at: performance.now() + 900, f: 0.9 }; });
   await sleep(900 + dur * 0.9 * 1000 + 800);
   await page.click('#sing');

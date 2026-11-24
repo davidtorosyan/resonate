@@ -15,7 +15,8 @@
 //   jit {i: s} — the whole note late (−: early), its length kept
 //   starts {i: s} — only its start moves: the note before is held up to a late one (with gap: true it
 //       isn't — a silence), an early one cuts the note before; the note still ends where it did
-//   drop [i] — not sung; stop: i — nothing after note i
+//   drop [i] — not sung; stop: i — nothing after note i; held: s — the last note sung held at most s (a long
+//       last note let go early)
 //   false {n, gap} — a false start: notes 0…n−1, a silence until gap s after note n's time, then from note 0
 //   extra: n — n notes past the phrase sung too (free); hum {m, d} — a hum at midi m for d s, ending 0.3 s
 //       before note 0 (free); vol (the gain, default 0.25: 0.012 is a whisper the gate doesn't hear)
@@ -43,7 +44,9 @@ function segments(P, ns, f = 1) {
     const pre = (ns[P.false.n].t - T0) * f, re = pre + (P.false.gap || 0);
     out = [...out.filter((o) => o.i < P.false.n).map((o) => ({ ...o, e: Math.min(o.e, pre - 0.04) })), ...out.map((o) => ({ ...o, s: o.s + re, e: o.e + re, re }))];
   }
-  return out.sort((x, y) => x.s - y.s);
+  out.sort((x, y) => x.s - y.s);
+  if (P.held > 0 && out.length) { const L = out[out.length - 1]; L.e = Math.min(L.e, L.s + P.held); }
+  return out;
 }
 // The pitch offset (semitones) drift and vib add at time t (s from the first segment's start) of a sung span `tot` s long.
 function bend(P, t, tot) {

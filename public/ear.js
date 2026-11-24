@@ -65,6 +65,9 @@ export const EAR_FREE = {
                        //   smaller Σ|shift| wins
   moveCost: 1,         // per second the hit notes' slots moved: a line squeezed so that one more note hits on its
                        //   less-flat start, every slot moved to its cap, doesn't beat the singer's own line
+  offCost: 0.5,        // per note placed on singing at another pitch: a singer who stopped early leaves the line's
+                       //   rest free — squeezed into what was sung, a note or two more lands on a pitch by chance,
+                       //   and the line no longer runs past the singer's end (nothing "not reached")
   gradeShift: 0.1,     // the final ♪ grading: a slot moves ≤ this — it can't borrow its neighbour's pitch
   wideShift: 0.6,      // where a start is looked for: a grading whose slots may move this far (s)
   offsetMin: 40,       // ¢: an attempt this far off as a whole is fitted there too, and that fit kept when it…
@@ -73,11 +76,15 @@ export const EAR_FREE = {
   keyMin: 90,          // ¢: from here (a semitone, give or take the estimate) that's another key (♪ not counted);
                        //   under it, all a little off
   tuneWin: 0.85,       // "The tune was right": its fit hits this share
-  nofit: 1 / 3,        // under this share hit (even after the offset): couldn't follow — or under `coverHits` hit
+  nofit: 1 / 3,        // under this share hit (of the notes reached — reachedBase; even after the offset): couldn't
+                       //   follow — or under `coverHits` hit
   coverHits: 0.6,      //   with under `cover` of the singing (its voiced frames, from the anchor on) inside the line
   cover: 0.8,          //   found (a tempo beyond the search: the best line covers part of it, hitting little; singing
                        //   on into the next line: all of it hit)
   reach: 0.3,          // s: a note starting this long after the last voiced frame wasn't reached
+  lastMin: 0.3, lastPad: 0.1, // the line's last note ends where the singer's voice did (+ lastPad s; at least
+                       //   lastMin, never past its written length): in free time nothing comes after it — a long
+                       //   last note let go early, or ■ Done tapped while it's still sung, is that note sung
   conf: 0.3,           // a measured start: an onset this sure (rhythm.js conf)
   onsetStep: 0.5,      // findOnsets' prior against a change of timing between joined notes (per s; Sing's 1.5
                        //   smooths a held note's late next start away — here each start is timed on its own)
@@ -162,7 +169,7 @@ function cueText(c, ctx) {
     case "short": return `Keep going to ${nm(c.j)}`;
     case "missed": {
       const w = wordOf(c.j, ctx.notes);
-      return w && w.n > 1 ? `“${w.word}” — sing all ${NUM[w.n - 1] || w.n} notes` : `Sing out on ${nm(c.j)}`;
+      return w && w.n > 1 ? `“${w.word}” — sing ${w.n === 2 ? "both" : `all ${NUM[w.n - 1] || w.n}`} notes` : `Sing out on ${nm(c.j)}`;
     }
     case "pitch": return `${nm(c.j)} — ${c.size === "touch" ? "a touch" : c.size === "much" ? "much" : "aim"} ${c.dir}`;
     case "unclear": return "Closer to the mic";
@@ -233,13 +240,18 @@ export function keyOffset(ph, notes, frames) {
 
 // Grade the line placed at t = a + b·(written t − its start), pitches + off (¢): → the candidate.
 function placer(ph, notes, frames, endT, counted) {
-  const js = phraseJs(ph), T0 = notes[ph.j0].t, cset = new Set(counted);
+  const js = phraseJs(ph), T0 = notes[ph.j0].t, cset = new Set(counted), last = js.length - 1;
+  // (the line's last note: as long as the singer held it — F.lastMin)
+  const lastV = frames.reduce((m, f) => (f.midi != null ? f.t : m), -Infinity);
   return (a, b, off) => {
-    const ns = js.map((j) => { const n = notes[j]; return { midi: n.midi + off / 100, t: a + b * (n.t - T0), d: b * n.d }; });
+    const ns = js.map((j, k) => {
+      const n = notes[j], t = a + b * (n.t - T0), d = b * n.d;
+      return { midi: n.midi + off / 100, t, d: k === last ? Math.min(d, Math.max(F.lastMin, lastV + F.lastPad - t)) : d };
+    });
     const g = gradeTake(ns, frames, { endT });
-    let s = 0, sh = 0, hits = 0;
-    g.forEach((x, k) => { if (hitOf(x)) { s += 1 + 0.25 * (x.hit || 0); sh += Math.abs(x.shift || 0); if (cset.has(js[k])) hits++; } });
-    return { s: s - F.moveCost * sh, sh, hits, g, ns, a, b, off };
+    let s = 0, sh = 0, hits = 0, offs = 0;
+    g.forEach((x, k) => { if (hitOf(x)) { s += 1 + 0.25 * (x.hit || 0); sh += Math.abs(x.shift || 0); if (cset.has(js[k])) hits++; } else if (x?.status === "off") offs++; });
+    return { s: s - F.moveCost * sh - F.offCost * offs, sh, hits, g, ns, a, b, off };
   };
 }
 // The best of some candidates: the best score; among those within `tie` of it, the one sitting closest to the
@@ -281,6 +293,11 @@ function fitAt(ph, notes, frames, endT, counted, anchors, off) {
   const r = refine(c.place, c, c.anchor, off);
   return { ...r, anchor: c.anchor, edge: r.b <= F.bMin * 1.02 || r.b >= F.bMax / 1.02 };
 }
+// What a share of the counted notes is taken of (rule 7): those the line puts before the singer stopped (the last
+// voiced frame + reach) — at least a third of them, so a few notes sung don't make a whole line.
+function reachedBase(ph, ns, counted, lastV) {
+  return Math.max(counted.filter((j) => ns[j - ph.j0].t <= lastV + F.reach).length, Math.ceil(counted.length / 3), 1);
+}
 // The singer's line (rules 2–4): the anchors, the key offset, the fit at 0 and — the whole attempt off by
 // ≥ offsetMin — at that offset; the offset kept when it hits ≥ offsetHits of the counted notes and ≥ offsetGain×
 // what the written key does.
@@ -294,7 +311,9 @@ export function fitLine(ph, frames, endT, ctx) {
   let fit = f0, kind = null;
   if (Math.abs(key.c) >= F.offsetMin) {
     const fc = fitAt(ph, notes, frames, endT, counted, anchors, key.c);
-    if (fc.hits >= F.offsetHits * counted.length && fc.hits >= F.offsetGain * f0.hits) { fit = fc; kind = Math.abs(key.c) >= F.keyMin ? "key" : "offset"; }
+    // (of the counted notes the singer reached: one who stopped early, in another key, is still in that key)
+    const lastV = frames.reduce((m, f) => (f.midi != null ? f.t : m), -Infinity);
+    if (fc.hits >= F.offsetHits * reachedBase(ph, fc.ns, counted, lastV) && fc.hits >= F.offsetGain * f0.hits) { fit = fc; kind = Math.abs(key.c) >= F.keyMin ? "key" : "offset"; }
   }
   return { ...fit, key: { c: key.c, s: kind === "key" ? Math.max(-6, Math.min(6, Math.round(key.c / 100))) : 0, kind }, f0 };
 }
@@ -425,7 +444,7 @@ export function judgeFree(ph, frames0, endT, ctx) {
   const reachedSet = new Set(js.filter((j, k) => fit.ns[k].t <= lastV + F.reach));
   const notReached = counted.filter((j) => !reachedSet.has(j)).length;
   const hitsW = counted.filter((j) => hitOf(g[j - ph.j0])).length;
-  const share = Math.max(hitsW, fit.hits) / Math.max(1, counted.length);
+  const share = Math.max(hitsW, fit.hits) / reachedBase(ph, fit.ns, counted, lastV);
   const res = { fit: { a: fit.a, b: fit.b, off: fit.key.kind ? fit.key.c : 0, anchor: fit.anchor, g, ns: fit.ns }, key: fit.key, notReached, up: null };
   // couldn't follow: the tempo on the search's edge, too little hit even after the offset, or the line found
   // covering too little of the singing
@@ -482,8 +501,14 @@ export function judgeFree(ph, frames0, endT, ctx) {
   }
   // (missed: hardly a voice around it at all — a note sung late and short is a timing matter, not "sing out")
   const silentAt = (j) => { const n = graded[j - ph.j0], w = fr.filter((f) => f.t >= n.t - 0.05 && f.t < n.t + n.d + 0.05); return w.length >= 2 && w.filter((f) => f.midi != null).length < 0.25 * w.length; };
+  // (…or its pitch not heard in it nor just after it — a short note left out between two sung ones: their edges fill
+  // a quarter of its window, but nothing there was this note; a late one is heard on its pitch, after its start)
+  const unheardAt = (j) => {
+    const n = graded[j - ph.j0], target = notes[j].midi + (isKey ? fit.key.c / 100 : 0);
+    return fr.filter((f) => f.midi != null && f.t >= n.t && f.t < n.t + n.d + 0.3 && Math.abs(fold(f.midi - target)) <= 0.5).length < 3;
+  };
   if (!cue) {
-    const missed = reachedCounted.filter((j) => gOf(j)?.status === "missed" && silentAt(j)).sort((x, y) => notes[y].d - notes[x].d || x - y)[0];
+    const missed = reachedCounted.filter((j) => gOf(j)?.status === "missed" && (silentAt(j) || unheardAt(j))).sort((x, y) => notes[y].d - notes[x].d || x - y)[0];
     if (missed != null) cue = { kind: "missed", j: missed, at: around(missed, missed), sounds: ["note", "you"] };
   }
   if (!cue) {
