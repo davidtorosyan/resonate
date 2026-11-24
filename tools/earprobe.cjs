@@ -4,6 +4,8 @@
 //   PLANS='[{"name":"late 3rd","mode":"free","f":1.1,"starts":{"2":0.3}}]' node earprobe.cjs
 //   PLANS=@file.json node earprobe.cjs            SONG=amazing-grace (default)   SHOTS=<dir> (a screenshot each)
 //   OWN='[[8,11]]'                                 (lines of the singer's own first — Pick words: notes [j0, j1); `phrase` counts them in)
+//   XML=<file.musicxml> [TITLE=…]                  (a song of one's own instead of a sample — added to My songs in this run's browser
+//                                                   profile; the owner's songs stay outside the repo)
 // A plan: { name, phrase (0-based, default 0), mode: "free" | "beats" | "hold" | "talk", ... } and the singer's
 //   fields (tools/lib/earsinger.cjs: every note index is the note's index in the phrase, 0-based) —
 //   free:  f (tempo factor: 1.2 = 20 % slower), wait (ms after ■ Done shows, default 1000), cents {i: ¢},
@@ -36,13 +38,25 @@ const SHOTS = process.env.SHOTS || '';
 (async () => {
   const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'] });
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: SHOTS ? 2 : 1 });
-  await ctx.addInitScript((song) => { try { localStorage.setItem('resonate.sing.song', song); } catch {} }, SONG);
+  await ctx.addInitScript((song) => { try { if (!localStorage.getItem('probe.xml')) localStorage.setItem('resonate.sing.song', song); } catch {} }, SONG);
   await ctx.addInitScript(SINGER);
   const page = await ctx.newPage();
   const errs = [];
   page.on('pageerror', (e) => errs.push('pageerror ' + e.message));
   await page.goto(BASE + 'sing.html');
   await page.waitForFunction(() => window.resonateDebug?.().ear?.on && document.getElementById('ear-words').textContent, null, { timeout: 30000 });
+  if (process.env.XML) {
+    const xml = fs.readFileSync(process.env.XML, 'utf8');
+    const title = process.env.TITLE || path.basename(process.env.XML).replace(/\.[^.]+$/, '');
+    await page.evaluate(async ([x, t]) => {
+      const v = document.getElementById('version').textContent.trim().replace(/^v/, '');
+      const id = await (await import(`./library.js?v=${v}`)).addSong(t, x);
+      localStorage.setItem('probe.xml', '1');
+      localStorage.setItem('resonate.sing.song', id);
+    }, [xml, title]);
+    await page.reload();
+    await page.waitForFunction(() => window.resonateDebug?.().ear?.on && document.getElementById('ear-words').textContent, null, { timeout: 90000 });
+  }
   // OWN='[[8,11]]': lines of the singer's own first (Pick words: notes [j0, j1) of the song) — a plan's `phrase` then
   // counts them in, in song order (resonateDebug().ear.lines)
   if (process.env.OWN) {
