@@ -41,12 +41,12 @@
 //   rn       { [i in the line]: { cls, dev, rdev } | null } — Beats: each start against its click (judgeBeats)
 //   drill    [i in the line] — Line: the notes reached and sung off or not sung, the cue's first, then the longest
 //            (Notes' "Off last time" targets: noteTargets)
-import { gradeTake } from "./grade.js?v=103";
-import { median, fold } from "./music.js?v=103";
-import { findOnsets, tolFlag, tolOn, voiceCover } from "./rhythm.js?v=103";
-import { metricOf, meterAt, measureAt, feltBeat } from "./takerhythm.js?v=103";
-import { PRACTICE } from "./practice.js?v=103";
-import { MIN_RMS } from "./pitch.js?v=103";
+import { gradeTake } from "./grade.js?v=104";
+import { median, fold } from "./music.js?v=104";
+import { findOnsets, tolFlag, tolOn, voiceCover } from "./rhythm.js?v=104";
+import { metricOf, meterAt, measureAt, feltBeat } from "./takerhythm.js?v=104";
+import { PRACTICE } from "./practice.js?v=104";
+import { MIN_RMS } from "./pitch.js?v=104";
 
 // A line for Ear: the printed line (the fix plan's Q-A) — a lyric line, short ones joined to 4+ syllables, a
 // long one cut near 8 (Amazing Grace: its four hymn lines, 9–11 s each). sing.js puts these into practice.js's
