@@ -137,6 +137,7 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     score.show(w.score);
     piano.show(w.piano);
     if (piano.link(w.score && w.piano)) score.keysChanged(); // (the Score's keys and its ▶ chips on the keyboard — or back in the stretch's controls)
+    earShows(sing.state(), w);
     placeTuner(w);
     placePlay(w);
     pill.hidden = !isOpen;
@@ -404,10 +405,18 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
     })().finally(() => { closing = null; });
     return closing;
   }
+  // Sing's Ear shows (one line at a time, by ear): the tuner — a live pitch readout — is hidden (index.html
+  // .app[data-ear]); it comes back with Ear off (⚙) or Sing gone, the song closed.
+  // (w: what's laid out — apply's; follow goes by the page as it is, never ahead of the layout)
+  function earShows(st, w = { sing: app.hasAttribute("data-sing") }) {
+    const on = !!(st?.ear && w.sing);
+    if (app.hasAttribute("data-ear") !== on) app.toggleAttribute("data-ear", on);
+  }
   // While a module holds the sound the tuner's mic button is off: "take" (red) or "paused".
   function follow() {
     const st = sing.state(), sc = score.state();
     const busy = !!(st?.busy || sc?.busy);
+    earShows(st);
     tuner.setHold(st?.take ? "take" : busy ? "paused" : null);
     sing.hush(piano.held() > 0 || !!(sc?.busy || sc?.held)); // (Sing's 🎤 Pitch listens again once the Piano and the Score are quiet)
     if (busy && tuner.state !== "off") tuner.park(); // (a safety net: every start parks it already)
@@ -469,8 +478,8 @@ export function mountSongView({ tuner, version, onLoad = () => {}, onLeave = () 
       const st = sing.state(), sc = score.state();
       return { open: isOpen, loaded: sing.loaded, scoreLoaded: score.loaded, title, drop: dropped, form: app.dataset.form || "full", tin: app.dataset.tin,
         moving: running(), switching: !!switching, closing: !!closing, laid: app.hasAttribute("data-song"),
-        mods: isOpen ? (mods.sing && mods.score ? "both" : mods.sing ? "sing" : mods.score ? "score" : "none") : null, set: { ...mods }, dev, pdfOnly: isOpen && pdfOnly,
-        state: isOpen || st ? { ...(st || {}), song: current ?? st?.song ?? null, busy: !!(st?.busy || sc?.busy), take: !!st?.take } : null, score: sc };
+        mods: isOpen ? (mods.sing && mods.score ? "both" : mods.sing ? "sing" : mods.score ? "score" : "none") : null, set: { ...mods }, dev, pdfOnly: isOpen && pdfOnly, ear: app.hasAttribute("data-ear"),
+        state: isOpen || st ? { ...(st || {}), song: current ?? st?.song ?? null, busy: !!(st?.busy || sc?.busy), take: !!st?.take, ear: !!st?.ear } : null, score: sc };
     },
     singDebug: () => (isOpen ? sing.debug() : null),
     scoreDebug: () => score.debug(),

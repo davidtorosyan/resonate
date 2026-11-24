@@ -84,7 +84,7 @@ const dbg = (p) => p.evaluate(() => {
     play: pl && { ready: pl.ready, page: pl.page, pages: pl.pages, at: pl.at, W: pl.W, H: pl.H, sp: pl.sp, keys: !!(d.piano?.shown && d.piano.linked) && !pl.keys.shown, peeks: pl.peekLog.length, last: pl.peekLog.at(-1) || null,
       pb: pl.playback.state, sched: pl.playback.scheduled.length, audio: pl.audio },
     lgen: d.song?.score?.lgen ?? null,
-    sing: s && { session: s.session?.kind || null, title: s.score?.title } };
+    sing: s && { session: s.session?.kind || null, ear: s.ear?.on ? s.ear.run : undefined, title: s.score?.title } };
 }).catch(() => null);
 async function until(p, pred, ms = 15000) {
   const end = Date.now() + ms;
@@ -263,17 +263,19 @@ async function runSize(sz) {
       d = await until(p, (x) => x.play.page === 2, 2000);
       ok(d?.play.page === 2, `→ turns the Score's page (2 / ${d?.play.pages})`);
     }
-    // Sing's Listen stops the Score's ▶, and the Score's ▶ stops Sing's Listen
+    // Sing's Listen stops the Score's ▶, and the Score's ▶ stops Sing's Listen (Sing's Ear — on by default —:
+    // its ▶ Hear, a run of its own, not a session)
+    const singPlays = (x) => x.sing?.session === 'listen' || (x.sing?.ear !== undefined && x.sing.ear === 'play');
     await clickScorePlay(p);
     d = await until(p, (x) => x.play.pb === 'playing', 5000);
     await p.waitForTimeout(400);
     await p.click('#listen');
-    d = await until(p, (x) => x.sing?.session === 'listen' && x.play.pb === 'idle', 6000);
-    ok(d?.sing?.session === 'listen' && d.play.pb === 'idle', "Sing's Listen stopped the Score's ▶");
+    d = await until(p, (x) => singPlays(x) && x.play.pb === 'idle', 6000);
+    ok(d && singPlays(d) && d.play.pb === 'idle', `Sing's Listen stopped the Score's ▶ (${d?.sing?.ear !== undefined ? `Ear's ▶ Hear: ${d?.sing?.ear}` : d?.sing?.session})`);
     await p.waitForTimeout(500);
     await clickScorePlay(p);
-    d = await until(p, (x) => x.play.pb === 'playing' && !x.sing?.session, 6000);
-    ok(d?.play.pb === 'playing' && !d.sing?.session, "the Score's ▶ stopped Sing's Listen");
+    d = await until(p, (x) => x.play.pb === 'playing' && !x.sing?.session && !x.sing?.ear, 6000);
+    ok(d?.play.pb === 'playing' && !d.sing?.session && !d.sing?.ear, "the Score's ▶ stopped Sing's Listen");
     // the Score off (Sing alone): ▶ stops, the keys aren't the Score's
     await p.click('#mod-score');
     d = await until(p, (x) => x.song.mods === 'sing' && !x.song.state.busy && !x.song.switching && !x.song.moving, 5000);

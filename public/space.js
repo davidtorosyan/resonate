@@ -34,6 +34,7 @@ export const DATA_KEYS = [
   "resonate.sing.history",    // per song: takes' summaries
   "resonate.sing.practice",   // per song: guided practice marks (practice.js; device only until v1.1)
   "resonate.sing.session",    // guided practice: the session under way
+  "resonate.sing.eardata",    // per song: Ear's line open (sing.js "Ear"; device only)
   "resonate.play",            // per song: Play's names level, hands, place, PDF page, practice days (device only)
   "resonate.import",          // an unfinished PDF → Song import (omr/jobs.js: its id; the job itself is in IndexedDB, per space)
   "resonate.convert",         // songs waiting to be converted, one after another (omr/queue.js)

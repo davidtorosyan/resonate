@@ -184,6 +184,9 @@
       #ear-acts { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.5rem; }
       #ear-acts button, .ear-cue .chip, .ear-names button { font: inherit; font-size: 0.9rem; color: #e8e8f0; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; padding: 0.4rem 0.9rem; min-height: 38px; cursor: pointer; }
       #ear-res { text-align: center; display: flex; flex-direction: column; gap: 0.35rem; min-height: 2.2rem; }
+      #ear-res[data-old] > :not(.ear-last) { opacity: 0.55; }
+      .ear-last { font-size: 0.78rem; color: rgba(255,255,255,0.5); }
+      .ear-flash { color: rgba(255,255,255,0.6); }
       .ear-counts { font-size: 1.15rem; font-weight: 600; }
       .ear-win { color: #4ade80; font-weight: 600; }
       .ear-cue { color: #ffe6a0; }
@@ -194,6 +197,10 @@
       .ear-msg { text-align: center; color: #ffe6a0; min-height: 1.3rem; margin-top: 0.4rem; }
       #ear-ring { display: flex; justify-content: center; }
       #ear-ring[hidden] { display: none; }
+      /* ▶ Hear it first: the ▶ pulses (no motion: a still ring) */
+      #listen[data-pulse] { animation: earpulse 1.6s ease-in-out infinite; }
+      @keyframes earpulse { 50% { box-shadow: 0 0 0 6px rgba(166,79,255,0.45); } }
+      @media (prefers-reduced-motion: reduce) { #listen[data-pulse] { animation: none; box-shadow: 0 0 0 3px rgba(166,79,255,0.6); } }
       .ear-ring { --lv: 0; width: 64px; height: 64px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.15); box-shadow: 0 0 0 calc(var(--lv) * 14px) rgba(74,222,128,0.35); transition: box-shadow 60ms linear; }
       /* Guided: the step's card replaces the results row, the play bar and the chips (More → Tools has them). */
       body[data-guided="true"] .results-head, body[data-guided="true"] #playbar, body[data-guided="true"] #chips, body[data-guided="true"] #loopbar { display: none; }
@@ -493,13 +500,13 @@
       </section>
       <section id="ear" hidden aria-live="polite">
         <div class="ear-top">
-          <button id="ear-prev" class="ear-nav" type="button" aria-label="Previous phrase">‹</button>
+          <button id="ear-prev" class="ear-nav" type="button" aria-label="Previous line">‹</button>
           <span id="ear-name" class="mono"></span>
-          <button id="ear-next" class="ear-nav" type="button" aria-label="Next phrase">›</button>
+          <button id="ear-next" class="ear-nav" type="button" aria-label="Next line">›</button>
         </div>
         <div id="ear-words"></div>
         <div class="ear-modes" role="group" aria-label="Exercise">
-          <button type="button" data-ear="sing">Sing</button>
+          <button type="button" data-ear="line">Line</button>
           <button type="button" data-ear="beats">Beats</button>
           <button type="button" data-ear="notes">Notes</button>
         </div>
@@ -548,17 +555,19 @@
           <span id="op-title" class="op-title">Singing options</span>
           <button id="op-close" class="tool-btn" type="button" aria-label="Close the options">✕</button>
         </div>
-        <h3>While you sing</h3>
-        <label class="op-choice"><input type="radio" name="view" value="practice" /><span><b>Practice</b> — notes + your pitch</span></label>
-        <label class="op-choice"><input type="radio" name="view" value="perform" /><span><b>Perform</b> — lyrics only, review after</span></label>
-        <h3>Coach</h3>
-        <label class="op-choice"><input type="checkbox" id="guided-on" /><span><b>Guide me</b> — one step at a time</span></label>
-        <h3>Guide</h3>
-        <select id="guide-select" aria-label="Guide while singing">
-          <option value="click">Click</option>
-          <option value="melody">Melody (headphones)</option>
-          <option value="none">None</option>
-        </select>
+        <!-- (Ear's switch, "Guide me" until v102; on: one line at a time by ear — the whole song's options below don't apply and hide) -->
+        <label class="op-choice"><input type="checkbox" id="guided-on" /><span><b>Phrase by phrase</b> — by ear</span></label>
+        <div id="op-whole">
+          <h3>While you sing</h3>
+          <label class="op-choice"><input type="radio" name="view" value="practice" /><span><b>Practice</b> — notes + your pitch</span></label>
+          <label class="op-choice"><input type="radio" name="view" value="perform" /><span><b>Perform</b> — lyrics only, review after</span></label>
+          <h3>Guide</h3>
+          <select id="guide-select" aria-label="Guide while singing">
+            <option value="click">Click</option>
+            <option value="melody">Melody (headphones)</option>
+            <option value="none">None</option>
+          </select>
+        </div>
       </div>
     </div>
     <div id="taptempo" class="overlay" hidden>

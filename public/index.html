@@ -356,6 +356,8 @@
       .app { --tslot: 52px; }
       .app[data-form="docked"] { --tslot: 150px; }
       .app[data-tin="home"]:not([data-form="full"]) .home { flex: none; height: var(--tslot); margin-bottom: 8px; padding: 0; justify-content: flex-start; align-items: stretch; }
+      /* Sing's Ear shows: no tuner (a live pitch readout — Ear trains by ear; songview.js follow), its slot gone too */
+      .app[data-ear] #tuner, .app[data-ear][data-tin="home"] .home { display: none; }
       .tmic, .cbar, .tword { display: none; }
       .tuner[data-form="strip"], .tuner[data-form="docked"] { cursor: pointer; background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line); }
       .tuner[data-form="strip"] > :is(.ribbon-wrap, .gauge, .level, .scope, .tmsg),
@@ -418,6 +420,12 @@
       #listen::before { content: "\25B6\FE0E"; font-size: 19px; line-height: 1; margin-left: 3px; }
       #listen[data-stop]::before { content: "\25A0\FE0E"; margin-left: 0; font-size: 20px; }
       #listen:disabled { opacity: .4; cursor: default; }
+      /* Sing's Ear (one line, by ear): ▶ Hear it first — a ring round ▶ pulses (opacity only; reduced motion: still) */
+      #listen { position: relative; }
+      #listen[data-pulse]::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; box-shadow: 0 0 0 3px rgba(166,79,255,.75), 0 0 16px 2px rgba(166,79,255,.45);
+        animation: hearpulse 1.6s ease-in-out infinite; pointer-events: none; }
+      @keyframes hearpulse { 0%, 100% { opacity: .15; } 50% { opacity: 1; } }
+      @media (prefers-reduced-motion: reduce) { #listen[data-pulse]::after { animation: none; opacity: .8; } }
       .dock #sing { flex: 1 1 auto; align-self: flex-start; min-width: 0; max-width: 340px; height: 58px; margin: -2px auto 0; padding: 0 16px; border-radius: 20px; background: var(--grad-primary); color: #fff;
         font: 700 17px/1.1 var(--display); box-shadow: var(--glow-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .dock #sing[data-active="true"] { background: var(--grad-live); box-shadow: 0 10px 28px -10px rgba(255,79,111,.7); }

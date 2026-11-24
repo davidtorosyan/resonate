@@ -11,7 +11,7 @@
 //          false {n, gap}, extra: n, hum {m, d}, vol, silent: true. ■ Done is tapped 0.7 s after the singer's
 //          last note.
 //   beats: late (s every note), f, cents, all, oct, drift, vib, jit, starts, drop, vol; slow (0.9 / 0.8 / 0.7:
-//          Beats' Slower set to it first; none: 100 %)
+//          the ♩ menu set to that % of the song's tempo first; none: 100 %)
 //   hold:  by (semitones off the target), cents, vib; target (index in Notes' targets, default the current)
 // Prints one JSON line per plan: the plan, the result on screen, the counts, the win and the cue (text, kind,
 // dir, note), the fitted tempo (b) and start (a), the onsets measured (of the starts), the key offset found
@@ -54,13 +54,13 @@ const SHOTS = process.env.SHOTS || '';
       await page.click(p < want ? '#ear-next' : '#ear-prev');
       await sleep(80);
     }
-    const mode = plan.mode === 'beats' ? 'beats' : plan.mode === 'hold' ? 'notes' : 'sing';
+    const mode = plan.mode === 'beats' ? 'beats' : plan.mode === 'hold' ? 'notes' : 'line';
     await page.click(`.ear-modes button[data-ear="${mode}"]`);
     await sleep(150);
     const out = { name: plan.name || `plan ${k}`, plan };
     await S(() => { window.__sung = null; }); // (the singer's record of this plan only: a hold or talk sings none)
     try {
-      if (mode === 'sing') {
+      if (mode === 'line') {
         await page.click('#sing');
         await until(() => document.getElementById('sing').textContent.includes('Done'), 10000);
         const wait = plan.wait ?? 1000;
@@ -74,11 +74,12 @@ const SHOTS = process.env.SHOTS || '';
         await page.click('#sing');
         await until(() => { const e = window.resonateDebug().ear; return e.res && e.run === null; }, 15000);
       } else if (mode === 'beats') {
-        // (Slower cycles 100 → 90 → 80 → 70 → 100 %: to the plan's speed, 100 % without one — a plan doesn't inherit the last one's)
-        const want = plan.slow || 1, speed = () => S(() => window.resonateDebug().ear.slow);
-        for (let s = 0; s < 4 && (await speed()) != null && Math.abs((await speed()) - want) > 1e-6; s++) { await page.click('#ear-acts button[data-act="slow"]'); await sleep(80); }
-        out.slow = await speed();
-        if (out.slow == null ? plan.slow : Math.abs(out.slow - want) > 1e-6) throw new Error(`Beats' speed is ${out.slow ?? 'not shown (resonateDebug().ear.slow)'}, not ${want}`);
+        // (the ♩ menu — Beats sings at its tempo — to the plan's speed, 100 % without one: a plan doesn't inherit the last one's)
+        const want = plan.slow || 1;
+        const set = await S((w) => { const sel = document.getElementById('tempo-select'), o = [...sel.options].find((x) => x.value === `r:${w}`); if (!o) return false; if (sel.value !== o.value) { sel.value = o.value; sel.dispatchEvent(new Event('change', { bubbles: true })); } return true; }, want);
+        await sleep(150);
+        out.slow = await S(() => window.resonateDebug().rate);
+        if (!set || Math.abs(out.slow - want) > 1e-6) throw new Error(`the tempo is ${out.slow}, not ${want} (no ♩ menu option r:${want}?)`);
         await S((p) => { window.__sing = { ...p, mode: 'beats' }; }, plan);
         await page.click('#sing');
         await until(() => !!window.resonateDebug().session, 10000);
@@ -86,7 +87,7 @@ const SHOTS = process.env.SHOTS || '';
       } else {
         if (plan.target != null) {
           const ok = await S((t) => { const N = window.resonateDebug().ear.notes; return !!N && t < N.targets.length; }, plan.target);
-          if (ok) await S((t) => { /* tap the target's name */ const d = window.resonateDebug(); const j = d.ear.notes.targets[t]; const b = document.querySelector(`#ear-notes button[data-j="${j}"]`) || [...document.querySelectorAll('#ear-notes button')].find((x) => x.textContent); b?.click(); }, plan.target);
+          if (ok) await S((t) => { /* tap the target's name */ const d = window.resonateDebug(); const j = d.ear.notes.js[t]; const b = document.querySelector(`#ear-notes button[data-j="${j}"]`) || [...document.querySelectorAll('#ear-notes button')].find((x) => x.textContent); b?.click(); }, plan.target);
         }
         await S((p) => { window.__sing = { ...p, mode: 'hold' }; }, plan);
         await page.click('#sing');

@@ -95,11 +95,14 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
     lw.firstChild.append(listen);
     const corner = document.querySelector(".dock .row .corner");
     corner.before(lw, sing);
-    new MutationObserver(() => { // (sing.js writes "▶ Listen" / "■ Stop": the round button shows the glyph, the label the word)
+    // (sing.js writes "▶ Listen" / "■ Stop": the round button shows the glyph, the label the word — sing.js's
+    // data-caption when it gives one: Ear's "Hear" / "Stop")
+    new MutationObserver(() => {
       const stop = listen.textContent.includes("■");
       listen.toggleAttribute("data-stop", stop);
-      lw.querySelector(".l").textContent = stop ? "Stop" : "Listen";
-    }).observe(listen, { childList: true, characterData: true, subtree: true });
+      const l = listen.dataset.caption || (stop ? "Stop" : "Listen"), el = lw.querySelector(".l");
+      if (el.textContent !== l) el.textContent = l;
+    }).observe(listen, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["data-caption"] });
     // The sheets, get-ready and the drop zone: a layer of their own.
     const layer = document.createElement("div");
     layer.className = "sing-scope";

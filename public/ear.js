@@ -3,8 +3,8 @@
 // "Ear" keeps the sessions and the screen, and hands these the phrase, the song's notes and what the mic
 // heard.
 //
-// A phrase: practice.js groupPhrases's { j0, j1, js, wk, mk, … } at Ear's sizes (EAR_PHRASE: a lyric line,
-// short ones joined). ctx: { notes (the song's, as the page has them: t, d in seconds at the tempo now,
+// A phrase: practice.js groupPhrases's { j0, j1, js, wk, mk, … } at Ear's sizes (EAR_PHRASE: the printed
+// line). ctx: { notes (the song's, as the page has them: t, d in seconds at the tempo now,
 // midi, shift, text, melisma), spq (seconds per quarter at the tempo now), name (midi → its name in the
 // song's key) }.
 //
@@ -25,9 +25,10 @@
 import { gradeTake } from "./grade.js?v=102";
 import { median } from "./music.js?v=102";
 
-// A phrase for Ear: a lyric line, short ones joined to 4+ syllables, long ones cut near 10
-// (sing.js puts these into practice.js's PRACTICE.phrase before grouping).
-export const EAR_PHRASE = { minSyl: 4, minSec: 0, maxSyl: 10, maxSec: 14 };
+// A line for Ear: the printed line (the fix plan's Q-A) — a lyric line, short ones joined to 4+ syllables, a
+// long one cut near 8 (Amazing Grace: its four hymn lines, 9–11 s each). sing.js puts these into practice.js's
+// PRACTICE.phrase before grouping.
+export const EAR_PHRASE = { minSyl: 4, minSec: 0, maxSyl: 8, maxSec: 14 };
 
 export const phraseJs = (ph) => { const out = []; for (let j = ph.j0; j < ph.j1; j++) out.push(j); return out; };
 // The starts ♩ counts: the phrase's first note and every new syllable, ≥ 0.12 s.

@@ -17,7 +17,7 @@ import { deleteJobsFor } from "./omr/jobs.js?v=102";
 import { dropFingering } from "./assist.js?v=102";
 
 // Per song: { songId: … } maps in localStorage (DATA_KEYS).
-const PER_SONG = ["resonate.sing.keys", "resonate.sing.rates", "resonate.sing.timing", "resonate.sing.history", "resonate.sing.practice", "resonate.play"];
+const PER_SONG = ["resonate.sing.keys", "resonate.sing.rates", "resonate.sing.timing", "resonate.sing.history", "resonate.sing.practice", "resonate.sing.eardata", "resonate.play"];
 
 // true once the song is gone; false for a sample (or no id). Throws when the songs' storage failed
 // (nothing else is done then).

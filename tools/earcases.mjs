@@ -34,7 +34,7 @@ import { PRACTICE, groupPhrases } from '../public/practice.js';
 import { EAR_PHRASE, judgeFree, judgeBeats } from '../public/ear.js';
 
 const { segments } = earsinger;
-const DONE = new Set(['WP0']); // the work packages landed: their cases are judged
+const DONE = new Set(['WP0', 'WP1']); // the work packages landed: their cases are judged
 const V = !!process.env.V, ONLY = process.env.ONLY ? new RegExp(process.env.ONLY) : null, SHOW_TODO = process.env.TODO !== '0';
 
 let pass = 0, fail = 0;

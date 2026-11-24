@@ -128,11 +128,11 @@ async function walk(dev, ctxOpts, modules) {
   await page.click('.ear-modes button[data-ear="beats"]'); await sleep(300);
   await shot('beats', 'tapped Beats');
   await page.click('#listen'); await sleep(1200);
-  await shot('beats-hear', 'tapped ▶ With the click: count-in clicks, then the phrase with the click');
+  await shot('beats-hear', 'tapped ▶ Hear in Beats: count-in clicks, then the line with the click');
   await idle();
   await S(() => { window.__sing = { mode: 'beats', late: 0.25 }; });
   await page.click('#sing'); await sleep(900);
-  await shot('beats-countin', 'tapped ● Sing with the click: the count-in');
+  await shot('beats-countin', 'tapped ● Sing in Beats: the count-in');
   await until(() => window.resonateSing.debug().nowT > window.resonateSing.debug().notes[window.resonateSing.debug().ear.ph.j0].t + 1, 20000);
   await shot('beats-singing', 'singing with the click (every note 250 ms late)');
   await until(() => window.resonateSing.debug().ear.res?.kind === 'beats', 40000);
@@ -144,8 +144,9 @@ async function walk(dev, ctxOpts, modules) {
   await until(() => !window.resonateSing.debug().session && window.resonateSing.debug().ear.run === null, 40000);
   await S(() => { window.__sing = null; }); await sleep(300);
   await shot('beats-result-on', 'the Beats result (on the click)');
-  await page.click('#ear-acts button[data-act="slow"]'); await sleep(200);
-  await shot('beats-slower', 'tapped Slower once');
+  await S(() => { const sel = document.getElementById('tempo-select'); sel.value = 'r:0.8'; sel.dispatchEvent(new Event('change', { bubbles: true })); }); await sleep(300);
+  await shot('beats-slower', 'the ♩ menu set to 80 % (Beats sings at its tempo)');
+  await S(() => { const sel = document.getElementById('tempo-select'); sel.value = 'r:1'; sel.dispatchEvent(new Event('change', { bubbles: true })); }); await sleep(200);
   // Notes
   await page.click('.ear-modes button[data-ear="notes"]'); await sleep(300);
   await shot('notes', 'tapped Notes');
@@ -176,9 +177,9 @@ async function walk(dev, ctxOpts, modules) {
   await S(() => { window.__sing = null; });
   // phrases
   await page.click('#ear-next'); await sleep(400);
-  await shot('phrase-2', 'tapped › (next phrase)');
+  await shot('phrase-2', 'tapped › (next line)');
   for (let k = 0; k < 6; k++) { const b = await page.$('#ear-next:not([disabled])'); if (!b) break; await b.click(); await sleep(200); }
-  await shot('phrase-last', 'the last phrase');
+  await shot('phrase-last', 'the last line');
   // ⚙
   const gear = await page.$('#options-btn, #opts, button[aria-label*="ptions"], button[title*="ptions"]');
   if (gear) { await gear.click(); await sleep(500); await shot('options', 'opened ⚙'); }

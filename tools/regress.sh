@@ -104,7 +104,7 @@ if [ "$TIER" = main ]; then
   # Guide me — on by default — from a clean slate on Amazing Grace, a simulated singer; BLEED=1 puts the page's
   # sound into the fake mic (a phone speaker's click bleed) and fails on any rhythm / practice warning.
   # (v101: Ear — the E8 prototype — replaced the guided card; guided.cjs tested the card, kept for its history)
-  run ear 600 node ear.cjs                        # Ear (E8): the free attempt, Beats, Notes with a simulated singer
+  run ear 600 node ear.cjs                        # Ear (E8): the free attempt, Beats, Notes with a simulated singer; the shell around it (~1.5 min)
   run voicetest 600 node voicetest.cjs            # Voice: the range test with a simulated singer, no note over a live mic
   run quietvoice 600 env SHOTS=0 node quietvoice.cjs # a distant singer (−25 dB, room noise) calibrates and is heard; noise alone never (E4)
   run sleep 900 env SHOTS=0 node sleep.cjs        # every page asleep when hidden: contexts, sources, tracks, the session

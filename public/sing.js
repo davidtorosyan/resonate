@@ -455,6 +455,7 @@ function readKeys() {
 let scoreId = null; // the song the loaded score is (songId changes as soon as another is chosen)
 let songRevNow = null; // the library's rev of the MusicXML loaded (a new one when it's replaced: its PDF read again)
 function setScore(sc, stored = null) {
+  earFresh = true; // (Ear starts the song afresh, on its stored line: another song, or this one read again)
   score = sc;
   scoreId = songId;
   minor = guessMinor(sc);
@@ -767,7 +768,7 @@ async function beginSing(part) {
   showMsg("");
   updateButtons(); // (the old take's Play bar goes: a Play tapped while the mic opens would run under the take)
   singBtn.disabled = listenBtn.disabled = true;
-  statusEl.textContent = "requesting mic…";
+  statusEl.textContent = earBeatsTake() ? "" : "requesting mic…"; // (Ear says Mic… itself)
   const slept0 = sleeps;
   let mic;
   try {
@@ -866,7 +867,7 @@ async function beginSing(part) {
     gradeUpTo(ft);
     nowT = songT;
     renderYou();
-    statusEl.textContent = songT < start ? `count-in ${Math.max(1, Math.min(Math.ceil(count), Math.floor((songT - start + count * beatSec) / beatSec) + 1))}` : `${r.db.toFixed(0)} dB`;
+    if (!earBeatsTake()) statusEl.textContent = songT < start ? `count-in ${Math.max(1, Math.min(Math.ceil(count), Math.floor((songT - start + count * beatSec) / beatSec) + 1))}` : `${r.db.toFixed(0)} dB`; // (Ear's Beats: no count-in or dB in the controls row)
     renderLive();
     if (take.untilT !== undefined) {
       const last = shownLine >= take.untilLine;
@@ -1854,6 +1855,8 @@ const barQAt = (q) => { const [b, t] = meterAt(measureAt(q)); return (b * 4) / t
 let pdocId = null; // the song pdoc belongs to
 function loadPractice() {
   stopGuided();
+  const newSong = pdocId !== songId || earFresh, earWas = newSong ? null : earPh(); // (Ear: the line open before a regroup)
+  earFresh = false;
   if (pdocId !== songId) { thenNow = null; thenNowFresh = false; lastRound = null; mapNew.clear(); cardGlow = 0; winsShown = []; }
   psong = null;
   pstep = null;
@@ -1862,6 +1865,7 @@ function loadPractice() {
   try {
     psong = P.groupPhrases(notes, lines, { spq: songSpq(), barQAt, measureOf: score.measureOf || null });
   } catch (err) { console.warn("practice: grouping", err); psong = null; }
+  earRegroup(newSong, earWas);
   pdoc = readAll(PK.doc)[songId] || P.newDoc();
   pdocId = songId;
   const s = readAll(PK.session);
@@ -2243,28 +2247,116 @@ function endBlock(b, nxt = null) {
 
 // ---------------------------------------------------------------------------
 // Ear (E8 prototype, docs/EAR.md; the owner: "the beats and the notes exercises … pretty much the main
-// thing I care about"). While "Guide me" is on, Sing shows one phrase at a time (a lyric line: short
-// ones joined to 4+ syllables, long ones cut near 10) with three modes:
-//   Sing  — ▶ Hear / ▶ First note (mic closed), ● Sing → the mic opens, nothing sounds, you sing on
-//           your own time and tap ■ Done; your start and tempo are found from your pitch (ear.js fitFree),
+// thing I care about"). While "Guide me" is on (⚙ "Phrase by phrase"), Sing shows one line at a time (the
+// printed line: ear.js EAR_PHRASE) with three modes:
+//   Line  — ▶ Hear / ▶ First note (mic closed), ● Sing → the mic opens, nothing sounds, you sing on
+//           your own time and tap ■ Done; your start and tempo are found from your pitch (ear.js judgeFree),
 //           the existing grading counts ♩ (starts on time, against your own tempo) and ♪ (notes
 //           within 50¢), then one win and at most one cue with ▶ note / ▶ you.
-//   Beats — ▶ With the click (melody + click + a bar of count-in, mic closed), ● Sing with the click
-//           (the guided take path: count-in, click, rhythmOf → each start on / not), Slower.
-//   Notes — the phrase's lowest, highest and most-missed notes: ▶ the note (mic closed), hold it
-//           (800 ms within 50¢, any octave, within 6 s); matched → it sounds again; then the phrase.
+//   Beats — ▶ Hear (melody + click + a bar of count-in, mic closed), ● Sing with the click (the guided
+//           take path: count-in, click, rhythmOf → each start on / not) at the ♩ menu's tempo.
+//   Notes — the line's lowest, highest and most-missed notes: ▶ the note (mic closed), ● Match: the note,
+//           then hold it (800 ms within 50¢, any octave, within 6 s); matched → it sounds again; then the line.
+// ▶ during an attempt ends it, uncounted ("Stopped — not counted"). For the shell an attempt is a take (its
+// tuner — a live pitch readout — is hidden while Ear shows; its modules stay put), and anything of Ear's
+// sounding is busy (the cloud's changes, a stale shell's reload wait for it). Each line and mode keeps its
+// latest result (dimmed under "Last time" once you've moved away and back); the line open is kept per song
+// (resonate.sing.eardata).
 // No lane, no colours, no pitch readout: you train by ear. Counts, never a fraction or a %.
 
-Object.assign(P.PRACTICE.phrase, E.EAR_PHRASE); // (a phrase: a lyric line)
-const EAR = { mode: "sing", p: 0, run: null, last: {}, res: null, notes: null, slow: 1 };
+Object.assign(P.PRACTICE.phrase, E.EAR_PHRASE); // (a line: the printed line)
+const EAR = {
+  mode: "line",     // "line" | "beats" | "notes"
+  p: 0,             // the line open (psong.phrases index)
+  run: null,        // what runs: { kind: "play" | "notePlay" | "free" | "think" | "hold", … }
+  res: null,        // the result of the attempt just made (res.view: the song, line and mode it's for)
+  latest: {},       // view (song|line|mode) → the latest result there: "Last time", once you've moved away and back
+  last: {},         // view|tempo → the counts of the latest attempt there (what ↑ compares with: like with like)
+  notesBy: {},      // song|line → Notes' state: { targets: [offsets in the line], i, done: Set (of target i), tries, said8, msg }
+  flash: "",        // a word on the stage instead of a result: "Stopped — not counted"
+  heard: new Set(), // song|line|key: ▶ Hear has played it (the round ▶ stops pulsing)
+};
+let earFresh = true; // (a score just loaded: earRegroup starts Ear afresh)
+const EK = "resonate.sing.eardata"; // { songId: { v: 1, p: the line open (its wk), pi: its index } } — device only (DATA_KEYS: shelved with the account; forget.js)
+const EH = "resonate.sing.earhint"; // { line, beats, hold: attempts judged on this device } — a device pref: the first times' hints
+let earHints = readAll(EH);
 const earEl = $("ear");
 const earActive = () => guiding() && !drill;
 const earPh = () => psong?.phrases[Math.min(EAR.p, psong.phrases.length - 1)] || null;
 const earJs = E.phraseJs;
+const earMidi = (j) => notes[j].midi + (notes[j].shift || 0);
 // (the judgments are ear.js's, on the song's notes as they're shown: tools/earcases.mjs runs the same code)
 const earCtx = () => ({ notes, spq: secPerQuarter(), name: noteName });
 const earSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// A line of this song (two with the same tune and words are one), a view (+ the mode), the key it's heard in.
+const earLineKey = (ph) => `${songId}|${ph.wk || ph.mk || ph.j0}`;
+const earViewKey = (mode = EAR.mode, ph = earPh()) => (ph ? `${earLineKey(ph)}|${mode}` : null);
+const earHeardKey = (ph) => `${earLineKey(ph)}|${transpose}`;
+// An attempt (the mic open on Ear's own time, being judged, a held note): a take, for the shell.
+const earTake = () => { const k = EAR.run?.kind; return k === "free" || k === "think" || k === "hold"; };
+const earBeatsTake = () => gblock?.step?.kind === "ear";
 
+// The result shown for the line and mode open: the attempt just made, else the latest there (old: dimmed).
+function earShown() {
+  if (EAR.mode === "notes") return null;
+  const view = earViewKey();
+  if (!view) return null;
+  if (EAR.res?.view === view) return { res: EAR.res, old: false };
+  const l = EAR.latest[view];
+  return l ? { res: l, old: true } : null;
+}
+
+// The line open, kept for the song (a reload, another song and back open it again).
+function earSaveLine() {
+  const ph = earPh();
+  if (!songId || !ph) return;
+  const all = readAll(EK);
+  all[songId] = { ...(all[songId] || {}), v: 1, p: ph.wk || null, pi: EAR.p };
+  store(EK, JSON.stringify(all));
+}
+// The song's lines grouped again (loadPractice): another song opens on its own line, with nothing of the
+// last one's (results, Notes' targets, ▶ heard); the same song (a verse, a key) keeps the line open.
+function earRegroup(newSong, was) {
+  if (!psong?.phrases.length) return;
+  const ps = psong.phrases;
+  if (newSong) {
+    EAR.res = null;
+    EAR.flash = "";
+    EAR.latest = {};
+    EAR.notesBy = {};
+    EAR.heard.clear();
+    const s = readAll(EK)[songId];
+    EAR.p = s && ps[s.pi]?.wk === s.p ? s.pi : Math.max(0, s?.p ? ps.findIndex((p) => p.wk === s.p) : 0);
+  } else if (was && ps[EAR.p]?.wk !== was.wk) {
+    const i = ps.findIndex((p) => p.wk === was.wk);
+    if (i >= 0) EAR.p = i;
+  }
+  if (EAR.p >= ps.length) EAR.p = 0;
+}
+// The device's attempts so far (the first times' hints: ▶ Hear it first …).
+function earCount(kind) {
+  earHints = { ...earHints, [kind]: (earHints[kind] || 0) + 1 };
+  store(EH, JSON.stringify(earHints));
+}
+// ▶ Hear it first: the round ▶ pulses on a line not heard yet (this visit, in this key) and not sung yet,
+// until this device has had 3 Line attempts judged (the hint's rule; WP5 gives it its words).
+function earHearFirst() {
+  if (!earActive() || EAR.mode !== "line" || EAR.run || gblock || EAR.flash) return false;
+  const ph = earPh();
+  if (!ph || EAR.heard.has(earHeardKey(ph)) || EAR.latest[earViewKey("line", ph)]) return false;
+  return (earHints.line || 0) < 3;
+}
+
+// An Ear run that's over (if it's still the one): the screen follows, and what waited for it (the cloud's
+// changes, busyNow) comes in.
+function earEnd(run) {
+  if (EAR.run !== run) return false;
+  EAR.run = null;
+  renderEar();
+  updateButtons();
+  flushRemote();
+  return true;
+}
 // Stop whatever Ear is doing (a sound, an attempt, a note hold).
 function earStop() {
   const r = EAR.run;
@@ -2274,24 +2366,32 @@ function earStop() {
   r.stop?.();
   renderEar();
   updateButtons();
+  flushRemote();
 }
 
-// The phrase (or its first note) on the piano, a click and a count-in for Beats; mic closed.
-async function earPlay({ first = false, click = false, slow = 1, midi = null, dur = 1.2 } = {}) {
+// The line (or its first note) on the piano, a click and a count-in for Beats, or one note; mic closed. An
+// attempt under way ends, uncounted (the fix plan's Q-I). kind "notePlay": Notes' note before its hold —
+// the run stays for earNote to hand on to the hold (→ true: it played to its end).
+async function earPlay({ first = false, click = false, midi = null, dur = 1.2, kind = "play" } = {}) {
   window.resonateSing?.beforeSound?.(); // (the shell's tuner gives its mic up first: iOS plays quietly while one is open)
+  const attempt = EAR.run?.kind === "free" || earBeatsTake();
   earStop();
+  if (gblock) stopGuided();
   stopSession();
   stopKeys();
+  if (attempt) EAR.flash = "Stopped — not counted";
   const ph = earPh();
-  if (!ph && midi == null) return;
-  const run = (EAR.run = { kind: "play", nodes: [], stop() { for (const n of this.nodes) { try { n.stop?.(); } catch {} try { n.disconnect?.(); } catch {} } } });
+  if (!ph && midi == null) return false;
+  const run = (EAR.run = { kind, nodes: [], stop() { for (const n of this.nodes) { try { n.stop?.(); } catch {} try { n.disconnect?.(); } catch {} } } });
+  if (midi == null && !first && EAR.mode === "line") EAR.heard.add(earHeardKey(ph));
   updateButtons();
   renderEar();
   const ac = await getPlayCtx("tap");
-  if (EAR.run !== run || !ac) return;
-  let piano;
+  if (EAR.run !== run) return false;
+  let piano = null;
   try { piano = await loadPiano(ac); } catch (err) { console.warn(err); }
-  if (EAR.run !== run || !piano) return;
+  if (EAR.run !== run) return false;
+  if (!piano) { earEnd(run); return false; }
   const t0 = ac.currentTime + 0.15;
   let end = t0;
   if (midi != null) {
@@ -2306,25 +2406,27 @@ async function earPlay({ first = false, click = false, slow = 1, midi = null, du
     let lead = 0;
     if (click) {
       const sp = spanOf(EAR.p, EAR.p);
-      const beat = beatSecAt(sp.fromQ) / slow, count = Math.round(countInBeats(sp.fromM)) || 4, bar = feltBeat(meterAt(sp.fromM)).n;
+      const beat = beatSecAt(sp.fromQ), count = Math.round(countInBeats(sp.fromM)) || 4, bar = feltBeat(meterAt(sp.fromM)).n;
       for (let k = 0; k < count; k++) playClick(ac, t0 + k * beat, k % bar === 0, run.nodes);
-      lead = count * beat + (T0 - sp.from) / slow; // (the bar starts after the count-in; the phrase may start inside it)
-      const base = t0 + count * beat - sp.from / slow;
-      for (const b of beatGrid()) if (b.t >= sp.from - 1e-6 && b.t <= notes[ph.j1 - 1].t + notes[ph.j1 - 1].d + 1e-6) playClick(ac, base + b.t / slow, b.accent, run.nodes);
+      lead = count * beat + (T0 - sp.from); // (the bar starts after the count-in; the line may start inside it)
+      const base = t0 + count * beat - sp.from;
+      for (const b of beatGrid()) if (b.t >= sp.from - 1e-6 && b.t <= notes[ph.j1 - 1].t + notes[ph.j1 - 1].d + 1e-6) playClick(ac, base + b.t, b.accent, run.nodes);
     }
     for (const j of js) {
-      const n = notes[j], when = t0 + lead + (n.t - T0) / slow, d = first ? Math.min(1.5, n.d) : n.d / slow;
-      playPiano(ac, piano, when, d, n.midi + (n.shift || 0), 1.4, run.nodes);
+      const n = notes[j], when = t0 + lead + (n.t - T0), d = first ? Math.min(1.5, n.d) : n.d;
+      playPiano(ac, piano, when, d, earMidi(j), 1.4, run.nodes);
       end = Math.max(end, when + d + 0.3);
     }
   }
   const left = Math.max(0, end - ac.currentTime) * 1000;
   run.done = earSleep(left);
   await run.done;
-  if (EAR.run === run) { EAR.run = null; updateButtons(); renderEar(); }
+  if (kind === "notePlay") return EAR.run === run && !run.stopped; // (Notes: the hold takes over from here)
+  earEnd(run);
+  return true;
 }
 
-// ● Sing (the free attempt): the mic, nothing sounding; ■ Done ends it (or 3× the phrase + 5 s).
+// ● Sing (the free attempt): the mic, nothing sounding; ■ Done ends it (or 3× the line + 5 s).
 async function earFree() {
   if (EAR.run?.kind === "free") return earDone();
   window.resonateSing?.beforeSound?.();
@@ -2334,16 +2436,16 @@ async function earFree() {
   closeReview();
   const ph = earPh();
   if (!ph) return;
+  EAR.flash = "";
   const ac = tapContext();
-  const run = (EAR.run = { kind: "free", frames: [], level: 0, ready: false, stop: null, ac });
+  const run = (EAR.run = { kind: "free", ph, frames: [], level: 0, ready: false, stop: null, ac });
   renderEar();
   updateButtons();
   let mic;
   try { mic = await openMic({ ac }); } catch (err) {
-    if (EAR.run === run) EAR.run = null;
     showMsg(`Couldn't open the microphone: ${err.message || err.name}`, "error");
     ac.close().catch(() => {});
-    renderEar(); updateButtons();
+    earEnd(run);
     return;
   }
   micWasOpen = true;
@@ -2378,30 +2480,30 @@ async function earFree() {
 async function earDone() {
   const run = EAR.run;
   if (!run || run.kind !== "free" || !run.ready) return;
-  EAR.run = { kind: "think" };
+  const think = (EAR.run = { kind: "think" });
   renderEar(); updateButtons();
   const { frames, voice, endT } = await run.finish();
   run.ac.close().catch(() => {});
   await earSleep(50);
-  const ph = earPh();
-  const res = E.judgeFree(ph, frames, endT, earCtx());
+  if (EAR.run !== think) return; // (stopped meanwhile: another song, the page hidden)
+  const res = E.judgeFree(run.ph, frames, endT, earCtx());
   res.voice = voice;
-  earShow(ph, "sing", res);
-  if (EAR.run?.kind === "think") EAR.run = null;
-  renderEar(); updateButtons();
+  earShow(run.ph, "line", res);
+  earCount("line");
+  earEnd(think);
 }
 
-// ● Sing with the click (Beats): the guided take path — count-in, the click, the phrase's span.
+// ● Sing with the click (Beats): the guided take path — count-in, the click, the line's span.
 async function earBeats() {
   if (gblock) return stopGuided();
   earStop();
   const ph = earPh();
   if (!ph) return;
+  EAR.flash = "";
   const ac = tapContext();
   const b = gblock = { step: { kind: "ear" }, token: {}, phase: "sing", baseRate: rate, ac, savedTake: take?.part ? null : take, sid: songId };
   closeReview();
   stopKeys();
-  retime(b.baseRate * EAR.slow);
   renderEar();
   updateButtons();
   const sp = spanOf(EAR.p, EAR.p);
@@ -2410,62 +2512,72 @@ async function earBeats() {
   const t = await session?.ended;
   if (gblock !== b) return;
   gblock = null;
-  retime(b.baseRate);
   ac.close().catch(() => {});
   take = b.sid === songId && takeFits(b.savedTake) ? b.savedTake : null;
-  if (t) earShow(ph, "beats", { ...E.judgeBeats(ph, t, earCtx()), voice: t.voice, songT0: t.songT0 });
+  if (t && b.sid === songId) {
+    earShow(ph, "beats", { ...E.judgeBeats(ph, t, earCtx()), voice: t.voice, songT0: t.songT0 });
+    earCount("beats");
+  }
   renderAll();
   renderEar();
   updateButtons();
+  flushRemote();
 }
 
-// The result of an attempt: counts with ↑ against the last one of the same kind, "all of them".
+// The result of an attempt, kept for its line and mode: counts with ↑ against the last one of the same kind at
+// the same tempo.
 function earShow(ph, kind, res) {
-  const key = `${ph.wk || ph.mk || EAR.p}|${kind}`;
-  const prev = EAR.last[key];
-  res.up = { beats: prev?.counts?.beats != null && res.counts?.beats != null && res.counts.beats > prev.counts.beats, notes: prev?.counts && res.counts && res.counts.notes > prev.counts.notes };
+  const view = earViewKey(kind, ph), base = `${view}|${rate}`;
+  const prev = EAR.last[base];
+  res.up = { beats: prev?.counts?.beats != null && res.counts?.beats != null && res.counts.beats > prev.counts.beats, notes: !!(prev?.counts && res.counts && res.counts.notes > prev.counts.notes) };
   res.kind = kind;
-  EAR.last[key] = res;
+  res.view = view;
+  EAR.last[base] = { counts: res.counts };
+  EAR.latest[view] = res;
   EAR.res = res;
 }
 
-// Notes: the targets (lowest, highest, the last attempt's most-missed), ▶ then hold to match.
+// Notes: the targets (lowest, highest, the last attempt's most-missed) — offsets in the line —, ▶ then hold to match.
 function earTargets(ph) {
-  const js = earJs(ph);
-  const lo = js.reduce((a, j) => (notes[j].midi < notes[a].midi ? j : a), js[0]);
-  const hi = js.reduce((a, j) => (notes[j].midi > notes[a].midi ? j : a), js[0]);
+  const ks = earJs(ph).map((j) => j - ph.j0), m = (k) => earMidi(ph.j0 + k);
+  const lo = ks.reduce((a, k) => (m(k) < m(a) ? k : a), ks[0]);
+  const hi = ks.reduce((a, k) => (m(k) > m(a) ? k : a), ks[0]);
   const out = [lo];
-  if (notes[hi].midi !== notes[lo].midi) out.push(hi);
-  const last = EAR.last[`${ph.wk || ph.mk || EAR.p}|sing`];
+  if (m(hi) !== m(lo)) out.push(hi);
+  const last = EAR.latest[earViewKey("line", ph)];
   if (last?.fit) {
-    const off = js.filter((j) => last.fit.g[j - ph.j0]?.status === "off").sort((x, y) => Math.abs(last.fit.g[y - ph.j0].dev) - Math.abs(last.fit.g[x - ph.j0].dev))[0];
-    if (off != null && !out.some((j) => notes[j].midi === notes[off].midi)) out.push(off);
+    const g = last.fit.g;
+    const off = ks.filter((k) => g[k]?.status === "off").sort((x, y) => Math.abs(g[y].dev) - Math.abs(g[x].dev))[0];
+    if (off != null && !out.some((k) => m(k) === m(off))) out.push(off);
   }
   return out;
 }
+const earNotesOf = (ph) => (EAR.notesBy[earLineKey(ph)] ||= { targets: earTargets(ph), i: 0, done: new Set(), tries: 0, said8: false, msg: "" });
+// The current target's note (j in the song), or null.
+function earTarget(ph = earPh()) {
+  if (!ph) return null;
+  const k = earNotesOf(ph).targets[earNotesOf(ph).i];
+  return k == null || ph.j0 + k >= ph.j1 ? null : ph.j0 + k;
+}
 async function earNote() {
-  if (EAR.run?.kind === "hold" || EAR.run?.kind === "notePlay") { earStop(); return; }
+  const k0 = EAR.run?.kind;
+  if (k0 === "hold" || k0 === "notePlay") { earStop(); return; }
   const ph = earPh();
-  if (!ph) return;
-  const N = (EAR.notes ||= { p: EAR.p, targets: earTargets(ph), i: 0, done: new Set(), tries: 0, said8: false, msg: "" });
-  if (N.p !== EAR.p) Object.assign(N, { p: EAR.p, targets: earTargets(ph), i: 0, done: new Set(), tries: 0, msg: "" });
-  const j = N.targets[N.i];
+  const j = earTarget(ph);
   if (j == null) return;
-  const midi = notes[j].midi + (notes[j].shift || 0);
+  const N = earNotesOf(ph);
+  const midi = earMidi(j);
   const micAc = ownContext(new (window.AudioContext || window.webkitAudioContext)()); // (made in the tap: it runs later without one)
   micAc.resume().catch(() => {});
   N.msg = "";
+  EAR.flash = "";
   // ▶ the note, mic closed
-  const playing = earPlay({ midi, dur: 1.2 });
-  EAR.run && (EAR.run.kind = "notePlay");
-  const run0 = EAR.run;
-  await playing;
-  if (!run0 || run0.stopped || (EAR.run && EAR.run !== run0)) { micAc.close().catch(() => {}); return; }
+  if (!(await earPlay({ midi, dur: 1.2, kind: "notePlay" }))) { micAc.close().catch(() => {}); return; }
   // then the mic: hold it
   const run = (EAR.run = { kind: "hold", level: 0, stop: null });
   renderEar(); updateButtons();
   let mic;
-  try { mic = await openMic({ ac: micAc }); } catch (err) { EAR.run = null; showMsg(`Couldn't open the microphone: ${err.message || err.name}`, "error"); micAc.close().catch(() => {}); renderEar(); updateButtons(); return; }
+  try { mic = await openMic({ ac: micAc }); } catch (err) { showMsg(`Couldn't open the microphone: ${err.message || err.name}`, "error"); micAc.close().catch(() => {}); earEnd(run); return; }
   micWasOpen = true;
   if (EAR.run !== run) { mic.close(); micAc.close().catch(() => {}); return; }
   const t0 = performance.now(), quietUntil = t0 + 300;
@@ -2476,7 +2588,7 @@ async function earNote() {
     mic.close();
     micAc.close().catch(() => {});
     setSession("auto");
-    if (EAR.run === run) EAR.run = null;
+    earCount("hold");
     if (ok) {
       N.done.add(N.i);
       const oct = devs.length ? Math.round(median(devs.map((d) => d.raw)) / 12) : 0;
@@ -2485,16 +2597,23 @@ async function earNote() {
       N.tries = 0;
       const nx = N.targets.findIndex((_, i) => !N.done.has(i));
       if (nx >= 0) N.i = nx;
+      earEnd(run);
       earPlay({ midi, dur: 0.5 }).then(() => {
-        if (nx < 0) { N.msg = "✓ all of them · now the phrase"; EAR.mode = "sing"; EAR.notes = null; EAR.res = { kind: "sing", counts: null, win: { text: "All the notes · now the phrase" }, cue: null }; }
+        // (every target held: on to the line — WP4 keeps you in Notes)
+        if (nx < 0 && EAR.mode === "notes" && earPh() === ph) {
+          N.msg = "✓ all of them · now the phrase";
+          EAR.mode = "line";
+          delete EAR.notesBy[earLineKey(ph)];
+          EAR.res = { kind: "line", view: earViewKey("line", ph), counts: null, win: { text: "All the notes · now the phrase" }, cue: null };
+        }
         renderEar(); updateButtons();
       });
     } else {
       N.tries++;
       const m = devs.length ? median(devs.map((d) => d.cents)) : null;
       N.msg = N.tries >= 2 && m != null ? (m > 0 ? "a little lower" : "a little higher") : "▶ again";
+      earEnd(run);
     }
-    renderEar(); updateButtons();
   };
   run.stop = () => { cancelAnimationFrame(raf); mic.close(); micAc.close().catch(() => {}); setSession("auto"); };
   const tick = () => {
@@ -2520,15 +2639,16 @@ async function earNote() {
 // ▶ you: the attempt around a moment (song seconds of the fit / the take), from its recording.
 async function earYou(res, at) {
   if (!res?.voice) return;
+  window.resonateSing?.beforeSound?.();
   earStop();
   const ac = await getPlayCtx("tap");
-  if (!ac) return;
+  if (!ac || EAR.run) return;
   const run = (EAR.run = { kind: "play", nodes: [], stop() { for (const n of this.nodes) try { n.stop?.(); } catch {} } });
   renderEar(); updateButtons();
   const [a, b] = at || [res.voice.start, res.voice.start + Math.min(30, res.voice.data.length / res.voice.sampleRate)];
   playVoice(ac, res.voice, ac.currentTime + 0.1, a, run.nodes);
   await earSleep((b - a + 0.3) * 1000);
-  if (EAR.run === run) { run.stop(); EAR.run = null; renderEar(); updateButtons(); }
+  if (EAR.run === run) { run.stop(); earEnd(run); }
 }
 
 // --- Ear on screen --------------------------------------------------------------------------
@@ -2552,38 +2672,40 @@ function renderEar() {
   const ps = psong.phrases;
   if (EAR.p >= ps.length) EAR.p = 0;
   const ph = earPh();
+  const k = EAR.run?.kind, beatsTake = earBeatsTake();
   const busy = !!EAR.run || !!gblock;
+  const listening = k === "free" || k === "hold" || beatsTake;
   earEl.querySelector("#ear-name").textContent = `${EAR.p + 1} / ${ps.length}`;
   earEl.querySelector("#ear-prev").disabled = busy || EAR.p === 0;
   earEl.querySelector("#ear-next").disabled = busy || EAR.p >= ps.length - 1;
   earEl.querySelector("#ear-words").textContent = ph.words || P.phraseName(ph, 12, "none");
   for (const b of earEl.querySelectorAll(".ear-modes button")) { b.setAttribute("aria-pressed", String(b.dataset.ear === EAR.mode)); b.disabled = busy; }
+  const shown = earShown();
+  // the line's own actions (▶ First note ends an attempt, uncounted — as the dock's ▶)
   const acts = earEl.querySelector("#ear-acts");
   acts.textContent = "";
-  const res = EAR.res && EAR.res.kind === (EAR.mode === "beats" ? "beats" : "sing") ? EAR.res : null;
-  const singing = EAR.run?.kind === "free" || EAR.run?.kind === "hold" || gblock?.step?.kind === "ear";
-  if (EAR.mode === "sing") {
-    acts.append(earButton("▶ First note", "first"));
-    if (res?.voice && res.counts?.notesAll) acts.append(earButton("▶ You", "you"));
-  } else if (EAR.mode === "beats") {
-    acts.append(earButton(EAR.slow < 1 ? `Slower · ${Math.round(EAR.slow * 100)}%` : "Slower", "slow"));
+  if (EAR.mode === "line") {
+    const first = earButton("▶ First note", "first");
+    first.disabled = k === "think";
+    acts.append(first);
+    if (!listening && k !== "think" && !EAR.flash && shown?.res.voice && shown.res.counts?.notesAll) acts.append(earButton("▶ You", "you"));
   }
   // Notes: the names, the target lit, the message
   const nn = earEl.querySelector("#ear-notes");
   nn.hidden = EAR.mode !== "notes";
   if (EAR.mode === "notes") {
-    const N = EAR.notes && EAR.notes.p === EAR.p ? EAR.notes : (EAR.notes = { p: EAR.p, targets: earTargets(ph), i: 0, done: new Set(), tries: 0, said8: false, msg: "" });
+    const N = earNotesOf(ph);
     nn.textContent = "";
     const row = document.createElement("div");
     row.className = "ear-names";
     const seen = new Set();
     for (const j of earJs(ph)) {
-      const m = notes[j].midi + (notes[j].shift || 0);
+      const m = earMidi(j);
       if (seen.has(m)) continue;
       seen.add(m);
       const b = earButton(noteName(m), "target");
       b.dataset.j = String(j);
-      const ti = N.targets.findIndex((x) => notes[x].midi + (notes[x].shift || 0) === m);
+      const ti = N.targets.findIndex((x) => earMidi(ph.j0 + x) === m);
       b.dataset.state = ti === N.i ? "cur" : ti >= 0 && N.done.has(ti) ? "done" : ti >= 0 ? "todo" : "";
       b.disabled = busy;
       row.append(b);
@@ -2591,23 +2713,28 @@ function renderEar() {
     nn.append(row);
     const msg = document.createElement("div");
     msg.className = "ear-msg";
-    msg.textContent = EAR.run?.kind === "hold" ? "hold it…" : N.msg;
+    msg.textContent = k === "hold" ? "hold it…" : k === "notePlay" ? "Listen…" : N.msg;
     nn.append(msg);
   }
   // the level ring while the mic listens
   const ringBox = earEl.querySelector("#ear-ring");
-  ringBox.hidden = !singing;
-  if (singing && !ringBox.firstChild) ringBox.append(Object.assign(document.createElement("div"), { className: "ear-ring" }));
-  // the result: counts, win, cue
+  ringBox.hidden = !listening;
+  if (listening && !ringBox.firstChild) ringBox.append(Object.assign(document.createElement("div"), { className: "ear-ring" }));
+  // the result: counts, win, cue — the latest for this line and mode, dimmed once you've been away
   const out = earEl.querySelector("#ear-res");
   out.textContent = "";
-  if (EAR.run?.kind === "think") out.textContent = "…";
-  else if (res && !singing && EAR.mode !== "notes") {
+  out.toggleAttribute("data-old", false);
+  if (k === "think") out.textContent = "Checking…";
+  else if (!listening && EAR.mode !== "notes" && EAR.flash) out.append(Object.assign(document.createElement("div"), { className: "ear-flash", textContent: EAR.flash }));
+  else if (!listening && shown) {
+    const res = shown.res;
+    if (shown.old) { out.toggleAttribute("data-old", true); out.append(Object.assign(document.createElement("div"), { className: "ear-last", textContent: "Last time" })); }
     if (res.counts) {
       const c = document.createElement("div");
       c.className = "ear-counts";
-      const beats = res.counts.beats == null ? "♩ —" : res.counts.beatsAll ? "♩ all of them" : `♩ ${res.counts.beats}${res.up?.beats ? " ↑" : ""}`;
-      const tune = res.kind === "beats" ? "" : res.counts.notesAll ? "♪ all of them" : `♪ ${res.counts.notes}${res.up?.notes ? " ↑" : ""}`;
+      const up = shown.old ? {} : res.up || {};
+      const beats = res.counts.beats == null ? "♩ —" : res.counts.beatsAll ? "♩ all of them" : `♩ ${res.counts.beats}${up.beats ? " ↑" : ""}`;
+      const tune = res.kind === "beats" ? "" : res.counts.notesAll ? "♪ all of them" : `♪ ${res.counts.notes}${up.notes ? " ↑" : ""}`;
       c.textContent = [beats, tune].filter(Boolean).join("  ·  ");
       out.append(c);
     }
@@ -2616,59 +2743,85 @@ function renderEar() {
       const c = document.createElement("div");
       c.className = "ear-cue";
       c.append(res.cue.text);
-      if (res.cue.j != null) c.append(" ", earButton("▶ note", "cue-note", "chip"));
-      if (res.cue.at && res.voice && res.kind === "sing") c.append(" ", earButton("▶ you", "cue-you", "chip"));
+      if (res.cue.j != null && notes[res.cue.j]) c.append(" ", earButton("▶ note", "cue-note", "chip"));
+      if (res.cue.at && res.voice && res.kind === "line") c.append(" ", earButton("▶ you", "cue-you", "chip"));
       out.append(c);
     }
   }
+  earButtons(); // (the dock follows: Ear can come on without a button change — a song loaded, ⚙)
 }
 earEl.addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b || b.disabled) return;
-  const act = b.dataset.act, ph = earPh();
-  if (b.id === "ear-prev" || b.id === "ear-next") { EAR.p += b.id === "ear-prev" ? -1 : 1; EAR.res = null; EAR.notes = null; cursorToLine(lineOf[earPh().j0]); renderEar(); updateButtons(); return; }
-  if (b.dataset.ear) { EAR.mode = b.dataset.ear; EAR.res = null; renderEar(); updateButtons(); return; }
+  const act = b.dataset.act, ph = earPh(), res = earShown()?.res;
+  if (b.id === "ear-prev" || b.id === "ear-next") {
+    EAR.p += b.id === "ear-prev" ? -1 : 1;
+    EAR.res = null; // (the attempt just made stays the line's latest: "Last time" when you come back)
+    EAR.flash = "";
+    earSaveLine();
+    cursorToLine(lineOf[earPh().j0]);
+    renderEar(); updateButtons();
+    return;
+  }
+  if (b.dataset.ear) {
+    if (b.dataset.ear === EAR.mode) return;
+    EAR.mode = b.dataset.ear;
+    EAR.res = null;
+    EAR.flash = "";
+    renderEar(); updateButtons();
+    return;
+  }
   if (act === "first") return earPlay({ first: true });
-  if (act === "you") return earYou(EAR.res, null);
-  if (act === "slow") { EAR.slow = EAR.slow <= 0.7 + 1e-6 ? 1 : Math.round((EAR.slow - 0.1) * 10) / 10; renderEar(); return; }
-  if (act === "cue-note" && EAR.res?.cue?.j != null) { const n = notes[EAR.res.cue.j]; return earPlay({ midi: n.midi + (n.shift || 0), dur: Math.max(0.6, Math.min(1.5, n.d)) }); }
-  if (act === "cue-you") return earYou(EAR.res, EAR.res.cue.at);
-  if (act === "target") {
-    const j = Number(b.dataset.j), N = EAR.notes;
-    let i = N.targets.findIndex((x) => notes[x].midi === notes[j].midi);
-    if (i < 0) { N.targets.push(j); i = N.targets.length - 1; }
+  if (act === "you") return earYou(res, null);
+  if (act === "cue-note" && res?.cue?.j != null && notes[res.cue.j]) { const n = notes[res.cue.j]; return earPlay({ midi: earMidi(res.cue.j), dur: Math.max(0.6, Math.min(1.5, n.d)) }); }
+  if (act === "cue-you" && res?.cue?.at) return earYou(res, res.cue.at);
+  if (act === "target" && ph) {
+    const j = Number(b.dataset.j), N = earNotesOf(ph);
+    let i = N.targets.findIndex((x) => earMidi(ph.j0 + x) === earMidi(j));
+    if (i < 0) { N.targets.push(j - ph.j0); i = N.targets.length - 1; }
     N.i = i; N.tries = 0; N.msg = "";
     renderEar(); updateButtons();
-    void ph;
   }
 });
-// The footer: the mode's two actions (▶ on the left, the main one on the right).
+// The dock: the mode's two actions (the round ▶ on the left, the main one on the right).
 function earMain() {
-  if (EAR.mode === "sing") return EAR.run?.kind === "free" ? earDone() : EAR.run ? earStop() : earFree();
-  if (EAR.mode === "beats") return gblock ? stopGuided() : EAR.run ? earStop() : earBeats();
+  const k = EAR.run?.kind;
+  if (EAR.mode === "line") return k === "free" ? earDone() : k === "think" ? null : earFree();
+  if (EAR.mode === "beats") return gblock ? stopGuided() : earBeats();
   return earNote();
 }
 function earListen() {
-  if (EAR.run?.kind === "play") return earStop();
-  if (EAR.mode === "beats") return earPlay({ click: true, slow: EAR.slow });
-  if (EAR.mode === "notes") { const N = EAR.notes, j = N?.targets[N.i]; if (j != null) return earPlay({ midi: notes[j].midi + (notes[j].shift || 0), dur: 1.2 }); return; }
+  const k = EAR.run?.kind;
+  if (k === "play" || k === "notePlay" || k === "hold") return earStop(); // (■ Stop)
+  if (k === "think") return;
+  if (EAR.mode === "beats") return earPlay({ click: true });
+  if (EAR.mode === "notes") { const j = earTarget(); return j == null ? undefined : earPlay({ midi: earMidi(j), dur: 1.2 }); }
   return earPlay();
 }
+// Short labels (≤ 8 characters: a phone's dock), the round button's caption beside it (the shell shows it).
 function earButtons() {
-  const k = EAR.run?.kind;
-  if (EAR.mode === "sing") {
-    singBtn.textContent = k === "free" ? (EAR.run.ready ? "■ Done" : "…") : k === "think" ? "…" : "● Sing";
-    listenBtn.textContent = k === "play" ? "■ Stop" : "▶ Hear";
-  } else if (EAR.mode === "beats") {
-    singBtn.textContent = gblock ? "■ Stop" : "● Sing with the click";
-    listenBtn.textContent = k === "play" ? "■ Stop" : "▶ With the click";
-  } else {
-    singBtn.textContent = k === "hold" || k === "notePlay" ? "■ Stop" : "▶ Note, then hold it";
-    listenBtn.textContent = k === "play" ? "■ Stop" : "▶ Note";
-  }
-  singBtn.dataset.active = k === "free" || k === "hold" || !!gblock ? "true" : "false";
-  singBtn.disabled = !score || k === "think";
-  listenBtn.disabled = !score || k === "free" || k === "hold" || k === "think" || !!gblock;
+  const k = EAR.run?.kind, beatsTake = earBeatsTake();
+  if (EAR.mode === "line") singBtn.textContent = k === "free" ? (EAR.run.ready ? "■ Done" : "Mic…") : k === "think" ? "…" : "● Sing";
+  else if (EAR.mode === "beats") singBtn.textContent = beatsTake ? "■ Stop" : "● Sing";
+  else singBtn.textContent = k === "hold" || k === "notePlay" ? "■ Stop" : "● Match";
+  const stop = k === "play" || k === "notePlay" || k === "hold";
+  listenBtn.textContent = stop ? "■ Stop" : "▶ Hear";
+  if (listenBtn.dataset.caption !== (stop ? "Stop" : "Hear")) listenBtn.dataset.caption = stop ? "Stop" : "Hear";
+  listenBtn.toggleAttribute("data-pulse", earHearFirst());
+  singBtn.dataset.active = k === "free" || k === "hold" || beatsTake ? "true" : "false";
+  singBtn.disabled = !score || k === "think" || (k === "free" && !EAR.run.ready);
+  listenBtn.disabled = !score || k === "think" || (EAR.mode === "notes" && !stop && earTarget() == null);
+}
+// resonateDebug().ear: what Ear shows and runs (the probes and tools/ear.cjs read it).
+function earDebug() {
+  const ph = earPh(), sh = earActive() ? earShown() : null, N = ph && earActive() && EAR.mode === "notes" ? earNotesOf(ph) : ph ? EAR.notesBy[earLineKey(ph)] : null;
+  return {
+    on: earActive(), mode: EAR.mode, p: EAR.p, run: EAR.run?.kind || null, ph: ph && { j0: ph.j0, j1: ph.j1, wk: ph.wk, words: ph.words },
+    res: E.debugRes(EAR.res), shown: sh && { old: sh.old, kind: sh.res.kind, res: E.debugRes(sh.res) }, flash: EAR.flash || null, pulse: listenBtn.hasAttribute("data-pulse"),
+    // (Notes: targets as offsets in the line; js — the same notes' indices in the song)
+    notes: N && { targets: N.targets, js: ph ? N.targets.map((k) => ph.j0 + k) : [], i: N.i, done: [...N.done], msg: N.msg },
+    lines: psong?.phrases.map((p) => ({ j0: p.j0, j1: p.j1, words: p.words })) || [], hints: { ...earHints },
+  };
 }
 
 // --- Then → Now: the same lines from the first try and from now ------------------------------
@@ -2847,6 +3000,7 @@ function setGuided(on) {
   pstep = null;
   renderAll();
   renderGuided();
+  syncOptions();
 }
 
 // ---------------------------------------------------------------------------
@@ -3363,9 +3517,15 @@ function showLine(r) {
   renderAll();
 }
 
-// Singing options: Practice / Perform, and the guide.
+// Singing options: Ear's switch ("Phrase by phrase"); with it off, Practice / Perform and the guide (Ear
+// ignores them: they hide while it shows).
+function syncOptions() {
+  const el = $("op-whole");
+  if (el) el.hidden = earActive();
+}
 function openOptions() {
   $("guided-on").checked = guidedOn;
+  syncOptions();
   for (const r of optionsEl.querySelectorAll('input[name="view"]')) r.checked = r.value === view;
   guideSelect.value = guide;
   optionsEl.hidden = false;
@@ -3455,6 +3615,7 @@ function updateButtons() {
   listenBtn.disabled = kind === "sing" || !score || !!drill || !!gblock;
   singBtn.disabled = !score || (kind && kind !== "sing" && !drill && !gblock);
   if (earActive()) earButtons();
+  else if (listenBtn.hasAttribute("data-caption") || listenBtn.hasAttribute("data-pulse")) { delete listenBtn.dataset.caption; listenBtn.removeAttribute("data-pulse"); }
   playbarEl.hidden = !take || take.endT === null || kind === "sing" || !!drill;
   reviewBtn.hidden = !take?.grades?.some((g) => g && g.status !== "unsung");
   loopBtn.hidden = !!session || !!drill || !score || !notes.length;
@@ -3465,7 +3626,8 @@ function updateButtons() {
     b.disabled = b.dataset.mode !== "melody" && !take?.voice;
     b.dataset.active = b.dataset.mode === playMode ? "true" : "false";
   }
-  for (const el of [songSelect, verseSelect, keySelect, tempoSelect, optionsBtn, openFileBtn, openLinkBtn, removeBtn, saveBtn]) el.disabled = kind === "sing" || !!drill || !!gblock;
+  const earBusy = earTake() || EAR.run?.kind === "notePlay"; // (an Ear attempt: the song, its key and tempo stay as they were)
+  for (const el of [songSelect, verseSelect, keySelect, tempoSelect, optionsBtn, openFileBtn, openLinkBtn, removeBtn, saveBtn]) el.disabled = kind === "sing" || !!drill || !!gblock || earBusy;
   canvas.dataset.pannable = session ? "false" : "true";
   if (!reviewEl.hidden) showReviewPlaying();
 }
@@ -4105,7 +4267,7 @@ function queueRemote({ songs = false, profiles = false, state = [], takes = [], 
 }
 window.addEventListener("resonate:remote", (e) => { queueRemote(e.detail || {}); flushRemote(); });
 // (After another tab signed in or out, the reload also waits for an open review to close.)
-const busyNow = () => !!(session || drill || gblock || starting || finishing || (spaceChanged() && !reviewEl.hidden));
+const busyNow = () => !!(session || drill || gblock || starting || finishing || EAR.run || (spaceChanged() && !reviewEl.hidden));
 window.resonateBusy = busyNow; // (nav.js: a reload for another tab's sign-in/out waits for it)
 function flushRemote() {
   if (!pendingRemote) return;
@@ -4191,7 +4353,8 @@ async function stopAll() {
 window.resonateSing = Object.assign(window.resonateSing || {}, {
   open: async (id) => { await refreshLibrary(); return selectSong(id); }, // → true / false (not opened: a PDF only, …)
   stopAll,
-  state: () => ({ busy: busyNow() || !!getReady, take: session?.kind === "sing" || starting === "sing", song: scoreId, title: score?.title || "" }),
+  // (take: the mic open for a take — Ear's own attempts too: the shell's tuner holds, its modules stay; ear: Ear shows)
+  state: () => ({ busy: busyNow() || !!getReady, take: session?.kind === "sing" || starting === "sing" || earTake(), ear: earActive(), song: scoreId, title: score?.title || "" }),
   // (the shell, synchronously before its Piano or the Score sounds: on — the monitor's mic closes now;
   // off once they're quiet — it listens again MON_RESUME later, as after Sing's own keys)
   hush: (on) => {
@@ -4203,7 +4366,7 @@ window.resonateSing = Object.assign(window.resonateSing || {}, {
 });
 
 // Debug hook for automated tests / devtools.
-window.resonateDebug = () => ({ ear: { on: earActive(), mode: EAR.mode, p: EAR.p, slow: EAR.slow, run: EAR.run?.kind || null, ph: earPh() && { j0: earPh().j0, j1: earPh().j1 }, res: E.debugRes(EAR.res), notes: EAR.notes && { targets: EAR.notes.targets, i: EAR.notes.i, done: [...EAR.notes.done], msg: EAR.notes.msg } }, score, notes, lines, take, session: session && { kind: session.kind, line: session.line, mode: session.mode, count: session.count, beatSec: session.beatSec }, nowT, scrollT, practiceJ, reviewRows, rate, laneMode,
+window.resonateDebug = () => ({ ear: earDebug(), score, notes, lines, take, session: session && { kind: session.kind, line: session.line, mode: session.mode, count: session.count, beatSec: session.beatSec }, nowT, scrollT, practiceJ, reviewRows, rate, laneMode,
   practice: { on: guiding(), doc: pdoc, session: psess, step: pstep, block: gblock && { phase: gblock.phase, step: gblock.step, setup: gblock.setup, round: gblock.round, last: gblock.last && { r: { ...gblock.last.r, notes: undefined }, tv: gblock.last.tv, uv: gblock.last.uv } },
     phrases: psong?.phrases.map((p) => ({ name: p.name, j0: p.j0, j1: p.j1, t0: p.t0, t1: p.t1, mk: p.mk, section: p.section, marks: P.phraseMarks(pdoc, p) })),
     card: { title: coTitle.textContent, win: coWin.textContent, cue: coCue.textContent, buttons: [...coBtns.querySelectorAll("button")].map((b) => b.textContent), hidden: coachEl.hidden }, thenNow: !!thenNow },
