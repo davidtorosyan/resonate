@@ -2334,6 +2334,7 @@ const EAR = {
   oct: 0,           // the singer's octave against the written one (semitones: −12 a man on a soprano's tune), from a Notes
                     //   match an octave apart — every ▶ of Ear's plays in it; kept per song (eardata)
   octWas: 0,        // the octave a match set this visit (the action row's "Octave down" chip: a tap toggles it)
+  hintRoom: false,  // the first times' hint has had its line this visit: it keeps it (quiet) — nothing moves as hints retire
 };
 // (a playPiano note rings on RELEASE × 6 after its end: piano.js)
 const EAR_TAIL = 0.72;
@@ -2393,6 +2394,8 @@ function earRegroup(newSong, was) {
   if (newSong) {
     EAR.res = null;
     EAR.flash = "";
+    EAR.fact = ""; // ("Key A♭ → F" was the last song's: another song at the same Key menu value isn't it)
+    EAR.factTr = null;
     EAR.tip = false;
     if (EAR.count && !EAR.count.run) EAR.count = null;
     EAR.latest = {};
@@ -2426,7 +2429,10 @@ function earHint() {
   if ((earHints[kind] || 0) >= EAR_HINTS[kind]) {
     // (the song just moved to another key — Lower / Raise the song —: hear it there first, however many attempts)
     const again = EAR.mode === "line" && !!earFact() && !EAR.run && !gblock && !EAR.heard.has(earHeardKey(ph)) && !earShown();
-    return again ? { on: true, text: "▶ Hear it first" } : { on: false, text: "" };
+    // (its line stays, quiet, while another mode's hint is still to come and once shown this visit: a hint retiring —
+    // the 3rd Line attempt's result, the 2nd hold — or another mode's still showing moves nothing on screen)
+    const room = EAR.hintRoom || Object.keys(EAR_HINTS).some((x) => (earHints[x] || 0) < EAR_HINTS[x]);
+    return again ? { on: true, text: "▶ Hear it first" } : { on: room, text: "" };
   }
   const k = EAR.run?.kind;
   if (gblock || (k && k !== "play") || (EAR.mode === "notes" && k)) return { on: true, text: "" };
@@ -2678,6 +2684,7 @@ async function earDone() {
   earShow(run.ph, "line", res);
   earCount("line");
   earEnd(think);
+  earReveal();
 }
 
 // ● Sing with the click (Beats): the guided take path — count-in, the click, the line's span — its count-in row
@@ -2730,6 +2737,7 @@ async function earBeats() {
   renderEar();
   updateButtons();
   flushRemote();
+  earReveal();
 }
 
 // The result of an attempt, kept for its line and mode: counts with ↑ against the last whole one of the same
@@ -2861,7 +2869,7 @@ async function earNote() {
     earCount("hold");
     const top = earMidi(ph.j0 + N.hi) === target, bottom = earMidi(ph.j0 + N.lo) === target;
     const v = (N.v = E.holdVerdict(h, { tries: N.tries + 1, top, bottom, refOct: EAR.oct, name: (oct) => earNoteName(j, oct) }));
-    if (v.kind !== "match") { N.tries++; earEnd(run); return; }
+    if (v.kind !== "match") { N.tries++; earEnd(run); earReveal(); return; }
     // matched: held; an octave apart, the song's octave follows the singer's; the note again (0.5 s), so the
     // ear checks itself — in that octave
     N.done.add(N.cur);
@@ -2871,6 +2879,7 @@ async function earNote() {
     if (nx == null) N.complete = true;
     else N.cur = nx;
     earEnd(run);
+    earReveal();
     earPlay({ midi: earRefMidi(j), dur: 0.5, tag: "again" });
   };
   const tick = () => {
@@ -3061,11 +3070,38 @@ function earSpeedNow() {
   const e = timingEntry(), f = !useMap && e?.bpm ? ownSpeed() : rate;
   return EAR_SPEEDS.find(([x]) => Math.abs(x - f) < 1e-9)?.[0] ?? null;
 }
+// The column's room (the fix plan's iPad rules, "centred vertically in the region"): the big sizes (#ear[data-big]:
+// words 2.4rem, every button ≥ 48 px, the stage 17rem) on a window ≥ 700 px wide whose region leaves Ear ≥ 560 px of
+// height — the Score stacked under Sing on an iPad leaves ~340: a phone's sizes there, or nothing after ■ Done shows.
+// (Ear's region has a height of its own — the shell's region, sing.html's main: what's in Ear doesn't change it.)
+function earRoom() {
+  const p = earEl.parentElement;
+  if (!p || earEl.hidden) return;
+  const cs = getComputedStyle(p), gap = parseFloat(cs.rowGap) || 0;
+  let h = p.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0);
+  for (const c of p.children) if (c !== earEl && c.getClientRects().length) h -= c.getBoundingClientRect().height + gap;
+  const big = innerWidth >= 700 && h >= 560;
+  if (earEl.hasAttribute("data-big") !== big) earEl.toggleAttribute("data-big", big);
+}
+if (window.ResizeObserver && earEl.parentElement) new ResizeObserver(() => earRoom()).observe(earEl.parentElement);
+// A region too short for the whole column: what an attempt (or a hold) says, scrolled into view in Ear when it comes —
+// its top kept in view (the words above scroll away; a scroll brings them back).
+function earReveal() {
+  requestAnimationFrame(() => {
+    if (!earActive() || earEl.scrollHeight <= earEl.clientHeight + 1) return;
+    const el = earEl.querySelector(EAR.mode === "notes" ? "#ear-notes" : "#ear-res");
+    if (!el || el.hidden || !el.firstChild) return;
+    const a = earEl.getBoundingClientRect(), r = el.getBoundingClientRect();
+    const over = r.bottom - a.bottom;
+    if (over > 1) earEl.scrollTop += Math.min(over, Math.max(0, r.top - a.top));
+  });
+}
 function renderEar() {
   const on = earActive();
   earEl.hidden = !on;
   if (document.body.dataset.ear !== String(on)) document.body.dataset.ear = String(on);
   if (!on) return;
+  earRoom();
   const ps = psong.phrases;
   if (EAR.p >= ps.length) EAR.p = 0;
   const ph = earPh();
@@ -3079,6 +3115,7 @@ function renderEar() {
   for (const b of earEl.querySelectorAll(".ear-modes button")) { b.setAttribute("aria-pressed", String(b.dataset.ear === EAR.mode)); b.disabled = busy; }
   // the first times' hint (its line kept while it has nothing to say: the row under it doesn't move)
   const hint = earHint(), hintEl = earEl.querySelector("#ear-hint");
+  if (hint.on) EAR.hintRoom = true;
   hintEl.hidden = !hint.on;
   hintEl.toggleAttribute("data-quiet", !hint.text);
   hintEl.textContent = hint.text || "·";
@@ -3224,7 +3261,9 @@ earEl.addEventListener("click", (e) => {
   if (act === "cue-you" && res?.cue?.at && res.kind === "beats") return earYou(res, res.cue.at, { click: true });
   if (act === "cue-note" && res?.cue?.j != null && notes[res.cue.j]) { const n = notes[res.cue.j]; return earPlay({ midi: earRefMidi(res.cue.j), dur: Math.max(0.6, Math.min(1.5, n.d)) }); }
   // (▶ Piano on a timing cue: the stretch, from two starts before through the note, at the attempt's own tempo)
-  if (act === "cue-stretch" && res?.cue?.range) return earPlay({ range: res.cue.range, scale: (res.fit?.b ?? 1) * ((res.rate ?? rate) / rate) });
+  // (the fit's b is the singer's seconds per second heard at the attempt's speed, res.rate; the notes now are at `rate`:
+  // a second of theirs is rate / res.rate of then — Slow tapped since plays the singer's tempo all the same)
+  if (act === "cue-stretch" && res?.cue?.range) return earPlay({ range: res.cue.range, scale: (res.fit?.b ?? 1) * (rate / (res.rate ?? rate)) });
   // (▶ The rest: the piano from the first note not sung to the line's end)
   if (act === "cue-rest" && ph && res?.cue?.from != null && res.cue.from >= ph.j0 && res.cue.from < ph.j1) return earPlay({ range: [res.cue.from, ph.j1 - 1] });
   if (act === "cue-you" && res?.cue?.at) return earYou(res, res.cue.at);

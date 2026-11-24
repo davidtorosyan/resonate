@@ -182,14 +182,19 @@ async function singPage(browser) {
   await page.click('#ear-next'); await page.click('#ear-next');
   hint = await hintOf();
   ok(hint.on && hint.text === '▶ Hear it first' && (await ear()).hints.line === 2, `1c: another line, not heard yet — “${hint.text}” again (2 Line attempts on this device)`);
+  const topL3 = await firstTop();
   e = await attempt({ f: 1.2 });
   r = e.res;
   ok(e.p === 2 && r.counts?.notesAll && r.counts?.beatsAll && r.win?.kind === 'spot' && !r.cue, `1c: line 3 at its own speed, all right — “${e.ui}” (b ${r.fit?.b?.toFixed(2)}, onsets ${JSON.stringify(r.onsets)})`);
+  // (the 3rd Line attempt retires Line's hint: its line stays, quiet — the result doesn't come with a jump)
+  hint = await hintOf();
+  const top3 = await firstTop();
+  ok(hint.on && !hint.text && Math.abs(top3 - topL3) <= 2, `1c: the hint retired with this result — its line kept, quiet; ▶ First note where it was (${topL3.toFixed(1)} → ${top3.toFixed(1)})`);
   // 1d. line 4: “see.” (6 s written) let go after 1.5 s, ■ Done while it still sounds — in free time the singer ends
   // the line: that note is sung, not missed (it read ♩ 5 · ♪ 8 with nothing to fix)
   await page.click('#ear-next');
   hint = await hintOf();
-  ok(!hint.on && (await ear()).hints.line === 3 && !(await btns()).pulse, `1d: after 3 Line attempts the hint is gone, ▶ doesn't pulse (${JSON.stringify(hint)})`);
+  ok(hint.on && !hint.text && (await ear()).hints.line === 3 && !(await btns()).pulse, `1d: after 3 Line attempts the hint says nothing on a line not heard, ▶ doesn't pulse; its line kept this visit (${JSON.stringify(hint)})`);
   e = await attempt({ held: 1.5 }, 900, 1.4);
   r = e.res;
   ok(e.p === 3 && r.counts?.notesAll && r.counts?.beatsAll && r.win?.kind === 'spot' && !r.cue && Math.abs(r.fit?.b - 1) < 0.04, `1d: line 4, its long last note let go early and ■ Done while it sounds — “${e.ui}” (b ${r.fit?.b?.toFixed(2)})`);
@@ -561,6 +566,17 @@ async function singPage(browser) {
   const writ = await page.evaluate(([a, z]) => window.resonateDebug().notes.slice(a, z + 1).map((n) => n.t), rg || [0, 0]);
   const ratio = whens.length >= 2 ? (whens[whens.length - 1] - whens[0]) / (writ[writ.length - 1] - writ[0]) : null;
   ok(rg && stretch?.length === rg[1] - rg[0] + 1 && whens.length === stretch.length && Math.abs(ratio / e.res.fit.b - 1) < 0.02, `7: ▶ Piano — the stretch ${rg?.join('…')} (${stretch?.length} notes), at the attempt's tempo (×${ratio?.toFixed(3)}, b ${e.res?.fit?.b?.toFixed(3)})`);
+  // (Slow tapped after the attempt: the result stays, and its ▶ Piano still plays the singer's tempo — the same seconds as
+  // before, not the attempt's ratio applied to the slower notes)
+  await page.click('#ear-acts .ear-speed button[data-f="0.8"]');
+  await page.evaluate(() => { window.__atStart = []; window.__watch = true; });
+  await page.click('#ear-res button[data-act="cue-stretch"]');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'play', null, { timeout: 5000 });
+  await idle();
+  const whens2 = await page.evaluate(() => { window.__watch = false; return window.__atStart.map((x) => x.when).filter((x) => x > 0); });
+  const span = (xs) => (xs.length >= 2 ? xs[xs.length - 1] - xs[0] : null);
+  ok(whens2.length === whens.length && Math.abs(span(whens2) / span(whens) - 1) < 0.02, `7: ▶ Piano at Slow since — the stretch still at the singer's tempo (${span(whens2)?.toFixed(3)} s, was ${span(whens)?.toFixed(3)} s)`);
+  await page.click('#ear-acts .ear-speed button[data-f="1"]');
   // (▶ The rest: a singer who stopped after “grace” — the piano from the first note not sung to the line's end)
   e = await attempt({ stop: 6 });
   w = e.words;
@@ -642,12 +658,19 @@ async function singPage(browser) {
   // 6. another song: its own line, nothing of the last one's; back: the line kept; a reload: the same
   const v = await page.evaluate(() => document.getElementById('version').textContent.trim().replace(/^v/, ''));
   const id2 = await page.evaluate(async ([xml, v]) => (await import(`./library.js?v=${v}`)).addSong('Grace Again', xml), [AG_XML, v]);
+  // (Lower the song here — "Key A♭ → F" —, then a song whose own key is −3 too: that fact was the last song's)
+  e = await attempt({ all: -300 });
+  await page.click('#ear-res button[data-act="cue-key"]');
+  await sleep(300);
+  const factA = (await ear()).fact;
+  await page.evaluate((id) => { const k = JSON.parse(localStorage.getItem('resonate.sing.keys') || '{}'); k[id] = -3; localStorage.setItem('resonate.sing.keys', JSON.stringify(k)); }, id2);
   await page.click('#ear-next'); await page.click('#ear-next');
   ok((await ear()).p === 2, '6: line 3 open on Amazing Grace');
   await page.evaluate((id) => window.resonateSing.open(id), id2);
   await page.waitForFunction((id) => window.resonateSing.state().song === id && window.resonateDebug().ear.on, id2, { timeout: 15000 });
   e = await ear();
   ok(e.p === 0 && !e.res && !e.shown && !e.flash && e.mode === 'line' && e.ui === '', `6: another song opens on line 1 with nothing of the last one's (p ${e.p}, “${e.ui}”)`);
+  ok(factA === 'Key A♭ → F' && !e.fact && e.hint !== '▶ Hear it first' && (await page.evaluate(() => document.getElementById('key-select').value)) === '-3', `6: …not the last song's “${factA}” either, at the same Key menu value (fact ${e.fact}, hint ${e.hint})`);
   await page.click('.ear-modes button[data-ear="notes"]');
   e = await ear();
   ok(e.notes && e.notes.js.every((j) => j >= e.ph.j0 && j < e.ph.j1) && !e.notes.done.length, `6: its Notes start afresh (${JSON.stringify(e.notes?.targets)})`);
@@ -751,6 +774,31 @@ async function shell(browser, dev) {
   });
   if (dev === 'ipad') ok(size.words >= 2.4 && size.counts >= 1.6 && !size.small.length && !size.cut.length && Math.abs(size.above - size.below) < 40, `${dev}: words ${size.words}rem, counts ${size.counts}rem, ${size.n} buttons ≥ 48 px${size.small.length ? ` (not: ${size.small})` : ''}, centred (${size.above.toFixed(0)} above, ${size.below.toFixed(0)} below)`);
   else ok(!size.cut.length, `${dev}: no Ear button cut short (${size.n})${size.cut.length ? ` — ${size.cut}` : ''}`);
+  // (the tabs where they were in every mode with a result there too — and Beats' / Notes' hints still to come)
+  const tabsR = [];
+  for (const m of ['beats', 'notes', 'line']) { await modeTo(m); await sleep(100); tabsR.push(await page.evaluate(() => document.querySelector('.ear-modes').getBoundingClientRect().top)); }
+  ok(tabsR.every((t) => Math.abs(t - tabsAt[0]) <= 2), `${dev}: with Line's result — the tabs stay put from mode to mode (${tabsR.map((t) => t.toFixed(1)).join(', ')}; idle ${tabsAt[0].toFixed(1)})`);
+  if (dev === 'ipad') {
+    // (the Score stacked under Sing: Ear's region ~340 px tall — a phone's sizes, and an attempt's result scrolled into view)
+    await page.click('#mod-score');
+    await page.waitForFunction(() => window.resonatePlay?.state?.().ready && !window.resonateDebug().song.moving, null, { timeout: 30000 });
+    await sleep(400);
+    const room = await page.evaluate(() => ({ big: document.getElementById('ear').hasAttribute('data-big'), words: parseFloat(getComputedStyle(document.getElementById('ear-words')).fontSize) / parseFloat(getComputedStyle(document.documentElement).fontSize), h: document.getElementById('ear').clientHeight }));
+    ok(!room.big && room.words < 2, `${dev} + Score: Ear in ${room.h} px — a phone's sizes (words ${room.words}rem)`);
+    await page.click('.dock #sing');
+    await page.waitForFunction(() => document.querySelector('.dock #sing').textContent === '■ Done', null, { timeout: 10000 });
+    await page.evaluate(() => { window.__sing = { mode: 'free', at: performance.now() + 500, f: 1, cents: { 2: -200 } }; });
+    await sleep(500 + dur * 1000 + 800);
+    await page.click('.dock #sing');
+    await page.waitForFunction(() => { const x = window.resonateSing.debug().ear; return x.res && x.run === null; }, null, { timeout: 15000 });
+    await page.evaluate(() => { window.__sing = null; });
+    await sleep(400);
+    const seen = await page.evaluate(() => { const a = document.getElementById('ear').getBoundingClientRect(), r = document.getElementById('ear-res').getBoundingClientRect(), nx = document.querySelector('#ear-res .ear-next, #ear-res .ear-chips:last-child')?.getBoundingClientRect(); return { top: r.top - a.top, bottom: (nx || r).bottom - a.bottom, text: document.getElementById('ear-res').innerText.replace(/\n/g, ' | ') }; });
+    ok(seen.top >= -1 && seen.bottom <= 1, `${dev} + Score: the result in view after ■ Done (top ${seen.top.toFixed(0)}, its last chip ${seen.bottom.toFixed(0)} from Ear's bottom) — “${seen.text}”`);
+    await page.click('#mod-score');
+    await page.waitForFunction(() => !window.resonateDebug().song.moving && document.getElementById('ear').hasAttribute('data-big'), null, { timeout: 20000 });
+    ok(true, `${dev}: the Score off — the big sizes back`);
+  }
   if (dev === 'phone') {
     // Beats: ● Sing → ■ Stop (cut short here), Notes: ● Match → ■ Stop while the note plays
     await modeTo('beats');

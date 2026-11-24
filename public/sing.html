@@ -211,7 +211,7 @@
       .ear-count[data-up] { color: #4ade80; }
       .ear-ic { display: inline-block; width: 0.62em; height: 1em; vertical-align: -0.14em; fill: currentColor; margin-right: 0.3em; }
       .ear-tempo { font-size: 0.85rem; color: rgba(255,255,255,0.5); }
-      .ear-tempo .ear-ic { margin: 0 0.1em 0 0.25em; }
+      .ear-tempo .ear-ic { margin: 0 -0.12em 0 0.25em; } /* (the icon's box is wider than the note: “♩=62”, no gap) */
       .ear-cue { color: #ffe6a0; }
       #ear u { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.2em; }
       .ear-chips { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.5rem; }
@@ -268,27 +268,26 @@
       .ear-arc { display: none; position: absolute; inset: -3px; width: calc(100% + 6px); height: calc(100% + 6px); transform: rotate(-90deg); pointer-events: none; }
       .ear-ring[data-arc] .ear-arc { display: block; }
       .ear-arc circle { fill: none; stroke: rgba(255,255,255,0.6); stroke-width: 2; stroke-dasharray: 100; stroke-dashoffset: 0; }
-      /* An iPad (a window ≥ 700 px wide and ≥ 560 tall): the column centred in the space it has, to be read from a music
-         stand — the words 2.4rem, the counts 1.6rem, every button and chip ≥ 48 px */
-      @media (min-width: 700px) and (min-height: 560px) {
-        #ear { width: 100%; max-width: 640px; margin: auto; gap: 0.85rem; box-sizing: border-box; }
-        #ear-words { font-size: 2.4rem; }
-        .ear-counts { font-size: 1.6rem; }
-        #ear-hint, .ear-win, .ear-cue, .ear-flash, .ear-msg, .ear-ring-hint, .ear-keyoffer { font-size: 1.2rem; }
-        .ear-tempo, #ear-tip, .ear-last { font-size: 1rem; }
-        #ear-name { font-size: 1rem; }
-        .ear-nav { width: 48px; height: 48px; }
-        .ear-modes button, #ear-acts button, #ear .chip { min-height: 48px; font-size: 1.1rem; }
-        .ear-modes button { padding: 0.5rem 1.5rem; }
-        .ear-names button { min-height: 48px; min-width: 3.9rem; }
-        .ear-names b { font-size: 1.15rem; }
-        .ear-names small { font-size: 0.9rem; }
-        #ear-stage { min-height: 17rem; }
-        #ear-acts { min-height: 48px; } /* (Notes has no action row: the column the same height, the tabs where they were) */
-        .ear-ring { width: 84px; height: 84px; }
-        .ear-ring-t { font-size: 1.15rem; }
-        .ec-word { font-size: 1.6rem; }
-      }
+      /* An iPad (#ear[data-big]: a window ≥ 700 px wide whose region gives Ear ≥ 560 px of height — sing.js earRoom; the
+         Score stacked under Sing leaves it less: a phone's sizes there): the column centred in the space it has, to be
+         read from a music stand — the words 2.4rem, the counts 1.6rem, every button and chip ≥ 48 px */
+      #ear[data-big] { width: 100%; max-width: 640px; margin: auto; gap: 0.85rem; box-sizing: border-box; }
+      #ear[data-big] #ear-words { font-size: 2.4rem; }
+      #ear[data-big] .ear-counts { font-size: 1.6rem; }
+      #ear[data-big] #ear-hint, #ear[data-big] .ear-win, #ear[data-big] .ear-cue, #ear[data-big] .ear-flash, #ear[data-big] .ear-msg, #ear[data-big] .ear-ring-hint, #ear[data-big] .ear-keyoffer { font-size: 1.2rem; }
+      #ear[data-big] .ear-tempo, #ear[data-big] #ear-tip, #ear[data-big] .ear-last { font-size: 1rem; }
+      #ear[data-big] #ear-name { font-size: 1rem; }
+      #ear[data-big] .ear-nav { width: 48px; height: 48px; }
+      #ear[data-big] .ear-modes button, #ear[data-big] #ear-acts button, #ear[data-big] .chip { min-height: 48px; font-size: 1.1rem; }
+      #ear[data-big] .ear-modes button { padding: 0.5rem 1.5rem; }
+      #ear[data-big] .ear-names button { min-height: 48px; min-width: 3.9rem; }
+      #ear[data-big] .ear-names b { font-size: 1.15rem; }
+      #ear[data-big] .ear-names small { font-size: 0.9rem; }
+      #ear[data-big] #ear-stage { min-height: 17rem; }
+      #ear[data-big] #ear-acts { min-height: 48px; } /* (Notes has no action row: the column the same height, the tabs where they were) */
+      #ear[data-big] .ear-ring { width: 84px; height: 84px; }
+      #ear[data-big] .ear-ring-t { font-size: 1.15rem; }
+      #ear[data-big] .ec-word { font-size: 1.6rem; }
       /* Guided: the step's card replaces the results row, the play bar and the chips (More → Tools has them). */
       body[data-guided="true"] .results-head, body[data-guided="true"] #playbar, body[data-guided="true"] #chips, body[data-guided="true"] #loopbar { display: none; }
       /* (from More → Tools: a loop shows its bar instead of the card; 🎤 Pitch its readout) */
