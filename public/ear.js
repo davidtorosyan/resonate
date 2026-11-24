@@ -19,14 +19,15 @@
 //   win      { kind, j?, w? (wordOf j), sub?, text } | null — Line kinds: "spot" (twice: sub "again") · "fixed"
 //              (the last cue, now right: sub "note" | "start") · "rose" (sub "notes" | "beats" | "both") · "key"
 //              (the tune right in another key) · "tune" (right, all a little off) · "high" · "long" · "first".
-//              Beats: "entry".
+//              Beats (judgeBeats): "spot" · "fixed" · "rose" · "entry" · "run" · "even".
 //   cue      { kind, j?, w?, dir?, size?, s?, from?, range?, at?, sounds, text } | null — dir: what to do
 //              ("higher" / "lower" / "sooner" / "later"; key: the song "lower" / "higher"); size: a pitch cue's
 //              "touch" | "aim" | "much"; s: a key cue's semitones (−6…+6); from: "short"'s first note not sung
 //              (▶ The rest); range: [j0, j1] the stretch a timing cue's ▶ plays; at: [t0, t1] attempt s (▶ You);
 //              sounds: the ▶s it offers ("first", "you", "note", "stretch", "rest", "hear", "key").
 //              Line kinds, the first that applies: "silent" · "nofit" · "key" · "offset" · "short" · "missed" ·
-//              "pitch" · "unclear" · "held" · "timing" · "sag". Beats: "timing" · "silent".
+//              "pitch" · "unclear" · "held" · "timing" · "sag". Beats: "silent" · "slip" · "unheard" · "steady" ·
+//              "held" · "drift" · "missed" · "timing" (sounds "hear", "click", "you").
 //   text     the words are WP5's (earText); `text` on a win and a cue is their plain form meanwhile.
 //   fit      { a, b, off, anchor, g (grades — at the singer's line, written pitches; another key: in theirs),
 //              ns (the notes where the singer put them) } — Line
@@ -36,11 +37,12 @@
 //   notReached  counted notes that start after the singer stopped; whole: a baseline for next time (heard,
 //   followed, sung to the end); up { notes, beats }: a count that rose since prev; cover: the share of the
 //   singing inside the line found; ms: the judging's time
-//   rn       { [i in the line]: { cls, dev, rdev } | null } — Beats: each note from take.rhythm
+//   rn       { [i in the line]: { cls, dev, rdev } | null } — Beats: each start against its click (judgeBeats)
 import { gradeTake } from "./grade.js?v=102";
 import { median, fold } from "./music.js?v=102";
-import { findOnsets, tolFlag } from "./rhythm.js?v=102";
-import { metricOf } from "./takerhythm.js?v=102";
+import { findOnsets, tolFlag, tolOn, voiceCover } from "./rhythm.js?v=102";
+import { metricOf, meterAt, measureAt, feltBeat } from "./takerhythm.js?v=102";
+import { PRACTICE } from "./practice.js?v=102";
 import { MIN_RMS } from "./pitch.js?v=102";
 
 // A line for Ear: the printed line (the fix plan's Q-A) — a lyric line, short ones joined to 4+ syllables, a
@@ -148,14 +150,16 @@ function named(j, ctx) {
 function winText(w, ctx) {
   const nm = (j) => named(j, ctx);
   switch (w.kind) {
-    case "spot": return w.sub === "again" ? "Spot on — twice running" : "Spot on";
+    case "spot": return `Spot on${ctx.beats ? " with the click" : ""}${w.sub === "again" ? " — twice running" : ""}`;
     case "fixed": return w.sub === "start" ? `In on ${nm(w.j)} now` : `${nm(w.j)} right on it now`;
-    case "rose": return w.sub === "both" ? "More of both than last time" : w.sub === "beats" ? "More on the beat than last time" : "More in tune than last time";
+    case "rose": return w.sub === "both" ? "More of both than last time" : w.sub === "beats" ? `More on the ${ctx.beats ? "click" : "beat"} than last time` : "More in tune than last time";
     case "key": case "tune": return "The tune was right";
     case "high": return `Hit the high note on ${nm(w.j)}`;
     case "long": return `${nm(w.j)} held right on the note`;
     case "first": return "Started on the note";
-    case "entry": return `In on ${nm(w.j)}`;
+    case "entry": return "Came in on time";
+    case "run": return `Steady from ${nm(w.j)} to ${nm(w.j2)}`;
+    case "even": return "Kept a steady beat";
     default: return "";
   }
 }
@@ -167,7 +171,12 @@ function cueText(c, ctx) {
     case "key": return c.dir === "lower" ? "Started lower than the piano" : "Started higher than the piano";
     case "offset": return c.dir === "higher" ? "A little low all the way" : "A little high all the way";
     case "short": return `Keep going to ${nm(c.j)}`;
+    case "slip": return c.dir === "sooner" ? `Came in late — start when ${nm(c.j)} lights` : `Came in early — wait for ${nm(c.j)} to light`;
+    case "unheard": return "Couldn't hear the starts — sing each word out";
+    case "steady": return c.dir === "sooner" ? "Behind the click — sing right on it" : "Ahead of the click — wait for it";
+    case "drift": return c.dir === "sooner" ? "Slowing down — stay with the click" : "Speeding up — stay with the click";
     case "missed": {
+      if (ctx.beats) return `Sing out on ${nm(c.j)}`; // (Beats: a start not sung — its syllable's other notes aside)
       const w = wordOf(c.j, ctx.notes);
       return w && w.n > 1 ? `“${w.word}” — sing ${w.n === 2 ? "both" : `all ${NUM[w.n - 1] || w.n}`} notes` : `Sing out on ${nm(c.j)}`;
     }
@@ -353,13 +362,12 @@ function stepIn(pts) {
   return best;
 }
 
-// The starts on the singer's own line (rule 6): each start's onset (rhythm.js findOnsets on the fitted line,
-// the start searched ±0.3 s), judged against a Theil–Sen line through the other measured starts (leave-one-out:
-// one late start doesn't tilt its own reference) — on within tolFlag(u) of the beat's division on the singer's
-// clock. A start sung but not measured (legato, a same-pitch repeat, a glide) is on when its note was hit and at
-// least half the starts reached were measured; it is never cued. The line's first start is on when sung: in
-// free time nothing comes before it.
-function judgeStarts(ph, fit, grades, frames, endT, ctx, starts, reached) {
+// Each start's onset where the singer's line puts its note (rhythm.js findOnsets on the line, the start searched
+// ±0.3 s): Line's ♩ and Beats' both. fit: the singer's line { a, b, ns } (Beats: against the click); grades: at that
+// line (Line: unsung — not reached, or missed with no voice near — isn't searched); unsung (Beats): instead, the
+// starts not searched. → { out: { [k]: { measured, kind, dev, u, tol, first, y (s: the onset, on the frames'
+// clock) } }, pts: [[line t, y, k, tol]] (the measured ones), lead, ne (where the pitch put each note) } | null
+function measureStarts(ph, fit, grades, frames, endT, ctx, starts, reached, unsungOf = null) {
   const { notes } = ctx;
   if (!ctx.feat || ctx.start == null || !ctx.score || !ctx.qToT) return null;
   const js = phraseJs(ph), T0 = notes[ph.j0].t;
@@ -375,7 +383,7 @@ function judgeStarts(ph, fit, grades, frames, endT, ctx, starts, reached) {
   const at = ns.map((n, k) => n.t + (["good", "ok", "off"].includes(wide[k]?.status) ? wide[k].shift || 0 : 0));
   const ne = ns.map((n, k) => ({ ...n, t: at[k], d: k + 1 < ns.length && !ns[k + 1].restBefore ? Math.max(0.05, at[k + 1] - at[k]) : n.d }));
   const voicedNear = (n) => frames.some((f) => f.midi != null && f.t >= n.t - 0.1 && f.t <= n.t + n.d + 0.25);
-  const unsung = js.map((j, k) => !reached.has(j) || grades[k]?.status === "unsung" || (grades[k]?.status === "missed" && !voicedNear(ns[k]) && !voicedNear(ne[k])));
+  const unsung = unsungOf || js.map((j, k) => !reached.has(j) || grades[k]?.status === "unsung" || (grades[k]?.status === "missed" && !voicedNear(ns[k]) && !voicedNear(ne[k])));
   // (an attack followed by the note before's pitch, not this one's, is the note before re-sung — a melisma's note
   // after a breath — not this start: the singer's own pitch says so when they sang this note right)
   const pitchAfter = (t) => { const v = frames.filter((f) => f.midi != null && f.t >= t + 0.03 && f.t < t + 0.18).map((f) => f.midi); return v.length >= 3 ? median(v) : null; };
@@ -397,11 +405,23 @@ function judgeStarts(ph, fit, grades, frames, endT, ctx, starts, reached) {
     out[k] = { measured: !!measured, kind: o?.kind ?? null, dev: o?.dev ?? null, u: met[k]?.u ?? null, tol: tolFlag(met[k]?.u ?? 0.3), first: j === ph.j0 };
     if (measured) { out[k].y = ne[k].t + o.dev; pts.push([ns[k].t, out[k].y, k, out[k].tol]); }
   }
+  return { out, pts, lead: on.lead, ne, live };
+}
+
+// The starts on the singer's own line (rule 6): each start's onset (measureStarts), judged against a Theil–Sen
+// line through the other measured starts (leave-one-out: one late start doesn't tilt its own reference) — on
+// within tolFlag(u) of the beat's division on the singer's clock. A start sung but not measured (legato, a
+// same-pitch repeat, a glide) is on when its note was hit and at least half the starts reached were measured; it
+// is never cued. The line's first start is on when sung: in free time nothing comes before it.
+function judgeStarts(ph, fit, grades, frames, endT, ctx, starts, reached) {
+  const m = measureStarts(ph, fit, grades, frames, endT, ctx, starts, reached);
+  if (!m) return null;
+  const { out, pts, live } = m;
   const nMeasured = pts.length;
   for (const [x, y, k] of pts) {
     const others = pts.filter((p) => p[2] !== k);
     const line = others.length >= 3 ? theilSen(others) : null;
-    out[k].r = line ? y - line.a - line.b * x : y - x - (on.lead ?? 0);
+    out[k].r = line ? y - line.a - line.b * x : y - x - (m.lead ?? 0);
   }
   // (a step — one note held long or cut short, the beat kept after it — is one start off: the first after it;
   // the rest are judged on the beat as it went on)
@@ -416,7 +436,7 @@ function judgeStarts(ph, fit, grades, frames, endT, ctx, starts, reached) {
     else if (s.measured) s.on = Math.abs(s.r) <= s.tol;
     else s.on = judged && hitOf(grades[k]);
   }
-  return { starts: out, measured: nMeasured, of: live.length, judged, step, lead: on.lead };
+  return { starts: out, measured: nMeasured, of: live.length, judged, step, lead: m.lead };
 }
 
 // --- The judgment ------------------------------------------------------------------------------------------
@@ -581,28 +601,184 @@ export function judgeFree(ph, frames0, endT, ctx) {
   return done(res);
 }
 
-// Beats (● Sing with the click): the take's rhythm (takerhythm.js rhythmOf, a guided span) → each start
-// on or not, the counts, one win, one cue. (WP3 rebuilds it on the click grid.)
+// Beats (● Sing with the click; the fix plan's "Beats (judgeBeats)"): each start against its click — the beat
+// grid less the measured trip (the count-in's clicks found in the recording), else less the browser's estimate
+// with a wider band. Not rhythmOf's classes: those are against the take's own steady lead (a singer steadily
+// behind the click came out "all of them"), and its onset search, centred on that lead, can't follow half a
+// beat late or a tempo pulled away from the click (attacks taken from the neighbours: cues the wrong way). So
+// the starts are found here where the singer's line (fitLine on the frames as heard) puts each note, and each is
+// judged on its own distance from its click.
+export const EAR_BEATS = {
+  uncal: 0.04,     // s more tolerance when the trip wasn't measured (headphones: the browser's estimate)
+  missing: 0.2,    // a start whose own note's span is voiced under this share (and not hit) wasn't sung:
+                   //   "Sing out on …", never early or late (an onset borrowed from the next note)
+  iqr: 2,          // × tolOn(u): starts this close together keep one lag — steady behind / ahead
+  driftBeat: 0.25, // a drift over the line ≥ max(tolFlag, this × the beat): slowing down / speeding up
+  driftMin: 4,     //   …from this many measured starts
+  keep: 0.75,      // × the beat: a late entry every start keeps, under this, is behind the click — not a count off
+                   //   (a whole beat late is: the count-in row's word, "start when it lights")
+  run: 3,          // starts on the click in a row: "Steady from … to …"
+  fitB: 0.3, fitA: 1.2, // the singer's line kept when its tempo is within this of the click's and it starts within
+                   //   this many beats of the written start (else the written line: onsets near the clicks)
+};
+const BT = EAR_BEATS;
+const quantile = (xs, p) => { const s = [...xs].sort((a, b) => a - b), x = p * (s.length - 1), i = Math.floor(x); return i + 1 < s.length ? s[i] + (x - i) * (s[i + 1] - s[i]) : s[i]; };
+
+// The take (Sing's guided take on the line's span, as finishSing leaves it): frames on the song clock as heard
+// (moved by the measured trip), grades, endT, rhythm (rhythmOf: calibrated, phrases[0].lag — the first sound
+// after the count-in, takerhythm.js phraseRhythm —, notes for comparison). ctx: as judgeFree's — notes (at the
+// tempo sung), spq0, name, score + qToT, feat + start (the recording's features, its first sample on the frames'
+// clock: none — rhythmOf's onsets, judged on the grid all the same), prev (the last whole Beats attempt at this
+// line and speed). → a result as judgeFree's: counts { beats, beatsAll } (notes null), win, cue, starts { [k]: {
+// dev (s off its click, + late), on, measured, missing, kind } }, onsets, lag, steady / drift (s), calibrated,
+// whole, up, rn (per note: cls on / early / late / missing, dev, rdev — dev less the median).
+// Beats kinds — wins: "spot" (again) · "fixed" (sub start) · "rose" (sub beats) · "entry" (the first start on) ·
+// "run" (j…j2, ≥ 3 on in a row) · "even" (a steady lag kept). Cues, the first that applies: "silent" · "slip"
+// (dir: sooner / later) · "unheard" · "steady" · "held" (a step) · "drift" · "missed" · "timing"; sounds "hear" (▶ Hear with the
+// click), "click" (▶ Click: the melody and the click over `range`), "you" (▶ You: the take over `at`, song s as
+// heard, the click with it).
 export function judgeBeats(ph, take, ctx) {
+  const t0 = typeof performance !== "undefined" ? performance.now() : Date.now();
   const { notes } = ctx;
-  const starts = startsOf(ph, notes, ctx.spq0), rn = take.rhythm?.notes || [];
-  const on = starts.filter((j) => { const r = rn[j]; return r && (r.cls === "on" || r.cls === "close"); });
-  const measured = starts.filter((j) => rn[j] && rn[j].cls);
-  const counts = { beats: measured.length * 2 >= starts.length ? on.length : null, beatsAll: on.length === starts.length };
-  const worst = starts.filter((j) => rn[j]?.cls === "early" || rn[j]?.cls === "late").sort((x, y) => Math.abs(rn[y].rdev ?? rn[y].dev ?? 0) - Math.abs(rn[x].rdev ?? rn[x].dev ?? 0))[0];
-  const dir = worst != null && rn[worst].cls === "late" ? "sooner" : "later";
-  const cue = worst != null ? { kind: "timing", dir, j: worst } : take.frames?.some((f) => f.midi != null) ? null : { kind: "silent" };
-  if (cue) cue.text = cueText(cue, ctx);
-  const winJ = on[0];
-  const win = winJ != null && counts.beats != null ? { kind: "entry", j: winJ } : null;
-  if (win) win.text = winText(win, ctx);
-  return {
-    rn: Object.fromEntries(phraseJs(ph).map((j) => [j - ph.j0, rn[j] ? { cls: rn[j].cls, dev: rn[j].dev, rdev: rn[j].rdev } : null])),
-    counts: cue?.kind === "silent" ? null : counts,
-    win,
-    cue,
-    onsets: { measured: measured.length, of: starts.length },
+  const bctx = { ...ctx, beats: true, ph };
+  const done = (r) => { r.ms = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - t0); if (r.win) r.win.text = winText(r.win, bctx); if (r.cue) r.cue.text = cueText(r.cue, bctx); for (const x of [r.win, r.cue]) if (x?.j != null) x.w = wordOf(x.j, notes); return r; };
+  const rh = take.rhythm || null, pr = rh?.phrases?.[0] || null;
+  const js = phraseJs(ph), T0 = notes[ph.j0].t;
+  const { counted, starts } = countSets(ph, notes, ctx.spq0);
+  const cal = !!rh?.calibrated;
+  // the meter on the click (each start's division u, the beat), the bar the line starts in
+  const met = ctx.score && ctx.qToT ? metricOf(ctx.score, js.map((j) => notes[j]), [js.map((_, k) => k)], ctx.qToT) : null;
+  const uOf = (k) => met?.[k]?.u ?? rh?.notes?.[js[k]]?.u ?? 0.3;
+  const beat = (met ? median(starts.map((j) => met[j - ph.j0].beat)) : null) ?? pr?.beat ?? 0.6;
+  const extra = cal ? 0 : BT.uncal;
+  const tolOf = (k) => tolFlag(uOf(k)) + extra;
+  const uMed = median(starts.map((j) => uOf(j - ph.j0)));
+  const tolM = tolFlag(uMed) + extra;
+  const endT = take.endT ?? Infinity;
+  const frames = (take.frames || []).filter((f) => f.t >= T0 - beat - 0.3);
+  const rn0 = (j) => rh?.notes?.[j] || null;
+  const nothing = { counts: null, win: null, starts: null, onsets: null, whole: false, up: { notes: false, beats: false }, calibrated: cal, lag: pr?.lag ?? null, steady: null, drift: null };
+  if (frames.filter((f) => f.midi != null).length < 6) return done({ ...nothing, rn: rnOf(ph, js, {}, rn0), cue: { kind: "silent", sounds: [] } });
+  // the take ran past where each start could be
+  const reached = new Set(js.filter((j) => notes[j].t + Math.min(0.35, notes[j].d) < endT));
+  // where the singer's line puts each note (their pitch: a steady lag, a tempo pulled from the click)
+  const written = { a: T0, b: 1, ns: js.map((j) => ({ midi: notes[j].midi, t: notes[j].t, d: notes[j].d })) };
+  let fit = null;
+  try { fit = fitLine(ph, frames, endT, ctx); } catch (err) { console.warn("ear: beats line", err); }
+  const line = fit && !fit.edge && Math.abs(fit.b - 1) <= BT.fitB && Math.abs(fit.a - T0) <= BT.fitA * beat && fit.hits >= Math.ceil(counted.length / 3) ? fit : written;
+  const g = gradeTake(line.ns.map((n) => ({ midi: n.midi, t: n.t, d: n.d })), frames, { endT, maxShift: F.gradeShift });
+  // a start not sung: its own note's span hardly voiced (the vowel band; no recording: the pitch frames), not hit
+  const spans = js.map((_, k) => [line.ns[k].t, line.ns[k].t + line.ns[k].d]);
+  const cover = ctx.feat && ctx.start != null ? voiceCover(ctx.feat, ctx.start, { songT0: 0, trip: 0, quiet: [-Infinity, T0 - beat] }, spans)
+    : spans.map(([a, b]) => { const w = frames.filter((f) => f.t >= a && f.t < b); return w.length ? w.filter((f) => f.midi != null).length / w.length : 0; });
+  const missing = new Set(starts.filter((j) => reached.has(j) && cover[j - ph.j0] < BT.missing && !hitOf(g[j - ph.j0])));
+  const m = measureStarts(ph, line, g, frames, endT, ctx, starts, reached, js.map((j) => !reached.has(j) || missing.has(j)));
+  const S = {};
+  for (const j of starts) {
+    const k = j - ph.j0;
+    if (!reached.has(j)) { S[k] = { reached: false, on: false, measured: false, dev: null }; continue; }
+    if (missing.has(j)) { S[k] = { reached: true, missing: true, on: false, measured: false, dev: null }; continue; }
+    let dev = null, kind = null;
+    if (m) { const o = m.out[k]; if (o?.measured) { dev = o.y - notes[j].t; kind = o.kind; } }
+    else { const r = rn0(j); if (r?.cls) { dev = r.dev; kind = r.kind; } }
+    S[k] = { reached: true, measured: dev != null, dev, kind, tol: tolOf(k) };
+  }
+  const live = starts.filter((j) => S[j - ph.j0].reached && !S[j - ph.j0].missing);
+  const meas = live.filter((j) => S[j - ph.j0].measured);
+  const judged = live.length > 0 && meas.length * 2 >= live.length;
+  const devs = meas.map((j) => S[j - ph.j0].dev);
+  const med = devs.length ? median(devs) : null;
+  // steady: every start about the same distance off its click, one way
+  const iqr = devs.length >= 3 ? quantile(devs, 0.75) - quantile(devs, 0.25) : Infinity;
+  const steady = judged && devs.length >= 3 && Math.abs(med) > tolM && iqr <= BT.iqr * tolOn(uMed);
+  // drift: the distance from the click growing (slowing down) or shrinking (speeding up) over the line
+  const pts = meas.map((j) => [notes[j].t, S[j - ph.j0].dev]);
+  const ts = pts.length >= BT.driftMin ? theilSen(pts) : null;
+  const drift = ts ? ts.b * (pts[pts.length - 1][0] - pts[0][0]) : null;
+  // (…or a step: on the click, then from one start on all off the same way — the note before it held long or cut
+  // short, the click's beat kept after it: that note, not "slowing down")
+  // (at least two starts before it, on their clicks: a late entry alone, the rest on the click, is the entry's)
+  const step0 = judged && !steady ? stepIn(meas.map((j) => [notes[j].t, S[j - ph.j0].dev, j - ph.j0, S[j - ph.j0].tol])) : null;
+  const pre = step0 ? meas.filter((j) => j - ph.j0 < step0.k) : [];
+  const step = step0 && pre.length >= 2 && pre.every((j) => Math.abs(S[j - ph.j0].dev) <= S[j - ph.j0].tol) ? step0 : null;
+  const drifting = judged && !steady && !step && drift != null && Math.abs(drift) >= Math.max(tolM, BT.driftBeat * beat);
+  // a counting slip: the first sound after the count-in ≥ max(0.6 beat, 0.25 s) off — unless every start kept
+  // that lag and it's under ¾ of a beat (behind the click, not a count off); a lag every start keeps of ¾ beat
+  // or more is a count off too
+  const lag = pr?.lag ?? null;
+  const need = Math.max(PRACTICE.time.slipBeats * beat, cal ? PRACTICE.time.slipSec : PRACTICE.time.slipSecUncal);
+  const kept = steady && lag != null && Math.abs(med - lag) <= tolM && Math.abs(lag) < BT.keep * beat;
+  const slip = lag != null && Math.abs(lag) >= need && !kept ? (lag > 0 ? "sooner" : "later") : steady && Math.abs(med) >= BT.keep * beat ? (med > 0 ? "sooner" : "later") : null;
+  // each start: measured — within its tolerance of its click; sung but not measured (legato, a repeat) — on
+  // when its note was hit and the measured ones were on the click
+  for (const j of live) {
+    const s = S[j - ph.j0];
+    s.on = s.measured ? Math.abs(s.dev) <= s.tol : judged && !steady && !drifting && med != null && Math.abs(med) <= tolM && hitOf(g[j - ph.j0]);
+  }
+  const onN = starts.filter((j) => S[j - ph.j0].on).length;
+  const counts = slip || !judged ? null : { beats: onN, beatsAll: onN === starts.length, notes: null, notesAll: false };
+  const res = { counts, calibrated: cal, lag, steady: steady ? +med.toFixed(3) : null, drift: drift != null ? +drift.toFixed(3) : null, step: step ? { k: step.k, d: +step.d.toFixed(3) } : null, tol: +tolM.toFixed(3),
+    line: { a: +line.a.toFixed(3), b: +line.b.toFixed(3), fit: line === fit },
+    starts: Object.fromEntries(Object.entries(S).map(([k, s]) => [k, { dev: s.dev != null ? +s.dev.toFixed(3) : null, on: !!s.on, measured: !!s.measured, missing: !!s.missing, reached: !!s.reached, kind: s.kind ?? null }])),
+    onsets: { measured: meas.length, of: live.length }, rn: rnOf(ph, js, S, rn0, med) };
+  res.whole = !!counts && starts.every((j) => S[j - ph.j0].reached);
+  const prev = ctx.prev?.whole ? ctx.prev : null;
+  res.up = { notes: false, beats: !!prev && res.whole && prev.counts?.beats != null && counts.beats > prev.counts.beats };
+
+  // --- the cue: the first that applies
+  const startBefore = (j, n) => { const ss = starts.filter((x) => x < j); return ss.length >= n ? ss[ss.length - n] : ph.j0; };
+  // (▶ You: the take from a beat before the stretch to past its end — and past where the singer put it)
+  const at = (ja, jb) => [Math.max(notes[ja].t - beat + Math.min(0, med ?? 0), (take.voice?.start ?? -Infinity)), notes[jb].t + notes[jb].d + 0.4 + Math.max(0, med ?? 0)];
+  // (a take-wide cue's stretch: the first bar from the entry, at least three starts)
+  const bar = () => {
+    const fb = feltBeat(meterAt(ctx.score || {}, measureAt(ctx.score || { measures: [0] }, notes[ph.j0].q)));
+    const within = starts.filter((j) => notes[j].t < T0 + fb.n * beat - 1e-6);
+    return Math.max(within[within.length - 1] ?? ph.j0, starts[Math.min(2, starts.length - 1)]);
   };
+  let cue = null;
+  if (slip) cue = { kind: "slip", j: ph.j0, dir: slip, sounds: ["hear"] };
+  else if (!judged) cue = { kind: "unheard", sounds: [] };
+  else if (steady) { const jb = bar(); cue = { kind: "steady", dir: med > 0 ? "sooner" : "later", range: [ph.j0, jb], at: at(ph.j0, jb), sounds: ["click", "you"] }; }
+  else if (step && ph.j0 + step.k - 1 >= ph.j0) {
+    const jStart = ph.j0 + step.k, held = jStart - 1;
+    cue = { kind: "held", j: held, dir: step.d > 0 ? "sooner" : "later", range: [startBefore(held, 1), jStart], at: at(startBefore(held, 1), jStart), sounds: ["click", "you"] };
+  } else if (drifting) cue = { kind: "drift", dir: drift > 0 ? "sooner" : "later", range: [ph.j0, ph.j1 - 1], at: at(ph.j0, ph.j1 - 1), sounds: ["click", "you"] };
+  else if (missing.size) { const j = Math.min(...missing); cue = { kind: "missed", j, range: [startBefore(j, 2), j], at: at(startBefore(j, 2), j), sounds: ["click"] }; }
+  else {
+    const off = live.find((j) => S[j - ph.j0].measured && !S[j - ph.j0].on);
+    if (off != null) cue = { kind: "timing", j: off, dir: S[off - ph.j0].dev > 0 ? "sooner" : "later", range: [startBefore(off, 2), off], at: at(startBefore(off, 2), off), sounds: ["click", "you"] };
+  }
+  res.cue = cue;
+
+  // --- the win: the first that applies, not last time's again when another applies
+  const wins = [];
+  if (counts?.beatsAll) wins.push({ kind: "spot", ...(ctx.prev?.win?.kind === "spot" ? { sub: "again" } : {}) });
+  const pc = prev?.cue;
+  if (counts && pc?.j != null && pc.j >= ph.j0 && pc.j < ph.j1 && (pc.kind === "timing" || pc.kind === "missed") && S[pc.j - ph.j0]?.measured && S[pc.j - ph.j0].on) wins.push({ kind: "fixed", sub: "start", j: pc.j });
+  if (res.up.beats) wins.push({ kind: "rose", sub: "beats" });
+  if (counts && S[0]?.measured && S[0].on) wins.push({ kind: "entry", j: ph.j0 });
+  if (counts) {
+    let best = null, run = [];
+    for (const j of starts) {
+      if (S[j - ph.j0].measured && S[j - ph.j0].on) run.push(j); else run = [];
+      if (run.length >= BT.run && (!best || run.length > best.length)) best = [...run];
+    }
+    if (best) wins.push({ kind: "run", j: best[0], j2: best[best.length - 1] });
+  }
+  if (steady) wins.push({ kind: "even" });
+  const same = (w, p) => !!p && w.kind === p.kind && (w.j ?? null) === (p.j ?? null) && (w.sub ?? null) === (p.sub ?? null);
+  res.win = wins.find((w) => w.kind === "spot" || !same(w, ctx.prev?.win)) || wins[0] || null;
+  return done(res);
+}
+// Per note of the line, for the probes: Beats' class against the click (on / early / late / missing / null),
+// dev, rdev (dev less the median of the measured starts); rhythmOf's own where Beats has none.
+function rnOf(ph, js, S, rn0, med = null) {
+  return Object.fromEntries(js.map((j) => {
+    const k = j - ph.j0, s = S[k];
+    if (s) return [k, { cls: s.missing ? "missing" : !s.measured ? null : s.on ? "on" : s.dev > 0 ? "late" : "early", dev: s.dev, rdev: s.dev != null && med != null ? +(s.dev - med).toFixed(3) : null }];
+    const r = rn0(j);
+    return [k, r ? { cls: null, dev: r.dev, rdev: r.rdev } : null];
+  }));
 }
 
 // A result as resonateDebug() shows it: everything but the recording and the fitted notes (the grades,

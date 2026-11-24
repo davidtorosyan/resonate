@@ -14,8 +14,11 @@
 //   2c ▶ First note, then the dock's ▶, in the middle of an attempt (the song, key, tempo and ⚙ locked): it
 //     ends, uncounted — "Stopped — not counted", nothing stored, the note / the line plays (WP1.6), the mic's
 //     tracks stopped and the session "playback" before the piano starts (iOS: quiet under a live capture)
-//   3 Beats — sing with the click (the guided take path): ♩ all of them, "In on …"; the dock "● Sing" →
-//     "■ Stop", no count-in or dB in #status (WP1.3–4)
+//   3 Beats (WP3) — ▶ First note there too; ▶ Hear counts in as ● Sing does (a bar, the pickup's missing beats),
+//     its count-in row lit as it plays; ● Sing with the click: the row lit from the take's clock (each dot on its
+//     click, the word at the entry), then the level ring moving (neutral, not green), 🎧 the first time (a touch
+//     device); on the click: "all of them", "Spot on with the click", ▶ You; 0.3 s late every note: "Behind the
+//     click — sing right on it" with ▶ Click and ▶ You, which play; no count-in or dB in #status (WP1.3–4)
 //   4 Notes — "■ Stop" on both buttons while the note plays (WP1.7); the first target held an octave down
 //     (matched, "an octave down — fine"), the next on pitch: every target done → back to the line
 //   5 ⚙ — while Ear shows only its switch, "Phrase by phrase" (WP1.10); turned off while ▶ Hear plays, it stops
@@ -182,24 +185,107 @@ async function singPage(browser) {
   }
   e = await ear();
   ok(e.flash && /Stopped/.test(e.ui), `2c: after it played: “${e.ui}”`);
-  // 3. Beats: the click take
-  await page.evaluate(() => { window.__sing = { mode: 'beats' }; });
+  // 3. Beats: ▶ First note there too; ▶ Hear counts in as ● Sing does, its row lit as it plays (WP3.3–4, 6)
+  await page.evaluate(() => { window.__sing = null; });
   await page.click('.ear-modes button[data-ear="beats"]');
   e = await ear();
   b = await btns();
-  ok(!e.flash && !e.shown && b.sing === '● Sing' && b.caption === 'Hear' && !(await page.$('#ear-acts button')), `3: Beats — “${b.listen}” (${b.caption}) · “${b.sing}”, no result yet, no Slower`);
-  await page.evaluate(() => { window.__status = []; window.__poll = setInterval(() => { const s = document.getElementById('status').textContent; if (s) window.__status.push(s); }, 50); });
+  const acts = await page.$$eval('#ear-acts button', (xs) => xs.map((x) => x.textContent));
+  ok(!e.flash && !e.shown && b.sing === '● Sing' && b.caption === 'Hear' && JSON.stringify(acts) === '["▶ First note"]', `3: Beats — “${b.listen}” (${b.caption}) · “${b.sing}”, no result yet, the action row ${JSON.stringify(acts)}`);
+  // (the count-in row, sampled every 20 ms: its state, the clock it's lit from, the ring's level)
+  const watch = () => page.evaluate(() => { window.__rows = []; window.__poll = setInterval(() => { const d = window.resonateDebug(), c = d.ear.count, ring = document.querySelector('#ear-ring'); window.__rows.push({ nowT: d.nowT, c: c && { lit: c.lit, wordOn: c.wordOn, gone: c.gone, shown: c.shown, play: c.play }, ring: !!ring && !ring.hidden, lv: Number(document.querySelector('.ear-ring')?.style.getPropertyValue('--lv') || 0), status: document.getElementById('status').textContent }); }, 20); });
+  const unwatch = () => page.evaluate(() => { clearInterval(window.__poll); return window.__rows; });
+  // the row's clicks against the clock: each dot lit on its click (not before it, at most 0.25 s after), in order;
+  // the word lit at the entry, not before
+  const rowOk = (rows, cl, entry, clock) => {
+    const at = (i) => rows.find((r) => r.c && r.c.lit >= i);
+    const lits = cl.map((_, i) => at(i)), w = rows.find((r) => r.c?.wordOn);
+    const order = rows.filter((r) => r.c).every((r, i, xs) => !i || r.c.lit >= xs[i - 1].c.lit);
+    const timely = lits.every((r, i) => r && clock(r) - cl[i].t >= -0.02 && clock(r) - cl[i].t <= 0.25);
+    return { ok: order && timely && !!w && clock(w) >= entry - 0.02 && clock(w) - entry <= 0.25 && lits.every((r) => !r.c.wordOn), got: lits.map((r, i) => r ? +(clock(r) - cl[i].t).toFixed(3) : null), word: w ? +(clock(w) - entry).toFixed(3) : null };
+  };
+  let cnt = (await ear()).count;
+  ok(!cnt, '3: no row before a take or ▶ Hear');
+  await watch();
+  await page.click('#listen');
+  await page.waitForFunction(() => window.resonateDebug().ear.count?.wordOn, null, { timeout: 15000 });
+  await sleep(300);
+  let rows = await unwatch();
+  cnt = (await ear()).count;
+  const bars = await page.$$eval('#ear-count .ec-bar', (xs) => xs.map((x) => [...x.children].map((c) => (c.classList.contains('ec-word') ? c.textContent : c.hasAttribute('data-big') ? 'B' : 'b')).join(' ')));
+  ok(cnt?.play && cnt.shown && cnt.clicks.length === 5 && JSON.stringify(bars) === JSON.stringify(['B b b', 'B b Amazing']), `3: ▶ Hear in Beats — the count-in row: ${JSON.stringify(bars)} (a bar, then the pickup's missing beats, as ● Sing counts in), shown while it plays`);
+  const hearLits = rows.filter((r) => r.c).map((r) => r.c.lit);
+  ok(hearLits.length && hearLits.every((x, i) => !i || x >= hearLits[i - 1]) && hearLits[hearLits.length - 1] === 4 && rows.some((r) => r.c?.wordOn), `3: ▶ Hear — the dots lit in order (${[...new Set(hearLits)].join(',')}), then the word`);
+  await page.click('#listen'); // (■ Stop)
+  await idle();
+  ok(!(await ear()).count && (await page.$eval('#ear-count', (x) => x.hidden)), '3: ▶ Hear stopped — the row goes');
+  // ● Sing on the click: the row lit from the take's clock until its word has been sung, then the level ring; the
+  // first time on a touch device, 🎧
+  await page.evaluate(() => { window.__sing = { mode: 'beats' }; });
+  await page.evaluate(() => { window.__status = []; window.__spoll = setInterval(() => { const s = document.getElementById('status').textContent; if (s) window.__status.push(s); }, 50); });
+  await watch();
   await page.click('#sing');
   await page.waitForFunction(() => window.resonateDebug().session?.kind === 'sing', null, { timeout: 10000 });
   b = await btns();
+  e = await ear();
   ok(b.sing === '■ Stop' && (await page.evaluate(() => window.resonateSing.state().take)), `3: the take — the primary “${b.sing}”, a take for the shell`);
+  ok(e.tip && (await page.$eval('#ear-tip', (x) => !x.hidden && /headphones/.test(x.textContent))) && e.hints.phones === 1, `3: 🎧 on the first Beats take (a touch device): “${await page.textContent('#ear-tip')}”`);
+  const cl = e.count.clicks, entry = e.count.entry;
   await page.waitForFunction(() => { const x = window.resonateDebug().ear; return x.res?.kind === 'beats'; }, null, { timeout: 40000 });
-  const status = await page.evaluate(() => { clearInterval(window.__poll); return window.__status; });
-  ok(!status.some((s) => /count-in|dB|requesting/.test(s)), `3: no count-in, dB or "requesting mic" in #status (${JSON.stringify([...new Set(status)].slice(0, 4))})`);
+  rows = await unwatch();
+  const status = await page.evaluate(() => { clearInterval(window.__spoll); return window.__status; });
+  ok(!status.some((x) => /count-in|dB|requesting/.test(x)), `3: no count-in, dB or "requesting mic" in #status (${JSON.stringify([...new Set(status)].slice(0, 4))})`);
+  // (the take's clock: nowT, the song as scheduled — the row reads it less the output's latency)
+  const ro = rowOk(rows, cl, entry, (r) => r.nowT);
+  ok(ro.ok && rows.some((r) => r.c?.shown), `3: the row lit in order from the take's clock — each dot ${JSON.stringify(ro.got)} s after its click, the word ${ro.word} s after the entry`);
+  const singing = rows.filter((r) => r.nowT > entry + 1.5 && r.nowT < entry + 6);
+  const lvs = singing.map((r) => r.lv);
+  ok(singing.length && singing.every((r) => r.ring && !r.c?.shown) && Math.max(...lvs) > 0.3 && Math.min(...lvs) < Math.max(...lvs) - 0.05, `3: then the level ring, moving with the singing (--lv ${Math.min(...lvs).toFixed(2)}…${Math.max(...lvs).toFixed(2)})`);
+  ok(!rows.some((r) => r.c?.shown && r.ring), '3: the row and the ring never both');
+  const ringColor = await page.evaluate(() => { const d = document.createElement('div'); d.className = 'ear-ring'; d.style.setProperty('--lv', '1'); document.getElementById('ear-ring').append(d); const c = getComputedStyle(d).boxShadow; d.remove(); return c; });
+  ok(/rgba\(255, 255, 255, 0\.25\)/.test(ringColor), `3: the ring is neutral, not the win's green (${ringColor})`);
   e = await ear();
   r = e.res;
-  ok(r.counts?.beatsAll && /^In on/.test(r.win?.text || ''), `3: Beats with the click — “${e.ui}”`);
-  ok(r.win?.kind === 'entry' && r.onsets?.of === 8 && r.onsets.measured === 8, `3: every start measured (${JSON.stringify(r.onsets)})`);
+  ok(r.counts?.beatsAll && r.win?.kind === 'spot' && /all of them/.test(e.ui) && /✓ Spot on with the click/.test(e.ui) && !r.cue, `3: on the click — “${e.ui}”`);
+  ok(r.onsets?.of === 8 && r.onsets.measured === 8 && Object.values(r.starts).every((x) => x.on && Math.abs(x.dev) < 0.08), `3: every start measured, each on its click (${JSON.stringify(r.onsets)}; dev ${Object.values(r.starts).map((x) => x.dev).join(' ')})`);
+  ok(e.tip && !e.count, '3: 🎧 stays with its result; the row is gone');
+  const actsAll = await page.$$eval('#ear-acts button', (xs) => xs.map((x) => x.textContent));
+  ok(JSON.stringify(actsAll) === '["▶ First note","▶ You"]', `3: all on the click — ▶ You beside ▶ First note (${JSON.stringify(actsAll)})`);
+  // behind the click (0.3 s late every note): said, with ▶ Click and ▶ You; 🎧 once only
+  await page.evaluate(() => { window.__sing = { mode: 'beats', late: 0.3 }; });
+  await page.click('#sing');
+  await page.waitForFunction(() => window.resonateDebug().session?.kind === 'sing', null, { timeout: 10000 });
+  e = await ear();
+  ok(!e.tip && (await page.$eval('#ear-tip', (x) => x.hidden)), '3: 🎧 not again');
+  await page.waitForFunction(() => { const x = window.resonateDebug().ear; return x.res?.kind === 'beats' && !window.resonateDebug().session; }, null, { timeout: 40000 });
+  await page.evaluate(() => { window.__sing = null; });
+  e = await ear();
+  r = e.res;
+  const chips = await page.$$eval('#ear-res .ear-cue button', (xs) => xs.map((x) => x.textContent));
+  ok(r.cue?.kind === 'steady' && r.cue.dir === 'sooner' && !r.counts?.beatsAll && /Behind the click — sing right on it/.test(e.ui) && JSON.stringify(chips) === '["▶ Click","▶ You"]', `3: 0.3 s late on every note — “${e.ui}” ${JSON.stringify(chips)} (dev ${Object.values(r.starts).map((x) => x.dev).join(' ')})`);
+  ok(!/all of them/.test(e.ui) && !/Spot on|Came in on time/.test(e.ui), '3: no “all of them”, no win for the timing');
+  // ▶ Click: the melody and the click over the cue's stretch; ▶ You: the take there with the click
+  for (const [chip, act] of [['▶ Click', 'cue-click'], ['▶ You', 'cue-you']]) {
+    await page.evaluate(() => { window.__atStart = []; window.__watch = true; });
+    await page.click(`#ear-res button[data-act="${act}"]`);
+    await page.waitForFunction(() => window.resonateDebug().ear.run === 'play', null, { timeout: 5000 });
+    await sleep(700);
+    const n = await page.evaluate(() => window.__atStart.length);
+    await idle();
+    await page.evaluate(() => { window.__watch = false; });
+    e = await ear();
+    ok(n >= 2 && !e.flash && e.res?.cue?.kind === 'steady', `3: ${chip} plays (${n} sources started in 0.7 s) and stops by itself, the result kept`);
+  }
+  // line 2 comes in on beat 3: the count-in bar, then its own bar's two beats, then “That”
+  await page.click('#ear-next');
+  await page.click('#listen');
+  await page.waitForFunction(() => window.resonateDebug().ear.count?.play && document.querySelector('#ear-count .ec-word'), null, { timeout: 5000 });
+  const bars2 = await page.$$eval('#ear-count .ec-bar', (xs) => xs.map((x) => [...x.children].map((c) => (c.classList.contains('ec-word') ? c.textContent : c.hasAttribute('data-big') ? 'B' : 'b')).join(' ')));
+  cnt = (await ear()).count;
+  ok(JSON.stringify(bars2) === JSON.stringify(['B b b', 'B b That']) && Math.abs(cnt.entry - 9) < 1e-6 && cnt.clicks.slice(-2).map((c) => c.t).join() === '7.5,8.25', `3: line 2's row — ${JSON.stringify(bars2)}, its own bar's beats at ${cnt.clicks.slice(-2).map((c) => c.t)} s, the entry at ${cnt.entry} s`);
+  await page.click('#listen');
+  await idle();
+  await page.click('#ear-prev');
   // 4. Notes: ■ Stop while the note plays; hold the first target an octave down, the second on pitch
   await page.click('.ear-modes button[data-ear="notes"]');
   b = await btns();

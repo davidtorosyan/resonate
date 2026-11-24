@@ -37,7 +37,7 @@ import { PRACTICE, groupPhrases } from '../public/practice.js';
 import { EAR_PHRASE, judgeFree, judgeBeats, wordOf, countSets, gateFrames } from '../public/ear.js';
 
 const { segments } = earsinger;
-const DONE = new Set(['WP0', 'WP1', 'WP2']); // the work packages landed: their cases are judged
+const DONE = new Set(['WP0', 'WP1', 'WP2', 'WP3']); // the work packages landed: their cases are judged
 const V = !!process.env.V, ONLY = process.env.ONLY ? new RegExp(process.env.ONLY) : null, SHOW_TODO = process.env.TODO !== '0';
 
 let pass = 0, fail = 0;
@@ -170,7 +170,7 @@ function lineRound(S, ph, plan, { phase = 0, seed = 7, prev = null } = {}) {
 // ● Sing with the click (Beats) on a phrase, as startSing(part) runs it. rig: the phone's speaker by default
 // (the clicks reach the mic: the trip measured), { clickLevel: 0 } headphones (the browser's estimate only).
 const RIG = { rt: 0.07, est: 0.04, clickLevel: 0.3 };
-function beatsRound(S, ph, plan, { phase = 0, seed = 7 } = {}) {
+function beatsRound(S, ph, plan, { phase = 0, seed = 7, prev = null } = {}) {
   const rig = { ...RIG, ...plan.rig };
   const rate = plan.slow || 1, spq = S.spq / rate, qToT = (q) => q * spq; // (Beats' Slower: retime(rate))
   const notes = S.notes.map((n) => ({ ...n, t: qToT(n.q), d: qToT(n.q + n.dq) - qToT(n.q) }));
@@ -211,9 +211,11 @@ function beatsRound(S, ph, plan, { phase = 0, seed = 7 } = {}) {
   const s = { latency: rig.est, ac: {}, songT0, count, beatSec, features: { result: () => feat }, part: { guided: true, stage: 'time', phrases: [ph.js] } };
   const take = { range: [ph.j0, ph.j1], grades, frames: fr, latency, guide: 'click' };
   const rhythm = TR.rhythmOf({ s, v: { start: 0 }, cal, stopAt, settings: null, take, score: sc, notes, lines: S.lines, qToT, tapped: false });
-  const ctx = { notes, spq, spq0: S.spq, name: (mm) => noteName(mm, S.flats) };
+  // (as earBeats hands it over: the take as finishSing leaves it — frames and the recording on the song clock as
+  // heard —, the session's features, the meter, the last whole Beats attempt here)
+  const ctx = { notes, spq, spq0: S.spq, name: (mm) => noteName(mm, S.flats), score: sc, qToT, feat, start: -songT0 - latency, prev };
   const t1 = performance.now();
-  const res = judgeBeats(ph, { rhythm, frames: fr, grades }, ctx);
+  const res = judgeBeats(ph, { rhythm, frames: fr, grades, endT, voice: { start: -songT0 - latency } }, ctx);
   return { res, ms: performance.now() - t1, cal, rhythm, grades, sung, truth: truthOf(plan, ns, segs, sung, true) };
 }
 
@@ -323,6 +325,27 @@ const BEATS = [
   { name: '“grace” in 0.2 s late', line: 0, w: 6, word: 'grace!', plan: { starts: { 6: 0.2 } }, wp: 'WP0', want: [X.cue('timing', 6, 'sooner')] },
   { name: 'L2 “once” in 0.2 s late', line: 2, w: 2, word: 'once', plan: { starts: { 2: 0.2 } }, wp: 'WP0', want: [X.cue('timing', 2, 'sooner')] },
   { name: 'silent', line: 0, plan: { silent: true }, wp: 'WP0', want: [X.cue('silent'), ['no counts', (r) => !r.counts]] },
+  // (WP3 beyond the plan's table: the other lines — L1 and L2 come in on beat 3, two clicks after the count-in —,
+  // headphones, 80 %, the entry alone, a beat early, the history, the other singers)
+  { name: 'L1 on time', line: 1, plan: {}, wp: 'WP3', want: [X.beatsAll, X.win('spot')] },
+  { name: 'L1 0.3 s late', line: 1, plan: { late: 0.3 }, wp: 'WP3', want: [X.notBeatsAll, X.cue('steady', null, 'sooner')] },
+  { name: 'L3 on time (its long last note)', line: 3, plan: {}, wp: 'WP3', want: [X.beatsAll, X.win('spot')] },
+  { name: '0.25 s late, headphones (the estimate only)', line: 0, plan: { late: 0.25, rig: { clickLevel: 0 } }, wp: 'WP3', want: [X.notBeatsAll, X.cue('steady', null, 'sooner')] },
+  { name: '0.1 s late, headphones (inside the wider band)', line: 0, plan: { late: 0.1, rig: { clickLevel: 0 } }, wp: 'WP3', want: [X.beatsAll] },
+  { name: 'at 80 %, on time', line: 0, plan: { slow: 0.8 }, wp: 'WP3', want: [X.beatsAll, X.win('spot')] },
+  { name: 'at 80 %, 0.3 s late', line: 0, plan: { slow: 0.8, late: 0.3 }, wp: 'WP3', want: [X.notBeatsAll, X.cue('steady', null, 'sooner')] },
+  { name: 'only the entry 0.25 s late', line: 0, w: 0, word: 'A', plan: { starts: { 0: 0.25 } }, wp: 'WP3', want: [X.cue('timing', 0, 'sooner'), ['not “Came in on time”', (r) => r.win?.kind !== 'entry']] },
+  { name: 'L1 the pickup left out: in a beat late on “saved”, the rest on the click', line: 1, plan: { drop: [0, 1] }, wp: 'WP3', want: [X.noBeats, X.cue('slip', null, 'sooner'), ['no win for the entry', (r) => r.win?.kind !== 'entry']] },
+  { name: 'a beat early (0.75 s)', line: 1, plan: { late: -0.75 }, wp: 'WP3', want: [X.noBeats, X.cue('slip', null, 'later')] },
+  { name: '“grace” held long, the rest late after it (rubato)', line: 0, w: 6, word: 'grace!', plan: { starts: { 7: 0.5, 8: 0.5, 9: 0.5, 10: 0.5 } }, wp: 'WP3', want: [X.notBeatsAll, X.cue('held', 6, 'sooner')] },
+  { name: '“grace” cut short, the rest early after it', line: 0, w: 6, word: 'grace!', plan: { starts: { 7: -0.4, 8: -0.4, 9: -0.4, 10: -0.4 } }, wp: 'WP3', want: [X.notBeatsAll, X.cue('held', 6, 'later')] },
+  { name: 'stops singing after “how”', line: 0, plan: { stop: 7 }, wp: 'WP3', want: [X.cue('missed', 8), X.noTiming] },
+  { name: 'fixed: “grace” late, then on (“sweet” early)', line: 0, before: { starts: { 6: 0.25 } }, plan: { starts: { 8: -0.25 } }, wp: 'WP3', want: [X.win('fixed', 6), X.cue('timing', 8, 'later')] },
+  { name: 'rose: behind the click, then one start off', line: 0, before: { late: 0.25 }, plan: { starts: { 6: 0.25 } }, wp: 'WP3', want: [X.win('rose'), ['♩ up', (r) => !!r.up?.beats], X.cue('timing', 6, 'sooner')] },
+  { name: 'spot on with the click twice running', line: 0, before: {}, plan: {}, wp: 'WP3', want: [X.win('spot'), ['twice', (r) => r.win?.sub === 'again']] },
+  { name: 'quiet (vol 0.03)', line: 0, plan: { vol: 0.03 }, wp: 'WP3', want: [X.beatsAll] },
+  { name: 'vibrato 40¢', line: 0, plan: { vib: 40 }, wp: 'WP3', want: [X.beatsAll] },
+  { name: 'a few notes off pitch, on the click', line: 0, plan: { cents: { 3: 150, 8: -200 } }, wp: 'WP3', want: [X.beatsAll] },
 ];
 
 // ---------------------------------------------------------------------------

@@ -714,6 +714,16 @@ function countInLeft(s, t) {
   return Math.min(n, Math.max(1, n - k));
 }
 
+// A part's count-in (a loop round, a guided round, Ear's Beats — its ● Sing and its ▶ Hear alike): a bar in the
+// meter it starts in, at the song's pace there (up to lastQ), plus — on a line in the song's pickup bar — the
+// pickup's missing beats, fractional when the pickup isn't whole beats.
+function partCountIn(startM, startQ, lastQ) {
+  const meter = meterAt(startM), fbm = feltBeat(meter);
+  const pickLen = (score.measures[startM + 1] ?? score.length) - score.measures[startM];
+  const pickupFill = pickLen < fbm.n * fbm.q - 1e-6 && (score.measureOf?.[startM] ?? startM) === 0 ? (fbm.n * fbm.q - pickLen) / fbm.q : 0;
+  return { meter, beatSec: beatSecAt(startQ, lastQ, meter), count: fbm.n + pickupFill, barBeats: fbm.n, pickup: pickupFill > 0 };
+}
+
 // Every beat of the song: [{ t (s), accent, q }]. A pickup bar (the song's first bar, and its
 // replays after a repeat) counts back from its barline: an eighth pickup in 4/4 has no beat of
 // its own; a 1½-beat pickup has one, half a beat in.
@@ -811,16 +821,13 @@ async function beginSing(part) {
   const startQ = part ? part.fromQ : score.measures[entryIdx] ?? 0;
   const lastQ = part ? notes[part.range[1] - 1].q + notes[part.range[1] - 1].dq : score.length;
   const startM = part ? part.fromM : entryIdx;
-  const meter = part ? meterAt(startM) : countInMeter(startM); // one meter for the count-in's beats, pace and accents
-  const beatSec = beatSecAt(startQ, lastQ, meter); // the count-in's pace: the song's at its start
+  const pci = part ? partCountIn(startM, startQ, lastQ) : null;
+  const meter = pci ? pci.meter : countInMeter(startM); // one meter for the count-in's beats, pace and accents
+  const beatSec = pci ? pci.beatSec : beatSecAt(startQ, lastQ, meter); // the count-in's pace: the song's at its start
   const start = part ? part.from : entryT;
   const end = part ? part.until : songEnd + END_PAD;
   const [j0, j1] = part ? part.range : [0, notes.length];
-  // (a loop round on a line in the song's pickup bar gets the pickup's missing beats too)
-  const pickLen = (score.measures[startM + 1] ?? score.length) - score.measures[startM];
-  const fbm = feltBeat(meter);
-  const pickupFill = part && pickLen < fbm.n * fbm.q - 1e-6 && (score.measureOf?.[startM] ?? startM) === 0 ? (fbm.n * fbm.q - pickLen) / fbm.q : 0;
-  const count = part ? fbm.n + pickupFill : countInBeats();
+  const count = pci ? pci.count : countInBeats();
   const barBeats = feltBeat(meter).n;
   const t0 = ac.currentTime + 0.3;
   const songT0 = t0 + count * beatSec - start; // song time `start` sounds right after the count-in
@@ -867,6 +874,7 @@ async function beginSing(part) {
     gradeUpTo(ft);
     nowT = songT;
     renderYou();
+    if (earBeatsTake()) earTakeTick(songT, r, ac); // (Ear's Beats: the count-in row, the level ring)
     if (!earBeatsTake()) statusEl.textContent = songT < start ? `count-in ${Math.max(1, Math.min(Math.ceil(count), Math.floor((songT - start + count * beatSec) / beatSec) + 1))}` : `${r.db.toFixed(0)} dB`; // (Ear's Beats: no count-in or dB in the controls row)
     renderLive();
     if (take.untilT !== undefined) {
@@ -2253,8 +2261,11 @@ function endBlock(b, nxt = null) {
 //           your own time and tap ■ Done; your start and tempo are found from your pitch (ear.js judgeFree),
 //           the existing grading counts ♩ (starts on time, against your own tempo) and ♪ (notes
 //           within 50¢), then one win and at most one cue with ▶ note / ▶ you.
-//   Beats — ▶ Hear (melody + click + a bar of count-in, mic closed), ● Sing with the click (the guided
-//           take path: count-in, click, rhythmOf → each start on / not) at the ♩ menu's tempo.
+//   Beats — ▶ Hear (melody + click + the count-in ● Sing has, mic closed), ● Sing with the click (the guided
+//           take path: count-in, click) at the ♩ menu's tempo — both with the count-in row (a dot a click, the
+//           first word lit at the entry), then the level ring; ear.js judgeBeats: each start against its click
+//           (the grid less the measured trip), a count off, steady behind / ahead, a drift, a note held long,
+//           a start not sung, one start — ▶ Click / ▶ You (the take with the click) for the timing cues.
 //   Notes — the line's lowest, highest and most-missed notes: ▶ the note (mic closed), ● Match: the note,
 //           then hold it (800 ms within 50¢, any octave, within 6 s); matched → it sounds again; then the line.
 // ▶ during an attempt ends it, uncounted ("Stopped — not counted"). For the shell an attempt is a take (its
@@ -2277,6 +2288,9 @@ const EAR = {
   heard: new Set(), // song|line|key: ▶ Hear has played it (the round ▶ stops pulsing)
   sound: null,      // our own ▶'s sound: { ac, end } (its context's time it has stopped) — a mic opened right after
                     //   hears its tail (pitch.js soundGone): the attempt gates at MIN_RMS until it's gone
+  count: null,      // Beats' count-in row while it shows (earCountRow): ● Sing's, lit from the take's clock, or ▶ Hear's
+  level: 0,         // the Beats take's mic level (the ring; a free attempt's and a hold's are their run's)
+  tip: false,       // 🎧 shown with this Beats take and its result (once per touch device)
 };
 // (a playPiano note rings on RELEASE × 6 after its end: piano.js)
 const EAR_TAIL = 0.72;
@@ -2330,6 +2344,8 @@ function earRegroup(newSong, was) {
   if (newSong) {
     EAR.res = null;
     EAR.flash = "";
+    EAR.tip = false;
+    if (EAR.count && !EAR.count.run) EAR.count = null;
     EAR.latest = {};
     EAR.notesBy = {};
     EAR.heard.clear();
@@ -2360,6 +2376,7 @@ function earHearFirst() {
 function earEnd(run) {
   if (EAR.run !== run) return false;
   EAR.run = null;
+  if (EAR.count?.run === run) EAR.count = null;
   renderEar();
   updateButtons();
   flushRemote();
@@ -2370,6 +2387,7 @@ function earStop() {
   const r = EAR.run;
   if (!r) return;
   EAR.run = null;
+  if (EAR.count?.run === r) EAR.count = null;
   r.stopped = true;
   r.stop?.();
   renderEar();
@@ -2379,14 +2397,17 @@ function earStop() {
 
 // The line (or its first note) on the piano, a click and a count-in for Beats, or one note; mic closed. An
 // attempt under way ends, uncounted (the fix plan's Q-I). kind "notePlay": Notes' note before its hold —
-// the run stays for earNote to hand on to the hold (→ true: it played to its end).
-async function earPlay({ first = false, click = false, midi = null, dur = 1.2, kind = "play" } = {}) {
+// the run stays for earNote to hand on to the hold (→ true: it played to its end). range [ja, jb]: only those
+// notes (a cue's stretch); with click, two clicks before the beat it starts on, then the beat through it (▶ Click).
+// The whole line with the click (Beats' ▶ Hear) counts in as ● Sing does, its row lit as it plays.
+async function earPlay({ first = false, click = false, midi = null, dur = 1.2, kind = "play", range = null } = {}) {
   window.resonateSing?.beforeSound?.(); // (the shell's tuner gives its mic up first: iOS plays quietly while one is open)
   const attempt = EAR.run?.kind === "free" || earBeatsTake();
   earStop();
   if (gblock) stopGuided();
   stopSession();
   stopKeys();
+  EAR.count = null;
   if (attempt) EAR.flash = "Stopped — not counted";
   const ph = earPh();
   if (!ph && midi == null) return false;
@@ -2394,7 +2415,11 @@ async function earPlay({ first = false, click = false, midi = null, dur = 1.2, k
     for (const n of this.nodes) { try { n.stop?.(); } catch {} try { n.disconnect?.(); } catch {} }
     if (this.sound && EAR.sound === this.sound) this.sound.end = Math.min(this.sound.end, this.sound.ac.currentTime + 0.02); // (cut: gone at once)
   } });
-  if (midi == null && !first && EAR.mode === "line") EAR.heard.add(earHeardKey(ph));
+  if (midi == null && !first && !range && EAR.mode === "line") EAR.heard.add(earHeardKey(ph));
+  // (Beats' ▶ Hear: its count-in row shows at once, lit once the sound starts)
+  const sp = midi == null && click && !range ? spanOf(EAR.p, EAR.p) : null;
+  const ci = sp ? earCountIn(ph, sp) : null;
+  if (sp) EAR.count = { ...earCountRow(ph, sp, ci), run };
   updateButtons();
   renderEar();
   const ac = await getPlayCtx("tap");
@@ -2414,19 +2439,29 @@ async function earPlay({ first = false, click = false, midi = null, dur = 1.2, k
     run.stopsAt = () => h.stopsAt();
     run.sound.end = h.stopsAt();
   } else {
-    const js = first ? [ph.j0] : earJs(ph);
-    const T0 = notes[ph.j0].t;
-    let lead = 0;
-    if (click) {
-      const sp = spanOf(EAR.p, EAR.p);
-      const beat = beatSecAt(sp.fromQ), count = Math.round(countInBeats(sp.fromM)) || 4, bar = feltBeat(meterAt(sp.fromM)).n;
-      for (let k = 0; k < count; k++) playClick(ac, t0 + k * beat, k % bar === 0, run.nodes);
-      lead = count * beat + (T0 - sp.from); // (the bar starts after the count-in; the line may start inside it)
-      const base = t0 + count * beat - sp.from;
-      for (const b of beatGrid()) if (b.t >= sp.from - 1e-6 && b.t <= notes[ph.j1 - 1].t + notes[ph.j1 - 1].d + 1e-6) playClick(ac, base + b.t, b.accent, run.nodes);
+    const ja = range ? range[0] : ph.j0, jb = range ? range[1] : ph.j1 - 1;
+    const js = first ? [ph.j0] : earJs({ j0: ja, j1: jb + 1 });
+    let base = t0 - notes[ja].t; // (song s → this context's: no click, the first note at once)
+    if (sp) {
+      // the count-in ● Sing has (partCountIn: a pickup's missing beats, fractional), then the bar's own beats
+      for (let k = 0; k < ci.count; k++) playClick(ac, t0 + k * ci.beatSec, k % ci.barBeats === 0, run.nodes);
+      base = t0 + ci.count * ci.beatSec - sp.from;
+      const last = notes[ph.j1 - 1];
+      for (const b of beatGrid()) if (b.t >= sp.from - 1e-6 && b.t <= last.t + last.d + 1e-6) playClick(ac, base + b.t, b.accent, run.nodes);
+      EAR.count.ac = ac;
+      EAR.count.songT0 = base;
+      earCountPlay(run);
+    } else if (click) {
+      // a stretch with the click: two clicks before the beat it starts on, then the beat to its end
+      const beat = beatSecAt(notes[ja].q), grid = beatGrid(), until = notes[jb].t + notes[jb].d;
+      const g0 = grid.filter((b) => b.t <= notes[ja].t + 1e-6).pop()?.t ?? notes[ja].t;
+      base = t0 - (g0 - 2 * beat);
+      for (const k of [2, 1]) playClick(ac, base + g0 - k * beat, false, run.nodes);
+      for (const b of grid) if (b.t >= g0 - 1e-6 && b.t <= until + 1e-6) playClick(ac, base + b.t, b.accent, run.nodes);
+      end = Math.max(end, base + until + 0.3);
     }
     for (const j of js) {
-      const n = notes[j], when = t0 + lead + (n.t - T0), d = first ? Math.min(1.5, n.d) : n.d;
+      const n = notes[j], when = base + n.t, d = first ? Math.min(1.5, n.d) : n.d;
       playPiano(ac, piano, when, d, earMidi(j), 1.4, run.nodes);
       end = Math.max(end, when + d + 0.3);
       run.sound.end = Math.max(run.sound.end, when + Math.max(0.12, d) + EAR_TAIL);
@@ -2439,6 +2474,53 @@ async function earPlay({ first = false, click = false, midi = null, dur = 1.2, k
   if (kind === "notePlay") return EAR.run === run && !run.stopped; // (Notes: the hold takes over from here)
   earEnd(run);
   return true;
+}
+
+// Beats' count-in, as ● Sing has it (partCountIn on the line's span).
+function earCountIn(ph, sp) {
+  const last = notes[ph.j1 - 1];
+  return partCountIn(sp.fromM, sp.fromQ, last.q + last.dq);
+}
+// Beats' count-in row (the fix plan's screens): every click before the line's first word — the count-in, then
+// the bar's own beats up to it — in bars (a bar's first beat big), then the word, lit at the entry. Song s.
+function earCountRow(ph, sp, ci) {
+  const T1 = notes[ph.j0].t, clicks = [];
+  for (let k = 0; k < ci.count; k++) clicks.push({ t: sp.from - (ci.count - k) * ci.beatSec, big: k % ci.barBeats === 0 });
+  for (const b of beatGrid()) if (b.t >= sp.from - 1e-6 && b.t < T1 - 1e-6) clicks.push({ t: b.t, big: !!b.accent });
+  const w = E.wordOf(ph.j0, notes);
+  return {
+    id: `${songId}|${ph.j0}|${rate}|${Date.now()}`, clicks, word: w?.word || noteName(earMidi(ph.j0)), entry: T1,
+    // (the word on a bar's downbeat: a group of its own — not the song's pickup bar's start: that's a late beat)
+    bar: !ci.pickup && score.measures.some((q) => Math.abs(q - notes[ph.j0].q) < 1e-6),
+    end: T1 + Math.min(notes[ph.j0].d, ci.beatSec), lit: -1, word0: false, gone: false,
+  };
+}
+// The row lit at song time t (as heard): every click gone by, the latest brighter; the word from the entry on.
+// A take's row gives way to the level ring once the first word has been sung (end).
+function earCountTick(t) {
+  const c = EAR.count;
+  if (!c) return;
+  let lit = -1;
+  for (let i = 0; i < c.clicks.length; i++) if (t >= c.clicks[i].t - 0.01) lit = i;
+  const word = t >= c.entry - 0.01;
+  if (lit !== c.lit || word !== c.word0) { c.lit = lit; c.word0 = word; paintCount(); }
+  if (!c.run && !c.gone && t > c.end) { c.gone = true; renderEar(); }
+}
+// ▶ Hear's row, from the play context's clock while it plays.
+function earCountPlay(run) {
+  const step = () => {
+    const c = EAR.count;
+    if (EAR.run !== run || c?.run !== run) return;
+    earCountTick(c.ac.currentTime - c.songT0 - (c.ac.outputLatency || c.ac.baseLatency || 0));
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+// A Beats take's frame (beginSing's tick): the level ring from the take's mic, the row from its song clock.
+function earTakeTick(songT, r, ac) {
+  EAR.level = Math.min(1, Math.max(0, (r.db + 60) / 50));
+  renderEarLevel();
+  earCountTick(songT - (ac.outputLatency || ac.baseLatency || 0));
 }
 
 // ● Sing (the free attempt): the mic, nothing sounding; ■ Done ends it (or 3× the line + 5 s).
@@ -2520,29 +2602,44 @@ async function earDone() {
   earEnd(think);
 }
 
-// ● Sing with the click (Beats): the guided take path — count-in, the click, the line's span.
+// ● Sing with the click (Beats): the guided take path — count-in, the click, the line's span — its count-in row
+// and level ring in Ear; then ear.js judgeBeats: each start against its click (the take's recording, as heard).
+// 🎧 the first time on a touch device: the click is quiet on a phone's speaker while the mic is open.
+const earTouch = () => { try { return matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0; } catch { return false; } };
 async function earBeats() {
   if (gblock) return stopGuided();
   earStop();
   const ph = earPh();
   if (!ph) return;
   EAR.flash = "";
+  EAR.tip = false;
+  if (earTouch() && !earHints.phones) { EAR.tip = true; earHints = { ...earHints, phones: 1 }; store(EH, JSON.stringify(earHints)); }
   const ac = tapContext();
   const b = gblock = { step: { kind: "ear" }, token: {}, phase: "sing", baseRate: rate, ac, savedTake: take?.part ? null : take, sid: songId };
   closeReview();
   stopKeys();
+  const sp = spanOf(EAR.p, EAR.p);
+  EAR.count = earCountRow(ph, sp, earCountIn(ph, sp));
+  EAR.level = 0;
   renderEar();
   updateButtons();
-  const sp = spanOf(EAR.p, EAR.p);
   await startSing({ guided: true, from: sp.from, fromQ: sp.fromQ, fromM: sp.fromM, until: sp.end + MAX_SHIFT + 0.6, range: [sp.j0, sp.j1], ac, token: b.token, guide: "click", view: "practice", lane: "off", stage: "time", record: true, phrases: [ph.js] });
-  if (gblock !== b) return;
-  const t = await session?.ended;
+  if (gblock !== b) { if (EAR.count && !EAR.count.run) { EAR.count = null; renderEar(); } return; } // (the mic refused, stopped meanwhile)
+  const s = session?.kind === "sing" ? session : null;
+  const t = await s?.ended;
+  if (EAR.count && !EAR.count.run) EAR.count = null;
   if (gblock !== b) return;
   gblock = null;
   ac.close().catch(() => {});
   take = b.sid === songId && takeFits(b.savedTake) ? b.savedTake : null;
   if (t && b.sid === songId) {
-    earShow(ph, "beats", { ...E.judgeBeats(ph, t, earCtx()), voice: t.voice, songT0: t.songT0 });
+    // (the take's recording and its features, on the frames' clock — the song as heard; the last whole Beats
+    // attempt here at this speed: "In on … now", "more on the click than last time")
+    let feat = null;
+    try { feat = t.voice ? s.features.result() : null; } catch {}
+    const prev = EAR.last[`${earViewKey("beats", ph)}|${rate}`] || null;
+    const res = E.judgeBeats(ph, t, earCtx({ feat, start: t.voice ? t.voice.start : null, prev }));
+    earShow(ph, "beats", { ...res, voice: t.voice, songT0: t.songT0 });
     earCount("beats");
   }
   renderAll();
@@ -2557,9 +2654,9 @@ async function earBeats() {
 function earShow(ph, kind, res) {
   const view = earViewKey(kind, ph), base = `${view}|${rate}`;
   const prev = EAR.last[base];
-  if (kind !== "line") {
-    res.up = { beats: prev?.counts?.beats != null && res.counts?.beats != null && res.counts.beats > prev.counts.beats, notes: false };
-    res.whole = !!res.counts;
+  if (kind !== "line") { // (judgeBeats gives them: the take sung to its end, the last whole one here)
+    res.up ??= { beats: prev?.counts?.beats != null && res.counts?.beats != null && res.counts.beats > prev.counts.beats, notes: false };
+    res.whole ??= !!res.counts;
   }
   res.kind = kind;
   res.view = view;
@@ -2667,8 +2764,9 @@ async function earNote() {
   raf = requestAnimationFrame(tick);
 }
 
-// ▶ you: the attempt around a moment (song seconds of the fit / the take), from its recording.
-async function earYou(res, at) {
+// ▶ you: the attempt around a moment (song seconds of the fit / the take), from its recording. click (Beats): the
+// click on the beat with it, where it was (the take's recording is on the song's clock as heard).
+async function earYou(res, at, { click = false } = {}) {
   if (!res?.voice) return;
   window.resonateSing?.beforeSound?.();
   earStop();
@@ -2682,6 +2780,12 @@ async function earYou(res, at) {
   const [a, b] = at || [res.voice.start, res.voice.start + Math.min(30, res.voice.data.length / res.voice.sampleRate)];
   const when = ac.currentTime + 0.1;
   playVoice(ac, res.voice, when, a, run.nodes);
+  if (click) {
+    // (the beat in that stretch — and before the song's first beat, the count-in's: the take's line 1 starts there)
+    const gs = beatGrid().filter((g) => g.t >= a - 1e-6 && g.t <= b + 1e-6), beat = gs.length >= 2 ? gs[1].t - gs[0].t : 0;
+    if (beat > 0) for (let t = gs[0].t - beat; t >= a - 1e-6; t -= beat) gs.unshift({ t, accent: false });
+    for (const g of gs) playClick(ac, when + g.t - a, g.accent, run.nodes);
+  }
   run.sound = EAR.sound = { ac, end: when + (b - a) + 0.3 }; // (your own voice is a ▶ too: the next attempt's mic gates it out)
   await earSleep((b - a + 0.3) * 1000);
   if (EAR.run === run) { run.stop(); earEnd(run); }
@@ -2690,7 +2794,30 @@ async function earYou(res, at) {
 // --- Ear on screen --------------------------------------------------------------------------
 function renderEarLevel() {
   const ring = earEl.querySelector(".ear-ring");
-  if (ring) ring.style.setProperty("--lv", String(EAR.run?.level ?? 0));
+  if (ring) ring.style.setProperty("--lv", String(EAR.run ? EAR.run.level ?? 0 : earBeatsTake() ? EAR.level : 0));
+}
+// Beats' count-in row: built once per row, lit in place (earCountTick).
+const countEl = $("ear-count");
+function paintCount() {
+  const c = EAR.count;
+  if (!c) return;
+  if (countEl.dataset.id !== c.id) {
+    countEl.dataset.id = c.id;
+    countEl.textContent = "";
+    let bar = null;
+    const group = () => { bar = document.createElement("span"); bar.className = "ec-bar"; countEl.append(bar); };
+    c.clicks.forEach((k, i) => {
+      if (!bar || (k.big && i > 0)) group();
+      const d = document.createElement("i");
+      d.className = "ec-dot";
+      if (k.big) d.dataset.big = "";
+      bar.append(d);
+    });
+    if (!bar || c.bar) group();
+    bar.append(Object.assign(document.createElement("span"), { className: "ec-word", textContent: c.word }));
+  }
+  countEl.querySelectorAll(".ec-dot").forEach((d, i) => { d.toggleAttribute("data-on", i <= c.lit); d.toggleAttribute("data-now", i === c.lit && !c.word0); });
+  countEl.querySelector(".ec-word")?.toggleAttribute("data-on", c.word0);
 }
 function earButton(text, act, cls = "") {
   const b = document.createElement("button");
@@ -2717,14 +2844,16 @@ function renderEar() {
   earEl.querySelector("#ear-words").textContent = ph.words || P.phraseName(ph, 12, "none");
   for (const b of earEl.querySelectorAll(".ear-modes button")) { b.setAttribute("aria-pressed", String(b.dataset.ear === EAR.mode)); b.disabled = busy; }
   const shown = earShown();
-  // the line's own actions (▶ First note ends an attempt, uncounted — as the dock's ▶)
+  // the line's own actions (▶ First note — in Beats too: a choir never counts you in without a pitch — ends an
+  // attempt, uncounted, as the dock's ▶; ▶ You after an attempt with all of them)
   const acts = earEl.querySelector("#ear-acts");
   acts.textContent = "";
-  if (EAR.mode === "line") {
+  if (EAR.mode !== "notes") {
     const first = earButton("▶ First note", "first");
     first.disabled = k === "think";
     acts.append(first);
-    if (!listening && k !== "think" && !EAR.flash && shown?.res.voice && shown.res.counts?.notesAll) acts.append(earButton("▶ You", "you"));
+    const all = EAR.mode === "line" ? shown?.res.counts?.notesAll : shown?.res.counts?.beatsAll;
+    if (!listening && k !== "think" && !EAR.flash && shown?.res.voice && all) acts.append(earButton("▶ You", "you"));
   }
   // Notes: the names, the target lit, the message
   const nn = earEl.querySelector("#ear-notes");
@@ -2752,10 +2881,17 @@ function renderEar() {
     msg.textContent = k === "hold" ? "hold it…" : k === "notePlay" ? "Listen…" : N.msg;
     nn.append(msg);
   }
-  // the level ring while the mic listens
+  // Beats: the count-in row (● Sing until its first word has been sung; ▶ Hear while it plays), then the level
+  // ring while the mic listens
+  const counting = EAR.mode === "beats" && !!EAR.count && !EAR.count.gone;
+  countEl.hidden = !counting;
+  if (counting) paintCount();
   const ringBox = earEl.querySelector("#ear-ring");
-  ringBox.hidden = !listening;
+  ringBox.hidden = !listening || counting;
   if (listening && !ringBox.firstChild) ringBox.append(Object.assign(document.createElement("div"), { className: "ear-ring" }));
+  renderEarLevel();
+  const tip = earEl.querySelector("#ear-tip");
+  tip.hidden = !(EAR.tip && EAR.mode === "beats");
   // the result: counts, win, cue — the latest for this line and mode, dimmed once you've been away
   const out = earEl.querySelector("#ear-res");
   out.textContent = "";
@@ -2778,8 +2914,19 @@ function renderEar() {
       const c = document.createElement("div");
       c.className = "ear-cue";
       c.append(res.cue.text);
-      if (res.cue.j != null && notes[res.cue.j] && res.cue.kind !== "short") c.append(" ", earButton("▶ note", "cue-note", "chip")); // (the rest's ▶: WP5)
-      if (res.cue.at && res.voice && res.kind === "line") c.append(" ", earButton("▶ you", "cue-you", "chip"));
+      if (res.kind === "beats") {
+        // (Beats: a timing cue's sounds are timing — ▶ Click: the melody and the click over its stretch; ▶ You: the
+        // take there, the click with it; a count off: ▶ Hear, the line with its count-in)
+        const sd = res.cue.sounds || [], row = document.createElement("div");
+        row.className = "ear-chips";
+        if (sd.includes("hear")) row.append(earButton("▶ Hear", "cue-hear", "chip"));
+        if (sd.includes("click") && res.cue.range) row.append(earButton("▶ Click", "cue-click", "chip"));
+        if (sd.includes("you") && res.cue.at && res.voice) row.append(earButton("▶ You", "cue-you", "chip"));
+        if (row.childElementCount) c.append(row);
+      } else {
+        if (res.cue.j != null && notes[res.cue.j] && res.cue.kind !== "short") c.append(" ", earButton("▶ note", "cue-note", "chip")); // (the rest's ▶: WP5)
+        if (res.cue.at && res.voice && res.kind === "line") c.append(" ", earButton("▶ you", "cue-you", "chip"));
+      }
       out.append(c);
     }
   }
@@ -2793,6 +2940,7 @@ earEl.addEventListener("click", (e) => {
     EAR.p += b.id === "ear-prev" ? -1 : 1;
     EAR.res = null; // (the attempt just made stays the line's latest: "Last time" when you come back)
     EAR.flash = "";
+    EAR.tip = false;
     earSaveLine();
     cursorToLine(lineOf[earPh().j0]);
     renderEar(); updateButtons();
@@ -2803,11 +2951,20 @@ earEl.addEventListener("click", (e) => {
     EAR.mode = b.dataset.ear;
     EAR.res = null;
     EAR.flash = "";
+    EAR.tip = false;
     renderEar(); updateButtons();
     return;
   }
   if (act === "first") return earPlay({ first: true });
+  if (act === "you" && res?.kind === "beats" && ph) {
+    // (the take over the line, a beat before it to past its end, the click with it)
+    const last = notes[ph.j1 - 1];
+    return earYou(res, [Math.max(res.voice.start, notes[ph.j0].t - beatSecAt(notes[ph.j0].q)), last.t + last.d + 0.6], { click: true });
+  }
   if (act === "you") return earYou(res, null);
+  if (act === "cue-hear") return earPlay({ click: true });
+  if (act === "cue-click" && res?.cue?.range) return earPlay({ click: true, range: res.cue.range });
+  if (act === "cue-you" && res?.cue?.at && res.kind === "beats") return earYou(res, res.cue.at, { click: true });
   if (act === "cue-note" && res?.cue?.j != null && notes[res.cue.j]) { const n = notes[res.cue.j]; return earPlay({ midi: earMidi(res.cue.j), dur: Math.max(0.6, Math.min(1.5, n.d)) }); }
   if (act === "cue-you" && res?.cue?.at) return earYou(res, res.cue.at);
   if (act === "target" && ph) {
@@ -2857,6 +3014,9 @@ function earDebug() {
     // (Notes: targets as offsets in the line; js — the same notes' indices in the song)
     notes: N && { targets: N.targets, js: ph ? N.targets.map((k) => ph.j0 + k) : [], i: N.i, done: [...N.done], msg: N.msg },
     lines: psong?.phrases.map((p) => ({ j0: p.j0, j1: p.j1, words: p.words })) || [], hints: { ...earHints },
+    // (Beats: the count-in row — its clicks (song s), the latest lit, the word lit, shown; the take's level; 🎧)
+    count: EAR.count && { clicks: EAR.count.clicks.map((c) => ({ t: +c.t.toFixed(3), big: c.big })), word: EAR.count.word, entry: EAR.count.entry, lit: EAR.count.lit, wordOn: EAR.count.word0, gone: EAR.count.gone, play: !!EAR.count.run, shown: !countEl.hidden },
+    level: earBeatsTake() ? EAR.level : EAR.run?.level ?? null, tip: EAR.tip,
   };
 }
 

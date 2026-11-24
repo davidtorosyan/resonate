@@ -190,6 +190,7 @@
       .ear-counts { font-size: 1.15rem; font-weight: 600; }
       .ear-win { color: #4ade80; font-weight: 600; }
       .ear-cue { color: #ffe6a0; }
+      .ear-chips { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.4rem; }
       .ear-names { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.4rem; }
       .ear-names button[data-state="cur"] { background: #a64fff; border-color: #a64fff; color: #fff; font-weight: 700; }
       .ear-names button[data-state="done"] { border-color: #4ade80; color: #4ade80; }
@@ -197,11 +198,25 @@
       .ear-msg { text-align: center; color: #ffe6a0; min-height: 1.3rem; margin-top: 0.4rem; }
       #ear-ring { display: flex; justify-content: center; }
       #ear-ring[hidden] { display: none; }
+      /* Beats' count-in row: a dot a click, in bars (a bar's first beat bigger), then the line's first word — each lit
+         as it comes (no animation of its own: a colour change) */
+      #ear-count { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 0.3rem 1.1rem; min-height: 64px; }
+      #ear-count[hidden] { display: none; }
+      .ec-bar { display: inline-flex; align-items: center; gap: 0.5rem; }
+      .ec-dot { display: block; width: 11px; height: 11px; border-radius: 50%; background: rgba(255,255,255,0.18); }
+      .ec-dot[data-big] { width: 16px; height: 16px; }
+      .ec-dot[data-on] { background: rgba(166,79,255,0.55); }
+      .ec-dot[data-now] { background: #d0a6ff; box-shadow: 0 0 0 3px rgba(166,79,255,0.35); }
+      .ec-word { font-weight: 700; font-size: 1.2rem; color: rgba(255,255,255,0.4); padding-left: 0.25rem; }
+      .ec-word[data-on] { color: #fff; text-shadow: 0 0 12px rgba(166,79,255,0.9); }
+      #ear-tip { text-align: center; font-size: 0.85rem; color: rgba(255,255,255,0.65); }
+      #ear-tip[hidden] { display: none; }
       /* ▶ Hear it first: the ▶ pulses (no motion: a still ring) */
       #listen[data-pulse] { animation: earpulse 1.6s ease-in-out infinite; }
       @keyframes earpulse { 50% { box-shadow: 0 0 0 6px rgba(166,79,255,0.45); } }
       @media (prefers-reduced-motion: reduce) { #listen[data-pulse] { animation: none; box-shadow: 0 0 0 3px rgba(166,79,255,0.6); } }
-      .ear-ring { --lv: 0; width: 64px; height: 64px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.15); box-shadow: 0 0 0 calc(var(--lv) * 14px) rgba(74,222,128,0.35); transition: box-shadow 60ms linear; }
+      /* the level ring: how loud the mic hears you — neutral, never the win's green (it isn't a judgment) */
+      .ear-ring { --lv: 0; width: 64px; height: 64px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.15); box-shadow: 0 0 0 calc(var(--lv) * 14px) rgba(255,255,255,0.25); transition: box-shadow 60ms linear; }
       /* Guided: the step's card replaces the results row, the play bar and the chips (More → Tools has them). */
       body[data-guided="true"] .results-head, body[data-guided="true"] #playbar, body[data-guided="true"] #chips, body[data-guided="true"] #loopbar { display: none; }
       /* (from More → Tools: a loop shows its bar instead of the card; 🎤 Pitch its readout) */
@@ -511,7 +526,9 @@
           <button type="button" data-ear="notes">Notes</button>
         </div>
         <div id="ear-notes" hidden></div>
+        <div id="ear-count" hidden aria-hidden="true"></div>
         <div id="ear-ring" hidden></div>
+        <div id="ear-tip" hidden>🎧 Wired headphones work best here</div>
         <div id="ear-res"></div>
         <div id="ear-acts"></div>
       </section>
