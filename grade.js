@@ -22,11 +22,20 @@
 // frames: [{ t (song time of the audio, s), midi | null, rms }] in time order.
 // notes:  [{ midi, t, d }] (s), in time order.
 
-import { fold, median } from "./music.js?v=102";
+import { fold, median } from "./music.js?v=103";
 
 export const MAX_SHIFT = 0.24;
 const STEP = 0.03;
 const SHIFTS = Array.from({ length: Math.round((2 * MAX_SHIFT) / STEP) + 1 }, (_, i) => -MAX_SHIFT + i * STEP);
+// The shifts a slot may take for another maxShift (gradeTake's option; Ear's final grading moves a
+// slot at most 0.1 s, so it can't borrow its neighbour's pitch): STEP steps out from 0, up to it.
+const shiftsCache = new Map();
+const shiftsFor = (ms) => {
+  if (ms === MAX_SHIFT) return SHIFTS;
+  let s = shiftsCache.get(ms);
+  if (!s) { const k = Math.max(0, Math.round(ms / STEP)); s = Array.from({ length: 2 * k + 1 }, (_, i) => +((i - k) * STEP).toFixed(4)); shiftsCache.set(ms, s); }
+  return s;
+};
 const MOVE = 0.15;        // cost per second a note's start moves (keep to the score unless it helps)
 const DRIFT = 0.1;        // cost per second the shift changes between joined notes
 const DRIFT_REST = 0.03;  //   …across a rest (a new entry may be early or late on its own)
@@ -57,12 +66,14 @@ function slot(n, a, b, endT) {
   return [s0 + Math.min(GRACE_MAX, GRACE_FRAC * (n.t + n.d + b - s0)), e];
 }
 
-// Per note, prefix sums of matched (within 50¢) frames over the region any slot can reach.
-function prep(notes, frames) {
+// Per note, prefix sums of matched (within 50¢) frames over the region any slot can reach (moved by
+// up to `ms`, + the rest before it that slotCost looks into: up to MAX_SHIFT).
+function prep(notes, frames, ms = MAX_SHIFT) {
   const dt = frames.length > 1 ? (frames[frames.length - 1].t - frames[0].t) / (frames.length - 1) : 0;
+  const reach = Math.max(ms, MAX_SHIFT) + ms;
   return notes.map((n) => {
-    const lo = lowerBound(frames, n.t - 2 * MAX_SHIFT - 0.01); // (a moved slot + the rest before it)
-    const hi = lowerBound(frames, n.t + n.d + 2 * MAX_SHIFT + 0.01, lo);
+    const lo = lowerBound(frames, n.t - reach - 0.01); // (a moved slot + the rest before it)
+    const hi = lowerBound(frames, n.t + n.d + reach + 0.01, lo);
     const match = new Int32Array(hi - lo + 1);
     for (let i = lo; i < hi; i++) {
       const m = frames[i].midi;
@@ -151,13 +162,15 @@ const reached = (notes, endT) => {
 
 // Grade a whole take (after it ends): the best moved slots for all notes together.
 // Returns one grade per note: { status, hit, dev, octave, sungMidi, shift, from, to }.
-export function gradeTake(notes, frames, { endT = Infinity, gate = 0.012 } = {}) {
+// maxShift: how far a slot's start may move (s; MAX_SHIFT — Sing's takes — unless given).
+export function gradeTake(notes, frames, { endT = Infinity, gate = 0.012, maxShift = MAX_SHIFT } = {}) {
   notes = withRests(notes);
   gate = loudGate(frames, gate);
   const N = reached(notes, endT);
   const grades = notes.map(() => ({ status: "unsung" }));
   if (!N) return grades;
-  const p = prep(notes.slice(0, N), frames);
+  const SHIFTS = shiftsFor(maxShift);
+  const p = prep(notes.slice(0, N), frames, maxShift);
   const K = SHIFTS.length;
   let cost = Float64Array.from(SHIFTS, (a) => MOVE * Math.abs(a));
   const back = [];

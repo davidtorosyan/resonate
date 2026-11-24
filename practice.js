@@ -73,7 +73,7 @@ function joinsNext(notes, j) {
   }
   return false;
 }
-function wordsOf(notes, js) {
+export function wordsOf(notes, js) {
   let s = "";
   for (const j of js) {
     const n = notes[j];

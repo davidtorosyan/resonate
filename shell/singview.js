@@ -9,12 +9,12 @@
 // The song page around it (songview.js) opens and closes it; a touch that can start sound or a mic
 // in Sing parks the tuner and stops the Score first (beforeSound), synchronously, so Sing's handler
 // finds no live track and sets its own audio session.
-import { scopeCss } from "./scopecss.js?v=102";
-import { staleShell, pageOpen } from "./chrome.js?v=102";
+import { scopeCss } from "./scopecss.js?v=103";
+import { staleShell, pageOpen } from "./chrome.js?v=103";
 
 const $ = (id) => document.getElementById(id);
 // Controls in Sing that can't start sound or a mic: a touch there leaves the tuner listening.
-const SILENT = "select, #options-btn, #op-close, #co-more, #mo-close, #rv-close, #rv-save, #tt-close, #ta-close, #save-song, #remove-song, #review-btn, #map, #remote-btn, #tt-pad, #ta-pad, #ta-undo, #ta-prevline, #ta-nextline";
+const SILENT = "select, #options-btn, #op-close, #co-more, #mo-close, #rv-close, #rv-save, #tt-close, #ta-close, #save-song, #remove-song, #review-btn, #map, #remote-btn, #tt-pad, #ta-pad, #ta-undo, #ta-prevline, #ta-nextline, #ear-prev, #ear-next, #ear-lines, #earlines button";
 
 // The shell's own look for Sing's insides (after the scoped sing.html CSS: same specificity, later wins).
 const OVERRIDES = `
@@ -55,7 +55,7 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
     return (loading ||= (async () => {
       if (!mounted) await mount();
       mounted = true;
-      await import("../sing.js?v=102");
+      await import("../sing.js?v=103");
       S = window.resonateSing;
       singDebug = window.resonateDebug;
       singBusy = window.resonateBusy;
@@ -95,16 +95,19 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
     lw.firstChild.append(listen);
     const corner = document.querySelector(".dock .row .corner");
     corner.before(lw, sing);
-    new MutationObserver(() => { // (sing.js writes "▶ Listen" / "■ Stop": the round button shows the glyph, the label the word)
+    // (sing.js writes "▶ Listen" / "■ Stop": the round button shows the glyph, the label the word — sing.js's
+    // data-caption when it gives one: Ear's "Hear" / "Stop")
+    new MutationObserver(() => {
       const stop = listen.textContent.includes("■");
       listen.toggleAttribute("data-stop", stop);
-      lw.querySelector(".l").textContent = stop ? "Stop" : "Listen";
-    }).observe(listen, { childList: true, characterData: true, subtree: true });
+      const l = listen.dataset.caption || (stop ? "Stop" : "Listen"), el = lw.querySelector(".l");
+      if (el.textContent !== l) el.textContent = l;
+    }).observe(listen, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["data-caption"] });
     // The sheets, get-ready and the drop zone: a layer of their own.
     const layer = document.createElement("div");
     layer.className = "sing-scope";
     layer.id = "sing-layer";
-    for (const id of ["drop", "getready", "options", "taptempo", "tapalong", "more", "review"]) layer.append(take(`#${id}`));
+    for (const id of ["drop", "getready", "options", "earlines", "taptempo", "tapalong", "more", "review"]) layer.append(take(`#${id}`));
     document.body.insertBefore(layer, $("places")); // (before Record / Voice / Assistants: sing.js finds its own ids first)
 
     // A touch that can start sound or a mic parks the tuner and stops the Score first (capture:
@@ -131,13 +134,13 @@ export function mountSing({ version, beforeSound, onSong, onLoad = () => {} }) {
   }
   // Back: Sing's own topmost sheet first (→ true: one closed, the page stays).
   function closeSheet() {
-    for (const [sheet, btn] of [["getready", null], ["tapalong", "ta-close"], ["taptempo", "tt-close"], ["options", "op-close"], ["more", "mo-close"], ["review", "rv-close"]]) {
+    for (const [sheet, btn] of [["getready", null], ["tapalong", "ta-close"], ["taptempo", "tt-close"], ["options", "op-close"], ["earlines", "el-close"], ["more", "mo-close"], ["review", "rv-close"]]) {
       const el = $(sheet);
       if (el && !el.hidden) { btn ? $(btn).click() : el.click(); return true; }
     }
     return false;
   }
-  const sheetOpen = () => ["getready", "tapalong", "taptempo", "options", "more", "review"].some((id) => { const el = $(id); return el && !el.hidden; });
+  const sheetOpen = () => ["getready", "tapalong", "taptempo", "options", "earlines", "more", "review"].some((id) => { const el = $(id); return el && !el.hidden; });
   // Shown or not (the region, its dock buttons, the AI button): the shell's layout decides.
   function show(on) {
     region.hidden = !on;

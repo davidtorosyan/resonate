@@ -85,7 +85,8 @@ export const drop = (gh) => gh?.el.remove();
 // fades in just after, from a little way toward where the old one was.
 export function morph(gh, el) {
   if (!gh) { fadeIn(el, { dur: DUR }); return; }
-  if (!visible(el) || document.hidden) { drop(gh); return; }
+  if (document.hidden) { drop(gh); return; }
+  if (!visible(el)) { fadeOut(gh); return; } // (the new form not shown — Sing's Ear hides the tuner: the old one fades where it was)
   const a = gh.r, b = el.getBoundingClientRect();
   if (reduced()) {
     fadeOut(gh);

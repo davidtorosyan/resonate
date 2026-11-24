@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0f0f1e" />
     <title>Resonate · Sing</title>
-    <script src="away.js?v=102" data-open="sing"></script>
+    <script src="away.js?v=103" data-open="sing"></script>
     <style>
       :root { color-scheme: dark; }
       /* An open menu's list takes the option's own colours (Chrome on Windows drew the see-through
@@ -166,14 +166,49 @@
       .map-strip i[data-new="true"] { animation: map-new 1.2s ease-out 2; }
       @keyframes map-new { 50% { filter: brightness(1.8); } }
       @media (prefers-reduced-motion: reduce) { .map-strip i[data-new="true"] { animation: none; } #coach { transition: none; } }
-      /* Ear (E8 prototype): one phrase, Sing · Beats · Notes — no lane, no colours, by ear */
-      #ear { display: flex; flex-direction: column; gap: 0.7rem; padding: 0.6rem 0.2rem 0.4rem; }
+      /* Ear (E8 prototype): one line, Line · Beats · Notes — no lane, no colours, by ear. Top to bottom: ‹ n / N ›, the
+         line's words, the tabs, the first times' hint, the action row (▶ First note, Normal · Slow · Slower), then the
+         stage — a slot of its own height for the ring, the count-in row, Notes' row and the result: nothing above it
+         moves between empty, listening and a result */
+      #ear { display: flex; flex-direction: column; gap: 0.6rem; padding: 0.5rem 0.2rem 0.4rem; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
       #ear[hidden] { display: none; }
       body[data-ear="true"] #lyrics, body[data-ear="true"] #lane, body[data-ear="true"] #map, body[data-ear="true"] #coach, body[data-ear="true"] #results { display: none !important; }
       .ear-top { display: flex; align-items: center; justify-content: center; gap: 1rem; }
-      .ear-nav { font: inherit; font-size: 1.4rem; width: 44px; height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05); color: #e8e8f0; cursor: pointer; }
+      .ear-nav { flex: none; font: inherit; font-size: 1.4rem; width: 44px; height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05); color: #e8e8f0; cursor: pointer; }
       .ear-nav:disabled { opacity: 0.35; cursor: default; }
-      #ear-name { color: rgba(255,255,255,0.55); font-size: 0.85rem; }
+      /* the lines: ‹ the dots (≤ 10 lines; the singer's own a diamond; ♩ or ♪ secured dim green, both bright; the open
+         one larger) or the open line's first words ▾ › — a tap opens the Lines sheet */
+      .ear-lines { font: inherit; display: inline-flex; align-items: center; justify-content: center; min-width: 96px; max-width: min(62vw, 22rem); min-height: 44px; padding: 0 0.9rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05); color: #e8e8f0; cursor: pointer; }
+      .ear-lines:disabled { opacity: 0.6; cursor: default; }
+      .ear-lines[data-words] { width: min(62vw, 22rem); } /* (one width whatever the words: ‹ › stay under the thumb from line to line) */
+      #ear-name { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; color: rgba(255,255,255,0.8); font-size: 0.9rem; }
+      .eld { display: block; flex: none; width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.5); box-sizing: border-box; }
+      .eld[data-own] { border-radius: 1.5px; transform: rotate(45deg) scale(0.86); }
+      .eld[data-sec="b"], .eld[data-sec="n"] { background: rgba(74,222,128,0.4); border-color: #4ade80; }
+      .eld[data-sec="bn"] { background: #4ade80; border-color: #4ade80; }
+      .eld[data-cur] { width: 13px; height: 13px; border: 2px solid #fff; }
+      .eld[data-cur]:not([data-sec]) { background: rgba(255,255,255,0.85); }
+      .eld[data-new] { animation: eldnew 0.8s ease-out 2; }
+      @keyframes eldnew { 50% { box-shadow: 0 0 0 6px rgba(74,222,128,0.5); } }
+      @media (prefers-reduced-motion: reduce) { .eld[data-new] { animation: none; } }
+      .elw { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .elv { flex: none; font-size: 0.75rem; color: rgba(255,255,255,0.55); }
+      /* the Lines sheet: a row a line (♩ ♪ green once secured, ✕ on the singer's own); Pick words: the song's words */
+      .el-row { display: flex; align-items: center; gap: 0.4rem; border-bottom: 1px solid rgba(255,255,255,0.07); }
+      .el-go { flex: 1; min-width: 0; min-height: 44px; text-align: left; font: inherit; font-size: 0.95rem; line-height: 1.3; background: none; border: 0; color: #e8e8f0; padding: 0.35rem 0.15rem; cursor: pointer; }
+      .el-row[data-cur] .el-go { color: #d0a6ff; font-weight: 600; }
+      .el-marks { flex: none; display: inline-flex; gap: 0.15rem; color: rgba(255,255,255,0.22); font-size: 1.05rem; }
+      .el-marks .ear-ic[data-on] { color: #4ade80; }
+      .el-x { flex: none; font: inherit; font-size: 0.85rem; min-width: 44px; min-height: 44px; border-radius: 10px; border: 1px solid transparent; background: none; color: rgba(255,255,255,0.55); cursor: pointer; }
+      .el-x[data-arm] { color: #ffe6a0; border-color: rgba(255,230,160,0.5); padding: 0 0.6rem; }
+      .el-foot { display: flex; justify-content: center; margin-top: 0.8rem; }
+      .el-foot:empty { display: none; }
+      .el-hint { text-align: center; color: #d0a6ff; margin: 0.2rem 0 0.5rem; }
+      .el-words { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.4rem 0; border-bottom: 1px solid rgba(255,255,255,0.07); }
+      .el-words button { font: inherit; font-size: 0.95rem; min-height: 40px; padding: 0.3rem 0.6rem; border-radius: 10px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.05); color: #e8e8f0; cursor: pointer; }
+      .el-words button[data-a] { background: #a64fff; border-color: #a64fff; color: #fff; font-weight: 600; }
+      .el-words button[data-far] { opacity: 0.38; }
+      #earlines .chip { font: inherit; font-size: 0.9rem; color: #e8e8f0; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; padding: 0.4rem 1rem; min-height: 44px; cursor: pointer; }
       #ear-words { text-align: center; font-size: clamp(1.3rem, 5vw, 1.9rem); font-weight: 600; line-height: 1.3; color: #fff; }
       .ear-modes { display: flex; justify-content: center; gap: 0; }
       .ear-modes button { font: inherit; font-size: 0.95rem; padding: 0.5rem 1.1rem; min-height: 40px; border: 1px solid rgba(255,255,255,0.2); background: transparent; color: #cfcfe0; cursor: pointer; }
@@ -181,20 +216,113 @@
       .ear-modes button:last-child { border-radius: 0 999px 999px 0; }
       .ear-modes button[aria-pressed="true"] { background: #a64fff; border-color: #a64fff; color: #fff; font-weight: 600; }
       .ear-modes button:disabled { opacity: 0.5; }
+      /* the first times' hint: its line keeps its place while it has nothing to say (an attempt, a result) */
+      #ear-hint { text-align: center; color: #d0a6ff; font-size: 0.95rem; line-height: 1.35; min-height: 1.35em; }
+      #ear-hint[hidden] { display: none; }
+      #ear-hint[data-quiet] { visibility: hidden; }
       #ear-acts { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.5rem; }
-      #ear-acts button, .ear-cue .chip, .ear-names button { font: inherit; font-size: 0.9rem; color: #e8e8f0; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; padding: 0.4rem 0.9rem; min-height: 38px; cursor: pointer; }
-      #ear-res { text-align: center; display: flex; flex-direction: column; gap: 0.35rem; min-height: 2.2rem; }
-      .ear-counts { font-size: 1.15rem; font-weight: 600; }
+      #ear-acts button, #ear .chip, .ear-names button { font: inherit; font-size: 0.9rem; color: #e8e8f0; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; padding: 0.4rem 0.9rem; min-height: 40px; cursor: pointer; }
+      #ear-acts button:disabled, #ear .chip:disabled { opacity: 0.45; cursor: default; }
+      #ear-acts button[aria-pressed="true"] { background: rgba(166,79,255,0.3); border-color: #a64fff; color: #fff; }
+      /* Normal · Slow · Slower: the ♩ menu's speed, three segments */
+      .ear-speed { display: inline-flex; }
+      #ear-acts .ear-speed button { border-radius: 0; padding: 0.4rem 0.7rem; margin-left: -1px; }
+      #ear-acts .ear-speed button:first-child { border-radius: 999px 0 0 999px; margin-left: 0; }
+      #ear-acts .ear-speed button:last-child { border-radius: 0 999px 999px 0; }
+      #ear-stage { display: flex; flex-direction: column; gap: 0.6rem; min-height: 12.5rem; }
+      #ear-res { text-align: center; display: flex; flex-direction: column; gap: 0.4rem; }
+      #ear-res[hidden] { display: none; }
+      #ear-res[data-old] > :not(.ear-last) { opacity: 0.55; }
+      .ear-last { font-size: 0.78rem; color: rgba(255,255,255,0.5); }
+      .ear-flash { color: rgba(255,255,255,0.6); }
       .ear-win { color: #4ade80; font-weight: 600; }
+      /* the counts: ♩ and ♪ drawn alike (the ♩ glyph came from a font with a wide gap), the unit in words; a count
+         that rose since the last attempt here green — no ↑ (it read as "sing higher") */
+      .ear-counts { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.15rem 0.5rem; font-size: 1.15rem; font-weight: 600; }
+      .ear-sep { color: rgba(255,255,255,0.35); }
+      .ear-count[data-up] { color: #4ade80; }
+      .ear-ic { display: inline-block; width: 0.62em; height: 1em; vertical-align: -0.14em; fill: currentColor; margin-right: 0.3em; }
+      .ear-tempo { font-size: 0.85rem; color: rgba(255,255,255,0.5); }
+      .ear-tempo .ear-ic { margin: 0 -0.12em 0 0.25em; } /* (the icon's box is wider than the note: “♩=62”, no gap) */
       .ear-cue { color: #ffe6a0; }
+      #ear u { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.2em; }
+      .ear-chips { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.5rem; }
+      .ear-next { display: flex; justify-content: center; margin-top: 0.2rem; }
+      #ear .ear-next .chip { border-color: rgba(166,79,255,0.75); color: #fff; }
+      /* Notes: the line's pitches low → high — the name, the syllable first sung on it, a dot on a target (amber: off
+         last time; green: held) — the current one lit */
       .ear-names { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.4rem; }
-      .ear-names button[data-state="cur"] { background: #a64fff; border-color: #a64fff; color: #fff; font-weight: 700; }
-      .ear-names button[data-state="done"] { border-color: #4ade80; color: #4ade80; }
+      .ear-names button { display: inline-flex; flex-direction: column; align-items: center; gap: 0.12rem; min-width: 3.3rem; padding: 0.35rem 0.55rem 0.3rem; border-radius: 14px; line-height: 1.15; }
+      .ear-names b { font-weight: 600; font-size: 0.95rem; }
+      .ear-names small { font-size: 0.74rem; color: rgba(255,255,255,0.6); max-width: 6.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ear-dot { display: block; width: 7px; height: 7px; border-radius: 50%; }
+      .ear-names button[data-state] .ear-dot { background: rgba(208,166,255,0.85); }
+      .ear-names button[data-state=""] .ear-dot { background: transparent; }
+      .ear-names button[data-off] .ear-dot { background: #ffc46b; }
+      .ear-names button[data-state="done"] .ear-dot { background: #4ade80; }
+      .ear-names button[data-state="cur"] { background: #a64fff; border-color: #a64fff; color: #fff; }
+      .ear-names button[data-state="cur"] b { font-weight: 700; }
+      .ear-names button[data-state="cur"] small { color: rgba(255,255,255,0.85); }
+      .ear-names button[data-state="done"] { border-color: rgba(74,222,128,0.7); }
       .ear-names button[data-state="todo"] { border-color: rgba(166,79,255,0.7); }
-      .ear-msg { text-align: center; color: #ffe6a0; min-height: 1.3rem; margin-top: 0.4rem; }
-      #ear-ring { display: flex; justify-content: center; }
+      .ear-msg { text-align: center; color: #e8e8f0; min-height: 1.4rem; margin-top: 0.5rem; }
+      .ear-msg[data-tone="win"] { color: #4ade80; font-weight: 600; }
+      .ear-msg[data-tone="cue"] { color: #ffe6a0; }
+      .ear-msg[data-tone="fact"] { color: rgba(255,255,255,0.6); font-size: 0.9rem; }
+      .ear-msg + .ear-msg { margin-top: 0.15rem; }
+      .ear-keyoffer { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; color: #ffe6a0; }
+      /* the level ring while the mic listens — "Sing" inside it once the mic is ready, the first times "Tap ■ Done at
+         the end" under it */
+      #ear-ring { display: flex; flex-direction: column; align-items: center; gap: 0.7rem; padding-top: 0.6rem; }
       #ear-ring[hidden] { display: none; }
-      .ear-ring { --lv: 0; width: 64px; height: 64px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.15); box-shadow: 0 0 0 calc(var(--lv) * 14px) rgba(74,222,128,0.35); transition: box-shadow 60ms linear; }
+      .ear-ring-t { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 600; font-size: 0.95rem; color: #fff; }
+      .ear-ring-hint { color: rgba(255,255,255,0.6); font-size: 0.9rem; min-height: 1.3em; }
+      /* Beats' count-in row: a dot a click, in bars (a bar's first beat bigger), then the line's first word — each lit
+         as it comes (no animation of its own: a colour change) */
+      #ear-count { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 0.3rem 1.1rem; min-height: 64px; }
+      #ear-count[hidden] { display: none; }
+      .ec-bar { display: inline-flex; align-items: center; gap: 0.5rem; }
+      .ec-dot { display: block; width: 11px; height: 11px; border-radius: 50%; background: rgba(255,255,255,0.18); }
+      .ec-dot[data-big] { width: 16px; height: 16px; }
+      .ec-dot[data-on] { background: rgba(166,79,255,0.55); }
+      .ec-dot[data-now] { background: #d0a6ff; box-shadow: 0 0 0 3px rgba(166,79,255,0.35); }
+      .ec-word { font-weight: 700; font-size: 1.2rem; color: rgba(255,255,255,0.4); padding-left: 0.25rem; }
+      .ec-word[data-on] { color: #fff; text-shadow: 0 0 12px rgba(166,79,255,0.9); }
+      #ear-tip { text-align: center; font-size: 0.85rem; color: rgba(255,255,255,0.65); }
+      #ear-tip[hidden] { display: none; }
+      /* ▶ Hear it first: the ▶ pulses (no motion: a still ring) */
+      #listen[data-pulse] { animation: earpulse 1.6s ease-in-out infinite; }
+      @keyframes earpulse { 50% { box-shadow: 0 0 0 6px rgba(166,79,255,0.45); } }
+      @media (prefers-reduced-motion: reduce) { #listen[data-pulse] { animation: none; box-shadow: 0 0 0 3px rgba(166,79,255,0.6); } }
+      /* the level ring: how loud the mic hears you — neutral, never the win's green (it isn't a judgment) */
+      .ear-ring { --lv: 0; position: relative; width: 64px; height: 64px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.15); box-shadow: 0 0 0 calc(var(--lv) * 14px) rgba(255,255,255,0.25); transition: box-shadow 60ms linear; }
+      /* a Notes hold: the time left, a thin arc on the ring emptying over the 6 s (time, not pitch) */
+      .ear-arc { display: none; position: absolute; inset: -3px; width: calc(100% + 6px); height: calc(100% + 6px); transform: rotate(-90deg); pointer-events: none; }
+      .ear-ring[data-arc] .ear-arc { display: block; }
+      .ear-arc circle { fill: none; stroke: rgba(255,255,255,0.6); stroke-width: 2; stroke-dasharray: 100; stroke-dashoffset: 0; }
+      /* An iPad (#ear[data-big]: a window ≥ 700 px wide whose region gives Ear ≥ 560 px of height — sing.js earRoom; the
+         Score stacked under Sing leaves it less: a phone's sizes there): the column centred in the space it has, to be
+         read from a music stand — the words 2.4rem, the counts 1.6rem, every button and chip ≥ 48 px */
+      #ear[data-big] { width: 100%; max-width: 640px; margin: auto; gap: 0.85rem; box-sizing: border-box; }
+      #ear[data-big] #ear-words { font-size: 2.4rem; }
+      #ear[data-big] .ear-counts { font-size: 1.6rem; }
+      #ear[data-big] #ear-hint, #ear[data-big] .ear-win, #ear[data-big] .ear-cue, #ear[data-big] .ear-flash, #ear[data-big] .ear-msg, #ear[data-big] .ear-ring-hint, #ear[data-big] .ear-keyoffer { font-size: 1.2rem; }
+      #ear[data-big] .ear-tempo, #ear[data-big] #ear-tip, #ear[data-big] .ear-last { font-size: 1rem; }
+      #ear[data-big] #ear-name { font-size: 1rem; }
+      #ear[data-big] .ear-nav { width: 48px; height: 48px; }
+      #ear[data-big] .ear-lines { min-height: 48px; }
+      #ear[data-big] .eld { width: 11px; height: 11px; }
+      #ear[data-big] .eld[data-cur] { width: 15px; height: 15px; }
+      #ear[data-big] .ear-modes button, #ear[data-big] #ear-acts button, #ear[data-big] .chip { min-height: 48px; font-size: 1.1rem; }
+      #ear[data-big] .ear-modes button { padding: 0.5rem 1.5rem; }
+      #ear[data-big] .ear-names button { min-height: 48px; min-width: 3.9rem; }
+      #ear[data-big] .ear-names b { font-size: 1.15rem; }
+      #ear[data-big] .ear-names small { font-size: 0.9rem; }
+      #ear[data-big] #ear-stage { min-height: 17rem; }
+      #ear[data-big] #ear-acts { min-height: 48px; } /* (Notes has no action row: the column the same height, the tabs where they were) */
+      #ear[data-big] .ear-ring { width: 84px; height: 84px; }
+      #ear[data-big] .ear-ring-t { font-size: 1.15rem; }
+      #ear[data-big] .ec-word { font-size: 1.6rem; }
       /* Guided: the step's card replaces the results row, the play bar and the chips (More → Tools has them). */
       body[data-guided="true"] .results-head, body[data-guided="true"] #playbar, body[data-guided="true"] #chips, body[data-guided="true"] #loopbar { display: none; }
       /* (from More → Tools: a loop shows its bar instead of the card; 🎤 Pitch its readout) */
@@ -451,7 +579,7 @@
       <div class="header-right mono">
         <span id="assistant-chip" class="assistant-chip" hidden></span>
         <button id="remote-btn" class="remote-btn" type="button" hidden aria-pressed="false" aria-label="Let an assistant control this device" title="Let an assistant control this device"><svg class="ai-mark" viewBox="0 0 20 16" aria-hidden="true" focusable="false"><path d="M1.5 14.5 6.5 1.5l5 13M3.25 10h6.5M13.5 1.5h5M16 1.5v13M13.5 14.5h5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <span id="version">v102</span>
+        <span id="version">v103</span>
         <span id="status"></span>
       </div>
     </header>
@@ -493,20 +621,25 @@
       </section>
       <section id="ear" hidden aria-live="polite">
         <div class="ear-top">
-          <button id="ear-prev" class="ear-nav" type="button" aria-label="Previous phrase">‹</button>
-          <span id="ear-name" class="mono"></span>
-          <button id="ear-next" class="ear-nav" type="button" aria-label="Next phrase">›</button>
+          <button id="ear-prev" class="ear-nav" type="button" aria-label="Previous line">‹</button>
+          <button id="ear-lines" class="ear-lines" type="button" aria-haspopup="dialog"><span id="ear-name"></span></button>
+          <button id="ear-next" class="ear-nav" type="button" aria-label="Next line">›</button>
         </div>
         <div id="ear-words"></div>
         <div class="ear-modes" role="group" aria-label="Exercise">
-          <button type="button" data-ear="sing">Sing</button>
+          <button type="button" data-ear="line">Line</button>
           <button type="button" data-ear="beats">Beats</button>
           <button type="button" data-ear="notes">Notes</button>
         </div>
-        <div id="ear-notes" hidden></div>
-        <div id="ear-ring" hidden></div>
-        <div id="ear-res"></div>
+        <div id="ear-hint" hidden></div>
         <div id="ear-acts"></div>
+        <div id="ear-stage">
+          <div id="ear-notes" hidden></div>
+          <div id="ear-count" hidden aria-hidden="true"></div>
+          <div id="ear-ring" hidden></div>
+          <div id="ear-tip" hidden>🎧 Wired headphones work best here</div>
+          <div id="ear-res"></div>
+        </div>
       </section>
       <section id="results">
         <div id="loopbar" hidden>
@@ -548,17 +681,31 @@
           <span id="op-title" class="op-title">Singing options</span>
           <button id="op-close" class="tool-btn" type="button" aria-label="Close the options">✕</button>
         </div>
-        <h3>While you sing</h3>
-        <label class="op-choice"><input type="radio" name="view" value="practice" /><span><b>Practice</b> — notes + your pitch</span></label>
-        <label class="op-choice"><input type="radio" name="view" value="perform" /><span><b>Perform</b> — lyrics only, review after</span></label>
-        <h3>Coach</h3>
-        <label class="op-choice"><input type="checkbox" id="guided-on" /><span><b>Guide me</b> — one step at a time</span></label>
-        <h3>Guide</h3>
-        <select id="guide-select" aria-label="Guide while singing">
-          <option value="click">Click</option>
-          <option value="melody">Melody (headphones)</option>
-          <option value="none">None</option>
-        </select>
+        <!-- (Ear's switch, "Guide me" until v102; on: one line at a time by ear — the whole song's options below don't apply and hide) -->
+        <label class="op-choice"><input type="checkbox" id="guided-on" /><span><b>Phrase by phrase</b> — by ear</span></label>
+        <div id="op-whole">
+          <h3>While you sing</h3>
+          <label class="op-choice"><input type="radio" name="view" value="practice" /><span><b>Practice</b> — notes + your pitch</span></label>
+          <label class="op-choice"><input type="radio" name="view" value="perform" /><span><b>Perform</b> — lyrics only, review after</span></label>
+          <h3>Guide</h3>
+          <select id="guide-select" aria-label="Guide while singing">
+            <option value="click">Click</option>
+            <option value="melody">Melody (headphones)</option>
+            <option value="none">None</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <!-- (Ear's lines: a row each — ♩ ♪ once secured, the singer's own ★ —, Pick words…: sing.js "The Lines sheet") -->
+    <div id="earlines" class="overlay" hidden>
+      <div class="sheet" role="dialog" aria-labelledby="el-title">
+        <div class="rv-head">
+          <span id="el-title" class="op-title">Lines</span>
+          <button id="el-close" class="tool-btn" type="button" aria-label="Close">✕</button>
+        </div>
+        <div id="el-list"></div>
+        <div id="el-pick" hidden></div>
+        <div class="el-foot"></div>
       </div>
     </div>
     <div id="taptempo" class="overlay" hidden>
@@ -630,7 +777,7 @@
         <div id="rv-lines"></div>
       </div>
     </div>
-    <script type="module" src="nav.js?v=102"></script>
-    <script type="module" src="sing.js?v=102"></script>
+    <script type="module" src="nav.js?v=103"></script>
+    <script type="module" src="sing.js?v=103"></script>
   </body>
 </html>

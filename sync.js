@@ -22,11 +22,11 @@
 // pages' "resonate:data" events (debounced), when the page becomes visible, and every 2 minutes
 // while it's open — one at a time across tabs (Web Locks).
 
-import { supabase, savedUser } from "./auth.js?v=102";
-import { activeSpace, SYNC_META } from "./space.js?v=102";
-import { listSongs, getSong, putSong, replaceSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, countClips, listTakes, getTake, putTake, removeTake, persistent, dbGen, isMusicXml } from "./library.js?v=102";
-import { dropFromQueue } from "./omr/queue.js?v=102";
-import { deleteJobsFor } from "./omr/jobs.js?v=102";
+import { supabase, savedUser } from "./auth.js?v=103";
+import { activeSpace, SYNC_META } from "./space.js?v=103";
+import { listSongs, getSong, putSong, replaceSong, removeSong, getPdf, putPdf, listPdfIds, countVoices, countClips, listTakes, getTake, putTake, removeTake, persistent, dbGen, isMusicXml } from "./library.js?v=103";
+import { dropFromQueue } from "./omr/queue.js?v=103";
+import { deleteJobsFor } from "./omr/jobs.js?v=103";
 
 export const SONG_LIMIT = 20; // (the server's: 20261120010000_sync_limits_20.sql — applied before this ships)
 const FILE_LIMIT = 10 * 1024 * 1024;
@@ -34,6 +34,7 @@ const TEXT_LIMIT = 64 * 1024 * 1024; // a downloaded file never unpacks to more 
 export const OFF_KEY = "resonate.sync.off"; // this device doesn't sync (a device setting)
 const L = { keys: "resonate.sing.keys", rates: "resonate.sing.rates", timing: "resonate.sing.timing", history: "resonate.sing.history", profiles: "resonate.profiles", play: "resonate.play" };
 const PRACTICE = "resonate.sing.practice"; // (guided practice, by song: not synced, but goes with a deleted song)
+const EARDATA = "resonate.sing.eardata";   // (Ear's line open, by song: the same)
 const FIELDS = { key: L.keys, rate: L.rates, timing: L.timing }; // a song's settings: song_state "<song>|<field>", data { v }
 const HISTORY = "history"; // its take history: song_state "<song>|history", data { list }
 const BUCKET = "songs";
@@ -286,7 +287,7 @@ async function apply(sb, row, meta, changed, uid) {
       guard();
       await removeSong(id, { quiet: true });
       // (removeSong took its take and PDF; what's kept by id goes as forget.js's delete does here)
-      for (const k of [L.keys, L.rates, L.timing, L.history, L.play, PRACTICE]) setIn(k, id, null);
+      for (const k of [L.keys, L.rates, L.timing, L.history, L.play, PRACTICE, EARDATA]) setIn(k, id, null);
       // Its conversion too: out of the queue, and its stored jobs — a kept one (iOS ended the tab
       // mid-batch) would otherwise be resumed and spend minutes converting a song that's gone. Only
       // while this space is still the one on the device: the queue and the jobs are the active space's.
