@@ -156,24 +156,28 @@ async function walk(dev, ctxOpts, modules) {
   await until(() => window.resonateSing.debug().ear.run === 'hold', 10000); await sleep(400);
   await shot('notes-holding', 'holding (2 semitones sharp)');
   await until(() => window.resonateSing.debug().ear.run === null, 10000); await sleep(200);
-  await shot('notes-miss1', 'after 6 s without a match');
+  await shot('notes-miss1', 'the hold ended (nothing near the note for 2.5 s): the 1st miss');
   await page.click('#sing');
   await until(() => window.resonateSing.debug().ear.run === 'hold', 10000);
   await until(() => window.resonateSing.debug().ear.run === null, 10000); await sleep(200);
   await shot('notes-miss2', 'missed again (still 2 semitones sharp)');
+  await page.click('#ear-notes button[data-act="try"]');
+  await until(() => window.resonateSing.debug().ear.run === 'hold', 10000);
+  await until(() => window.resonateSing.debug().ear.run === null, 10000); await sleep(200);
+  await shot('notes-miss3', 'tapped ▶ Try again, missed a 3rd time (still 2 semitones sharp)');
   await S(() => { window.__sing = { mode: 'hold', by: -12, cents: 10 }; });
   await page.click('#sing');
   await until(() => (window.resonateSing.debug().ear.notes?.done || []).length >= 1, 15000); await sleep(1000);
   await shot('notes-match-octave', 'held it an octave down');
-  await S(() => { window.__sing = { mode: 'hold', by: 0 }; });
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < 6; k++) {
     const e = (await dbg()).ear;
-    if (e.mode !== 'notes') break;
+    if (e.mode !== 'notes' || e.notes?.complete) break;
     await page.click('#sing');
     await until(() => window.resonateSing.debug().ear.run === 'hold' || window.resonateSing.debug().ear.mode !== 'notes', 10000);
     await until(() => window.resonateSing.debug().ear.run === null, 15000); await sleep(900);
-    await shot(`notes-match-${k + 2}`, 'held the next target on pitch');
+    await shot(`notes-match-${k + 2}`, 'held the next target (in that octave)');
   }
+  await page.click('#ear-acts button[data-act="oct"]').catch(() => {}); await sleep(200); // (the written octave again)
   await S(() => { window.__sing = null; });
   // phrases
   await page.click('#ear-next'); await sleep(400);

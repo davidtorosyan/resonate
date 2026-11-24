@@ -21,8 +21,14 @@
 //     click — sing right on it" with ▶ Click and ▶ You, which play — ▶ You with the take's own clicks after the ♩
 //     menu changed; ■ Stop in the count-in: the row gone at once, a double tap doesn't sing again; no count-in or dB
 //     in #status (WP1.3–4)
-//   4 Notes — "■ Stop" on both buttons while the note plays (WP1.7); the first target held an octave down
-//     (matched, "an octave down — fine"), the next on pitch: every target done → back to the line
+//   4 Notes (WP4) — a Line attempt with “sweet” a tone sharp, its "Practise that note ›": Notes on A♭4, "Off last
+//     time", the row low → high with the syllable under each and “sweet” marked; ● Match: "■ Stop" on both buttons
+//     while the note plays (WP1.7), "Now sing it — keep it going" and the ring's arc emptying (neutral); a tone sharp:
+//     "Not yet" with a real ▶ Try again, then "Lower", then ▶ Sing along (4 s, no live mic) · Next note ›; E♭4 an
+//     octave down: "✓ Same note, in your lower voice" (green), EAR.oct −12, the note again and Line's ▶ Hear an
+//     octave down, "Octave down" pressed; C5 a tone flat ×3: "Too high for now?" [Lower the song] → the key −2, "Key
+//     A♭ → G♭"; every target held: stays in Notes, "✓ Those notes — now the whole line", ● Sing → Line with the mic
+//     open; the octave chip toggles back
 //   5 ⚙ — while Ear shows only its switch, "Phrase by phrase" (WP1.10); turned off while ▶ Hear plays, it stops
 //   6 another song opens on its own line, nothing of the last one's; back, and after a reload, the line kept (WP1.8)
 // The shell (index.html, Sing alone), a phone 390×844 and an iPad 820×1180 (WP1.1–4):
@@ -316,11 +322,29 @@ async function singPage(browser) {
   await page.click('#listen');
   await idle();
   await page.click('#ear-prev');
-  // 4. Notes: ■ Stop while the note plays; hold the first target an octave down, the second on pitch
-  await page.click('.ear-modes button[data-ear="notes"]');
+  // 4. Notes (WP4). A Line attempt with “sweet” a tone sharp first: its cue's "Practise that note ›" → Notes on it
+  await page.evaluate(() => { window.__sing = null; });
+  await page.click('.ear-modes button[data-ear="line"]');
+  await page.click('#sing');
+  await page.waitForFunction(() => document.getElementById('sing').textContent === '■ Done', null, { timeout: 10000 });
+  await page.evaluate(() => { window.__sing = { mode: 'free', at: performance.now() + 700, f: 1, cents: { 8: 200 } }; });
+  await sleep(700 + dur * 1000 + 800);
+  await page.click('#sing');
+  await page.waitForFunction(() => { const x = window.resonateDebug().ear; return x.res && x.run === null; }, null, { timeout: 15000 });
+  e = await ear();
+  ok(e.res?.cue?.kind === 'pitch' && e.res.cue.j === 8 && (await page.$('#ear-res button[data-act="practise"]')), `4: “sweet” a tone sharp — “${e.ui}”, with “Practise that note ›”`);
+  await page.click('#ear-res button[data-act="practise"]');
+  e = await ear();
+  const row = () => page.$$eval('#ear-notes .ear-names button', (xs) => xs.map((x) => ({ name: x.querySelector('b')?.textContent, syl: x.querySelector('small')?.textContent || '', state: x.dataset.state, off: x.hasAttribute('data-off'), cur: x.getAttribute('aria-current') === 'true', j: +x.dataset.j })));
+  let names = await row();
+  const tone = () => page.$$eval('#ear-notes .ear-msg', (xs) => xs.map((x) => `${x.dataset.tone || ''}:${x.textContent}`));
+  ok(e.mode === 'notes' && e.notes.cur === 8 && e.notes.targets[0] === 8 && e.notes.off.includes(8) && e.notes.msg === 'Off last time' && !(await ear()).run, `4: Notes on “sweet” — current ${e.notes.cur}, targets ${JSON.stringify(e.notes.targets)}, “${e.notes.msg}”, nothing playing`);
+  ok(names.map((x) => x.name).join(' ') === 'E♭4 F4 A♭4 B♭4 C5' && names.find((x) => x.name === 'A♭4')?.syl === 'sweet' && names.find((x) => x.name === 'A♭4').off && names.find((x) => x.name === 'A♭4').cur && names.find((x) => x.name === 'E♭4').state === 'todo' && names.find((x) => x.name === 'F4').state === '',
+    `4: the row low → high, the word under each, “sweet” marked off last time — ${names.map((x) => `${x.name}/${x.syl}${x.cur ? '*' : ''}${x.off ? '!' : ''}(${x.state})`).join(' ')}`);
   b = await btns();
   ok(b.sing === '● Match' && b.caption === 'Hear', `4: Notes — “${b.listen}” (${b.caption}) · “${b.sing}”`);
-  await page.evaluate(() => { window.__sing = { mode: 'hold', by: -12 }; });
+  // ● Match: the note (both buttons ■ Stop), then the hold — a tone sharp: not yet, no direction; the ring's arc emptying
+  await page.evaluate(() => { window.__sing = { mode: 'hold', by: 2 }; });
   await page.click('#sing');
   e = await ear();
   b = await btns();
@@ -328,17 +352,108 @@ async function singPage(browser) {
   ok(await page.evaluate(() => window.resonateSing.state().busy && !window.resonateSing.state().take), '4: the note: busy, not a take');
   await page.waitForFunction(() => window.resonateDebug().ear.run === 'hold', null, { timeout: 10000 });
   ok(await page.evaluate(() => window.resonateSing.state().take), '4: the hold: a take for the shell');
-  await page.waitForFunction(() => (window.resonateDebug().ear.notes?.done || []).length >= 1, null, { timeout: 15000 });
-  await sleep(900);
+  await sleep(500);
+  const arc1 = await page.evaluate(() => ({ on: !!document.querySelector('#ear-ring .ear-ring[data-arc]'), off: +document.querySelector('#ear-ring .ear-arc circle')?.style.strokeDashoffset, msg: window.resonateDebug().ear.notes.msg, color: getComputedStyle(document.querySelector('#ear-ring .ear-ring')).boxShadow }));
+  await sleep(700);
+  const arc2 = await page.evaluate(() => +document.querySelector('#ear-ring .ear-arc circle')?.style.strokeDashoffset);
+  ok(arc1.on && arc2 > arc1.off + 5 && arc1.msg === 'Now sing it — keep it going' && !/74, 222, 128/.test(arc1.color), `4: holding — “${arc1.msg}”, the arc emptying (${arc1.off} → ${arc2}), the ring neutral`);
+  await page.waitForFunction(() => window.resonateDebug().ear.run === null, null, { timeout: 10000 });
   e = await ear();
-  ok(/octave down — fine/.test(e.notes?.msg || '') && e.notes.targets.every((k) => k >= 0 && k < 11) && e.notes.js.every((j, i) => j === e.ph.j0 + e.notes.targets[i]), `4: the first target matched an octave down — “${e.notes?.msg}” (targets in the line ${JSON.stringify(e.notes?.targets)})`);
-  await page.evaluate(() => { window.__sing = { mode: 'hold', by: 0 }; });
+  ok(e.notes.v?.kind === 'notyet' && e.notes.msg === 'Not yet' && e.notes.hold === null && (await page.$('#ear-notes button[data-act="try"]')) && !(await page.$('#ear-notes button[data-act="along"]')), `4: a tone sharp, 1st — “${e.notes.msg}” with ▶ Try again (no direction yet)`);
+  // ▶ Try again (a real button): 2nd — which way; 3rd — ▶ Sing along, Next note ›
+  await page.click('#ear-notes button[data-act="try"]');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'hold', null, { timeout: 10000 });
+  await page.waitForFunction(() => window.resonateDebug().ear.run === null, null, { timeout: 10000 });
+  e = await ear();
+  ok(e.notes.msg === 'Lower' && (await tone()).join() === 'cue:Lower', `4: 2nd — “${e.notes.msg}” (${await tone()})`);
+  await page.click('#ear-notes button[data-act="try"]');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'hold', null, { timeout: 10000 });
+  await page.waitForFunction(() => window.resonateDebug().ear.run === null, null, { timeout: 10000 });
+  e = await ear();
+  const nchips = await page.$$eval('#ear-notes .ear-chips button', (xs) => xs.map((x) => x.textContent));
+  ok(e.notes.msg === 'Lower' && nchips.join(' | ') === '▶ Try again | ▶ Sing along | Next note ›' && !(await page.$('#ear-notes .ear-keyoffer')), `4: 3rd — “${e.notes.msg}” ${nchips.join(' · ')} (no key offer: not the top note)`);
+  // ▶ Sing along: the note 4 s, the mic closed; ■ Stop on the dock
+  await page.evaluate(() => { window.__sing = null; window.__atStart = []; window.__watch = true; });
+  await page.click('#ear-notes button[data-act="along"]');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'play', null, { timeout: 5000 });
+  await sleep(400);
+  e = await ear();
+  const along = await page.evaluate(() => window.__atStart.slice());
+  ok(e.tag === 'along' && e.notes.msg === 'Sing along with it' && JSON.stringify(e.playing) === '[68]' && along.length && along.every((x) => x.live === 0), `4: ▶ Sing along — “${e.notes.msg}”, A♭4 (${JSON.stringify(e.playing)}), no live mic track (${JSON.stringify(along)})`);
+  await page.click('#listen');
+  await idle();
+  await page.evaluate(() => { window.__watch = false; });
+  // Next note ›: on to the next target (E♭4, the lowest)
+  await page.click('#ear-notes button[data-act="nextnote"]');
+  e = await ear();
+  ok(e.notes.cur === 0 && e.notes.msg === '' && !e.notes.done.length, `4: Next note › — current ${e.notes.cur} (E♭4), the message cleared`);
+  // an octave down: matched — green, the song's octave follows (the chip “Octave down”, pressed; Ear's ▶ an octave down)
+  await page.evaluate(() => { window.__sing = { mode: 'hold', by: -12 }; });
   await page.click('#sing');
-  await page.waitForFunction(() => { const x = window.resonateDebug().ear; return (x.notes?.done || []).length >= 2 || x.mode === 'line'; }, null, { timeout: 15000 });
-  await sleep(1200);
+  await page.waitForFunction(() => (window.resonateDebug().ear.notes?.done || []).length >= 1, null, { timeout: 15000 });
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'play' && (window.resonateDebug().ear.playing || []).length, null, { timeout: 3000 }).catch(() => {});
   e = await ear();
-  ok(e.mode === 'line' && /now the phrase/.test(e.res?.win?.text || ''), `4: every target matched → back to the line (“${e.res?.win?.text}”)`);
+  const conf = e.playing;
+  ok(e.notes.done.includes(0) && e.notes.msg === '✓ Same note, in your lower voice' && (await tone()).join() === 'win:✓ Same note, in your lower voice' && e.oct === -12 && JSON.stringify(conf) === '[51]', `4: an octave down — “${e.notes.msg}” (${await tone()}), oct ${e.oct}, the note again at ${JSON.stringify(conf)}`);
+  await idle();
+  const octChip = await page.$eval('#ear-acts button[data-act="oct"]', (x) => ({ text: x.textContent, pressed: x.getAttribute('aria-pressed') })).catch(() => null);
+  names = await row();
+  const kept8 = await page.evaluate(() => JSON.parse(localStorage.getItem('resonate.sing.eardata') || '{}')['amazing-grace']?.oct);
+  ok(octChip?.text === 'Octave down' && octChip.pressed === 'true' && kept8 === -12 && names[0].name === 'E♭3' && e.notes.cur === 3, `4: “${octChip?.text}” pressed (${octChip?.pressed}), kept for the song (${kept8}); the names in your octave (${names.map((x) => x.name).join(' ')}); next C5, “sweet” skipped for now (${e.notes.cur})`);
+  await page.click('.ear-modes button[data-ear="line"]');
+  await page.click('#listen');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'play' && (window.resonateDebug().ear.playing || []).length > 3, null, { timeout: 5000 });
+  const heard = (await ear()).playing;
+  await page.click('#listen');
+  await idle();
+  ok(heard.slice(0, 3).join() === '51,53,56', `4: Line's ▶ Hear in your octave — ${heard.slice(0, 5).join(' ')}`);
+  await page.click('.ear-modes button[data-ear="notes"]');
+  // the highest, a tone flat three times: Higher, then “Too high for now?” [Lower the song] → the key 2 down
+  await page.evaluate(() => { window.__sing = { mode: 'hold', by: -2 }; });
+  for (let i = 0; i < 3; i++) {
+    await page.click(i ? '#ear-notes button[data-act="try"]' : '#sing');
+    await page.waitForFunction(() => window.resonateDebug().ear.run === 'hold', null, { timeout: 10000 });
+    await page.waitForFunction(() => window.resonateDebug().ear.run === null, null, { timeout: 10000 });
+  }
+  e = await ear();
+  const offer = await page.$eval('#ear-notes .ear-keyoffer', (x) => x.textContent).catch(() => null);
+  ok(e.notes.cur === 3 && e.notes.msg === 'Higher' && offer === 'Too high for now?Lower the song', `4: the highest a tone flat, 3rd — “${e.notes.msg}”, “${offer}”`);
+  await page.click('#ear-notes .ear-keyoffer button');
+  await page.waitForFunction(() => window.resonateDebug().ear.on && /Key/.test(window.resonateDebug().ear.notes?.msg || ''), null, { timeout: 5000 });
+  e = await ear();
+  const key = await page.$eval('#key-select', (x) => x.value);
+  ok(key === '-2' && /^Key A♭ → (G♭|F♯)$/.test(e.notes.msg) && e.notes.cur === 3 && e.mode === 'notes' && JSON.stringify(e.notes.targets) === '[8,0,3]', `4: Lower the song — the key ${key}, “${e.notes.msg}”, still on C5 (${e.notes.cur})`);
+  // the rest held — C5 in your octave (said once: its name), then “sweet” in the written octave (an octave apart
+  // again: said, the song's octave back) → every target held: stays in Notes, “now the whole line”, ● Sing
+  for (const [want, by] of [[3, -12], [8, 0]]) {
+    await page.evaluate((x) => { window.__sing = { mode: 'hold', by: x }; }, by);
+    await page.click('#sing');
+    await page.waitForFunction((k) => (window.resonateDebug().ear.notes?.done || []).includes(k), want, { timeout: 15000 });
+    if (want === 3) { e = await ear(); ok(e.notes.v?.kind === 'match' && /^✓ B♭3$/.test(e.notes.v.text) && e.oct === -12, `4: C5 (now B♭4) held in your octave — “${e.notes.v?.text}”`); }
+    await idle();
+  }
+  e = await ear();
+  b = await btns();
+  const msgs = await tone();
+  ok(e.mode === 'notes' && e.notes.complete && msgs.join(' | ') === 'win:✓ Same note, in your higher voice | win:✓ Those notes — now the whole line' && b.sing === '● Sing' && !/All the notes/.test(e.notesUi) && e.oct === 0, `4: every target held — stays in Notes: ${msgs.join(' | ')}, the dock “${b.sing}”, the octave back (${e.oct})`);
+  // ● Sing: on to the line, the mic open in that tap
+  await page.click('#sing');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'free', null, { timeout: 5000 });
+  e = await ear();
+  ok(e.mode === 'line', `4: ● Sing — Line, the mic open (${e.run})`);
+  await page.click('#ear-acts button[data-act="first"]');
+  await idle();
   await page.evaluate(() => { window.__sing = null; });
+  // (the octave chip toggles: down again, then the written octave; the key back)
+  const pressed = () => page.$eval('#ear-acts button[data-act="oct"]', (x) => x.getAttribute('aria-pressed'));
+  const p0 = await pressed();
+  await page.click('#ear-acts button[data-act="oct"]');
+  const p1 = await pressed(), o1 = (await ear()).oct;
+  await page.click('#ear-acts button[data-act="oct"]');
+  e = await ear();
+  ok(p0 === 'false' && p1 === 'true' && o1 === -12 && e.oct === 0 && (await pressed()) === 'false', `4: “Octave down” — unpressed (${p0}), a tap: down again (${o1}, ${p1}), another: the written octave (${e.oct})`);
+  await page.selectOption('#key-select', '0');
+  await sleep(300);
   // 5. ⚙: only Ear's switch while it shows
   await page.click('#options-btn');
   const sheet = () => page.evaluate(() => ({ whole: getComputedStyle(document.getElementById('op-whole')).display !== 'none', label: document.querySelector('#guided-on').closest('label').textContent.trim(), on: document.getElementById('guided-on').checked }));

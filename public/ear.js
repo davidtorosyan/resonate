@@ -38,6 +38,8 @@
 //   followed, sung to the end); up { notes, beats }: a count that rose since prev; cover: the share of the
 //   singing inside the line found; ms: the judging's time
 //   rn       { [i in the line]: { cls, dev, rdev } | null } — Beats: each start against its click (judgeBeats)
+//   drill    [i in the line] — Line: the notes reached and sung off or not sung, the cue's first, then the longest
+//            (Notes' "Off last time" targets: noteTargets)
 import { gradeTake } from "./grade.js?v=102";
 import { median, fold } from "./music.js?v=102";
 import { findOnsets, tolFlag, tolOn, voiceCover } from "./rhythm.js?v=102";
@@ -560,6 +562,14 @@ export function judgeFree(ph, frames0, endT, ctx) {
     else if (Math.abs(drift) >= F.sag) cue = { kind: "sag", dir: drift > 0 ? "lower" : "higher", end: true, at: whole, sounds: ["first", "you"] };
   }
   res.cue = cue;
+  // Notes' targets from this attempt (the fix plan's WP4.1; noteTargets): the counted notes reached and sung off or
+  // not sung (as the cue judges "not sung"; not the stretch a singer who stopped left out: "Keep going to …") — the
+  // cue's note first, then the longest
+  const offOf = (j) => gOf(j)?.status === "off" || (gOf(j)?.status === "missed" && (silentAt(j) || unheardAt(j)));
+  const left = cue?.kind === "short" ? cue.from : Infinity;
+  res.drill = reachedCounted.filter((j) => j < left && offOf(j))
+    .sort((x, y) => (y === cue?.j) - (x === cue?.j) || notes[y].d - notes[x].d || Math.abs(gOf(y)?.dev ?? 0) - Math.abs(gOf(x)?.dev ?? 0) || x - y)
+    .map((j) => j - ph.j0);
 
   // --- the win: the first that applies, not the cue's note, not last time's again when another applies
   // (cleanly: hit, its voiced pitch steady in its slot, and hit where the singer's line puts it too — not only
@@ -790,6 +800,104 @@ function rnOf(ph, js, S, rn0, med = null) {
     const r = rn0(j);
     return [k, r ? { cls: null, dev: r.dev, rdev: r.rdev } : null];
   }));
+}
+
+// --- Notes (D10; the fix plan's "Notes (holdVerdict)") ------------------------------------------------------
+// ▶ the note (mic closed), then hold it: matched = `need` s within `tol` of it, any octave, within `window` s of the
+// mic opening (the range test's rule) — the mic gated at MIN_RMS until the note's sound is gone (sing.js). A miss
+// says which way only from the 2nd (Q-C: the ear tries first), and how far; far from every octave of it, "another
+// note"; with nothing near it at all, the hold ends early.
+export const EAR_HOLD = {
+  need: 0.8,        // s within `tol` (any octave), added up: matched
+  window: 6,        // s from the mic opening: not matched
+  tol: 50,          // ¢
+  near: 100,        // ¢: a hold with (next to) none of its voiced frames this near the note, in any octave, …
+  giveUp: 2.5,      //   …ends after this long voiced (a miss: no point waiting out the 6 s)
+  nearShare: 0.03,  //   (this share near is "none": a stray reading)
+  recent: 2,        // s: a miss is judged on the voiced frames of its last this long (where the singer settled)
+  heard: 0.3,       // s voiced: under it, not heard
+  another: 4,       // semitones: further than this from every octave of the note — another note, not a direction
+  touch: 70, much: 250, // ¢: a miss's size — a touch / (plain) / much
+  close: 50,        // ¢: the miss's centre this near, yet not held long enough on it — "keep it going"
+  along: 3,         // misses: then ▶ Sing along and Next note ›, and on the line's top / bottom note the key offer
+};
+const H = EAR_HOLD;
+
+// Notes' targets for a line (offsets in it, in the order they're drilled): the notes the last Line attempt sang
+// off or didn't sing (its `drill`: the cue's first, then the longest — ≤ 3), then the lowest and the highest — one
+// per pitch. off: the targets that came from that attempt ("Off last time"); lo / hi: the line's lowest and highest
+// pitch (the first note on each). midiOf(j): the note as it sounds (transposed).
+export function noteTargets(ph, notes, last = null, midiOf = (j) => notes[j].midi) {
+  const ks = phraseJs(ph).map((j) => j - ph.j0), m = (k) => midiOf(ph.j0 + k);
+  const lo = ks.reduce((a, k) => (m(k) < m(a) ? k : a), ks[0]);
+  const hi = ks.reduce((a, k) => (m(k) > m(a) ? k : a), ks[0]);
+  const targets = [], off = [];
+  const add = (k, isOff) => { if (k == null || k < 0 || k >= ks.length || targets.some((x) => m(x) === m(k))) return false; targets.push(k); if (isOff) off.push(k); return true; };
+  for (const k of last?.drill || []) if (off.length < 3) add(k, true);
+  add(lo, false);
+  add(hi, false);
+  return { targets, off, lo, hi };
+}
+
+// A hold, frame by frame: holdStep(h, dt (s since the last frame), dev (sung − the note's written pitch, semitones;
+// null: no pitch)) → h.end: null (go on) | "match" | "miss".
+export function holdStart() { return { t: 0, good: 0, voiced: 0, nv: 0, near: 0, fr: [], end: null }; }
+const foldS = (x) => x - 12 * Math.round(x / 12); // (−6…6 semitones: the nearest octave of the note)
+export function holdStep(h, dt, dev) {
+  if (h.end) return h;
+  h.t += Math.max(0, dt || 0);
+  if (dev != null && Number.isFinite(dev)) {
+    const c = Math.abs(foldS(dev)) * 100;
+    h.voiced += dt || 0;
+    h.nv++;
+    h.fr.push({ t: h.t, dev, in: c <= H.tol });
+    if (c <= H.tol) h.good += dt || 0;
+    if (c <= H.near) h.near++;
+  }
+  if (h.good >= H.need - 1e-9) h.end = "match";
+  else if (h.voiced >= H.giveUp && h.near <= H.nearShare * h.nv) h.end = "miss";
+  else if (h.t >= H.window) h.end = "miss";
+  return h;
+}
+
+// Where a hold sat against the note (its last `recent` s voiced): r — semitones from the note's nearest octave (a
+// circular centre, then the median around it: an octave jump of the pitch reading doesn't move it), k — that
+// octave (… −1: an octave down).
+function holdCentre(fr) {
+  if (!fr.length) return null;
+  const end = fr[fr.length - 1].t, xs = fr.filter((f) => f.t >= end - H.recent);
+  let sx = 0, sy = 0;
+  for (const f of xs) { const a = (foldS(f.dev) / 12) * 2 * Math.PI; sx += Math.cos(a); sy += Math.sin(a); }
+  const c = (Math.atan2(sy, sx) / (2 * Math.PI)) * 12;
+  const r = c + median(xs.map((f) => foldS(f.dev - c)));
+  return { r, k: Math.round(median(xs.map((f) => f.dev - r)) / 12) };
+}
+
+// What a hold came to (h.end set): { kind, text, … } — kind "match" (oct: the octave it was matched in, semitones
+// from the written note — 0, −12 …; said: "lower" | "higher" when that isn't the octave the note was played in,
+// refOct) · "silent" · "close" (its centre on the note, not held long enough: "keep it going", any try) · "notyet"
+// (the 1st miss: no direction yet) · "dir" (dir "higher" | "lower", size "touch" | "plain" | "much") · "another" (further than `another`
+// from every octave of it). tries: the misses at this note, this one included. From the `along`-th: along (▶ Sing
+// along), next (Next note ›), and — sung low on the line's top note (top), high on its bottom one — key { dir:
+// "lower" | "higher" (the song), s (semitones) }: "Too high for now?" / "Too low for now?".
+export function holdVerdict(h, { tries = 1, top = false, bottom = false, refOct = 0, name = null } = {}) {
+  if (h.end === "match") {
+    const ins = h.fr.filter((f) => f.in), k = ins.length ? Math.round(median(ins.map((f) => f.dev)) / 12) : 0, oct = 12 * k;
+    const said = oct < refOct ? "lower" : oct > refOct ? "higher" : null;
+    return { kind: "match", oct, said, text: said ? `✓ Same note, in your ${said} voice` : `✓ ${name ? name(oct) : "That's it"}` };
+  }
+  const v = { tries, along: tries >= H.along, next: tries >= H.along, key: null };
+  const at = h.voiced >= H.heard ? holdCentre(h.fr) : null;
+  if (!at) return { ...v, kind: "silent", text: "Didn't hear you — sing a bit louder" };
+  const r = +at.r.toFixed(2), c = Math.abs(r) * 100;
+  // (on the note, not long enough: no direction to give — any try)
+  if (c < H.close) return { ...v, kind: "close", r, text: "Close — keep it going" };
+  if (tries < 2) return { ...v, kind: "notyet", r, text: "Not yet" };
+  if (Math.abs(r) > H.another) return { ...v, kind: "another", r, text: "That's another note" };
+  const dir = r > 0 ? "lower" : "higher", size = c < H.touch ? "touch" : c > H.much ? "much" : "plain";
+  const text = `${size === "touch" ? "A touch " : size === "much" ? "Much " : ""}${size === "plain" ? dir[0].toUpperCase() + dir.slice(1) : dir}`;
+  if (v.along && ((top && dir === "higher") || (bottom && dir === "lower"))) v.key = { dir: dir === "higher" ? "lower" : "higher", s: Math.max(1, Math.min(6, Math.round(Math.abs(r)))), text: dir === "higher" ? "Too high for now?" : "Too low for now?" };
+  return { ...v, kind: "dir", r, dir, size, text };
 }
 
 // A result as resonateDebug() shows it: everything but the recording and the fitted notes (the grades,

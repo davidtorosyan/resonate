@@ -12,7 +12,8 @@
 //          ■ Done is tapped `done` s after the singer's last note (default 0.7; negative: while still singing).
 //   beats: late (s every note), f, cents, all, oct, drift, vib, jit, starts, drop, vol; slow (0.9 / 0.8 / 0.7:
 //          the ♩ menu set to that % of the song's tempo first; none: 100 %)
-//   hold:  by (semitones off the target), cents, vib; target (index in Notes' targets, default the current)
+//   hold:  by (semitones off the target), cents, vib; target (index in Notes' targets, default the current) — each
+//          hold plan is one more try at the note (the misses add up: Not yet → which way → ▶ Sing along …)
 // Prints one JSON line per plan: the plan, the result on screen, the counts, the win and the cue (text, kind,
 // dir, note), the fitted tempo (b) and start (a), the onsets measured (of the starts), the key offset found
 // (c, ¢) and the notes not reached — each null where this build's judgment doesn't give it — and per note:
@@ -117,7 +118,7 @@ const SHOTS = process.env.SHOTS || '';
       return { phrase: e.p, words: document.getElementById('ear-words').textContent, ui, notesUi, counts: r?.counts || null,
         win: win?.text || null, winKind: win?.kind ?? null, cue: cue?.text || null, cueKind: cue?.kind ?? null, cueDir: cue?.dir ?? null, cueAt: cue?.j != null && ph ? cue.j - ph.j0 : null,
         fit: fit ? { a: +fit.a.toFixed(3), b: +fit.b.toFixed(3) } : null, onsets: r?.onsets ?? null, offset: r?.key?.c ?? null, key: r?.key ?? null, notReached: r?.notReached ?? null,
-        notes: e.notes ? { msg: e.notes.msg, done: e.notes.done, targets: e.notes.targets } : null, perNote };
+        notes: e.notes ? { msg: e.notes.msg, done: e.notes.done, targets: e.notes.targets, cur: e.notes.cur ?? null, off: e.notes.off ?? null, tries: e.notes.tries ?? null, v: e.notes.v ?? null, complete: e.notes.complete ?? null } : null, oct: e.oct ?? null, perNote };
     }));
     if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); const f = path.join(SHOTS, `probe-${String(k).padStart(2, '0')}.png`); await page.screenshot({ path: f }); out.shot = f; }
     console.log(JSON.stringify(out));

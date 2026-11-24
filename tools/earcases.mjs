@@ -12,14 +12,16 @@
 // answer.
 // Each case names the work package that makes it so (DONE: those landed; "WP0": today's code already gets it
 // right — a guard): a case whose package hasn't landed is run and printed as "todo", not judged, and says so
-// when it already passes. WP2–WP4 turn theirs on (WP4 adds Notes' holds). The lines are the fix plan's (Q-A: the
+// when it already passes. WP2–WP4 turn theirs on. Notes (WP4): a note held as the page's mic would hear it →
+// pitch.js frames → ear.js holdStep frame by frame and holdVerdict at the 1st, 2nd and 3rd miss, as sing.js earNote
+// runs them (the fix plan's Notes table); noteTargets after a Line attempt. The lines are the fix plan's (Q-A: the
 // printed lines, PLAN_PHRASE), compared with the page's own (ear.js EAR_PHRASE) as a WP1 case. Every case also
 // checks a win or cue that names a note against what the singer did there (TRUTH: no win from a note sung wrong or
 // late, no cue pointing the wrong way or at a note sung right). A case may be sung `before` another attempt at the
 // line: that one's result is handed on as the page keeps it (EAR.last: only a whole attempt) — "fixed now", "more
 // than last time", "twice running", never the same win twice. Line plans may also carry `tail` (our own ▶'s last
 // note in the mic, on a calibrated device: `gate`) — node only.
-// usage: node earcases.mjs   (V=1: each case's notes; ONLY=<regex>: some cases; TODO=0: hide the todo lines;
+// usage: node earcases.mjs   (V=1: each case's notes; ONLY=<regex>: some cases — ONLY='^Notes$': the holds alone; TODO=0: hide the todo lines;
 //   JOBS=n: cases sung on n threads, default 3 — the page's pitch detector over an attempt takes ~2.5 s a run)
 import { Worker, isMainThread, parentPort } from 'node:worker_threads';
 import os from 'node:os';
@@ -34,10 +36,10 @@ import { gradeTake, MAX_SHIFT } from '../public/grade.js';
 import { MIN_RMS, ANALYSIS_LAG, FFT_SIZE } from '../public/pitch.js';
 import { noteName } from '../public/music.js';
 import { PRACTICE, groupPhrases } from '../public/practice.js';
-import { EAR_PHRASE, judgeFree, judgeBeats, wordOf, countSets, gateFrames } from '../public/ear.js';
+import { EAR_PHRASE, judgeFree, judgeBeats, wordOf, countSets, gateFrames, EAR_HOLD, holdStart, holdStep, holdVerdict, noteTargets } from '../public/ear.js';
 
 const { segments } = earsinger;
-const DONE = new Set(['WP0', 'WP1', 'WP2', 'WP3']); // the work packages landed: their cases are judged
+const DONE = new Set(['WP0', 'WP1', 'WP2', 'WP3', 'WP4']); // the work packages landed: their cases are judged
 const V = !!process.env.V, ONLY = process.env.ONLY ? new RegExp(process.env.ONLY) : null, SHOW_TODO = process.env.TODO !== '0';
 
 let pass = 0, fail = 0;
@@ -369,6 +371,77 @@ const short = (r, ph) => [
   r.notReached != null ? `not reached ${r.notReached}` : null,
 ].filter(Boolean).join(' | ');
 
+// ---------------------------------------------------------------------------
+// Notes (WP4): a held note
+
+// The singer holds `by` semitones (+ cents) off the note from `at` s after the mic opened, to past the window; the
+// frames as the page reads them, fed to holdStep as earNote's tick does (dt: the time since the last frame).
+function holdRound(target, plan, { phase = 0, seed = 7 } = {}) {
+  const end = EAR_HOLD.window + 0.5;
+  const sung = plan.silent ? [] : [{ t: plan.at ?? 0.35, d: plan.d ?? end, midi: target + (plan.by || 0) + (plan.cents || 0) / 100, text: 'ah', melisma: false, restBefore: true }];
+  const r = sing(sung, { songT0: 0, rt: 0, until: end, vibrato: plan.vib ?? 20, noise: 0.002, seed, loud: () => loudOf(plan) });
+  const fr = frames(r.audio, r.sr, { songT0: 0, latency: 0, fps: 60, from: FFT_SIZE / r.sr + phase, to: end, gate: MIN_RMS });
+  const h = holdStart();
+  let prev = null;
+  for (const f of fr) { holdStep(h, prev == null ? 0 : f.t - prev, f.midi == null ? null : f.midi - target); prev = f.t; if (h.end) break; }
+  return h;
+}
+function notesCases() {
+  console.log('Notes (holds; the line’s lowest E♭4 63, highest C5 72, “sweet” A♭4 68):');
+  const ph = AG.plan[0], m = (k) => AG.notes[ph.j0 + k].midi;
+  const name = (oct) => noteName(68 + oct, true);
+  // [name, target, plan, the verdict's options per try (tries 1…), wants (on the last try's verdict), its h]
+  const H = [
+    ['a fifth sharp (+7)', 68, { by: 7 }, [1, 2], [['1st: Not yet', (v, vs) => vs[0].kind === 'notyet' && vs[0].text === 'Not yet'], ['2nd: That’s another note', (v) => v.kind === 'another' && v.text === 'That’s another note'.replace('’', "'")], ['never “higher”', (v, vs) => vs.every((x) => !/higher/i.test(x.text))], ['ends early (nothing near it)', (v, vs, h) => h.end === 'miss' && h.t < EAR_HOLD.giveUp + 1.2]]],
+    ['a major third flat (−4)', 68, { by: -4 }, [1, 2], [['1st: Not yet', (v, vs) => vs[0].kind === 'notyet'], ['2nd: Much higher', (v) => v.kind === 'dir' && v.dir === 'higher' && v.size === 'much' && v.text === 'Much higher']]],
+    ['a tone sharp (+2)', 68, { by: 2 }, [2], [['Lower', (v) => v.dir === 'lower' && v.size === 'plain' && v.text === 'Lower'], ['ends early', (v, vs, h) => h.t < EAR_HOLD.giveUp + 1.2]]],
+    ['60¢ sharp (no vibrato: a ±20¢ one dips inside the 50¢ often enough to match in ~3 s — D10’s added-up rule)', 68, { cents: 60, vib: 0 }, [2], [['A touch lower', (v) => v.dir === 'lower' && v.size === 'touch' && v.text === 'A touch lower'], ['the whole 6 s (it was near)', (v, vs, h) => h.t >= EAR_HOLD.window - 0.05]]],
+    ['a semitone sharp (+1), three times', 68, { by: 1 }, [1, 2, 3], [['3rd: ▶ Sing along, Next note ›', (v) => v.along && v.next], ['2nd: neither yet', (v, vs) => !vs[1].along && !vs[1].next], ['Lower', (v) => v.dir === 'lower' && v.text === 'Lower'], ['no key offer (not the top note)', (v) => !v.key]]],
+    ['the highest a tone flat (−2), three times', 72, { by: -2 }, [{ tries: 1, top: true }, { tries: 2, top: true }, { tries: 3, top: true }], [['Higher', (v) => v.text === 'Higher'], ['3rd: Too high for now? — lower the song 2', (v) => v.key?.dir === 'lower' && v.key.s === 2 && v.key.text === 'Too high for now?'], ['2nd: no key offer yet', (v, vs) => !vs[1].key]]],
+    ['the highest a tone sharp, three times', 72, { by: 2 }, [{ tries: 3, top: true }], [['no key offer (sharp on the top note)', (v) => !v.key && v.dir === 'lower']]],
+    ['the lowest a tone sharp (+2), three times', 63, { by: 2 }, [{ tries: 3, bottom: true }], [['Too low for now? — raise the song 2', (v) => v.key?.dir === 'higher' && v.key.s === 2 && v.key.text === 'Too low for now?']]],
+    ['a fourth sharp (+5)', 68, { by: 5 }, [2], [['That’s another note', (v) => v.kind === 'another']]],
+    ['a tritone (+6)', 68, { by: 6 }, [2], [['That’s another note', (v) => v.kind === 'another']]],
+    ['a minor third flat (−3)', 68, { by: -3 }, [2], [['Much higher', (v) => v.dir === 'higher' && v.size === 'much']]],
+    ['on it', 68, {}, [{ refOct: 0, name }], [['matched', (v, vs, h) => v.kind === 'match' && v.oct === 0 && !v.said && v.text === '✓ A♭4' && h.t < 2]]],
+    ['on it, wide vibrato (±80¢)', 68, { vib: 80 }, [{ name }], [['matched', (v) => v.kind === 'match']]],
+    ['an octave down', 68, { by: -12 }, [{ refOct: 0, name }], [['matched, an octave down', (v) => v.kind === 'match' && v.oct === -12 && v.said === 'lower' && v.text === '✓ Same note, in your lower voice']]],
+    ['an octave down, the note played there', 68, { by: -12 }, [{ refOct: -12, name }], [['matched, said once: “✓ A♭3”', (v) => v.kind === 'match' && v.oct === -12 && !v.said && v.text === '✓ A♭3']]],
+    ['the written octave, the note played an octave down', 68, {}, [{ refOct: -12, name }], [['higher voice', (v) => v.kind === 'match' && v.oct === 0 && v.said === 'higher']]],
+    ['an octave up, 30¢ sharp', 63, { by: 12, cents: 30 }, [{ refOct: 0 }], [['matched an octave up', (v) => v.kind === 'match' && v.oct === 12 && v.said === 'higher']]],
+    ['silent', 68, { silent: true }, [1, 2], [['Didn’t hear you', (v) => v.kind === 'silent' && /Didn't hear you/.test(v.text)], ['the whole 6 s', (v, vs, h) => h.t >= EAR_HOLD.window - 0.05]]],
+    ['a whisper (vol 0.012)', 68, { vol: 0.012 }, [2], [['Didn’t hear you', (v) => v.kind === 'silent']]],
+    ['comes in 2 s late, on it', 68, { at: 2 }, [{ name }], [['matched', (v) => v.kind === 'match']]],
+    ['on it for half a second, then nothing', 68, { d: 0.5 }, [1, 2], [['1st: Close — keep it going (not a direction: no need to wait for the 2nd)', (v, vs) => vs.every((x) => x.kind === 'close' && x.text === 'Close — keep it going')]]],
+  ];
+  for (const [label, target, plan, tries, want] of H) {
+    const runs = VARIANTS.map((x) => { const h = holdRound(target, plan, x); return { h, vs: tries.map((t) => holdVerdict(h, typeof t === 'number' ? { tries: t, name } : { name, tries: 1, ...t })) }; });
+    const { h, vs } = runs[0], v = vs[vs.length - 1];
+    const failed = want.filter(([, fn]) => !fn(v, vs, h)).map(([w]) => w);
+    const say = (x) => `${x.kind}${x.dir ? ` ${x.dir}/${x.size}` : ''} “${x.text}”${x.along ? ' +along' : ''}${x.key ? ` +key ${x.key.dir} ${x.key.s}` : ''}`;
+    const same = runs.every((x) => JSON.stringify(x.vs.map(say)) === JSON.stringify(vs.map(say)));
+    console.log(`     Notes ${label}: ${vs.map(say).join(' → ')} | ${h.end} at ${h.t.toFixed(2)} s, held ${h.good.toFixed(2)} s, voiced ${h.voiced.toFixed(2)} s${v.r != null ? `, r ${v.r}` : ''}${same ? '' : `  [again: ${runs.slice(1).map((x) => x.vs.map(say).join(' → ')).join(' / ')}]`}`);
+    check(`Notes ${label}`, !failed.length, `wanted ${failed.join(', ')}`);
+    check(`Notes ${label}: the same holding, the same answer`, same);
+  }
+  // the targets: after a Line attempt (its off / not-sung notes first — the cue's first, ≤ 3 —, then the lowest and highest)
+  const T = (plan) => { const r = lineRound(AG, ph, plan).res; return { r, t: noteTargets(ph, AG.notes, r) }; };
+  const none = noteTargets(ph, AG.notes, null);
+  check('Notes targets, no Line attempt: the lowest, the highest', JSON.stringify(none.targets) === '[0,3]' && !none.off.length && m(none.lo) === 63 && m(none.hi) === 72, JSON.stringify(none));
+  let x = T({ cents: { 8: 200 } });
+  check('Notes targets after “sweet” +200¢: A♭4 (“sweet”) first, off last time; then E♭4, C5', x.t.targets[0] === 8 && x.t.off.includes(8) && JSON.stringify(x.t.targets) === '[8,0,3]', `${JSON.stringify(x.t)} (drill ${JSON.stringify(x.r.drill)}, cue ${x.r.cue?.kind}@${x.r.cue?.j})`);
+  x = T({});
+  check('Notes targets after an attempt all right: the lowest, the highest', JSON.stringify(x.t.targets) === '[0,3]' && !x.t.off.length, JSON.stringify(x.t));
+  x = T({ drop: [4] });
+  check('Notes targets after “Amazing”’s 2nd “zing” note left out: that note (B♭4) first', x.t.targets[0] === 4 && x.t.off.includes(4), `${JSON.stringify(x.t)} (cue ${x.r.cue?.kind}@${x.r.cue?.j})`);
+  x = T({ cents: { 2: 150, 7: -200, 9: 200 } });
+  check('Notes targets after three notes off: those three (the cue’s first), then the lowest, the highest', JSON.stringify([...x.t.off].sort((a, b) => a - b)) === '[2,7,9]' && x.t.targets[0] === x.r.cue?.j - ph.j0 && JSON.stringify(x.t.targets.slice(3)) === '[0,3]', `${JSON.stringify(x.t)} (cue ${x.r.cue?.kind}@${x.r.cue?.j}; drill ${JSON.stringify(x.r.drill)})`);
+  x = T({ cents: { 2: 150, 6: 150, 7: -200, 9: 200 } });
+  check('Notes targets after four notes off: three of them, one a pitch (“grace”’s C5 is the highest too)', x.t.off.length === 3 && x.t.off.every((k) => [2, 6, 7, 9].includes(k)) && x.t.targets[0] === x.r.cue?.j - ph.j0 && JSON.stringify(x.t.targets.slice(3)) === '[0]', `${JSON.stringify(x.t)} (cue ${x.r.cue?.kind}@${x.r.cue?.j}; drill ${JSON.stringify(x.r.drill)})`);
+  x = T({ stop: 6 });
+  check('Notes targets after a singer who stopped: nothing not reached', x.t.off.every((k) => k <= 6), `${JSON.stringify(x.t)} (drill ${JSON.stringify(x.r.drill)})`);
+}
+
 // The same singing again: the frames half a frame later (rAF never lands where it did), other room noise.
 const VARIANTS = [{ phase: 0, seed: 7 }, { phase: 1 / 120, seed: 11 }];
 const CASES = [...LINE.map((c) => ['Line', c]), ...BEATS.map((c) => ['Beats', c])];
@@ -445,6 +518,7 @@ if (!isMainThread) {
     }
   });
   console.log(`(the slowest judgment ${slowest.toFixed(0)} ms)`);
+  if (!ONLY || ONLY.test('Notes')) notesCases();
   const todos = Object.entries(todo).map(([k, v]) => `${k} ${v.length}`).join(', ');
   console.log(`${pass} passed, ${fail} failed${todos ? `, todo: ${todos}` : ''}`);
   process.exitCode = fail ? 1 : 0;

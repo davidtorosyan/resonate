@@ -182,8 +182,9 @@
       .ear-modes button[aria-pressed="true"] { background: #a64fff; border-color: #a64fff; color: #fff; font-weight: 600; }
       .ear-modes button:disabled { opacity: 0.5; }
       #ear-acts { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.5rem; }
-      #ear-acts button, .ear-cue .chip, .ear-names button { font: inherit; font-size: 0.9rem; color: #e8e8f0; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; padding: 0.4rem 0.9rem; min-height: 38px; cursor: pointer; }
+      #ear-acts button, #ear .chip, .ear-names button { font: inherit; font-size: 0.9rem; color: #e8e8f0; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; padding: 0.4rem 0.9rem; min-height: 38px; cursor: pointer; }
       #ear-res { text-align: center; display: flex; flex-direction: column; gap: 0.35rem; min-height: 2.2rem; }
+      #ear-res[hidden] { display: none; }
       #ear-res[data-old] > :not(.ear-last) { opacity: 0.55; }
       .ear-last { font-size: 0.78rem; color: rgba(255,255,255,0.5); }
       .ear-flash { color: rgba(255,255,255,0.6); }
@@ -191,11 +192,30 @@
       .ear-win { color: #4ade80; font-weight: 600; }
       .ear-cue { color: #ffe6a0; }
       .ear-chips { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.4rem; }
+      #ear-acts button[aria-pressed="true"] { background: rgba(166,79,255,0.3); border-color: #a64fff; color: #fff; }
+      /* Notes: the line's pitches low → high — the name, the syllable first sung on it, a dot on a target (amber: off
+         last time; green: held) — the current one lit */
       .ear-names { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.4rem; }
-      .ear-names button[data-state="cur"] { background: #a64fff; border-color: #a64fff; color: #fff; font-weight: 700; }
-      .ear-names button[data-state="done"] { border-color: #4ade80; color: #4ade80; }
+      .ear-names button { display: inline-flex; flex-direction: column; align-items: center; gap: 0.12rem; min-width: 3.3rem; padding: 0.35rem 0.55rem 0.3rem; border-radius: 14px; line-height: 1.15; }
+      .ear-names b { font-weight: 600; font-size: 0.95rem; }
+      .ear-names small { font-size: 0.74rem; color: rgba(255,255,255,0.6); max-width: 6.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ear-dot { display: block; width: 7px; height: 7px; border-radius: 50%; }
+      .ear-names button[data-state] .ear-dot { background: rgba(208,166,255,0.85); }
+      .ear-names button[data-state=""] .ear-dot { background: transparent; }
+      .ear-names button[data-off] .ear-dot { background: #ffc46b; }
+      .ear-names button[data-state="done"] .ear-dot { background: #4ade80; }
+      .ear-names button[data-state="cur"] { background: #a64fff; border-color: #a64fff; color: #fff; }
+      .ear-names button[data-state="cur"] b { font-weight: 700; }
+      .ear-names button[data-state="cur"] small { color: rgba(255,255,255,0.85); }
+      .ear-names button[data-state="done"] { border-color: rgba(74,222,128,0.7); }
       .ear-names button[data-state="todo"] { border-color: rgba(166,79,255,0.7); }
-      .ear-msg { text-align: center; color: #ffe6a0; min-height: 1.3rem; margin-top: 0.4rem; }
+      .ear-msg { text-align: center; color: #e8e8f0; min-height: 1.4rem; margin-top: 0.5rem; }
+      .ear-msg[data-tone="win"] { color: #4ade80; font-weight: 600; }
+      .ear-msg[data-tone="cue"] { color: #ffe6a0; }
+      .ear-msg[data-tone="fact"] { color: rgba(255,255,255,0.6); font-size: 0.9rem; }
+      .ear-msg + .ear-msg { margin-top: 0.15rem; }
+      .ear-keyoffer { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; color: #ffe6a0; }
+      .ear-next { display: flex; justify-content: center; margin-top: 0.3rem; }
       #ear-ring { display: flex; justify-content: center; }
       #ear-ring[hidden] { display: none; }
       /* Beats' count-in row: a dot a click, in bars (a bar's first beat bigger), then the line's first word — each lit
@@ -216,7 +236,11 @@
       @keyframes earpulse { 50% { box-shadow: 0 0 0 6px rgba(166,79,255,0.45); } }
       @media (prefers-reduced-motion: reduce) { #listen[data-pulse] { animation: none; box-shadow: 0 0 0 3px rgba(166,79,255,0.6); } }
       /* the level ring: how loud the mic hears you — neutral, never the win's green (it isn't a judgment) */
-      .ear-ring { --lv: 0; width: 64px; height: 64px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.15); box-shadow: 0 0 0 calc(var(--lv) * 14px) rgba(255,255,255,0.25); transition: box-shadow 60ms linear; }
+      .ear-ring { --lv: 0; position: relative; width: 64px; height: 64px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.15); box-shadow: 0 0 0 calc(var(--lv) * 14px) rgba(255,255,255,0.25); transition: box-shadow 60ms linear; }
+      /* a Notes hold: the time left, a thin arc on the ring emptying over the 6 s (time, not pitch) */
+      .ear-arc { display: none; position: absolute; inset: -3px; width: 70px; height: 70px; transform: rotate(-90deg); pointer-events: none; }
+      .ear-ring[data-arc] .ear-arc { display: block; }
+      .ear-arc circle { fill: none; stroke: rgba(255,255,255,0.6); stroke-width: 2; stroke-dasharray: 100; stroke-dashoffset: 0; }
       /* Guided: the step's card replaces the results row, the play bar and the chips (More → Tools has them). */
       body[data-guided="true"] .results-head, body[data-guided="true"] #playbar, body[data-guided="true"] #chips, body[data-guided="true"] #loopbar { display: none; }
       /* (from More → Tools: a loop shows its bar instead of the card; 🎤 Pitch its readout) */
