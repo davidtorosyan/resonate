@@ -149,7 +149,9 @@ async function runSize(sz) {
   ok(!(await shown(p, '#nextup')) && !(await shown(p, '#main-btn')) && await shown(p, '#listen') && await shown(p, '#sing') && await shown(p, '#songs-btn'), 'the dock: Listen · Sing\'s primary · Songs');
   await p.waitForTimeout(400);
   const tun = await rect(p, '#tuner');
-  ok(Math.abs(tun.h - (sz.form === 'strip' ? 52 : 150)) <= 1, `tuner height ${Math.round(tun.h)}`);
+  // (Sing's Ear shows — Guide me on, the default: no tuner, a live pitch readout; the Ear fix plan's WP1.2)
+  if (d.song.ear) ok(!tun?.vis, `the tuner hidden while Ear shows (${tun?.vis ? `height ${Math.round(tun.h)}` : 'hidden'})`);
+  else ok(Math.abs(tun.h - (sz.form === 'strip' ? 52 : 150)) <= 1, `tuner height ${Math.round(tun.h)}`);
   const lane = await rect(p, '#lane'), dock = await rect(p, '.dock'), coach = await rect(p, '#coach');
   ok(lane.h >= 150 && lane.b <= dock.y && (!coach.vis || coach.b <= dock.y + 1), `lane ${Math.round(lane.w)}×${Math.round(lane.h)} (≥ 150), Sing above the dock`);
   let L = await layout(p);

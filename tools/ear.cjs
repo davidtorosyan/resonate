@@ -6,13 +6,14 @@
 //     (within 6 %), ♪ one short with the cue on that note ("· higher"), ♩ 7 or more, an answer in < 1.5 s
 //   2 again, 10 % faster, every note right: "♩ all of them · ♪ all of them"
 //   2b Line → Notes → Line: that result again, dimmed under "Last time" (WP1.9)
-//   2c ▶ First note, then the dock's ▶, in the middle of an attempt: it ends, uncounted — "Stopped — not
-//     counted", nothing stored, the note / the line plays (WP1.6)
+//   2c ▶ First note, then the dock's ▶, in the middle of an attempt (the song, key, tempo and ⚙ locked): it
+//     ends, uncounted — "Stopped — not counted", nothing stored, the note / the line plays (WP1.6), the mic's
+//     tracks stopped and the session "playback" before the piano starts (iOS: quiet under a live capture)
 //   3 Beats — sing with the click (the guided take path): ♩ all of them, "In on …"; the dock "● Sing" →
 //     "■ Stop", no count-in or dB in #status (WP1.3–4)
 //   4 Notes — "■ Stop" on both buttons while the note plays (WP1.7); the first target held an octave down
 //     (matched, "an octave down — fine"), the next on pitch: every target done → back to the line
-//   5 ⚙ — while Ear shows only its switch, "Phrase by phrase" (WP1.10)
+//   5 ⚙ — while Ear shows only its switch, "Phrase by phrase" (WP1.10); turned off while ▶ Hear plays, it stops
 //   6 another song opens on its own line, nothing of the last one's; back, and after a reload, the line kept (WP1.8)
 // The shell (index.html, Sing alone), a phone 390×844 and an iPad 820×1180 (WP1.1–4):
 //   the tuner hidden while Ear shows, back with ⚙ off or the song closed; during a free attempt state().take,
@@ -41,6 +42,19 @@ async function singPage(browser) {
     try { if (!sessionStorage.getItem('ear')) { sessionStorage.setItem('ear', '1'); localStorage.setItem('resonate.sing.song', 'amazing-grace'); } } catch {}
   });
   await ctx.addInitScript(SINGER); // (window.__sing: the plan sung; indices in the line)
+  // (the mic's tracks handed out, and — once __watch is set — how many were live when a piano note was started)
+  await ctx.addInitScript(() => {
+    if (location.protocol === 'about:') return;
+    const g = navigator.mediaDevices.getUserMedia;
+    window.__tracks = [];
+    window.__atStart = [];
+    navigator.mediaDevices.getUserMedia = async (...a) => { const s = await g.apply(navigator.mediaDevices, a); window.__tracks.push(...s.getTracks()); return s; };
+    const st = AudioBufferSourceNode.prototype.start;
+    AudioBufferSourceNode.prototype.start = function (...a) {
+      if (window.__watch) window.__atStart.push({ live: window.__tracks.filter((t) => t.readyState === 'live').length, session: navigator.audioSession?.type });
+      return st.apply(this, a);
+    };
+  });
   const page = await ctx.newPage();
   const errs = [];
   page.on('pageerror', (e) => errs.push('pageerror ' + e.message));
@@ -109,10 +123,17 @@ async function singPage(browser) {
     await page.evaluate(() => { window.__sing = { mode: 'free', at: performance.now() + 200, f: 1 }; });
     await sleep(700);
     const firstOff = await page.$eval('#ear-acts button[data-act="first"]', (x) => x.disabled);
+    const locked = await page.evaluate(() => ['song-select', 'key-select', 'tempo-select', 'options-btn'].filter((id) => !document.getElementById(id)?.disabled));
+    ok(!locked.length, `2c: during the attempt the song, key, tempo and ⚙ are locked${locked.length ? ` (not: ${locked})` : ''}`);
+    await page.evaluate(() => { window.__atStart = []; window.__watch = true; });
     await page.click(sel);
     await sleep(150);
     e = await ear();
     ok(!firstOff && e.run === 'play' && e.flash === 'Stopped — not counted' && /^Stopped — not counted$/.test(e.ui), `2c: ${what} mid-attempt → “${e.ui}”, ${play} plays (run ${e.run})`);
+    // (iOS plays quietly while a capture is live, and needs "playback" — an "auto" after it went to the silent switch)
+    await sleep(400);
+    const snd = await page.evaluate(() => { window.__watch = false; return { starts: window.__atStart, live: window.__tracks.filter((t) => t.readyState === 'live').length, session: navigator.audioSession.type }; });
+    ok(snd.starts.length && snd.starts.every((s) => !s.live && s.session === 'playback') && !snd.live && snd.session === 'playback', `2c: ${what}: the mic stopped and the session “playback” before the piano (${JSON.stringify(snd.starts.slice(0, 2))}; now ${snd.session}, ${snd.live} live)`);
     ok(e.hints.line === 2 && JSON.stringify(e.shown?.res ?? null) === kept && !(await page.evaluate(() => window.resonateDebug().session)), `2c: ${what}: nothing judged or stored (the device's attempts ${e.hints.line}, the result kept)`);
     await page.evaluate(() => { window.__sing = null; });
     await idle();
@@ -165,9 +186,16 @@ async function singPage(browser) {
   const sheet = () => page.evaluate(() => ({ whole: getComputedStyle(document.getElementById('op-whole')).display !== 'none', label: document.querySelector('#guided-on').closest('label').textContent.trim(), on: document.getElementById('guided-on').checked }));
   let o = await sheet();
   ok(o.on && !o.whole && /^Phrase by phrase — by ear$/.test(o.label), `5: ⚙ while Ear shows — “${o.label}” only (the whole song's options hidden: ${!o.whole})`);
+  // (turned off while Ear's ▶ Hear plays: it stops — it would play on under the whole song's Listen)
+  await page.click('#op-close');
+  await page.click('#listen');
+  await page.waitForFunction(() => window.resonateDebug().ear.run === 'play', null, { timeout: 5000 });
+  await page.click('#options-btn');
   await page.click('#guided-on');
   o = await sheet();
+  const after = await page.evaluate(() => ({ run: window.resonateDebug().ear.run, busy: window.resonateSing.state().busy, listen: document.getElementById('listen').textContent }));
   ok(!o.on && o.whole && !(await page.evaluate(() => window.resonateDebug().ear.on)), '5: off — While you sing and Guide back, Ear gone');
+  ok(after.run === null && !after.busy && !/■/.test(after.listen), `5: off while ▶ Hear played — it stopped (run ${after.run}, busy ${after.busy}, “${after.listen}”)`);
   await page.click('#guided-on');
   o = await sheet();
   ok(o.on && !o.whole && (await page.evaluate(() => window.resonateDebug().ear.on)), '5: on again — Ear back, the switch alone');

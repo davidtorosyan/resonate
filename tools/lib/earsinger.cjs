@@ -96,7 +96,7 @@ const BODY = (segments, bend) => {
           const M = plan(a, z, 0);
           m = sungAt(M, d.nowT - (P.late || 0) - M.base);
         } else if (P.mode === 'hold' && d.ear.run === 'hold') {
-          const N = d.ear.notes; const n = d.notes[N.targets[N.i]];
+          const N = d.ear.notes; const n = d.notes[N.js ? N.js[N.i] : N.targets[N.i]]; // (targets: offsets in the line since WP1; js: in the song)
           m = n.midi + (n.shift || 0) + (P.by || 0) + (P.cents || 0) / 100 + (P.vib ? P.vib * Math.sin(2 * Math.PI * 5.5 * performance.now() / 1000) / 100 : 0);
         }
         if (m === null) g.gain.setTargetAtTime(0, ac.currentTime, 0.005);

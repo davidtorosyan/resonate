@@ -2469,9 +2469,13 @@ async function earFree() {
   raf = requestAnimationFrame(tick);
   run.finish = async () => {
     cancelAnimationFrame(raf);
+    // The mic stops now (the recording still flushes what it has), the session with it — before a ▶ that
+    // ended the attempt sets "playback": iOS plays quietly while a capture is live, and an "auto" set after
+    // the flush would have undone the ▶'s "playback".
+    mic.stream.getTracks().forEach((t) => t.stop());
+    setSession("auto");
     const voice = await cap?.finish().catch(() => null);
     mic.close();
-    setSession("auto");
     if (voice) voice.start -= t0; // (the attempt's clock: frame times)
     return { frames: run.frames, voice, endT: ac.currentTime - t0 };
   };
@@ -2993,6 +2997,7 @@ function renderMore() {
 function setGuided(on) {
   if (guidedOn === on) return;
   if (gblock) stopGuided();
+  earStop(); // (Ear's ▶ Hear doesn't play on under the whole song's Listen)
   guidedOn = on;
   store(PK.guided, on ? "on" : "off");
   const box = $("guided-on");
