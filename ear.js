@@ -11,18 +11,23 @@
 //   makeFeatures of the attempt's recording and its first sample's time on the attempt's clock — the starts are
 //   measured from them; none: ♩ isn't judged), gateUntil (Line: attempt s until which our own ▶'s tail may still
 //   be in the mic — frames under MIN_RMS don't count before it), prev (the last whole attempt at this line, mode
-//   and speed: { counts, win, cue, whole } — "rose", "fixed now", never the same win twice) }.
+//   and speed: { counts, win, cue, whole } — "rose", "fixed now", never the same win twice), oct (the singer's
+//   octave, EAR.oct: semitones the piano plays the song in for them — the key's direction is the voice against the
+//   piano heard), shiftOk (s → the Key menu can move the song s semitones; none: ±12) }.
 //
 // A result (sing.js EAR.res; resonateDebug().ear.res is debugRes of it):
 //   counts   { notes (♪: counted notes hit; null — not judged: another key), notesAll, beats (♩: starts on time;
 //              null: not judged), beatsAll } | null (nothing to count: not heard, couldn't follow)
 //   win      { kind, j?, w? (wordOf j), sub?, text } | null — Line kinds: "spot" (twice: sub "again") · "fixed"
 //              (the last cue, now right: sub "note" | "start") · "rose" (sub "notes" | "beats" | "both") · "key"
-//              (the tune right in another key) · "tune" (right, all a little off) · "high" · "long" · "first".
+//              (the tune right in another key) · "tune" (right, all a little off) · "every" (♪ all, not "Spot on") ·
+//              "high" · "long" · "first".
 //              Beats (judgeBeats): "spot" · "fixed" · "rose" · "entry" · "run" · "even".
 //   cue      { kind, j?, w?, dir?, size?, s?, from?, range?, at?, sounds, text } | null — dir: what to do
-//              ("higher" / "lower" / "sooner" / "later"; key: the song "lower" / "higher"); size: a pitch cue's
-//              "touch" | "aim" | "much"; s: a key cue's semitones (−6…+6); from: "short"'s first note not sung
+//              ("higher" / "lower" / "sooner" / "later"; key: where the voice was — "lower" / "higher" than the
+//              piano); size: a pitch cue's "touch" | "aim" | "much"; s: a key cue's semitones (the Key menu's: ±12;
+//              other — the menu's ends left only a shift the other way: "Sang it in another key"); from: "short"'s
+//              first note not sung
 //              (▶ The rest); range: [j0, j1] the stretch a timing cue's ▶ plays; at: [t0, t1] attempt s (▶ You);
 //              sounds: the ▶s it offers ("first", "you", "note", "stretch", "rest", "hear", "key").
 //              Line kinds, the first that applies: "silent" · "nofit" · "key" · "offset" · "short" · "missed" ·
@@ -30,10 +35,16 @@
 //              "held" · "drift" · "missed" · "timing" (sounds "hear", "click", "you").
 //   text     a win's and a cue's words, plain (earText gives them with the syllable underlined, and the rest
 //            of what the screen says)
-//   fit      { a, b, off, anchor, g (grades — at the singer's line, written pitches; another key: in theirs),
-//              ns (the notes where the singer put them) } — Line
-//   key      { c (¢: the attempt's pitch classes against the line's), s, kind: "key" | "offset" | null } — Line
-//   starts   { [i in the line]: { r (s off the singer's own steady line), on, measured, kind } } — Line
+//   fit      { a, b, off, anchor, g (grades — on each note's own span: a start measured starts its slot; written
+//              pitches; another key: in theirs — a note squeezed by a neighbour's onset and not hit: "unclear",
+//              squeezed), ns (the notes where the singer put them), refit (the measured starts' line moved it), look (the
+//              second look's line: a step the attacks showed) — b: the singer's tempo (with a step, its own line's) } — Line
+//   key      { c (¢: the attempt's pitch classes against the line's — the fit's, of up to three candidates), s, kind:
+//              "key" | "offset" | null, d (semitones: the voice against the piano heard), dir, other } — Line
+//   starts   { [i in the line]: { r (s off the singer's own steady line), on, measured, kind, rit?, um? (counted
+//              on, unmeasured) } } — Line; rit: the first start of a ritardando into the line's end (counted on,
+//              never cued), or null; um: a start counted on but not measured; spotOk: "Spot on" allowed (no start
+//              unmeasured, no offset / sag cue); anchored: the starts that set their notes' own spans
 //   onsets   { measured, of } — starts with a measured onset, of the starts reached
 //   notReached  counted notes that start after the singer stopped; whole: a baseline for next time (heard,
 //   followed, sung to the end); up { notes, beats }: a count that rose since prev; cover: the share of the
@@ -41,12 +52,12 @@
 //   rn       { [i in the line]: { cls, dev, rdev } | null } — Beats: each start against its click (judgeBeats)
 //   drill    [i in the line] — Line: the notes reached and sung off or not sung, the cue's first, then the longest
 //            (Notes' "Off last time" targets: noteTargets)
-import { gradeTake } from "./grade.js?v=104";
-import { median, fold } from "./music.js?v=104";
-import { findOnsets, tolFlag, tolOn, voiceCover } from "./rhythm.js?v=104";
-import { metricOf, meterAt, measureAt, feltBeat } from "./takerhythm.js?v=104";
-import { PRACTICE } from "./practice.js?v=104";
-import { MIN_RMS } from "./pitch.js?v=104";
+import { gradeTake, loudGate } from "./grade.js?v=105";
+import { median, fold } from "./music.js?v=105";
+import { findOnsets, tolFlag, tolOn, voiceCover, attackTimes } from "./rhythm.js?v=105";
+import { metricOf, meterAt, measureAt, feltBeat } from "./takerhythm.js?v=105";
+import { PRACTICE } from "./practice.js?v=105";
+import { MIN_RMS } from "./pitch.js?v=105";
 
 // A line for Ear: the printed line (the fix plan's Q-A) — a lyric line, short ones joined to 4+ syllables, a
 // long one cut near 8 (Amazing Grace: its four hymn lines, 9–11 s each). sing.js puts these into practice.js's
@@ -100,6 +111,34 @@ export const EAR_FREE = {
                        //   within 50¢ where the singer's line puts it too
   touch: 80, much: 250, // ¢: a pitch cue's size — a touch / aim / much
   sag: 25,             // ¢: every note hit, but this far off all the way (median) or by the end (last third vs first)
+  // Round 2 (the Ear fix plan round 2, WP1):
+  attackGain: 0.4,     // the fit: per counted start (past the first) within `attackWin` s of an attack in the recording —
+  attackWin: 0.07,     //   repeated pitches are told apart only by their attacks (a syllable left out of a run of one pitch)
+  tempoCost: 0.5,      // the fit: per second of the line, × |ln b| — held near the tempo heard (every line; legato: no
+                       //   attacks, a line squeezed onto a held voice loses here)
+  peaks: 3, peakApart: 150, // the key: up to this many candidates from the pitch-class correlation, ≥ this many ¢ apart
+  keyGain: 2,          // …another key's fit kept over the written key's when it hits this many notes more, or the written
+  keyBent: 1.1,        //   key's sits on the search's edge or bends the tempo by more than this (×)
+  laterAnchor: 2,      // a later anchor (a restart) wins only when the first one's fit misses this many counted notes it hits
+  ritFirst: 0.05,      // s: a ritardando into the line's end — its last 2–3 starts late, the first by this, …
+  ritMin: 0.03,        //   …each later than the one before by this…
+  ritBeat: 0.75,       //   …the last at most this many beats late (on the singer's clock)
+  anchorMax: 0.35,     // ♪ on each note's own span: a start re-placed at its measured onset only within this of its fitted time
+  anchorGap: 0.04,     //   …no slot past a measured neighbour's onset less this (the plan's 20 ms: a frame's window runs
+                       //   ~50 ms past its time — the next note's attack read as this note's pitch)
+  anchorKeep: 0.4,     //   …a slot left under this share of its length is squeezed: a note cut short by its neighbour's
+                       //   early start (or its own late one) isn't judged on pitch unless it was hit
+  spanShift: 0.05,     //   …and the grading's slots move at most this
+  onsetSlope: 0.05,    // the measured starts' own line (≥ 4) this far from the pitch fit's tempo: refit near it
+  voicedStart: 0.3,    // an unmeasured start is on when its note was voiced this share of its slot (any pitch) and its
+                       //   nearest measured starts are on: a pitch miss never costs a ♩
+  seedMin: 0.04, seedMax: 0.15, // s: Line's onsets — the first guess at their lead within half the starts' shortest spacing
+                       //   (at least seedMin, at most seedMax): further, a run of equal notes lines up a whole note off
+  onsetGap: 0.05,      // s: two measured starts at least this far apart (else the one further from its place is unmeasured)
+  firstStep: 0.25,     // s: a step after the line's first start alone (its first syllable held long) at least this size
+  stepMin: 0.15, stepMax: 1.2, stepCut: 0.6, // s: the steps judgeFree's second look tries (a hold up to stepMax; cut short up to stepCut)
+  stepCost: 0.25,      //   …per s of it (in starts on an attack: the smaller step wins a tie)
+  stepAttacks: 0.9,    //   …and it looks only when the best step puts one more start on an attack than any straight line (net of its costs)
 };
 const F = EAR_FREE;
 
@@ -174,6 +213,7 @@ function winParts(w, ctx) {
     case "fixed": return w.sub === "start" ? ["In on ", ...nm(w.j), " now"] : [...nm(w.j), " right on it now"];
     case "rose": return [w.sub === "both" ? "More of both than last time" : w.sub === "beats" ? `More on the ${ctx.beats ? "click" : "beat"} than last time` : "More in tune than last time"];
     case "key": case "tune": return ["The tune was right"];
+    case "every": return ["Every note in tune"];
     case "high": return ["Hit the high note on ", ...nm(w.j)];
     case "long": return [...nm(w.j), " held right on the note"];
     case "first": return ["Started on the note"];
@@ -189,7 +229,7 @@ function cueParts(c, ctx) {
   switch (c.kind) {
     case "silent": return ["Didn't hear you — sing a bit louder"];
     case "nofit": return ["Couldn't follow that one"];
-    case "key": return [c.dir === "lower" ? "Started lower than the piano" : "Started higher than the piano"];
+    case "key": return [c.other ? "Sang it in another key" : c.dir === "lower" ? "Started lower than the piano" : "Started higher than the piano"];
     case "offset": return [c.dir === "higher" ? "A little low all the way" : "A little high all the way"];
     case "short": return ["Keep going to ", ...wordParts(c.j, ctx)];
     case "slip": return c.dir === "sooner" ? ["Came in late — start when ", ...wordParts(c.j, ctx), " lights"] : ["Came in early — wait for ", ...wordParts(c.j, ctx), " to light"];
@@ -217,7 +257,8 @@ const cueText = (c, ctx) => plainOf(cueParts(c, ctx));
 // What a result says on screen, in order (the fix plan's "Line, after an attempt": win, counts, cue, next):
 // res — judgeFree's / judgeBeats's (res.kind "line" | "beats"); ctx — { notes, name, lastLine (no line after this
 // one), bpm (♩ a minute the line was heard at: "You sang it at ♩=62"), voice (the attempt's recording is here:
-// ▶ You), shift(s) (the Key menu can move the song s semitones: Lower / Raise the song), old (a result from before:
+// ▶ You), shift(s) (the Key menu can move the song s semitones: Lower / Raise the song), keyName(s) (the key that
+// lands it in: "Lower the song to F"; "Move the song to you" when the menu's end left only the other way), old (a result from before:
 // "Last time" — nothing drawn as risen) }.
 // → { win: parts | null (with its ✓), counts: [{ icon: "beat" | "note", text, all, up }] (a count not judged, or 0,
 // left out; never "—", "0", "↑" or a fraction), tempo: { bpm, text } | null, cue: parts | null, sounds: [{ act,
@@ -257,7 +298,7 @@ export function earText(res, ctx = {}) {
       else if (s === "rest" && q.from != null) add("cue-rest", "▶ The rest");
       else if (s === "hear") add("cue-hear", "▶ Hear");
       else if (s === "you" && ctx.voice && (q.at || beats)) add("cue-you", "▶ You");
-      else if (s === "key" && q.s && ctx.shift?.(q.s)) add("cue-key", q.s < 0 ? "Lower the song" : "Raise the song", { s: q.s });
+      else if (s === "key" && q.s && ctx.shift?.(q.s)) { const kn = ctx.keyName?.(q.s); add("cue-key", q.other ? "Move the song to you" : `${q.s < 0 ? "Lower" : "Raise"} the song${kn ? ` to ${kn}` : ""}`, { s: q.s }); }
     }
   } else if (ctx.voice && n && (beats ? n.beatsAll : n.notesAll)) out.sounds.push({ act: "you", label: "▶ You" });
   // the next exercise (D9: the singer picks, the next is suggested) — one chip
@@ -305,46 +346,76 @@ export function anchorsOf(frames) {
 
 // The key offset (rule 3): the attempt's pitch classes (a 10¢ histogram of the voiced frames) against the
 // line's (its written notes, weighted by length), cross-correlated — order-free: → { c (¢, −600…+600: sung =
-// written + c) }.
+// written + c — the strongest), peaks: [{ c, w (its strength, the strongest 1) }] (round 2's WP1.3: up to `peaks`
+// of the correlation's peaks, ≥ `peakApart` ¢ apart, strongest first — a few wrong notes can put a fifth-related
+// offset on top: each is fitted, the fit decides) }.
 export function keyOffset(ph, notes, frames) {
   const B = 120, H = new Float64Array(B), W = new Float64Array(B);
   const put = (A, cents, w) => { const x = (((cents / 10) % B) + B) % B, i = Math.floor(x), f = x - i; A[i % B] += w * (1 - f); A[(i + 1) % B] += w * f; };
   let n = 0;
   for (const f of frames) if (f.midi != null) { put(H, f.midi * 100, 1); n++; }
   for (const j of phraseJs(ph)) put(W, notes[j].midi * 100, notes[j].d);
-  if (!n) return { c: 0 };
+  if (!n) return { c: 0, peaks: [] };
   // (both smoothed a little: a voice isn't a delta, nor are 10¢ bins)
   const smooth = (A) => { const out = new Float64Array(B), k = [0.06, 0.24, 0.4, 0.24, 0.06]; for (let i = 0; i < B; i++) for (let d = -2; d <= 2; d++) out[i] += A[(i + d + B) % B] * k[d + 2]; return out; };
   const Hs = smooth(H), Ws = smooth(W);
   const corr = new Float64Array(B);
   for (let s = 0; s < B; s++) { let c = 0; for (let b = 0; b < B; b++) c += Hs[(b + s) % B] * Ws[b]; corr[s] = c; }
-  let best = 0;
-  for (let s = 1; s < B; s++) if (corr[s] > corr[best] + 1e-12) best = s;
-  // (sub-bin: the parabola through the peak and its neighbours)
-  const l = corr[(best + B - 1) % B], m = corr[best], r = corr[(best + 1) % B], den = l - 2 * m + r;
-  const x = best + (den < 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (l - r)) / den)) : 0);
-  let c = x * 10;
-  if (c > 600) c -= 1200;
-  return { c };
+  // (sub-bin: the parabola through a peak and its neighbours)
+  const cOf = (best) => {
+    const l = corr[(best + B - 1) % B], m = corr[best], r = corr[(best + 1) % B], den = l - 2 * m + r;
+    const x = best + (den < 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (l - r)) / den)) : 0);
+    let c = x * 10;
+    if (c > 600) c -= 1200;
+    return c;
+  };
+  // the local maxima, strongest first; each ≥ peakApart from every one taken before it
+  const tops = [];
+  for (let s = 0; s < B; s++) if (corr[s] >= corr[(s + B - 1) % B] && corr[s] > corr[(s + 1) % B]) tops.push(s);
+  tops.sort((a, b) => corr[b] - corr[a] || a - b);
+  const apart = Math.round(F.peakApart / 10), taken = [];
+  for (const s of tops) {
+    if (taken.length >= F.peaks) break;
+    if (taken.some((t) => { const d = Math.abs(s - t) % B; return Math.min(d, B - d) < apart; })) continue;
+    taken.push(s);
+  }
+  if (!taken.length) taken.push(0);
+  const top = corr[taken[0]] || 1;
+  const peaks = taken.map((s) => ({ c: cOf(s), w: +(corr[s] / top).toFixed(3) }));
+  return { c: peaks[0].c, peaks };
 }
 
 // Grade the line placed at t = a + b·(written t − its start), pitches + off (¢): → the candidate.
-function placer(ph, notes, frames, endT, counted) {
+// att: the recording's attacks (rhythm.js attackTimes, sorted; null — no recording): a counted start past the first
+// that lands on one scores attackGain (round 2's WP1.2). Every candidate pays tempoCost × |ln b| × the line's seconds:
+// the singer's tempo is held near the one heard unless the notes say otherwise.
+function placer(ph, notes, frames, endT, counted, att = null) {
   const js = phraseJs(ph), T0 = notes[ph.j0].t, cset = new Set(counted), last = js.length - 1;
+  const loud = loudGate(frames, 0.012); // (the same frames for every candidate: found once — gradeTake's own default gate)
   // (a short line — a few notes of the singer's own — fits as well at a tempo far from the one heard, one note off:
   // there a tie goes to the tempo nearer the speed heard too — |ln b| × the line's seconds, as a slot's move would)
   const lineSec = notes[js[last]].t - T0, short = counted.length <= F.shortLine;
   // (the line's last note: as long as the singer held it — F.lastMin)
   const lastV = frames.reduce((m, f) => (f.midi != null ? f.t : m), -Infinity);
+  // (the counted starts past the first, as offsets in the line; the attacks' times)
+  const sk = counted.filter((j) => j !== ph.j0 && !notes[j].melisma).map((j) => j - ph.j0);
+  const at = att?.length ? att.map((x) => x.t) : null;
+  const onAttack = (t) => {
+    let lo = 0, hi = at.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (at[mid] < t) lo = mid + 1; else hi = mid; }
+    return (lo < at.length && at[lo] - t <= F.attackWin) || (lo > 0 && t - at[lo - 1] <= F.attackWin);
+  };
   return (a, b, off) => {
     const ns = js.map((j, k) => {
       const n = notes[j], t = a + b * (n.t - T0), d = b * n.d;
       return { midi: n.midi + off / 100, t, d: k === last ? Math.min(d, Math.max(F.lastMin, lastV + F.lastPad - t)) : d };
     });
-    const g = gradeTake(ns, frames, { endT });
-    let s = 0, sh = 0, hits = 0, offs = 0;
+    const g = gradeTake(ns, frames, { endT, loud });
+    let s = 0, sh = 0, hits = 0, offs = 0, ah = 0;
     g.forEach((x, k) => { if (hitOf(x)) { s += 1 + 0.25 * (x.hit || 0); sh += Math.abs(x.shift || 0); if (cset.has(js[k])) hits++; } else if (x?.status === "off" || x?.status === "good" || x?.status === "ok") offs++; });
-    return { s: s - F.moveCost * sh - F.offCost * offs, sh, k: sh + (short ? Math.abs(Math.log(b)) * lineSec : 0), hits, g, ns, a, b, off };
+    if (at) for (const k of sk) if (onAttack(ns[k].t)) ah++;
+    const tempo = F.tempoCost * Math.abs(Math.log(b)) * lineSec;
+    return { s: s - F.moveCost * sh - F.offCost * offs + F.attackGain * ah - tempo, sh, k: sh + (short ? Math.abs(Math.log(b)) * lineSec : 0), hits, ah, g, ns, a, b, off };
   };
 }
 // The best of some candidates: the best score; among those within `tie` of it, the one sitting closest to the
@@ -376,15 +447,30 @@ function refine(place, best, anchor, off) {
   return fineB(best.b);
 }
 // The singer's line at one pitch offset: from each anchor (its own frames, from anchor − before) the coarse
-// search, the best of them refined.
-function fitAt(ph, notes, frames, endT, counted, anchors, off) {
+// search; the first anchor's kept unless a later one's hits `laterAnchor` counted notes more that it misses (round 2:
+// a breath inside the line isn't a restart — on a line of one repeated pitch every placement hits, the first is kept);
+// then refined.
+function fitAt(ph, notes, frames, endT, counted, anchors, off, att = null) {
   const cs = anchors.map((an) => {
-    const place = placer(ph, notes, frames.filter((f) => f.t >= an - F.before), endT, counted);
+    const place = placer(ph, notes, frames.filter((f) => f.t >= an - F.before), endT, counted, att);
     return { ...coarse(place, an, off), anchor: an, place };
   });
-  const c = pick(cs);
+  let c = cs[0];
+  const one = counted.every((j) => Math.abs(notes[j].midi - notes[counted[0]].midi) < 0.5);
+  if (!one) for (const x of cs.slice(1)) {
+    const gain = counted.filter((j) => hitOf(x.g[j - ph.j0]) && !hitOf(c.g[j - ph.j0])).length;
+    if (gain >= F.laterAnchor && x.s > c.s) c = x;
+  }
   const r = refine(c.place, c, c.anchor, off);
   return { ...r, anchor: c.anchor, edge: r.b <= F.bMin * 1.02 || r.b >= F.bMax / 1.02 };
+}
+// The singer's line again, near a = a0, b = b0 (the measured onsets' line: judgeFree's fallback) — ±3 % and ±60 ms.
+function refitNear(ph, notes, frames, endT, counted, fit, a0, b0) {
+  if (!(b0 > 0) || fit.anchor == null) return null;
+  const place = placer(ph, notes, frames.filter((f) => f.t >= fit.anchor - F.before), endT, counted, fit.att);
+  const cs = [];
+  for (let i = -3; i <= 3; i++) for (let k = -3; k <= 3; k++) cs.push(place(a0 + k * 0.02, b0 * (1 + i * 0.01), fit.off ?? 0));
+  return pick(cs);
 }
 // What a share of the counted notes is taken of (rule 7): those the line puts before the singer stopped (the last
 // voiced frame + reach) — at least a third of them, so a few notes sung don't make a whole line.
@@ -392,23 +478,50 @@ function reachedBase(ph, ns, counted, lastV) {
   return Math.max(counted.filter((j) => ns[j - ph.j0].t <= lastV + F.reach).length, Math.ceil(counted.length / 3), 1);
 }
 // The singer's line (rules 2–4): the anchors, the key offset, the fit at 0 and — the whole attempt off by
-// ≥ offsetMin — at that offset; the offset kept when it hits ≥ offsetHits of the counted notes and ≥ offsetGain×
-// what the written key does.
+// ≥ offsetMin — at each of the key's candidates (keyOffset's peaks; the best by hits). Another key's fit is kept on
+// quality (round 2's WP1.3): it hits ≥ offsetHits of the counted notes reached, and it hits keyGain notes more than the
+// written key's, or the written key's sits on the search's edge or bends the tempo (> keyBent× from it), or round 1's
+// rule (offsetGain× its hits). The key's direction is the register's (WP1.4): d — where the voice was against the
+// piano heard (the median over the counted notes hit of the sung pitch, unfolded, less the written one and the
+// singer's octave ctx.oct) —, s the shift of round(c) ± an octave nearest d that the Key menu allows (ctx.shiftOk;
+// none: ±12), dir d's sign; other: the menu's ends left only an s the other way ("Sang it in another key").
+// ctx.att: the recording's attacks (else from ctx.feat / ctx.start).
 export function fitLine(ph, frames, endT, ctx) {
   const { notes } = ctx;
   const { counted } = countSets(ph, notes, ctx.spq0);
   const anchors = anchorsOf(frames);
   if (!anchors.length) return null;
+  const att = ctx.att !== undefined ? ctx.att : ctx.feat && ctx.start != null ? attackTimes(ctx.feat, ctx.start) : null;
   const key = keyOffset(ph, notes, frames.filter((f) => f.t >= anchors[0] - F.before));
-  const f0 = fitAt(ph, notes, frames, endT, counted, anchors, 0);
-  let fit = f0, kind = null;
-  if (Math.abs(key.c) >= F.offsetMin) {
-    const fc = fitAt(ph, notes, frames, endT, counted, anchors, key.c);
-    // (of the counted notes the singer reached: one who stopped early, in another key, is still in that key)
-    const lastV = frames.reduce((m, f) => (f.midi != null ? f.t : m), -Infinity);
-    if (fc.hits >= F.offsetHits * reachedBase(ph, fc.ns, counted, lastV) && fc.hits >= F.offsetGain * f0.hits) { fit = fc; kind = Math.abs(key.c) >= F.keyMin ? "key" : "offset"; }
+  const f0 = fitAt(ph, notes, frames, endT, counted, anchors, 0, att);
+  // (of the counted notes the singer reached: one who stopped early, in another key, is still in that key)
+  const lastV = frames.reduce((m, f) => (f.midi != null ? f.t : m), -Infinity);
+  let fit = f0, kind = null, c = key.c;
+  // (the written key hitting every note reached: no other key can do better)
+  const all0 = !f0.edge && f0.hits >= reachedBase(ph, f0.ns, counted, lastV);
+  let fc = null;
+  if (!all0) for (const p of key.peaks || [{ c: key.c }]) {
+    if (Math.abs(p.c) < F.offsetMin) continue;
+    const x = fitAt(ph, notes, frames, endT, counted, anchors, p.c, att);
+    if (!fc || x.hits > fc.hits || (x.hits === fc.hits && x.s > fc.s)) fc = { ...x, c: p.c };
   }
-  return { ...fit, key: { c: key.c, s: kind === "key" ? Math.max(-6, Math.min(6, Math.round(key.c / 100))) : 0, kind }, f0 };
+  if (fc) {
+    const bent = Math.abs(Math.log(f0.b / fc.b)) > Math.log(F.keyBent);
+    const better = fc.hits >= f0.hits + F.keyGain || f0.edge || bent || fc.hits >= F.offsetGain * f0.hits;
+    if (fc.hits >= F.offsetHits * reachedBase(ph, fc.ns, counted, lastV) && better) { fit = fc; c = fc.c; kind = Math.abs(c) >= F.keyMin ? "key" : "offset"; }
+  }
+  const k = { c, s: 0, kind };
+  if (kind === "key") {
+    const oct = ctx.oct || 0, ok = ctx.shiftOk || ((s) => Math.abs(s) <= 12);
+    const ds = counted.filter((j) => hitOf(fit.g[j - ph.j0]) && fit.g[j - ph.j0].sungMidi != null).map((j) => fit.g[j - ph.j0].sungMidi - notes[j].midi - oct);
+    const d = ds.length ? median(ds) : c / 100, base = Math.round(c / 100);
+    const cands = [base, base - 12, base + 12].filter((s) => s && ok(s)).sort((x, y) => Math.abs(x - d) - Math.abs(y - d));
+    k.d = +d.toFixed(2);
+    k.dir = d < 0 ? "lower" : "higher";
+    k.s = cands[0] ?? 0;
+    if (k.s && Math.sign(k.s) !== Math.sign(d)) k.other = true;
+  }
+  return { ...fit, key: k, f0, att };
 }
 
 // --- ♩: the starts -----------------------------------------------------------------------------------------
@@ -424,21 +537,26 @@ function theilSen(pts) {
 // A step in the starts (the held-long rule): starts on, then ≥ 2 in a row off the same way — one note held long
 // or cut short, the beat kept after it. pts: [x, y, k, tol] in order. → { k (the first start after the step, in
 // the line), d (s: + = late), a, b (the line before it) } | null
-function stepIn(pts) {
+// (round 2's WP1.1 / WP1.8: ≥ minPre starts on before the step — Beats: 2, one start sets no beat; Line: 1 when it is
+// the line's first, sung on its note — and the starts after it flat about the step, within the step's start's
+// tolerance: a tempo curving away isn't a note held)
+function stepIn(pts, { minPre = 2, firstMin = 0 } = {}) {
   if (pts.length < 4) return null; // (three starts: a step and a tempo can't be told apart — one start before it sets no beat)
   const one = theilSen(pts);
   if (!one) return null;
   const sum1 = pts.reduce((s, [x, y]) => s + Math.abs(y - one.a - one.b * x), 0);
   let best = null;
-  for (let i = 1; i + 2 <= pts.length; i++) {
+  for (let i = minPre; i + 2 <= pts.length; i++) {
     const pre = pts.slice(0, i), post = pts.slice(i), sl = [];
     for (const g of [pre, post]) for (let p = 0; p < g.length; p++) for (let q = p + 1; q < g.length; q++) if (g[q][0] - g[p][0] > 0.05) sl.push((g[q][1] - g[p][1]) / (g[q][0] - g[p][0]));
     if (!sl.length) continue;
     const b = median(sl), a = median(pre.map(([x, y]) => y - b * x)), d = median(post.map(([x, y]) => y - b * x - a));
     const tol = pts[i][3];
-    if (Math.abs(d) <= tol) continue;
+    if (Math.abs(d) <= tol || (i < 2 && Math.abs(d) < firstMin)) continue;
     if (!pre.every(([x, y, , t]) => Math.abs(y - a - b * x) <= t)) continue; // (on before it)
     if (!post.slice(0, 2).every(([x, y, , t]) => Math.sign(y - a - b * x) === Math.sign(d) && Math.abs(y - a - b * x) > t)) continue; // (≥ 2 off, the same way)
+    const rp = post.map(([x, y]) => y - a - b * x);
+    if (Math.max(...rp) - Math.min(...rp) > tol) continue; // (flat after it: the beat kept)
     const sum = pts.reduce((s, [x, y], k) => s + Math.abs(y - a - b * x - (k >= i ? d : 0)), 0);
     if (sum > 0.5 * sum1) continue;
     if (!best || sum < best.sum) best = { k: pts[i][2], d, a, b, sum };
@@ -446,16 +564,22 @@ function stepIn(pts) {
   return best;
 }
 
-// Each start's onset where the singer's line puts its note (rhythm.js findOnsets on the line, the start searched
-// ±0.3 s): Line's ♩ and Beats' both. fit: the singer's line { a, b, ns } (Beats: against the click); grades: at that
+// Each start's onset where the singer's line puts its note (rhythm.js findOnsets on the line, its lead's first guess
+// within ±0.3 s — Line: within half the starts' shortest spacing, ≤ 0.15 s): Line's ♩ and Beats' both. fit: the singer's line { a, b, ns } (Beats: against the click); grades: at that
 // line (Line: unsung — not reached, or missed with no voice near — isn't searched); unsung (Beats): instead, the
 // starts not searched. → { out: { [k]: { measured, kind, dev, u, tol, first, y (s: the onset, on the frames'
 // clock) } }, pts: [[line t, y, k, tol]] (the measured ones), lead, ne (where the pitch put each note) } | null
-function measureStarts(ph, fit, grades, frames, endT, ctx, starts, reached, unsungOf = null) {
+function measureStarts(ph, fit, grades, frames, endT, ctx, starts, reached, unsungOf = null, { line = false, step = null } = {}) {
   const { notes } = ctx;
   if (!ctx.feat || ctx.start == null || !ctx.score || !ctx.qToT) return null;
   const js = phraseJs(ph), T0 = notes[ph.j0].t;
-  const ns = fit.ns.map((n, k) => ({ ...n, q: notes[js[k]].q, melisma: !!notes[js[k]].melisma, restBefore: k > 0 && n.t - (fit.ns[k - 1].t + fit.ns[k - 1].d) >= 0.02 }));
+  // (step { k, d }: Line's second look — fit.ns, where the notes are looked for, puts the notes from start k on d s
+  // later than the singer's straight line, a note held long before them: the starts are judged on that line — ns —, so
+  // the step shows in them as it was sung; pl — where they're looked for)
+  const pl = fit.ns;
+  const joinedAt = (k) => k > 0 && pl[k].t - (pl[k - 1].t + pl[k - 1].d) < 0.02;
+  const base = step ? pl.map((n, k) => (k >= step.k ? { ...n, t: n.t - step.d } : k === step.k - 1 && joinedAt(step.k) ? { ...n, d: Math.max(0.05, n.d - step.d) } : n)) : pl;
+  const ns = base.map((n, k) => ({ ...n, q: notes[js[k]].q, melisma: !!notes[js[k]].melisma, restBefore: k > 0 && n.t - (base[k - 1].t + base[k - 1].d) >= 0.02 }));
   // (the meter on the singer's clock: a beat's division in their seconds)
   // (in free time a start may come in late after a note held on — the window an entry gets, up to a beat)
   const sset = new Set(starts.map((j) => j - ph.j0));
@@ -463,69 +587,272 @@ function measureStarts(ph, fit, grades, frames, endT, ctx, starts, reached, unsu
   // Each start is searched where the pitch says the note was sung (a grading whose slots may move `wideShift`:
   // a note held on, the next one late, isn't looked for on the straight line, where its neighbour's attack is),
   // and judged against the straight line through the others.
-  const wide = gradeTake(fit.ns.map((n) => ({ midi: n.midi, t: n.t, d: n.d })), frames, { endT, maxShift: F.wideShift });
-  const at = ns.map((n, k) => n.t + (["good", "ok", "off"].includes(wide[k]?.status) ? wide[k].shift || 0 : 0));
+  // (round 2's WP1.1: only where that grading found the note — good / ok: a note sung off has no place of its own
+  // there, and its slot moved onto the neighbour that has the pitch it took — B2's first note sung 300¢ low was
+  // looked for on the next note, 0.37 s late. The line's first start is looked for at the singer's first sound.)
+  const wide = gradeTake(pl.map((n) => ({ midi: n.midi, t: n.t, d: n.d })), frames, { endT, maxShift: F.wideShift });
+  // (Line: nor a note inside a run of one pitch, both its neighbours on it — the pitch can't place it: the wide grading
+  // slides the run a whole note along, and its start was looked for on the neighbour's attack. Only inside one: with
+  // either neighbour on its pitch, the run's first and last notes — the one place the pitch does say — were looked for
+  // on the fit's line too: the pickup left out, “once” — on the pitch of the melisma note before it — was looked for on
+  // the line the fit had squeezed, and “was” graded on its neighbour's pitch)
+  const same = (k) => k > 0 && k + 1 < ns.length && [k - 1, k + 1].every((i) => Math.abs(ns[i].midi - ns[k].midi) < 0.5);
+  const at = ns.map((n, k) => (k === 0 && fit.anchor != null ? fit.anchor : pl[k].t + (["good", "ok"].includes(wide[k]?.status) && !(line && same(k)) ? wide[k].shift || 0 : 0)));
   const ne = ns.map((n, k) => ({ ...n, t: at[k], d: k + 1 < ns.length && !ns[k + 1].restBefore ? Math.max(0.05, at[k + 1] - at[k]) : n.d }));
   const voicedNear = (n) => frames.some((f) => f.midi != null && f.t >= n.t - 0.1 && f.t <= n.t + n.d + 0.25);
-  const unsung = unsungOf || js.map((j, k) => !reached.has(j) || grades[k]?.status === "unsung" || (grades[k]?.status === "missed" && !voicedNear(ns[k]) && !voicedNear(ne[k])));
+  const unsung = unsungOf || js.map((j, k) => !reached.has(j) || grades[k]?.status === "unsung" || (grades[k]?.status === "missed" && !voicedNear(pl[k]) && !voicedNear(ne[k])));
   // (an attack followed by the note before's pitch, not this one's, is the note before re-sung — a melisma's note
-  // after a breath — not this start: the singer's own pitch says so when they sang this note right)
+  // after a breath — not this start: the singer's own pitch says so when they sang this note right. Round 2's WP1.5:
+  // only after a melisma's note — a syllable sung on the pitch of the syllable before it is a wrong note, but a start)
   const pitchAfter = (t) => { const v = frames.filter((f) => f.midi != null && f.t >= t + 0.03 && f.t < t + 0.18).map((f) => f.midi); return v.length >= 3 ? median(v) : null; };
+  // (…the note before as it was sung, where the grading heard it: a syllable sung on the written pitch of a melisma's
+  // note sung wrong is no re-sung note — it follows another pitch)
   const keep = (k, t) => {
-    if (k === 0) return true;
-    const m = pitchAfter(t), mine = ne[k].midi, before = ne[k - 1].midi;
+    if (k === 0 || !ne[k - 1].melisma) return true;
+    const m = pitchAfter(t), mine = ne[k].midi, gb = grades?.[k - 1];
+    const before = gb && ["good", "ok", "off"].includes(gb.status) && gb.sungMidi != null ? gb.sungMidi : ne[k - 1].midi;
     if (m == null || Math.abs(fold(m - mine)) <= 0.6 || Math.abs(fold(before - mine)) < 1) return true;
     return Math.abs(fold(m - before)) > 0.6;
   };
+  const live = starts.filter((j) => reached.has(j));
+  // (Line: the singer's line is where the pitch put the notes — the onsets' first guess at a lead stays within half the
+  // shortest spacing of the starts, at most 0.15 s: a run of equal notes lined up one note off took every start's
+  // neighbour's attack, and ♪ on those spans heard each note's neighbour)
+  let seedRange = [-0.3, 0.3];
+  if (line) {
+    let gap = Infinity;
+    for (let i = 1; i < live.length; i++) gap = Math.min(gap, ns[live[i] - ph.j0].t - ns[live[i - 1] - ph.j0].t);
+    const r = Math.max(F.seedMin, Math.min(F.seedMax, gap / 2));
+    seedRange = [-r, r];
+  }
   let on;
-  try { on = findOnsets(ne, ctx.feat, ctx.start, frames, met, { songT0: 0, rt: null, latency: 0, endT, unsung, seedRange: [-0.3, 0.3], costs: { step: F.onsetStep, stepRest: F.onsetStep }, keep }); } catch (err) { console.warn("ear: onsets", err); return null; }
+  try { on = findOnsets(ne, ctx.feat, ctx.start, frames, met, { songT0: 0, rt: null, latency: 0, endT, unsung, seedRange, costs: { step: F.onsetStep, stepRest: F.onsetStep }, keep }); } catch (err) { console.warn("ear: onsets", err); return null; }
   const out = {};
   const pts = [];
-  const live = starts.filter((j) => reached.has(j));
   for (const j of live) {
     const k = j - ph.j0, o = on.notes[k], prev = notes[j - 1];
     const repeat = k > 0 && prev && Math.abs(prev.midi - notes[j].midi) < 0.5 && ns[k].t - (ns[k - 1].t + ns[k - 1].d) < 0.02;
     const measured = o && o.dev != null && o.conf >= F.conf && (!repeat || o.kind === "attack");
-    out[k] = { measured: !!measured, kind: o?.kind ?? null, dev: o?.dev ?? null, u: met[k]?.u ?? null, tol: tolFlag(met[k]?.u ?? 0.3), first: j === ph.j0 };
-    if (measured) { out[k].y = ne[k].t + o.dev; pts.push([ns[k].t, out[k].y, k, out[k].tol]); }
+    out[k] = { measured: !!measured, kind: o?.kind ?? null, dev: o?.dev ?? null, u: met[k]?.u ?? null, tol: tolFlag(met[k]?.u ?? 0.3), beat: met[k]?.beat ?? null, first: j === ph.j0 };
+    if (measured) out[k].y = ne[k].t + o.dev;
   }
-  return { out, pts, lead: on.lead, ne, live };
+  // (two starts on one onset, or out of order — rhythm.js align keeps neighbouring notes apart, not two starts with an
+  // unsung or a melisma's note between them: the one further from where it was looked for gives it up)
+  let pk = null;
+  for (const j of live) {
+    const k = j - ph.j0;
+    if (!out[k].measured) continue;
+    if (pk != null && out[k].y < out[pk].y + F.onsetGap) {
+      // (…the one whose note doesn't follow it — the pitch after the onset is the other's —, else the one not sung
+      // where it was looked for — a first word left out: the line's first start is looked for at the singer's first
+      // sound, which is the next start's —, else the one further from its place)
+      const pitchOk = (q) => { const m = pitchAfter(out[q].y); return m == null ? null : Math.abs(fold(m - ne[q].midi)) <= 0.6; };
+      const sung = (q) => !!grades?.[q] && ["good", "ok", "off", "unclear"].includes(grades[q].status);
+      const pa = pitchOk(pk), pb = pitchOk(k), sa = sung(pk), sb = sung(k);
+      const lose = pa !== pb && pa != null && pb != null ? (pa ? k : pk) : sa !== sb ? (sa ? k : pk) : Math.abs(out[k].y - ne[k].t) > Math.abs(out[pk].y - ne[pk].t) ? k : pk;
+      Object.assign(out[lose], { measured: false, y: undefined, dev: null, kind: null });
+      if (lose === k) continue;
+    }
+    pk = k;
+  }
+  // (an onset nearer the next start's place than its own, that next start measured nothing: the next one's — a
+  // syllable left out of a run of one pitch took its neighbour's attack, and the neighbour was left unmeasured)
+  // (from the end: a chain — each onset taken one start early — moves back one at a time)
+  for (let i = live.length - 2; i >= 0; i--) {
+    const k = live[i] - ph.j0, k2 = live[i + 1] - ph.j0, a = out[k], b = out[k2];
+    if (!a.measured || a.first || b.measured || !(a.y - pl[k].t > (pl[k2].t - pl[k].t) / 2)) continue;
+    Object.assign(b, { measured: true, kind: a.kind, y: a.y, dev: a.y - ne[k2].t });
+    Object.assign(a, { measured: false, y: undefined, dev: null, kind: null });
+  }
+  for (const j of live) { const k = j - ph.j0; if (out[k].measured) pts.push([ns[k].t, out[k].y, k, out[k].tol]); }
+  return { out, pts, lead: on.lead, ne, live, base };
 }
 
 // The starts on the singer's own line (rule 6): each start's onset (measureStarts), judged against a Theil–Sen
 // line through the other measured starts (leave-one-out: one late start doesn't tilt its own reference) — on
-// within tolFlag(u) of the beat's division on the singer's clock. A start sung but not measured (legato, a
-// same-pitch repeat, a glide) is on when its note was hit and at least half the starts reached were measured; it
-// is never cued. The line's first start is on when sung: in free time nothing comes before it.
-function judgeStarts(ph, fit, grades, frames, endT, ctx, starts, reached) {
-  const m = measureStarts(ph, fit, grades, frames, endT, ctx, starts, reached);
+// within tolFlag(u) of the beat's division on the singer's clock. The line's first start is on when sung: in free
+// time nothing comes before it. Round 2 (the fix plan's WP1.5, 1.7, 1.8):
+// - a start is off only when it's off against both the leave-one-out line and the singer's tempo (the slope through all
+//   the starts) through the median of the others: with four starts, one late start tilted every neighbour's line;
+// - a ritardando into the line's end (ritIn) — and a written fermata's note with the start after it — are counted on,
+//   never cued, and left out of the others' lines; the rit out of the held-long step too, the fermata's starts not: a
+//   fermata held as written is a step the singer's to take (step.free), and the notes after it are graded past it;
+// - a start sung but not measured (legato, a same-pitch repeat, a glide) is on when its note was voiced (any pitch:
+//   a pitch miss never costs a ♩) and its nearest measured starts are on; it is never cued.
+function judgeStarts(ph, fit, grades, frames, endT, ctx, starts, reached, look = null) {
+  const { notes } = ctx;
+  const m = measureStarts(ph, fit, grades, frames, endT, ctx, starts, reached, null, { line: true, step: look });
   if (!m) return null;
   const { out, pts, live } = m;
   const nMeasured = pts.length;
+  // (a written fermata: its note held as long as the singer likes — it and the start after it aren't judged)
+  const exempt = new Set();
+  for (let j = ph.j0; j < ph.j1; j++) if (notes[j].fermata) { exempt.add(j - ph.j0); const nx = starts.find((x) => x > j); if (nx != null) exempt.add(nx - ph.j0); }
+  const rit = ritIn(pts.filter((p) => !exempt.has(p[2])), out);
+  const free = new Set([...exempt, ...(rit?.ks || [])]);
+  const ref = pts.filter((p) => !free.has(p[2]));
   // (a short line — the singer's own two or three words — has too few others for leave-one-out: the singer's line,
   // whose tempo is loose there — the pitch fit of a 3-note line is good to ~5 % —, with that much more room the
   // further a start is from the first: a start well off still is, the fit's own slack never reads as one)
   const x0 = pts.length ? Math.min(...pts.map((p) => p[0])) : 0;
+  // (the second line: the slope of all the starts — the singer's tempo, one start off can't tilt it much — through
+  // the median of the others; the fix plan's slope 1 on the fitted line was the pitch fit's tempo, 1.3 % off over a
+  // line: a start 0.15 s early read 0.12)
+  const all = ref.length >= 3 ? theilSen(ref) : null, slope = all?.b ?? 1;
   for (const [x, y, k] of pts) {
-    const others = pts.filter((p) => p[2] !== k);
+    const others = ref.filter((p) => p[2] !== k);
     const line = others.length >= 3 ? theilSen(others) : null;
-    out[k].r = line ? y - line.a - line.b * x : y - x - (m.lead ?? 0);
-    if (!line) out[k].tol += F.fewSlack * Math.abs(x - x0);
+    if (line) {
+      const r1 = y - line.a - line.b * x, r2 = y - slope * x - median(others.map((p) => p[1] - slope * p[0]));
+      out[k].r = Math.abs(r1) <= Math.abs(r2) ? r1 : r2; // (off only when off against both)
+    } else {
+      out[k].r = y - x - (m.lead ?? 0);
+      out[k].tol += F.fewSlack * Math.abs(x - x0);
+    }
   }
   // (a step — one note held long or cut short, the beat kept after it — is one start off: the first after it;
   // the rest are judged on the beat as it went on)
-  const step = stepIn(pts);
-  if (step) for (const [x, y, k] of pts) out[k].r = y - step.a - step.b * x - (k > step.k ? step.d : 0);
+  // (Line: the line's first start may be the only one before the step — in free time nothing comes before it, so the
+  // first syllable held long is a step after one start —, when it was sung on its note: looked for at the singer's
+  // first sound, which is then that note's; a first note sung off, or left out — the first sound a later note's —, sets
+  // no beat. A step that size only from firstStep: one onset is all the line before it has — a first note without an
+  // attack, its onset 0.13 s off, made a "cut short" step past two starts not measured, and moved their notes onto
+  // their neighbours' pitches. A fermata's starts are in it too: a fermata held as written moves the rest of the line, and the
+  // notes after it are graded where they were sung — the step is the singer's to take there, never cued: free)
+  const sp = pts.filter((p) => !rit?.ks.has(p[2]));
+  const step = stepIn(sp, { minPre: sp[0]?.[2] === 0 && hitOf(grades[0]) ? 1 : 2, firstMin: F.firstStep });
+  if (step) {
+    const kPrev = starts.filter((j) => j - ph.j0 < step.k).pop() ?? ph.j0;
+    for (let j = kPrev; j < ph.j0 + step.k; j++) if (notes[j].fermata) step.free = true;
+    for (const [x, y, k] of ref) out[k].r = y - step.a - step.b * x - (k > step.k ? step.d : 0);
+    // (a step not a fermata's: its start is the one off — the fermata's note's own start too, when the note held is
+    // another: the pickup before it)
+    if (!step.free && free.has(step.k)) { const p = pts.find((q) => q[2] === step.k); out[step.k].r = p[1] - step.a - step.b * p[0]; free.delete(step.k); }
+  }
   const judged = nMeasured * 2 >= live.length && live.length > 0;
   for (const j of starts) {
     const k = j - ph.j0, s = out[k];
     if (!s) { out[k] = { on: false, measured: false, reached: false }; continue; }
     s.reached = true;
     if (s.first) s.on = s.measured || hitOf(grades[k]) || grades[k]?.status === "off";
-    else if (s.measured) s.on = Math.abs(s.r) <= s.tol;
-    else s.on = judged && hitOf(grades[k]);
+    else if (s.measured) { s.on = free.has(k) || Math.abs(s.r) <= s.tol; if (rit?.ks.has(k)) s.rit = true; }
   }
-  return { starts: out, measured: nMeasured, of: live.length, judged, step, lead: m.lead };
+  // (the unmeasured ones: voiced, between measured starts on)
+  const meas = starts.filter((j) => out[j - ph.j0].reached && out[j - ph.j0].measured);
+  for (const j of starts) {
+    const k = j - ph.j0, s = out[k];
+    if (!s.reached || s.measured || s.first) continue;
+    const n = fit.ns[k], w = frames.filter((f) => f.t >= n.t && f.t < n.t + n.d);
+    const voiced = w.length >= 2 && w.filter((f) => f.midi != null).length >= F.voicedStart * w.length;
+    const nb = [meas.filter((x) => x < j).pop(), meas.find((x) => x > j)].filter((x) => x != null);
+    s.on = judged && voiced && nb.length > 0 && nb.every((x) => out[x - ph.j0].on);
+    s.um = true;
+  }
+  return { starts: out, measured: nMeasured, of: live.length, judged, step, lead: m.lead, rit: rit ? rit.k0 : null, pts, base: m.base };
+}
+// A ritardando into the line's end (round 2's WP1.8; known gap 2): the last 2–3 measured starts each later than the one
+// before — the first ≥ ritFirst, each then ≥ ritMin more — against a line through the starts before them, which are
+// on; the last off its tolerance, and at most ritBeat beats late. A lone late last start (the one before it on time)
+// isn't one: that's still cued. pts: [x, y, k, tol] (in order); out: measureStarts's (first, beat). → { k0, ks } | null
+function ritIn(pts, out) {
+  for (const n of [3, 2]) {
+    if (pts.length < n + 2) continue;
+    const pre = pts.slice(0, -n), tail = pts.slice(-n);
+    const line = pre.length >= 3 ? theilSen(pre) : null;
+    const L = line || { a: median(pre.map((p) => p[1] - p[0])), b: 1 };
+    const r = ([x, y]) => y - L.a - L.b * x;
+    if (!pre.every((p) => out[p[2]].first || Math.abs(r(p)) <= p[3])) continue;
+    let prev = null, ok = true;
+    for (const p of tail) {
+      const x = r(p);
+      if (!(prev == null ? x >= F.ritFirst : x >= prev + F.ritMin)) { ok = false; break; }
+      prev = x;
+    }
+    const last = tail[tail.length - 1];
+    if (!ok || !(prev > last[3]) || prev > F.ritBeat * (out[last[2]].beat ?? 0.6)) continue;
+    return { k0: tail[0][2], ks: new Set(tail.map((p) => p[2])) };
+  }
+  return null;
+}
+
+// Where the recording's attacks put a step in the line (judgeFree's second look): the singer's line moved a little —
+// a ±0.08 s, b × 0.74…1.06 (the fit spread a hold over the line: its tempo too slow) — and from one start on, d s later
+// (or earlier: a note cut short), scored as the fit scores attacks: the counted starts (the first too: a line begun later
+// isn't a step after it) within attackWin of one, less the tempo's cost in those units; → { a, b, k, d, ns (the notes placed so: the note before the step to it),
+// ah, ah0 } when the best step puts stepAttacks more starts on attacks than the best straight line, else null.
+function stepLook(ph, notes, fit, counted, lastV) {
+  const at = fit.att?.length ? fit.att.map((x) => x.t) : null;
+  if (!at || !fit.ns) return null;
+  const js = phraseJs(ph), T0 = notes[ph.j0].t, last = js.length - 1;
+  // (the counted starts, the first among them: where it sits tells a step after it from a line started later)
+  const sk = counted.filter((j) => j === ph.j0 || !notes[j].melisma).map((j) => j - ph.j0);
+  if (sk.length < 4) return null;
+  const w = sk.map((k) => notes[js[k]].t - T0), lineSec = notes[js[last]].t - T0;
+  const on = (t) => {
+    let lo = 0, hi = at.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (at[mid] < t) lo = mid + 1; else hi = mid; }
+    return (lo < at.length && at[lo] - t <= F.attackWin) || (lo > 0 && t - at[lo - 1] <= F.attackWin);
+  };
+  const cost = (b) => (F.tempoCost / F.attackGain) * Math.abs(Math.log(b)) * lineSec;
+  const D = [];
+  for (let d = F.stepMin; d <= F.stepMax + 1e-9; d += 0.03) { D.push(d); if (d <= F.stepCut) D.push(-d); }
+  let best = null, plain = -Infinity;
+  // (around the fit's start, and the singer's first sound's: a run of one pitch fitted a note late lines its attacks up
+  // with the next notes')
+  const A = [fit.a];
+  if (fit.anchor != null && Math.abs(fit.anchor - 0.04 - fit.a) > 0.05) A.push(fit.anchor - 0.04);
+  for (const a0 of A) for (let da = -0.08; da <= 0.08 + 1e-9; da += 0.02) for (let u = Math.log(0.74); u <= Math.log(1.06) + 1e-9; u += 0.015) {
+    const a = a0 + da, b = fit.b * Math.exp(u), c = cost(b);
+    const x = w.map((t) => a + b * t);
+    const pre = [0];
+    for (let i = 0; i < x.length; i++) pre.push(pre[i] + (on(x[i]) ? 1 : 0));
+    plain = Math.max(plain, pre[x.length] - c);
+    for (let i = 1; i < x.length; i++) for (const d of D) {
+      let h = pre[i];
+      for (let q = i; q < x.length; q++) if (on(x[q] + d)) h++;
+      const sc = h - c - F.stepCost * Math.abs(d);
+      if (!best || sc > best.sc + 1e-9) best = { a, b, i, d, h, sc };
+    }
+  }
+  if (!best || best.sc < plain + F.stepAttacks) return null;
+  const k = sk[best.i], { a, b, d } = best;
+  const ns = fit.ns.map((n, q) => {
+    const t = a + b * (notes[js[q]].t - T0) + (q >= k ? d : 0);
+    let len = b * notes[js[q]].d;
+    if (q === k - 1 && notes[js[k]].t - (notes[js[q]].t + notes[js[q]].d) < 0.02) len = Math.max(0.05, len + d);
+    if (q === last) len = Math.min(len, Math.max(F.lastMin, lastV + F.lastPad - t));
+    return { ...n, t, d: len };
+  });
+  return { a, b, k, d, ns, ah: best.h, ah0: +plain.toFixed(2) };
+}
+
+// Each note's own span (round 2's WP1.6): base — the notes where the singer's line puts them ([{ t, d, midi }] in the
+// line); starts — judgeStarts's (y: a measured onset). A start whose onset is within anchorMax of its place starts
+// there; a melisma's notes keep their places inside their syllable; a note joined to the next runs to where the next
+// starts; no slot starts before or runs past a measured neighbour's onset (less anchorGap). A slot left under
+// anchorKeep of its length is squeezed ("own": by its own late onset; "by": by a neighbour's early one) — judgeFree
+// doesn't judge a squeezed note's pitch unless it was hit: a few frames, half of them looking into the next note (the
+// pitch reader's window runs ~50 ms past a frame's time), and the timing cue says what happened. (The fix plan had it
+// fall back to the fit's slot: that is where the neighbour's pitch is — a short note sung late, the note before held
+// into it, came out "much higher".)
+// → { ns, anchored (starts re-placed), squeezed: [false | "own" | "by"], bound: [the slot ends at a measured onset —
+// nothing sung in it then is a note left out: a note sung late would have that onset] }
+function ownSpans(base, starts) {
+  const n = base.length, G = F.anchorGap;
+  const y = base.map((x, k) => { const s = starts?.[k]; return s?.measured && s.y != null && Math.abs(s.y - x.t) <= F.anchorMax ? s.y : null; });
+  const P = base.map((x, k) => (y[k] != null ? y[k] : x.t)), E = base.map((x) => x.t + x.d);
+  const nextY = (k) => { for (let i = k + 1; i < n; i++) if (y[i] != null) return y[i]; return Infinity; };
+  const prevY = (k) => { for (let i = k - 1; i >= 0; i--) if (y[i] != null) return y[i]; return -Infinity; };
+  for (let k = 0; k < n; k++) if (y[k] == null) P[k] = Math.max(P[k], prevY(k) + G);
+  const bound = new Array(n).fill(false);
+  for (let k = 0; k < n; k++) {
+    const joined = k + 1 < n && base[k + 1].t - (base[k].t + base[k].d) < 0.02;
+    const own = joined ? P[k + 1] - (y[k + 1] != null ? G : 0) : base[k].t + base[k].d, ny = nextY(k) - G;
+    E[k] = Math.min(own, ny);
+    bound[k] = (joined && y[k + 1] != null) || ny <= own;
+  }
+  const squeezed = base.map((x, k) => (E[k] - P[k] < F.anchorKeep * x.d ? (y[k] != null ? "own" : "by") : false));
+  return { ns: base.map((x, k) => ({ ...x, t: P[k], d: Math.max(0.02, E[k] - P[k]) })), anchored: y.filter((v) => v != null).length, squeezed, bound };
 }
 
 // --- The judgment ------------------------------------------------------------------------------------------
@@ -540,18 +867,18 @@ export function judgeFree(ph, frames0, endT, ctx) {
   const { counted, starts } = countSets(ph, notes, ctx.spq0);
   const nothing = { counts: null, win: null, fit: null, key: null, starts: null, onsets: null, notReached: null, whole: false, up: null };
   if (voiced.length < 6) return done({ ...nothing, cue: { kind: "silent", sounds: ["first"] } });
-  const fit = fitLine(ph, frames, endT, ctx);
+  let fit = fitLine(ph, frames, endT, ctx);
   if (!fit) return done({ ...nothing, cue: { kind: "silent", sounds: ["first"] } });
   const js = phraseJs(ph);
   const fr = frames.filter((f) => f.t >= fit.anchor - F.before);
   const isKey = fit.key.kind === "key";
   // ♪ (rule 5): the written notes (another key: the singer's) at the singer's line, a slot moving ≤ 0.1 s
-  const regrade = (ns, off) => gradeTake(ns.map((n, k) => ({ midi: notes[js[k]].midi + off / 100, t: n.t, d: n.d })), fr, { endT, maxShift: F.gradeShift });
+  const loudFr = loudGate(fr, 0.012);
+  const regrade = (ns, off, maxShift = F.gradeShift) => gradeTake(ns.map((n, k) => ({ midi: notes[js[k]].midi + off / 100, t: n.t, d: n.d })), fr, { endT, maxShift, loud: loudFr });
   let g = regrade(fit.ns, isKey ? fit.key.c : 0);
   // not reached (rule 7): starting after the last voiced frame
   const lastV = fr.reduce((m, f) => (f.midi != null ? f.t : m), -Infinity);
-  const reachedSet = new Set(js.filter((j, k) => fit.ns[k].t <= lastV + F.reach));
-  const notReached = counted.filter((j) => !reachedSet.has(j)).length;
+  let notReached = counted.filter((j) => !(fit.ns[j - ph.j0].t <= lastV + F.reach)).length;
   const hitsW = counted.filter((j) => hitOf(g[j - ph.j0])).length;
   const share = Math.max(hitsW, fit.hits) / reachedBase(ph, fit.ns, counted, lastV);
   const res = { fit: { a: fit.a, b: fit.b, off: fit.key.kind ? fit.key.c : 0, anchor: fit.anchor, g, ns: fit.ns }, key: fit.key, notReached, up: null };
@@ -561,18 +888,97 @@ export function judgeFree(ph, frames0, endT, ctx) {
   const cover = sungFr.filter((f) => f.t >= fit.a - 0.15 && f.t <= lineEnd + 0.15).length / Math.max(1, sungFr.length);
   res.cover = +cover.toFixed(2);
   if (fit.edge || share < F.nofit || (cover < F.cover && share < F.coverHits)) return done({ ...res, counts: null, win: null, cue: { kind: "nofit", sounds: ["hear"] }, starts: null, onsets: null, whole: false });
-  // ♩ (rule 6)
-  const st = judgeStarts(ph, fit, g, fr, endT, ctx, starts, reachedSet);
-  // a held / cut note (a step in the starts): the notes after it graded where they were sung
-  // (every note where the step's model puts it — its own line, not the pitch fit's, which stretched to take the
-  // step in — the notes from the step on moved by it)
-  let graded = fit.ns;
-  if (st?.step) {
-    const { a, b, d, k: ks } = st.step;
-    graded = fit.ns.map((n, k) => ({ ...n, t: a + b * n.t + (k >= ks ? d : 0), d: b * n.d }));
-    g = regrade(graded, isKey ? fit.key.c : 0);
-    res.fit.g = g;
+  // ♩ (rule 6), then ♪ where the starts put the notes — at one placement of the line (the fit's, or the fallback's
+  // refit below): → { g, graded, st, reachedSet, bound, anchored }
+  const off = isKey ? fit.key.c : 0;
+  const judgeAt = (fit, g, look = null) => {
+    const reachedSet = new Set(js.filter((j, k) => fit.ns[k].t <= lastV + F.reach));
+    const st = judgeStarts(ph, fit, g, fr, endT, ctx, starts, reachedSet, look);
+    // a held / cut note (a step in the starts): the notes after it graded where they were sung — every note where the
+    // step's model puts it (its own line, not the pitch fit's, which stretched to take the step in), the notes from the
+    // step on moved by it. (The fix plan's WP1.1 kept the notes before it at the fit's places: B2's first note sung off
+    // made a step out of one start before it, measured 0.37 s late — its line moved them onto their neighbours. The
+    // first start is now looked for at the singer's first sound; the step's line is the better one: the fit stretched
+    // over a pause put a melisma's notes on the next ones.)
+    let graded = fit.ns;
+    if (st?.step) {
+      const { a, b, d, k: ks } = st.step;
+      // (on the line the starts were judged on: a second look's is the straight one, its notes looked for past the step)
+      graded = (look ? st.base : fit.ns).map((n, k) => ({ ...n, t: a + b * n.t + (k >= ks ? d : 0), d: b * n.d }));
+      g = regrade(graded, off);
+    }
+    // ♪ on each note's own span (round 2's WP1.6): a start measured is re-placed at its onset, its slot to the next
+    // note's place — never past a measured neighbour's onset —, graded with slots moving ≤ spanShift: a neighbour can't
+    // lend its pitch (a flat note between equal pitches), and a note cut short by its neighbour's early start isn't
+    // graded on that neighbour (squeezed: not judged on pitch)
+    let bound = null, anchored;
+    if (st) {
+      const sp = ownSpans(graded, st.starts);
+      bound = sp.bound;
+      if (sp.anchored) {
+        graded = sp.ns;
+        g = regrade(graded, off, F.spanShift);
+        sp.squeezed.forEach((q, k) => { if (q && g[k] && !hitOf(g[k])) g[k] = { ...g[k], status: "unclear", squeezed: q }; });
+      }
+      anchored = sp.anchored;
+    }
+    return { g, graded, st, reachedSet, bound, anchored };
+  };
+  const hitsIn = (g) => counted.filter((j) => hitOf(g[j - ph.j0])).length;
+  const offsIn = (g) => counted.filter((j) => g[j - ph.j0]?.status === "off").length;
+  let J = judgeAt(fit, g);
+  // (a note held long — or cut short — mid-line, no step found: the pitch fit, held near the tempo heard, spread the hold
+  // over the line, and the notes after it — a run of one pitch, told apart only by their attacks — were looked for a note
+  // early, each on its neighbour's attack: one start off, the rest "on", and the note after the hold graded on the held
+  // note's pitch. A second look where the recording's attacks put a step (stepLook): the notes looked for there, judged
+  // on the straight line; kept when its starts show the step and it blames no note more)
+  // (a step found that the attacks put elsewhere — another start, or another size: a run of one pitch looked for a
+  // note off its place makes a small step of its own — looked at again, and kept only when it blames fewer notes, or as
+  // many and finds more of the starts)
+  if (J.st) {
+    const s0 = J.st.step;
+    let sl = stepLook(ph, notes, fit, counted, lastV);
+    if (sl && s0 && sl.k === s0.k && Math.abs(sl.d - s0.d) < 0.15) sl = null;
+    if (sl) {
+      const lf = { ...fit, a: sl.a, b: sl.b, ns: sl.ns };
+      const J1 = judgeAt(lf, regrade(lf.ns, off), { k: sl.k, d: sl.d });
+      const o1 = offsIn(J1.g), o0 = offsIn(J.g), h1 = hitsIn(J1.g), h0 = hitsIn(J.g), m1 = J1.st?.measured ?? 0, m0 = J.st.measured;
+      if (J1.st?.step && (s0 ? o1 < o0 || (o1 === o0 && h1 >= h0 && (h1 > h0 || m1 > m0)) : o1 <= o0 && h1 >= h0)) {
+        J = J1;
+        fit = { ...lf, look: true };
+        Object.assign(res.fit, { a: fit.a, b: fit.b, ns: fit.ns, look: true });
+      }
+    }
   }
+  // (round 2's WP1.2, the fallback: the measured starts say another tempo than the pitch fit's — a short line's fit is
+  // loose: a late start bent it 15 % — refit near the onsets' line, measure and grade again. Not when a step explains
+  // them — a note held long mid-line bends the fit, and the step's own line already puts every note where it was sung:
+  // the refit lined up with the starts after the hold and put the first notes on their neighbours' pitches ("“with” —
+  // much lower" on a note sung right) — and kept only when, graded as the counts and the cues are (on each note's own
+  // span), it blames no note more and hits at most one fewer: a first word left out, the fit squeezed its notes onto
+  // the next ones' pitches — one of them "hit")
+  if (!J.st?.step && J.st?.pts?.length >= 4) {
+    const ts = theilSen(J.st.pts.map((p) => [p[0], p[1]]));
+    if (ts && Math.abs(ts.b - 1) > F.onsetSlope) {
+      const nf = refitNear(ph, notes, frames, endT, counted, fit, ts.a + ts.b * fit.a, ts.b * fit.b);
+      if (nf && nf.hits >= fit.hits - 1) {
+        const f1 = { ...fit, a: nf.a, b: nf.b, ns: nf.ns, g: nf.g, hits: nf.hits, refit: true };
+        const J1 = judgeAt(f1, regrade(f1.ns, off));
+        if (offsIn(J1.g) <= offsIn(J.g) && hitsIn(J1.g) >= hitsIn(J.g) - 1) {
+          fit = f1; J = J1;
+          Object.assign(res.fit, { a: fit.a, b: fit.b, ns: fit.ns, refit: true });
+        }
+      }
+    }
+  }
+  const { st, graded, reachedSet, bound } = J;
+  g = J.g;
+  notReached = res.notReached = counted.filter((j) => !reachedSet.has(j)).length;
+  if (st) res.anchored = J.anchored;
+  // (the singer's tempo: a step's own line on the fit's — the fit spread a held note over the line: "You sang it at ♩=…"
+  // read a fermata held as written as a slower tempo)
+  if (st?.step?.b > 0) res.fit.b = fit.b * st.step.b;
+  res.fit.g = g;
   const gOf = (j) => g[j - ph.j0];
   const hit = (j) => hitOf(gOf(j));
   // the counts
@@ -586,8 +992,11 @@ export function judgeFree(ph, frames0, endT, ctx) {
     beats: st?.judged ? onN : null, beatsAll: !!st?.judged && onN === starts.length,
   };
   res.counts = counts;
-  res.starts = st ? Object.fromEntries(Object.entries(st.starts).map(([k, s]) => [k, { r: s.r != null ? +s.r.toFixed(3) : null, on: !!s.on, measured: !!s.measured, kind: s.kind ?? null }])) : null;
+  res.starts = st ? Object.fromEntries(Object.entries(st.starts).map(([k, s]) => [k, { r: s.r != null ? +s.r.toFixed(3) : null, on: !!s.on, measured: !!s.measured, kind: s.kind ?? null, ...(s.rit ? { rit: true } : {}), ...(s.um && s.on ? { um: true } : {}) }])) : null;
   res.onsets = st ? { measured: st.measured, of: st.of } : null;
+  res.rit = st?.rit ?? null;
+  // (a start counted on but not measured — Q2-2: still counted, but no "Spot on")
+  res.um = !!st && starts.some((j) => { const s = st.starts[j - ph.j0]; return s?.reached && s.on && !s.measured; });
   res.whole = notReached === 0;
   // a count that rose since the last whole attempt here (same line, mode and speed)
   const prev = ctx.prev?.whole ? ctx.prev : null;
@@ -600,7 +1009,7 @@ export function judgeFree(ph, frames0, endT, ctx) {
   const whole = [Math.max(0, fit.a - 0.3), Math.max(...fit.ns.map((n) => n.t + n.d)) + 0.4];
   const startBefore = (j, n) => { const ss = starts.filter((x) => x < j); return ss.length >= n ? ss[ss.length - n] : ph.j0; };
   let cue = null;
-  if (fit.key.kind === "key") cue = { kind: "key", dir: fit.key.c < 0 ? "lower" : "higher", s: fit.key.s, at: whole, sounds: ["first", "you", "key"] };
+  if (fit.key.kind === "key") cue = { kind: "key", dir: fit.key.dir, s: fit.key.s, ...(fit.key.other ? { other: true } : {}), at: whole, sounds: ["first", "you", "key"] };
   else if (fit.key.kind === "offset") cue = { kind: "offset", dir: fit.key.c < 0 ? "higher" : "lower", at: whole, sounds: ["first", "you"] };
   if (!cue && notReached >= 2) {
     // (▶ The rest: from the first note of the stretch nothing was sung in)
@@ -616,8 +1025,11 @@ export function judgeFree(ph, frames0, endT, ctx) {
     const n = graded[j - ph.j0], target = notes[j].midi + (isKey ? fit.key.c / 100 : 0);
     return fr.filter((f) => f.midi != null && f.t >= n.t && f.t < n.t + n.d + 0.3 && Math.abs(fold(f.midi - target)) <= 0.5).length < 3;
   };
+  // (…or its own slot, ended by the next start's measured onset, holds nothing of it — a syllable left out of a run of
+  // one pitch: its neighbours' edges fill a third of it, all on its pitch)
+  const gone = (j) => gOf(j)?.status === "missed" && (silentAt(j) || unheardAt(j) || !!bound?.[j - ph.j0]);
   if (!cue) {
-    const missed = reachedCounted.filter((j) => gOf(j)?.status === "missed" && (silentAt(j) || unheardAt(j))).sort((x, y) => notes[y].d - notes[x].d || x - y)[0];
+    const missed = reachedCounted.filter(gone).sort((x, y) => notes[y].d - notes[x].d || x - y)[0];
     if (missed != null) cue = { kind: "missed", j: missed, at: around(missed, missed), sounds: ["note", "you"] };
   }
   if (!cue) {
@@ -628,7 +1040,7 @@ export function judgeFree(ph, frames0, endT, ctx) {
     }
   }
   if (!cue && unclear * 2 >= counted.length && unclear > 0) cue = { kind: "unclear", sounds: [] };
-  if (!cue && st?.step) {
+  if (!cue && st?.step && !st.step.free) {
     // (late after the note before held on: "held long"; late after a pause: that start came in late; early: the
     // note before cut short)
     const jStart = ph.j0 + st.step.k, held = jStart - 1, y = st.starts[st.step.k]?.y;
@@ -639,7 +1051,9 @@ export function judgeFree(ph, frames0, endT, ctx) {
     else if (held >= ph.j0) cue = { kind: "held", j: held, dir: st.step.d > 0 ? "sooner" : "later", range: [startBefore(held, 2), jStart], at: around(startBefore(held, 1), jStart), sounds: ["stretch", "you"] };
   }
   if (!cue && st?.judged) {
-    const late = starts.find((j) => { const s = st.starts[j - ph.j0]; return s?.reached && s.measured && !s.first && !s.on; });
+    // (the start furthest off for its tolerance — round 2's WP1.7: not the first)
+    const off = (j) => { const s = st.starts[j - ph.j0]; return Math.abs(s.r) / s.tol; };
+    const late = starts.filter((j) => { const s = st.starts[j - ph.j0]; return s?.reached && s.measured && !s.first && !s.on; }).sort((x, y) => off(y) - off(x) || x - y)[0];
     if (late != null) { const s = st.starts[late - ph.j0]; cue = { kind: "timing", j: late, dir: s.r > 0 ? "sooner" : "later", range: [startBefore(late, 2), late], at: around(startBefore(late, 2), late), sounds: ["stretch", "you"] }; }
   }
   if (!cue && !isKey && reachedCounted.every(hit) && reachedCounted.length >= 3) {
@@ -652,7 +1066,7 @@ export function judgeFree(ph, frames0, endT, ctx) {
   // Notes' targets from this attempt (the fix plan's WP4.1; noteTargets): the counted notes reached and sung off or
   // not sung (as the cue judges "not sung"; not the stretch a singer who stopped left out: "Keep going to …") — the
   // cue's note first, then the longest
-  const offOf = (j) => gOf(j)?.status === "off" || (gOf(j)?.status === "missed" && (silentAt(j) || unheardAt(j)));
+  const offOf = (j) => gOf(j)?.status === "off" || gone(j);
   const left = cue?.kind === "short" ? cue.from : Infinity;
   res.drill = reachedCounted.filter((j) => j < left && offOf(j))
     .sort((x, y) => (y === cue?.j) - (x === cue?.j) || notes[y].d - notes[x].d || Math.abs(gOf(y)?.dev ?? 0) - Math.abs(gOf(x)?.dev ?? 0) || x - y)
@@ -674,7 +1088,10 @@ export function judgeFree(ph, frames0, endT, ctx) {
     return here.length >= 3 && here.length >= 0.35 * all && Math.abs(median(here)) <= 50;
   };
   const wins = [];
-  if (counts.notesAll && counts.beatsAll) wins.push({ kind: "spot", ...(ctx.prev?.win?.kind === "spot" ? { sub: "again" } : {}) });
+  // ("Spot on": both all, every counted start measured, no offset or sag cue — round 2's WP1.14, its part the starts
+  // need: a late legato start the recording couldn't hear was "Spot on — twice running")
+  res.spotOk = !res.um && !(cue && ["sag", "offset"].includes(cue.kind));
+  if (counts.notesAll && counts.beatsAll && res.spotOk) wins.push({ kind: "spot", ...(ctx.prev?.win?.kind === "spot" ? { sub: "again" } : {}) });
   const pc = prev?.cue;
   if (pc?.j != null && pc.j >= ph.j0 && pc.j < ph.j1) {
     if ((pc.kind === "pitch" || pc.kind === "missed") && !fit.key.kind && clean(pc.j)) wins.push({ kind: "fixed", sub: "note", j: pc.j }); // (in the written key)
@@ -682,6 +1099,7 @@ export function judgeFree(ph, frames0, endT, ctx) {
   }
   if (res.up.notes || res.up.beats) wins.push({ kind: "rose", sub: res.up.notes && res.up.beats ? "both" : res.up.beats ? "beats" : "notes" });
   if (fit.key.kind && fit.hits >= F.tuneWin * counted.length) wins.push({ kind: fit.key.kind === "key" ? "key" : "tune" });
+  if (counts.notesAll && !wins.some((w) => w.kind === "spot")) wins.push({ kind: "every" }); // (♪ all, not "Spot on")
   if (!fit.key.kind) {
     const byLen = (a, b) => notes[b].d - notes[a].d || b - a; // (of equal ones, the later: a line's last long note)
     const top = Math.max(...counted.map((j) => notes[j].midi));
@@ -994,7 +1412,7 @@ export function holdVerdict(h, { tries = 1, top = false, bottom = false, refOct 
 // followed, sung to the end — a silent one, one it couldn't follow or one stopped early isn't "last time"):
 // { at, k: "line" | "beats", sp (the ♩ menu's rate), tr (the key), b / n (♩ / ♪ counts; absent: not judged),
 // ab / an (all of them), w (the win: { kind, k (its note's offset in the line), k2, sub }), c (the cue: { kind, k,
-// dir, size, s, end }) } — the last `keep` of each kind.
+// dir, size, s, end, other }) } — the last `keep` of each kind.
 export const EAR_STORE = {
   keep: 6,           // attempts kept per line and kind
   secure: 2, of: 3,  // secured (D6): "all" in `secure` of the line's last `of` counting attempts (♪: Line; ♩: Line and Beats)
@@ -1012,7 +1430,7 @@ export function attemptOf(res, ph, { at = Date.now(), kind = res?.kind, rate = 1
     at, k: kind, sp: rate, tr,
     b: c.beats ?? null, ab: !!c.beatsAll, n: kind === "line" ? c.notes ?? null : null, an: kind === "line" && !!c.notesAll,
     w: w ? compact({ kind: w.kind, k: off(w.j), k2: off(w.j2), sub: w.sub ?? null }) : null,
-    c: q ? compact({ kind: q.kind, k: off(q.j), dir: q.dir ?? null, size: q.size ?? null, s: q.s ?? null, end: q.end ?? null }) : null,
+    c: q ? compact({ kind: q.kind, k: off(q.j), dir: q.dir ?? null, size: q.size ?? null, s: q.s ?? null, end: q.end ?? null, other: q.other ?? null }) : null,
   });
 }
 // The line's record with this attempt added (the last `keep` of its kind kept).
@@ -1039,7 +1457,7 @@ export function secure(rec, at = Date.now()) {
 function resOf(e, ph) {
   const j = (k) => (k == null ? null : ph.j0 + k), inLine = (k) => k == null || (k >= 0 && ph.j0 + k < ph.j1);
   const w = e.w && inLine(e.w.k) && inLine(e.w.k2) ? compact({ kind: e.w.kind, j: j(e.w.k), j2: j(e.w.k2), sub: e.w.sub }) : null;
-  const c = e.c && inLine(e.c.k) ? compact({ kind: e.c.kind, j: j(e.c.k), dir: e.c.dir, size: e.c.size, s: e.c.s, end: e.c.end }) : null;
+  const c = e.c && inLine(e.c.k) ? compact({ kind: e.c.kind, j: j(e.c.k), dir: e.c.dir, size: e.c.size, s: e.c.s, end: e.c.end, other: e.c.other }) : null;
   return { counts: { beats: e.b ?? null, beatsAll: !!e.ab, notes: e.n ?? null, notesAll: !!e.an }, win: w, cue: c, whole: true };
 }
 // … as judgeFree's / judgeBeats's ctx.prev: the last whole attempt here of that kind at that speed (rate), or null.
@@ -1090,5 +1508,5 @@ export function ownSpan(notes, tokens, a, b) {
 export function debugRes(res) {
   if (!res) return null;
   const { voice, fit, songT0, ...rest } = res;
-  return { ...rest, fit: fit ? { a: fit.a, b: fit.b, off: fit.off, anchor: fit.anchor } : null, grades: fit?.g?.map((x) => x && { status: x.status, dev: x.dev, shift: x.shift }) };
+  return { ...rest, fit: fit ? { a: fit.a, b: fit.b, off: fit.off, anchor: fit.anchor, ...(fit.refit ? { refit: true } : {}), ...(fit.look ? { look: true } : {}) } : null, grades: fit?.g?.map((x) => x && { status: x.status, dev: x.dev, shift: x.shift }) };
 }
