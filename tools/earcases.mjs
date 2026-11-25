@@ -558,6 +558,12 @@ const OWN = [
   { song: 'piano-man', j: 91, name: '#91 in 0.25 s late, legato on one pitch', plan: { starts: { 91: 0.25 } }, wp: 'R2-1a', want: [XS.notSpot, ['a timing cue on it, or ♩ all and “Every note in tune”', (r) => (r.cue?.kind === 'timing' && r.cue.j === 91) || (!!r.counts?.beatsAll && r.win?.kind === 'every')]] },
   { song: 'blzmaj7', j: 31, name: '#31 in 0.2 s late (a run of one pitch)', plan: { starts: { 31: 0.2 } }, wp: 'R2-1a', want: [XS.notSpot] },
   { song: 'daniel-krieger-tyler-mehlenbacher-and-daniel-tannenbaum', j: 90, name: '#90 in 0.12 s late', plan: { starts: { 90: 0.12 } }, wp: 'R2-1a', want: [['♩ 3', (r) => r.counts?.beats === 3], XS.cue('timing', 90, 'sooner')] },
+  // (WP1a's review: sung right, the onsets of a run of one pitch lined up a whole note off — every start took its
+  // neighbour's attack, and ♪ on those spans heard the neighbours: "much higher" on a note sung right; a short line's
+  // fit bent 40 % from them; two starts on one onset, one "a bit early")
+  { song: 'from-the-sara-bareilles-2013-album-brave-enough-live-at-the-variety-playhouse', j: 173, name: 'all right (a run of one pitch, 0.33 s a note)', plan: {}, wp: 'R2-1a', saw: true, want: [X.notesAll, X.beatsAll, X.noCue] },
+  { song: 'daniel-krieger-tyler-mehlenbacher-and-daniel-tannenbaum', j: 330, name: 'all right, 15 % slower (four starts 0.3 s apart)', plan: { f: 1.15 }, wp: 'R2-1a', want: [X.notesAll, X.beatsAll, X.noCue, X.b(1.15, 0.05)] },
+  { song: 'blzmaj7', j: 47, name: 'all right, 10 % faster (a first note without an attack)', plan: { f: 0.9 }, wp: 'R2-1a', want: [X.notesAll, X.beatsAll, X.noTiming] },
   // WP2: Beats
   { song: 'hey-little-songbird-p-6', j: 0, mode: 'Beats', name: 'every start 0.15 s late', plan: { late: 0.15 }, wp: 'R2-2', want: [['one verdict (every start one class)', (r) => { const st = Object.values(r.starts || {}).filter((x) => x.reached && !x.missing); return st.every((x) => x.on === st[0]?.on); }], ['no “Came in on time” beside a take-wide cue', (r) => !(r.win?.kind === 'entry' && ['steady', 'hair', 'slip', 'drift'].includes(r.cue?.kind))]] },
   { song: 'x-f', j: 16, mode: 'Beats', name: 'on the click, three notes off pitch', plan: { wrong: { 16: -3, 19: 2, 21: -2 } }, wp: 'R2-2', saw: true, want: [X.beatsAll, X.noTiming, ['#16 not missing', (r, ph) => !r.starts?.[16 - ph.j0]?.missing]] },
