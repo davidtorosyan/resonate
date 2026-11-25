@@ -162,10 +162,11 @@ const reached = (notes, endT) => {
 
 // Grade a whole take (after it ends): the best moved slots for all notes together.
 // Returns one grade per note: { status, hit, dev, octave, sungMidi, shift, from, to }.
-// maxShift: how far a slot's start may move (s; MAX_SHIFT — Sing's takes — unless given).
-export function gradeTake(notes, frames, { endT = Infinity, gate = 0.012, maxShift = MAX_SHIFT } = {}) {
+// maxShift: how far a slot's start may move (s; MAX_SHIFT — Sing's takes — unless given). loud: what counts as loud,
+// already found (loudGate(frames, gate) — a caller grading many placements on the same frames, Ear's fit); none: found here.
+export function gradeTake(notes, frames, { endT = Infinity, gate = 0.012, maxShift = MAX_SHIFT, loud = null } = {}) {
   notes = withRests(notes);
-  gate = loudGate(frames, gate);
+  gate = loud ?? loudGate(frames, gate);
   const N = reached(notes, endT);
   const grades = notes.map(() => ({ status: "unsung" }));
   if (!N) return grades;

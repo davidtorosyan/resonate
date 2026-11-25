@@ -15,6 +15,8 @@
 //   jit {i: s} — the whole note late (−: early), its length kept
 //   starts {i: s} — only its start moves: the note before is held up to a late one (with gap: true it
 //       isn't — a silence), an early one cuts the note before; the note still ends where it did
+//   hold {i: s} — note i held s longer, everything after it moved with it (a note held long mid-line, the beat
+//       kept after it: every note sung right)
 //   drop [i] — not sung; stop: i — nothing after note i; held: s — the last note sung held at most s (a long
 //       last note let go early)
 //   curve: x — the tempo eases from 1 to 1 + x across the line (each note's length × 1 + x·its place in the line,
@@ -39,6 +41,7 @@ function segments(P, ns, f = 1) {
   const W = Math.max(...ns.map((n) => n.t - T0 + n.d)) || 1;
   const at = (tau) => (tau + (P.curve ? (P.curve * tau * tau) / (2 * W) : 0)) * f;
   let out = ns.map((n, i) => { const j = P.jit?.[i] || 0; return { i, s: at(n.t - T0) + j, e: at(n.t - T0 + n.d) + j - 0.04, m: n.midi + (n.shift || 0) + semis(i) }; });
+  for (const [k, v] of Object.entries(P.hold || {})) for (const o of out) { if (o.i === +k) o.e += v; else if (o.i > +k) { o.s += v; o.e += v; } }
   for (const [k, v] of Object.entries(P.starts || {})) {
     const o = out[+k];
     if (!o || !v) continue;

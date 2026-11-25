@@ -346,6 +346,8 @@ const X = {
 const XS = {
   cue: (k, j, dir) => [`cue ${k} on #${j}${dir ? ` ${dir}` : ''}`, (r) => r.cue?.kind === k && r.cue.j === j && (!dir || r.cue.dir === dir)],
   notSpot: ['never “Spot on”', (r) => r.win?.kind !== 'spot'],
+  // (a held note: the cue on its word — a melisma's notes are one)
+  held: (j) => [`“held long” on #${j}'s word`, (r, ph, R) => { if (r.cue?.kind !== 'held' || r.cue.dir !== 'sooner') return false; const w = (x) => wordOf(x, R.S.notes)?.w0 ?? x; return w(r.cue.j) === w(j); }],
 };
 // The screen's words for a result (as sing.js's earTextOf hands it over: the attempt's recording here, the Key menu
 // able to move the song, the line's tempo heard — the score's ♩). R.S: the case's song, R.lines its lines.
@@ -441,6 +443,14 @@ LINE.push(
   { name: '“ma” held on (its fermata): “zing” in 0.15 s late — not cued', line: 0, w: 3, word: 'zing', plan: { starts: { 3: 0.15 } }, wp: 'R2-1a', want: [X.noTiming, X.beatsAll] },
   // WP1.8: a ritardando into the line's end is left alone (known gap 2)
   ...[[3, { 6: 0.1, 7: 0.25, 8: 0.45 }], [0, { 8: 0.1, 9: 0.25, 10: 0.45 }], [0, { 9: 0.15, 10: 0.4 }], [0, { 9: 0.08, 10: 0.2 }]].flatMap(([line, starts], i) => [1, 1.1].map((f) => ({ name: `L${line} slowing into the end ${JSON.stringify(starts)}${f !== 1 ? ` ×${f}` : ''}`, line, plan: { starts: Object.fromEntries(Object.entries(starts).map(([k, v]) => [k, v * f])), f }, wp: 'R2-1a', more: f !== 1 || i === 1 || i === 2, want: [X.noTiming, X.beatsAll, ['rit set', (r) => r.rit != null]] }))),
+  // (v105's review: every note sung right, one held long and the rest of the line moved with it — the judgment follows
+  // the hold: no pitch or missed cue, the held note's "held long" — and a fermata held as written: nothing cued at all)
+  ...[0.35, 0.5, 0.8].map((h) => ({ name: `“ma” held ${h} s longer (its fermata), the rest moved with it`, line: 0, w: 2, word: 'ma', plan: { hold: { 2: h } }, wp: 'R2-1a', saw: h === 0.5, want: [X.notesAll, X.beatsAll, X.noCue] })),
+  ...[[1, ''], [6, 'grace!']].map(([w, word]) => ({ name: `${w === 1 ? '“Amazing”’s 2nd note' : '“grace”'} held 0.5 s longer, the rest moved with it`, line: 0, w, word, plan: { hold: { [w]: 0.5 } }, wp: 'R2-1a', want: [X.notesAll, X.cue('held', w, 'sooner'), X.say({ cue: w === 1 ? '“Amazing” (second note) held long — keep the beat' : '“grace” held long — keep the beat' })] })),
+  // (…and the pickup left out, “I” and its melisma: the line's first start is looked for at the first sound, which is
+  // “once”'s — it gives its onset up to “once”, whose pitch follows it; the browser's voice moved a note between two of
+  // its pitch onto its neighbour: “was” — much higher)
+  { name: '“I” (both its notes) left out', line: 2, plan: { drop: [0, 1] }, wp: 'R2-1a', saw: true, want: [X.cue('missed'), ['on “I”', (r, ph) => [0, 1].includes(at(r, ph))], X.say({ cue: '“I” — sing both notes' })] },
   { name: '“grace” in 0.25 s late', line: 0, w: 6, word: 'grace!', plan: { starts: { 6: 0.25 } }, wp: 'WP2', saw: true, want: [X.cue('timing', 6, 'sooner'), X.say({ cue: 'Come in sooner on “grace”', sounds: ['▶ Piano', '▶ You'], next: 'Try it with the clicks ›' })] },
   { name: '“grace” in 0.4 s late', line: 0, w: 6, word: 'grace!', plan: { starts: { 6: 0.4 } }, wp: 'WP2', want: [X.cue('timing', 6, 'sooner'), X.say({ cue: 'Come in sooner on “grace”' })] },
   { name: '“the” in 0.25 s late', line: 0, w: 9, word: 'the', plan: { starts: { 9: 0.25 } }, wp: 'WP2', want: [X.cue('timing', 9, 'sooner'), X.say({ cue: 'Come in sooner on “the”' })] },
@@ -564,6 +574,10 @@ const OWN = [
   { song: 'from-the-sara-bareilles-2013-album-brave-enough-live-at-the-variety-playhouse', j: 173, name: 'all right (a run of one pitch, 0.33 s a note)', plan: {}, wp: 'R2-1a', saw: true, want: [X.notesAll, X.beatsAll, X.noCue] },
   { song: 'daniel-krieger-tyler-mehlenbacher-and-daniel-tannenbaum', j: 330, name: 'all right, 15 % slower (four starts 0.3 s apart)', plan: { f: 1.15 }, wp: 'R2-1a', want: [X.notesAll, X.beatsAll, X.noCue, X.b(1.15, 0.05)] },
   { song: 'blzmaj7', j: 47, name: 'all right, 10 % faster (a first note without an attack)', plan: { f: 0.9 }, wp: 'R2-1a', want: [X.notesAll, X.beatsAll, X.noTiming] },
+  // (v105's review: every note sung right, one held long mid-line and the rest of the line moved with it — no pitch or
+  // missed cue, "held long" on the held note's word; a fermata held as written: no timing cue)
+  ...[['x-f', 29, 0.5], ['x-f', 127, 0.5], ['piano-man', 48, 0.5], ['55-cg', 8, 0.6]].map(([song, j, h]) => ({ song, j, name: `#${j} held ${h} s longer, the rest moved with it`, plan: { hold: { [j]: h } }, wp: 'R2-1a', want: [X.notesAll, XS.held(j)] })),
+  { song: 'x-f', j: 47, name: '#47 held 0.5 s longer (its fermata), the rest moved with it', plan: { hold: { 47: 0.5 } }, wp: 'R2-1a', want: [X.notesAll, X.noTiming] },
   // WP2: Beats
   { song: 'hey-little-songbird-p-6', j: 0, mode: 'Beats', name: 'every start 0.15 s late', plan: { late: 0.15 }, wp: 'R2-2', want: [['one verdict (every start one class)', (r) => { const st = Object.values(r.starts || {}).filter((x) => x.reached && !x.missing); return st.every((x) => x.on === st[0]?.on); }], ['no “Came in on time” beside a take-wide cue', (r) => !(r.win?.kind === 'entry' && ['steady', 'hair', 'slip', 'drift'].includes(r.cue?.kind))]] },
   { song: 'x-f', j: 16, mode: 'Beats', name: 'on the click, three notes off pitch', plan: { wrong: { 16: -3, 19: 2, 21: -2 } }, wp: 'R2-2', saw: true, want: [X.beatsAll, X.noTiming, ['#16 not missing', (r, ph) => !r.starts?.[16 - ph.j0]?.missing]] },
@@ -671,7 +685,7 @@ const ownOk = (song) => !!OWN_DIR && fs.existsSync(path.join(OWN_DIR, `${song}.j
 const songs = {};
 const songFor = (name) => (songs[name] ||= songOf(name, OWN_DIR));
 // An owner case's plan: its note indices are the song's — the singer's are the line's.
-const LINE_IDX = ['cents', 'wrong', 'jit', 'starts'];
+const LINE_IDX = ['cents', 'wrong', 'jit', 'starts', 'hold'];
 function toLine(P, ph) {
   const o = { ...P }, n = ph.j1 - ph.j0, bad = [];
   const at = (i) => { const k = +i - ph.j0; if (k < 0 || k >= n + (P.extra || 0)) bad.push(+i); return k; };

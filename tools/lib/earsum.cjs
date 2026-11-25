@@ -33,6 +33,8 @@ function summary(r, ph) {
     r.rit != null ? `rit ${r.rit}` : null,
     r.anchored != null ? `anchored ${Array.isArray(r.anchored) ? r.anchored.length : r.anchored}` : null,
     r.u0 != null ? `u0 ${r.u0}` : null,
+    r.fit?.refit ? 'refit' : null,
+    r.fit?.look ? 'look' : null,
   ].filter(Boolean).join(' | ');
 }
 
