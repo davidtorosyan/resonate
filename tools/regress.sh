@@ -122,6 +122,7 @@ if [ "$TIER" = main ]; then
   run playpdf 1200 env SHOTS=0 node playpdf.cjs   # 📄: the bars on the PDF, zoom and pan, the focus border
   run playfocus 900 env SHOTS=0 node playfocus.cjs # E3: a highlight's exact span for assistants, a double-tap picks one chord
   run playmarks 900 env SHOTS=0 node playmarks.cjs # E6: bookmarks — made, tabs on the music, the list, per song, the shell's Score
+  run playbar 300 env SHOTS=0 node playbar.cjs # one bar at a time: a held ‹ › / Shift + ← → starts the page a bar on
   run playfinger 1800 env SHOTS=0 node playfinger.cjs # E7: fingering on the shell's Piano — #fing, digits, the drawn hand, the hands' rules, the cache, off = today
 
   # ---- PDF → Song: the Reader (a synthetic fixture with clean-ups; the real recorded Chromium run) --------

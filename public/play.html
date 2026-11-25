@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0f0f1e" />
     <title>Resonate · Play</title>
-    <script src="away.js?v=103" data-open="score"></script>
+    <script src="away.js?v=105" data-open="score"></script>
     <style>
       :root { color-scheme: dark; }
       /* An open menu's list takes the option's own colours (Chrome on Windows drew the see-through
@@ -90,7 +90,7 @@
       #pdf[aria-pressed="true"] { background: rgba(166,79,255,0.28); border-color: #a64fff; }
       .pager { display: flex; align-items: center; gap: 0.25rem; margin-left: auto; }
       #pg { min-width: 4.6rem; text-align: center; font-size: 0.85rem; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.75); white-space: nowrap; }
-      #prev, #next { font-size: 1.3rem; line-height: 1; padding: 0; }
+      #prev, #next { font-size: 1.3rem; line-height: 1; padding: 0; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
       #version { font-size: 0.66rem; font-weight: 600; letter-spacing: 0; color: #a64fff; opacity: 0.9; } /* (v100: one digit more — the bar at its width limit kept its row only this way) */
       /* The AI button (signed in, approved, sync on, once an assistant has connected): an assistant
          may control this page — small, by the badge, so the bar keeps its rows (on the pages' row
@@ -499,13 +499,13 @@
       </div>
       <span class="pager">
         <button id="marks" type="button" aria-label="Bookmarks" title="Bookmarks" aria-haspopup="dialog" aria-expanded="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 3.5h9a1 1 0 0 1 1 1v16l-5.5-4-5.5 4v-16a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
-        <button id="prev" type="button" aria-label="Previous page" title="Previous page">‹</button>
+        <button id="prev" type="button" aria-label="Previous page" title="Previous page — hold: one bar back (Shift+←)">‹</button>
         <span id="pg" aria-live="polite">…</span>
-        <button id="next" type="button" aria-label="Next page" title="Next page">›</button>
+        <button id="next" type="button" aria-label="Next page" title="Next page — hold: one bar on (Shift+→)">›</button>
       </span>
       <span class="brk"></span>
       <button id="remote-btn" type="button" hidden aria-pressed="false" aria-label="Let an assistant control this device" title="Let an assistant control this device"><svg class="ai-mark" viewBox="0 0 20 16" aria-hidden="true" focusable="false"><path d="M1.5 14.5 6.5 1.5l5 13M3.25 10h6.5M13.5 1.5h5M16 1.5v13M13.5 14.5h5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-      <span id="version" class="mono">v103</span>
+      <span id="version" class="mono">v105</span>
       <div id="marklist" role="dialog" aria-label="Bookmarks" hidden></div>
     </header>
     <main id="stage" data-names="all">
@@ -530,7 +530,7 @@
       <div id="hear" class="hear" role="group" aria-label="Hear" hidden></div>
       <div id="strip" aria-hidden="true"></div>
     </div>
-    <script type="module" src="nav.js?v=103"></script>
-    <script type="module" src="play.js?v=103"></script>
+    <script type="module" src="nav.js?v=105"></script>
+    <script type="module" src="play.js?v=105"></script>
   </body>
 </html>
