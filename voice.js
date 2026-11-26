@@ -6,11 +6,11 @@
 // then does the same going up. The lowest and highest notes held are your limits; the
 // comfortable range starts a few notes inside them and can be adjusted by hand.
 
-import { openMic, createReader, gateDb, micGate, soundGone, FFT_SIZE, GATE_DB, MIN_RMS } from "./pitch.js?v=122";
-import { loadPiano, holdPiano, ownContext, sleepAudio } from "./piano.js?v=122";
-import { noteName, median } from "./music.js?v=122";
-import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=122";
-import { device, renameDevice, ready } from "./assist.js?v=122";
+import { openMic, createReader, gateDb, micGate, soundGone, FFT_SIZE, GATE_DB, MIN_RMS } from "./pitch.js?v=123";
+import { loadPiano, holdPiano, ownContext, sleepAudio } from "./piano.js?v=123";
+import { noteName, median } from "./music.js?v=123";
+import { loadProfiles, createProfile, updateProfile, deleteProfile, setActiveProfile } from "./profiles.js?v=123";
+import { device, renameDevice, ready } from "./assist.js?v=123";
 
 // (In the one-page shell this page is mounted in a sheet: its own elements first — the Score has a
 // #strip too. On voice.html resonateVoice isn't set: the document.)
