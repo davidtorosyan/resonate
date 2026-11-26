@@ -345,7 +345,7 @@ function draw() {
       cx.font = "600 13px system-ui, -apple-system, sans-serif"; const w = cx.measureText(t).width + 16;
       cx.fillStyle = "#e9c46a"; cx.beginPath(); cx.roundRect ? cx.roundRect(q.x - w / 2, q.y - 11, w, 22, 11) : cx.rect(q.x - w / 2, q.y - 11, w, 22); cx.fill();
       cx.fillStyle = "#1b1838"; cx.textAlign = "center"; cx.textBaseline = "middle"; cx.fillText(t, q.x, q.y + 0.5); cx.textBaseline = "alphabetic";
-    } else if (glowing(i)) {
+    } else if (glowing(i) || s.sparkle) {
       const q = tagPt(i), ph = (now % 1600) / 1600, pulse = 0.5 + 0.5 * Math.sin(ph * 2 * Math.PI);
       const gr = cx.createRadialGradient(q.x, q.y, 0, q.x, q.y, 18 + 4 * pulse);
       gr.addColorStop(0, `rgba(255,220,120,${0.55 + 0.35 * pulse})`); gr.addColorStop(1, "rgba(255,220,120,0)");
@@ -640,6 +640,21 @@ async function sortStrings() {
 async function strumAll(gap = 90) {
   for (let i = 0; i < S.strings.length; i++) { pluck(i); await wait(gap); }
 }
+// a note won: it sparkles, its name sticks above it, and it slides into its place among the strings (low → high)
+const nameOf = (L) => noteName(Math.round(S.base + 12 * Math.log2(1 / L)));
+const demoLog = [];
+async function reveal(j) {
+  S.strings[j].sparkle = true; tick(); await wait(550);
+  delete S.strings[j].sparkle;
+  S.strings[j].fixed = nameOf(S.strings[j].L);
+  pluck(j); draw();
+  const k = S.strings.filter((s, i) => i !== j && s.L > S.strings[j].L + 1e-9).length;
+  while (j > k) { moveString(j, j - 1); j--; draw(); await wait(110); }
+  const tagged = S.strings.filter((s) => s.fixed);
+  demoLog.push({ name: S.strings[j].fixed, L: S.strings[j].L, sorted: tagged.every((s, i) => !i || tagged[i - 1].L > s.L) });
+  await wait(450);
+  return j;
+}
 // one pure fifth from string src, by ear: the pendant at ⅓ on it (its twelfth), a new string whose octave harmonic
 // (the pendant at ½) is slid until it matches; folded down an octave (length doubled) when it lands above the octave
 async function fifthFrom(src) {
@@ -652,19 +667,21 @@ async function fifthFrom(src) {
     pend(j, 1 / 2); await glide(j, S.strings[j].L * 2); pluck(j); await wait(800);
   }
   pend(null);
-  return j;
+  return reveal(j);                                             // only the note in the octave is named
 }
 const SCRIPTS = {
   async penta() {
     // the octave: the pendant at ½ on the root, string 2 slid until its open note matches
-    pluck(0); await wait(700);
+    pluck(0); await wait(700); await reveal(0);
     pend(0, 1 / 2); pluck(0); await wait(800);
-    await glide(1, 0.5); pend(null); pluck(1); await wait(800);
+    await glide(1, 0.5); pend(null); pluck(1); await wait(800); await reveal(1);
     let src = 0;
     for (let k = 0; k < 4; k++) src = await fifthFrom(src);
     await sortStrings(); await wait(300); await strumAll();
   },
   async pyth() {
+    for (const s of S.strings) s.fixed = nameOf(s.L);
+    draw(); await wait(300);
     let src = S.strings.findIndex((s) => Math.abs(s.L - 64 / 81) < 1e-3);
     for (let k = 0; k < 7; k++) src = await fifthFrom(src);
     await sortStrings(); await wait(300);
@@ -690,6 +707,8 @@ async function runDemo() {
   if (!to) return;
   audio();
   demo = { to, timers: [] };
+  demoLog.length = 0;
+  if (!S.notes) S.notes = true;                                   // the names it reveals show with Notes on
   ffButton(); stage.dataset.demo = "1";
   try { await SCRIPTS[to](); } catch {}
   if (demo?.to === to) finishDemo(to);
@@ -697,7 +716,7 @@ async function runDemo() {
 function finishDemo(to) {
   demo = null;
   delete stage.dataset.demo;
-  S.strings = TUNINGS[to].L.map((L) => ({ L }));
+  S.strings = TUNINGS[to].L.map((L) => ({ L, fixed: nameOf(L) }));
   S.pendant = null;
   save(); controls(); layout();
 }
@@ -731,6 +750,6 @@ probe();
 window.resonateDebug = () => ({
   state: JSON.parse(JSON.stringify(S)), freqs: S.strings.map((_, i) => freqOf(i)), plucks: plucks.map((p) => ({ ...p })),
   land: G?.land, span: G?.span, beats: $("beats").textContent, pt: (i, a) => pt(i, a), dock: G && { ...G.dock },
-  audio: ac?.state || null, frac, clinks, locked, bin: () => binPt(), binHot: !!gripOff && drags.get("g") != null, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), stage: stageOf(), demo: demo && demo.to, speed: (v) => { demoSpeed = v; }, lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
+  audio: ac?.state || null, frac, clinks, locked, bin: () => binPt(), binHot: !!gripOff && drags.get("g") != null, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), stage: stageOf(), demo: demo && demo.to, demoLog: demoLog.map((x) => ({ ...x })), speed: (v) => { demoSpeed = v; }, lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
   ending: (f) => { makeCtx(); const d = buffer(f, null).getChannelData(0), n = d.length, w = Math.round(n * 0.01); let pk = 0, e = 0; for (let k = 0; k < n; k++) pk = Math.max(pk, Math.abs(d[k])); for (let k = n - w; k < n; k++) e = Math.max(e, Math.abs(d[k])); return { dur: n / ac.sampleRate, peak: pk, end: e / pk }; }, voices: voices.size, partials: (f, x) => partials(f, x, 48000),
 });
