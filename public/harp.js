@@ -604,13 +604,18 @@ $("preset").addEventListener("change", (e) => {
   e.target.value = ""; e.target.blur();
   if (v) applyPreset(v);
 });
-// ×2: a string twice as long as the last one — its octave below (named so when the last one is)
+// ×2: a string twice as long as the one played last (the last string before any is played) — its octave below,
+// named so when that one is
+function dblSource() {
+  const p = plucks[plucks.length - 1];
+  return p && p.i >= 0 && p.i < S.strings.length ? p.i : S.strings.length - 1;
+}
 const dblBtn = document.getElementById("dbl");
-function canDouble() { const n = S.strings.length; return !demo && n < MAXS && S.strings[n - 1].L * 2 <= 1 + 1e-9; }
+function canDouble() { return !demo && S.strings.length < MAXS && S.strings[dblSource()].L * 2 <= 1 + 1e-9; }
 $("dbl").addEventListener("click", () => {
   if (!canDouble()) return;
-  const last = S.strings[S.strings.length - 1], L = Math.min(1, last.L * 2);
-  S.strings.push({ L, ...(last.fixed ? { fixed: nameOf(L) } : {}) });
+  const src = S.strings[dblSource()], L = Math.min(1, src.L * 2);
+  S.strings.push({ L, ...(src.fixed ? { fixed: nameOf(L) } : {}) });
   save(); controls(); layout();
   if (!startShown()) pluck(S.strings.length - 1);
 });

@@ -414,21 +414,23 @@ async function main() {
     ok((await D(page)).chain === 13 && !(await page.$eval('#temper', (t) => t.hidden)), 'S the 12-by-fifths preset: the switch back');
     await page.click('#temper [data-t="et"]'); await until(() => window.resonateDebug().stage === 'et' && !window.resonateDebug().tempering);
     ok(await page.$eval('#step', (b) => b.disabled), 'S + fifth off once the strings leave the chain (Equal)');
-    // ×2: a string twice the last one's length — an octave below it, named when the last one is
-    await page.selectOption('#preset', 'reset'); await sleep(150);
-    ok(await page.$eval('#dbl', (b) => b.disabled), 'D ×2 off when the last string is longer than half');
+    // ×2: a string twice the length of the one played last — an octave below it, named when that one is
+    const tapS = async (i) => { const q = await P(page, i, 0.3); await page.mouse.click(q.x, q.y); await sleep(120); };
     await page.selectOption('#preset', 'penta'); await sleep(150);
     if (!(await D(page)).state.notes) await page.click('#notes');
-    await page.evaluate(() => window.resonateDebug().setL(5, 0.4)); await sleep(100);
-    ok(!(await page.$eval('#dbl', (b) => b.disabled)), 'D ×2 on once the last string is short enough');
+    await tapS(0);
+    d = await D(page);
+    ok(d.plucks[d.plucks.length - 1].i === 0 && await page.$eval('#dbl', (b) => b.disabled), 'D ×2 off when the string played last is longer than half');
+    await page.evaluate(() => window.resonateDebug().setL(2, 0.4)); await sleep(100); await tapS(2);
+    ok(!(await page.$eval('#dbl', (b) => b.disabled)), 'D ×2 on once the string played last is short enough');
     await page.click('#dbl'); await sleep(200);
     d = await D(page);
-    ok(d.state.strings.length === 7 && near(d.state.strings[6].L, 0.8, 1e-9) && d.plucks[d.plucks.length - 1].i === 6, `D ×2 adds a string twice the last one's length (${d.state.strings[6].L}) and plucks it`);
+    ok(d.state.strings.length === 7 && near(d.state.strings[6].L, 0.8, 1e-9) && d.plucks[d.plucks.length - 1].i === 6, `D ×2 doubles the string played last, not the last string (${d.state.strings[6].L}) and plucks it`);
     await page.evaluate(() => window.resonateDebug().setL(6, 0.5)); await page.click('#dbl'); await sleep(200);
     d = await D(page);
-    ok(d.state.strings.length === 8 && d.state.strings[7].L === 1, 'D a second ×2: the full length again');
+    ok(d.state.strings.length === 8 && d.state.strings[7].L === 1, 'D a second ×2 doubles the new string: the full length');
     await page.selectOption('#preset', 'penta'); await sleep(150);
-    await page.click('#dbl'); await sleep(200);
+    await tapS(5); await page.click('#dbl'); await sleep(200);
     d = await D(page);
     ok(d.fixed[6] === 'F♯3' && d.fixed[5] === 'F♯4', `D the octave below a named string is named (${d.fixed[5]} → ${d.fixed[6]})`);
     await ctx.close();
