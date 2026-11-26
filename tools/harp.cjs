@@ -8,6 +8,7 @@
 //   G  an iOS-like gate (a context starts only from a resume in a finger's lift): the harp grey with ▶ Start, a tap wakes
 //      it (strings ring softly), a string sounds, back from hidden → ▶ Start again
 //   (L also: ▶ Start only when the sound can't start by itself, none on coming back when it can, a grip moves a string,
+//    ♪ Notes: a glow over a string on a pentatonic note, a tap names and fixes it; a grip dragged off removes its string,
 //    a pluck rings ≥ 5 s and fades to nothing, ■ damps every string with a clink; ▶ Start and ■ are one button at the foot)
 // usage: node harp.cjs   (BASE=…)
 const { chromium } = require('playwright');
@@ -75,6 +76,20 @@ async function main() {
     await drag(page, await page.evaluate(() => { const r = document.getElementById('stage').getBoundingClientRect(); const q = window.resonateDebug().grip(1); return { x: q.x + r.left, y: q.y + r.top }; }), { x: g0.x, y: g0.y });
     d = await D(page);
     ok(d.state.strings[0].L === 1 && near(d.state.strings[1].L, 2 / 3, 1e-9), 'L and back');
+    // ♪ Notes: string 2 at ⅔ is the fifth — a glow; a tap names it and fixes it
+    ok(!(await D(page)).glows.some(Boolean), 'L no glows with ♪ Notes off');
+    await page.click('#notes'); await sleep(150);
+    d = await D(page);
+    ok(d.glows[1] && !d.glows[0] === false, `L ♪ Notes: a glow over each string on a pentatonic note (${d.glows})`);
+    const tg = await page.evaluate(() => { const r = document.getElementById('stage').getBoundingClientRect(); const q = window.resonateDebug().tag(1); return { x: q.x + r.left, y: q.y + r.top }; });
+    await page.mouse.click(tg.x, tg.y); await sleep(120);
+    d = await D(page);
+    ok(d.fixed[1] === 'C♯4' && !d.glows[1], `L a tap on it names it and fixes it (${d.fixed[1]})`);
+    const fb = await P(page, 1, 2 / 3), ft = await P(page, 1, 0.9);
+    await drag(page, fb, ft);
+    d = await D(page);
+    ok(near(d.state.strings[1].L, 2 / 3, 1e-9), 'L a fixed string keeps its length');
+    await page.click('#notes'); await sleep(100);
     await page.click('#snap'); // gentle
     let b2 = await P(page, 1, 2 / 3), t2 = await P(page, 1, 0.672);
     await drag(page, b2, t2);
@@ -132,6 +147,14 @@ async function main() {
     await page.click('#remove'); await sleep(80);
     d = await D(page);
     ok(d.state.strings.length === 2, 'L ✕ removes it');
+    // a grip dragged off the harp removes its string
+    await page.click('#add'); await sleep(80);
+    const n0 = (await D(page)).state.strings.length;
+    const gl = await page.evaluate((k) => { const r = document.getElementById('stage').getBoundingClientRect(); const q = window.resonateDebug().grip(k); return { x: q.x + r.left, y: q.y + r.top, left: r.left }; }, n0 - 1);
+    await drag(page, gl, { x: gl.left + 2, y: gl.y });
+    ok((await D(page)).state.strings.length === n0 - 1, 'L a grip dragged off the harp removes its string');
+    await drag(page, await page.evaluate(() => { const r = document.getElementById('stage').getBoundingClientRect(); const q = window.resonateDebug().grip(0); return { x: q.x + r.left, y: q.y + r.top }; }), { x: gl.x, y: gl.y - 4 });
+    ok((await D(page)).state.strings.length === n0 - 1, 'L dragged and let go on the harp: kept');
     // presets
     await page.selectOption('#preset', 'penta'); await sleep(100);
     d = await D(page);
