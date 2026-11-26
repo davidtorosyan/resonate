@@ -307,6 +307,11 @@ async function main() {
     await page.selectOption('#preset', 'et'); await sleep(150);
     d = await D(page);
     ok(d.fixed.every(Boolean) && d.state.notes, 'F a tuning preset names its strings');
+    await page.click('#notes'); await page.selectOption('#preset', 'penta'); await sleep(150);
+    d = await D(page);
+    ok(!d.state.notes && d.fixed.every(Boolean), 'F a preset with ♪ Notes off leaves it off');
+    await page.click('#notes'); await sleep(100);
+    ok((await D(page)).state.notes && (await D(page)).fixed.join() === 'F♯3,G♯3,A♯3,C♯4,D♯4,F♯4', 'F ♪ Notes on: the names there at once');
     await page.selectOption('#preset', 'mean'); await sleep(150);
     d = await D(page);
     ok(d.stage === 'mean' && near(d.freqs[4] / d.freqs[0], 1.25, 1e-9), 'F Meantone: a pure major third (5:4)');
