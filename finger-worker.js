@@ -2,7 +2,7 @@
 //   const w = new Worker(new URL("./finger-worker.js?v=N", import.meta.url), { type: "module" });
 //   w.postMessage({ id, items, hand });   → { id, result: fingerNotes(items, { hand }) } or { id, error }
 // items: finger.js's input (plain objects); result: its output (notes a Map, structured-cloned).
-import { fingerNotes } from "./finger.js?v=128";
+import { fingerNotes } from "./finger.js?v=129";
 
 self.onmessage = (e) => {
   const { id, items, hand } = e.data || {};

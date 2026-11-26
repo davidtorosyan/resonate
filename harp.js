@@ -278,19 +278,43 @@ async function probe() {
 function goButton() { const b = $("go"); b.dataset.mode = locked ? "start" : "stop"; b.textContent = locked ? "▶ Start" : "■"; b.setAttribute("aria-label", locked ? "Start the harp" : "Stop all strings"); }
 $("go").addEventListener("click", () => { if (locked) { strumOnWake = true; goTap = true; audio(); goTap = false; } else stopAll(); });
 
-// ---------- beats (123): the last two strings plucked ----------
+// ---------- beats: a badge for the last two strings plucked ----------
+// The interval's nearest simple ratio (b:a, within 50¢; the simplest first) → the rate its nearest harmonics beat at:
+// |a·f_low − b·f_high|. Coloured by it, green (none) → red (≥ 12/s), so a glance says how rough the pair is.
+const BEAT_RATIOS = [];
+for (let a = 1; a <= 8; a++) for (let b = 1; b <= 8; b++) {
+  const g = (x, y) => (y ? g(y, x % y) : x);
+  if (a >= b && g(a, b) === 1 && a + b <= 11 && a !== 7 && b !== 7) BEAT_RATIOS.push([a, b]);
+}
+BEAT_RATIOS.sort((x, y) => x[0] + x[1] - (y[0] + y[1]));
+function beatOf(f1, f2) {
+  const hi = Math.max(f1, f2), lo = Math.min(f1, f2);
+  for (const [a, b] of BEAT_RATIOS) {
+    if (Math.abs(1200 * Math.log2(hi / lo / (a / b))) <= 50) return { a, b, d: Math.abs(b * hi - a * lo) };
+  }
+  return null;
+}
+let beatsTimer = 0;
 function showBeats() {
   const el = $("beats");
-  if (!S.info || plucks.length < 2) { el.textContent = ""; return; }
-  const p = plucks[plucks.length - 1], q = [...plucks].reverse().find((v) => v.i !== p.i);
-  if (!q || p.i < 0 || q.i < 0 || p.i >= S.strings.length || q.i >= S.strings.length) { el.textContent = ""; return; }
-  const f1 = freqOf(p.i), f2 = freqOf(q.i);
-  let best = null;
-  for (let m = 1; m <= 8; m++) for (let n = 1; n <= 8; n++) {
-    const d = Math.abs(m * f1 - n * f2);
-    if (d < 12 && (!best || m + n < best.m + best.n || (m + n === best.m + best.n && d < best.d))) best = { m, n, d };
+  const p = plucks[plucks.length - 1], q = p && [...plucks].reverse().find((v) => v.i !== p.i);
+  if (!q || p.i < 0 || q.i < 0 || p.i >= S.strings.length || q.i >= S.strings.length) { el.hidden = true; return; }
+  const best = beatOf(freqOf(p.i), freqOf(q.i));
+  el.hidden = false;
+  const num = el.querySelector("b");
+  if (!best) { num.textContent = "–"; el.style.setProperty("--h", "none"); el.dataset.level = "none"; }
+  else {
+    const d = best.d < 0.05 ? 0 : best.d;
+    num.textContent = d === 0 ? "0" : d < 10 ? d.toFixed(1) : String(Math.round(d));
+    el.style.setProperty("--h", String(Math.round(135 * (1 - Math.min(1, d / 12)))));   // green → red at 12/s
+    el.dataset.level = d < 0.6 ? "calm" : d < 4 ? "mild" : d < 9 ? "rough" : "harsh";
   }
-  el.textContent = !best ? "" : best.d < 0.05 ? `strings ${q.i + 1} & ${p.i + 1}: no beats` : `strings ${q.i + 1} & ${p.i + 1}: ${best.d.toFixed(1)} beats/s`;
+  el.dataset.pair = `${q.i} ${p.i}`;
+  el.dataset.d = best ? String(best.d) : "";
+  // dim once the pair has rung out
+  el.classList.remove("old");
+  clearTimeout(beatsTimer);
+  beatsTimer = setTimeout(() => el.classList.add("old"), 9000);
 }
 
 // ---------- drawing ----------
@@ -737,7 +761,9 @@ for (const x of document.querySelectorAll("#temper button")) x.addEventListener(
 async function playChord(names) {
   const idx = names.split(" ").map((n) => S.strings.findIndex((x) => nameOf(x.L) === n)).filter((i) => i >= 0);
   idx.sort((a, b) => S.strings[b].L - S.strings[a].L);
-  for (const i of idx) { pluck(i); flashAt.set(S.strings[i], performance.now()); tick(); await new Promise((r) => setTimeout(r, 60)); }
+  const gap = idx.length === 2 ? 0 : 60;   // a pair together, so its beating starts at once
+  for (const i of idx) { pluck(i); flashAt.set(S.strings[i], performance.now()); tick(); if (gap) await new Promise((r) => setTimeout(r, gap)); }
+  showBeats();
 }
 for (const x of document.querySelectorAll("#chords button")) x.addEventListener("click", () => { if (startShown()) return; unlock(); playChord(x.dataset.c); });
 
@@ -890,7 +916,7 @@ probe();
 
 window.resonateDebug = () => ({
   state: JSON.parse(JSON.stringify(S)), freqs: S.strings.map((_, i) => freqOf(i)), plucks: plucks.map((p) => ({ ...p })),
-  land: G?.land, span: G?.span, beats: $("beats").textContent, pt: (i, a) => pt(i, a), dock: G && { ...G.dock },
+  land: G?.land, span: G?.span, beats: $("beats").hidden ? "" : $("beats").textContent, beatsLevel: $("beats").dataset.level || null, beatsD: $("beats").dataset.d === undefined || $("beats").dataset.d === "" ? null : +$("beats").dataset.d, pt: (i, a) => pt(i, a), dock: G && { ...G.dock },
   audio: ac?.state || null, lens: !!G?.lens, flash: S.strings.map((x) => flashOf(x, performance.now()) > 0), frac, clinks, locked, bin: () => binPt(), binHot: !!gripOff && drags.get("g") != null, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), stage: stageOf(), demo: demo && (demo.to.key || (demo.step ? "step" : demo.to.n === 6 ? "penta" : demo.to.n === 13 ? "pyth" : String(demo.to.n))), chain: chainCount(), tempering, setL: (i, L) => { S.strings[i].L = L; draw(); }, noteOf: (L) => noteOf(L), demoLog: demoLog.map((x) => ({ ...x })), speed: (v) => { demoSpeed = v; }, lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
   ending: (f) => { makeCtx(); const d = buffer(f, null).getChannelData(0), n = d.length, w = Math.round(n * 0.01); let pk = 0, e = 0; for (let k = 0; k < n; k++) pk = Math.max(pk, Math.abs(d[k])); for (let k = n - w; k < n; k++) e = Math.max(e, Math.abs(d[k])); return { dur: n / ac.sampleRate, peak: pk, end: e / pk }; }, voices: voices.size, partials: (f, x) => partials(f, x, 48000),
 });
