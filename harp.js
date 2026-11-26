@@ -13,7 +13,7 @@ const PLUCK_AT = 0.2;              // where a finger plucks (of the length): nea
 const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 const noteName = (m) => NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
 const hz = (m) => 440 * 2 ** ((m - 69) / 12);
-const DEFAULT = () => ({ base: 54, strings: [{ L: 1 }, { L: 1 }], snap: "strong", info: false, pendant: null });
+const DEFAULT = () => ({ base: 54, strings: [{ L: 1 }, { L: 1 }], snap: "strong", info: false, notes: false, pendant: null });
 
 // ---------- state ----------
 let S = load();
@@ -22,7 +22,7 @@ function load() {
     const s = JSON.parse(localStorage.getItem(KEY) || "null");
     if (s && Array.isArray(s.strings) && s.strings.length) {
       const d = DEFAULT();
-      return { ...d, ...s, strings: s.strings.map((x) => ({ L: clamp(+x.L || 1, LMIN, 1) })), pendant: s.pendant && s.pendant.s < s.strings.length ? s.pendant : null };
+      return { ...d, ...s, strings: s.strings.map((x) => ({ L: clamp(+x.L || 1, LMIN, 1), ...(typeof x.fixed === "string" ? { fixed: x.fixed } : {}) })), pendant: s.pendant && s.pendant.s < s.strings.length ? s.pendant : null };
     }
   } catch {}
   return DEFAULT();
@@ -31,6 +31,20 @@ let saveT = 0;
 function save() { clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} }, 200); }
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 const freqOf = (i) => hz(S.base) / S.strings[i].L;
+
+// ---------- ♪ Notes: the pentatonic's notes found by length ----------
+// The pentatonic of five pure fifths from the open note (frequency ×1, 9/8, 81/64, 3/2, 27/16), in every octave a
+// string can reach. A string within 3¢ of one (not fixed) shows a glowing ✦ above it; a tap names it and fixes it.
+const PENTA = [1, 9 / 8, 81 / 64, 3 / 2, 27 / 16];
+const CANON = [1, 2, 4].flatMap((o) => PENTA.map((r) => r * o)).filter((r) => r <= 1 / LMIN + 1e-9);
+function noteOf(L) {
+  const r = 1 / L;
+  for (const c of CANON) if (Math.abs(1200 * Math.log2(r / c)) < 3) return noteName(Math.round(S.base + 12 * Math.log2(c)));
+  return null;
+}
+const fixedOn = (i) => S.notes && !!S.strings[i]?.fixed;
+const glowing = (i) => S.notes && !S.strings[i].fixed && !drags.has("b" + i) && !!noteOf(S.strings[i].L);
+function tagPt(i) { const e = pt(i, S.strings[i].L); return G.land ? { x: e.x, y: e.y - 22 } : { x: e.x, y: e.y - 24 }; }
 
 // ---------- geometry ----------
 let G = null;
@@ -238,7 +252,7 @@ function showBeats() {
   const el = $("beats");
   if (!S.info || plucks.length < 2) { el.textContent = ""; return; }
   const p = plucks[plucks.length - 1], q = [...plucks].reverse().find((v) => v.i !== p.i);
-  if (!q || q.i >= S.strings.length) { el.textContent = ""; return; }
+  if (!q || p.i < 0 || q.i < 0 || p.i >= S.strings.length || q.i >= S.strings.length) { el.textContent = ""; return; }
   const f1 = freqOf(p.i), f2 = freqOf(q.i);
   let best = null;
   for (let m = 1; m <= 8; m++) for (let n = 1; n <= 8; n++) {
@@ -256,7 +270,7 @@ function frame() {
   raf = 0;
   draw();
   const now = performance.now();
-  if (vib.some((v) => v && now - v.t0 < v.tau * 4000) || drags.size) tick();
+  if (vib.some((v) => v && now - v.t0 < v.tau * 4000) || drags.size || S.strings.some((_, i) => glowing(i))) tick();
 }
 function frac(v) {
   for (let q = 1; q <= 256; q++) { const p = Math.round(v * q); if (p && Math.abs(v - p / q) < 2e-6 * v) return q === 1 ? `${p}` : `${p}/${q}`; }
@@ -291,7 +305,7 @@ function draw() {
     cx.beginPath(); cx.moveTo(e.x, e.y); cx.lineTo(f.x, f.y); cx.stroke(); cx.setLineDash([]);
     // the string, moving while it rings
     const v = vib[i], t = v ? (now - v.t0) / 1000 : 0, amp = v ? Math.min(G.span * 0.22, 14) * Math.exp(-t / v.tau) : 0;
-    cx.strokeStyle = "#e9c46a"; cx.lineWidth = 1.2 + 1.4 * s.L;
+    cx.strokeStyle = drags.get("g") === i && gripOff ? "rgba(255,110,140,0.55)" : "#e9c46a"; cx.lineWidth = 1.2 + 1.4 * s.L;
     cx.beginPath();
     for (let k = 0; k <= 60; k++) {
       const u = k / 60, p = pt(i, u * s.L);
@@ -306,10 +320,22 @@ function draw() {
       cx.fillStyle = "rgba(124,196,255,0.55)";
       for (const nd of [1 / 2, 1 / 3, 2 / 3, 1 / 4, 3 / 4]) { const p = pt(i, nd * s.L); cx.beginPath(); cx.arc(p.x, p.y, nd === 0.5 ? 3 : 2, 0, 7); cx.fill(); }
     }
-    // the bridge (drag it)
-    cx.fillStyle = drags.has("b" + i) ? "#c58cff" : "#a64fff";
+    // the bridge (drag it; a fixed string's is grey and stays)
+    cx.fillStyle = fixedOn(i) ? "#6b6488" : drags.has("b" + i) ? "#c58cff" : "#a64fff";
     cx.strokeStyle = "rgba(255,255,255,0.7)"; cx.lineWidth = 1.5;
     cx.beginPath(); cx.arc(e.x, e.y, 9, 0, 7); cx.fill(); cx.stroke();
+    if (fixedOn(i)) {
+      const q = tagPt(i), t = s.fixed;
+      cx.font = "600 13px system-ui, -apple-system, sans-serif"; const w = cx.measureText(t).width + 16;
+      cx.fillStyle = "#e9c46a"; cx.beginPath(); cx.roundRect ? cx.roundRect(q.x - w / 2, q.y - 11, w, 22, 11) : cx.rect(q.x - w / 2, q.y - 11, w, 22); cx.fill();
+      cx.fillStyle = "#1b1838"; cx.textAlign = "center"; cx.textBaseline = "middle"; cx.fillText(t, q.x, q.y + 0.5); cx.textBaseline = "alphabetic";
+    } else if (glowing(i)) {
+      const q = tagPt(i), ph = (now % 1600) / 1600, pulse = 0.5 + 0.5 * Math.sin(ph * 2 * Math.PI);
+      const gr = cx.createRadialGradient(q.x, q.y, 0, q.x, q.y, 18 + 4 * pulse);
+      gr.addColorStop(0, `rgba(255,220,120,${0.55 + 0.35 * pulse})`); gr.addColorStop(1, "rgba(255,220,120,0)");
+      cx.fillStyle = gr; cx.beginPath(); cx.arc(q.x, q.y, 22 + 4 * pulse, 0, 7); cx.fill();
+      cx.fillStyle = "#fff6d8"; cx.font = "16px system-ui, sans-serif"; cx.textAlign = "center"; cx.textBaseline = "middle"; cx.fillText("✦", q.x, q.y + 1); cx.textBaseline = "alphabetic";
+    }
     if (S.info) {
       const fq = freqOf(i), m = 69 + 12 * Math.log2(fq / 440), mr = Math.round(m), cents = Math.round((m - mr) * 100);
       const label = `${frac(s.L)} · ${fq.toFixed(1)} Hz · ${noteName(mr)}${cents ? (cents > 0 ? " +" : " −") + Math.abs(cents) + "¢" : ""}`;
@@ -365,9 +391,12 @@ stage.addEventListener("pointerdown", (e) => {
   audio();
   stage.setPointerCapture(e.pointerId);
   const p = where(e);
+  for (let i = 0; i < S.strings.length; i++) {
+    if (glowing(i) && dist(p, tagPt(i)) < 24) { S.strings[i].fixed = noteOf(S.strings[i].L); save(); tick(); return; }
+  }
   if (dist(p, pendantPos()) < 26) { drags.set(e.pointerId, { k: "pendant" }); pendDrag = { ...p }; tick(); return; }
   for (let i = 0; i < S.strings.length; i++) {
-    if (dist(p, pt(i, S.strings[i].L)) < 26) { drags.set(e.pointerId, { k: "bridge", i, id: "b" + i }); drags.set("b" + i, true); tick(); return; }
+    if (!fixedOn(i) && dist(p, pt(i, S.strings[i].L)) < 26) { drags.set(e.pointerId, { k: "bridge", i, id: "b" + i }); drags.set("b" + i, true); tick(); return; }
   }
   for (let i = 0; i < S.strings.length; i++) {
     if (dist(p, gripOf(i)) < 22) { drags.set(e.pointerId, { k: "grip", i }); drags.set("g", i); tick(); return; }
@@ -393,7 +422,9 @@ stage.addEventListener("pointermove", (e) => {
     let j = g.i, bd = Infinity;
     S.strings.forEach((_, k) => { const d = Math.abs(G.across(k) - c); if (d < bd) { bd = d; j = k; } });
     if (j !== g.i) { moveString(g.i, j); g.i = j; drags.set("g", j); }
-    gripAt = c; tick();
+    gripAt = c;
+    gripOff = S.strings.length > 1 && (p.x < 8 || p.y < 8 || p.x > G.W - 8 || p.y > G.H - 8) ? p : null;   // dragged off the harp
+    tick();
   } else if (g.k === "bridge") {
     S.strings[g.i].L = snapLength(g.i, clamp(alongOf(p.x, p.y), LMIN, 1));
     if (S.pendant?.s === g.i && S.pendant.a > S.strings[g.i].L * 0.98) S.pendant.a = S.strings[g.i].L * 0.98;
@@ -419,7 +450,7 @@ function end(e) {
     pendDrag = null;
     save();
   } else if (g.k === "bridge") drags.delete(g.id);
-  else if (g.k === "grip") { drags.delete("g"); gripAt = null; save(); }
+  else if (g.k === "grip") { drags.delete("g"); gripAt = null; if (gripOff) removeString(g.i); gripOff = null; save(); }
   else clearTimeout(g.lp);
   tick();
 }
@@ -432,7 +463,9 @@ stage.addEventListener("contextmenu", (e) => e.preventDefault());
 
 // ---------- rearranging: a grip at each string's nut end ----------
 let gripAt = null;                 // the dragged grip's across position (it follows the finger)
+let gripOff = null;                // the finger, while a grip is dragged off the harp (let go: the string goes)
 function gripOf(i) {
+  if (drags.get("g") === i && gripOff) return gripOff;
   const c = drags.get("g") === i && gripAt != null ? gripAt : G.across(i);
   return G.land ? { x: G.nut - 26, y: c } : { x: c, y: G.nut + 26 };
 }
@@ -462,16 +495,18 @@ function showRemove(i) {
   b.style.display = "block";
 }
 function hideRemove() { $("remove").style.display = "none"; removing = -1; }
-$("remove").addEventListener("click", () => {
-  const i = removing;
-  hideRemove();
+$("remove").addEventListener("click", () => { const i = removing; hideRemove(); removeString(i); });
+function removeString(i) {
   if (i < 0 || S.strings.length < 2) return;
   stopVoice(i);
+  const nv = [...voices].filter(([k]) => k !== i).map(([k, v]) => [k > i ? k - 1 : k, v]);
+  voices.clear(); for (const [k, v] of nv) voices.set(k, v);
   S.strings.splice(i, 1);
   vib.splice(i, 1);
   if (S.pendant) { if (S.pendant.s === i) S.pendant = null; else if (S.pendant.s > i) S.pendant.s--; }
-  save(); layout();
-});
+  for (const p of plucks) if (p.i > i) p.i--; else if (p.i === i) p.i = -1;
+  save(); controls(); layout();
+}
 function stopVoice(i) {
   const v = voices.get(i);
   if (v && ac) { try { v.g.gain.setTargetAtTime(0, ac.currentTime, 0.02); v.src.stop(ac.currentTime + 0.15); } catch {} }
@@ -485,6 +520,7 @@ function controls() {
   noteSel.value = S.base;
   $("snap").textContent = "Snap: " + S.snap;
   $("info").setAttribute("aria-pressed", S.info);
+  $("notes").setAttribute("aria-pressed", !!S.notes);
   $("add").disabled = S.strings.length >= 12;
   showBeats();
 }
@@ -502,6 +538,7 @@ $("preset").addEventListener("change", (e) => {
 $("add").addEventListener("click", () => { if (S.strings.length < 12) { S.strings.push({ L: 1 }); save(); controls(); layout(); } });
 $("snap").addEventListener("click", () => { S.snap = { strong: "gentle", gentle: "off", off: "strong" }[S.snap]; save(); controls(); });
 $("info").addEventListener("click", () => { S.info = !S.info; save(); controls(); draw(); });
+$("notes").addEventListener("click", () => { S.notes = !S.notes; save(); controls(); tick(); });
 
 // ---------- sleep ----------
 document.addEventListener("visibilitychange", () => {
@@ -522,6 +559,6 @@ probe();
 window.resonateDebug = () => ({
   state: JSON.parse(JSON.stringify(S)), freqs: S.strings.map((_, i) => freqOf(i)), plucks: plucks.map((p) => ({ ...p })),
   land: G?.land, span: G?.span, beats: $("beats").textContent, pt: (i, a) => pt(i, a), dock: G && { ...G.dock },
-  audio: ac?.state || null, frac, clinks, locked, lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
+  audio: ac?.state || null, frac, clinks, locked, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
   ending: (f) => { makeCtx(); const d = buffer(f, null).getChannelData(0), n = d.length, w = Math.round(n * 0.01); let pk = 0, e = 0; for (let k = 0; k < n; k++) pk = Math.max(pk, Math.abs(d[k])); for (let k = n - w; k < n; k++) e = Math.max(e, Math.abs(d[k])); return { dur: n / ac.sampleRate, peak: pk, end: e / pk }; }, voices: voices.size, partials: (f, x) => partials(f, x, 48000),
 });

@@ -27,7 +27,7 @@
 // tools/importcontract.mjs checks a run's events against this (fields, types, order).
 
 // Audiveris's sheet steps, in order: trace.js's list (one list — trace.js rejects a step it doesn't know).
-import { STEPS } from './trace.js?v=110';
+import { STEPS } from './trace.js?v=111';
 export { STEPS };
 // Audiveris walks the systems one after another in these (AbstractSystemStep); the others work on
 // the whole sheet at once.
