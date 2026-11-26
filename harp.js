@@ -33,13 +33,16 @@ function save() { clearTimeout(saveT); saveT = setTimeout(() => { try { localSto
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 const freqOf = (i) => hz(S.base) / S.strings[i].L;
 
-// ---------- ♪ Notes: the pentatonic's notes found by length ----------
-// The pentatonic of five pure fifths from the open note (frequency ×1, 9/8, 81/64, 3/2, 27/16), in every octave a
-// string can reach. A string within 3¢ of one, plucked open there, shows a glowing ✦ above it (not for a note
-// another string already has); a tap names it and fixes it.
-const PENTA = [1, 9 / 8, 81 / 64, 3 / 2, 27 / 16];
-const CANON = [1, 2, 4].flatMap((o) => PENTA.map((r) => r * o)).filter((r) => r <= 1 / LMIN + 1e-9);
+// ---------- ♪ Notes: the tunings' notes found by length ----------
+// Every note of the tunings below (the pentatonic, 12 by fifths, meantone, equal temperament — `TUNINGS`), in every
+// octave a string can reach. A string within 3¢ of one, plucked open there, shows a glowing ✦ above it (not for a
+// note another string already has); a tap names it (the nearest piano key) and fixes it.
+let CANON = null;
 function noteOf(L) {
+  if (!CANON) {
+    const oct = new Set(["penta", "pyth", "mean", "et"].flatMap((k) => TUNINGS[k].L.map((l) => 1 / l)).filter((r) => r < 2 - 1e-9));
+    CANON = [1, 2, 4].flatMap((o) => [...oct].map((r) => r * o)).filter((r) => r <= 1 / LMIN + 1e-9);
+  }
   const r = 1 / L;
   for (const c of CANON) if (Math.abs(1200 * Math.log2(r / c)) < 3) return noteName(Math.round(S.base + 12 * Math.log2(c)));
   return null;
@@ -61,15 +64,16 @@ function layout() {
   cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
   cx.setTransform(dpr, 0, 0, dpr, 0, 0);
   // the foot (FOOT px) holds ▶ Start / ■, centred under the strings and their grips
-  const W = r.width, H0 = r.height, H = H0 - FOOT, land = W >= H, n = S.strings.length, m = 28;
+  const twelve = TWELVE.has(stageOf()) || tempering, foot = FOOT + (twelve && r.width < 560 ? 52 : 0);   // the switch: a row of its own on a phone
+  const W = r.width, H0 = r.height, H = H0 - foot, land = W >= H, n = S.strings.length, m = 28;
   if (land) {
     const nut = m + 24, end = W - m - 24;
     const span = Math.min((H - 2 * m) / n, 110), top = (H - span * n) / 2;
-    G = { W, H: H0, land, nut, Lpx: end - nut, span, across: (i) => top + (n - 1 - i + 0.5) * span, dock: { x: m + 22, y: H0 - 42 } };      // the pendant's tray: the foot's left
+    G = { W, H: H0, foot, land, nut, Lpx: end - nut, span, across: (i) => top + (n - 1 - i + 0.5) * span, dock: { x: m + 22, y: H0 - 42 } };      // the pendant's tray: the foot's left
   } else {
     const nut = H - m - 24, end = m + 40;               // room above for a ✦ or a note's tag
     const span = Math.min((W - 2 * m) / n, 90), left = (W - span * n) / 2;
-    G = { W, H: H0, land, nut, Lpx: nut - end, span, across: (i) => left + (i + 0.5) * span, dock: { x: m + 18, y: H0 - 42 } };
+    G = { W, H: H0, foot, land, nut, Lpx: nut - end, span, across: (i) => left + (i + 0.5) * span, dock: { x: m + 18, y: H0 - 42 } };
   }
   draw();
 }
@@ -479,7 +483,7 @@ stage.addEventListener("pointercancel", end);
 stage.addEventListener("contextmenu", (e) => e.preventDefault());
 
 // ---------- rearranging: a grip at each string's nut end; the bin while one is held ----------
-const binPt = () => ({ x: G.W - 36, y: (G.H - FOOT) / 2 });
+const binPt = () => ({ x: G.W - 36, y: (G.H - G.foot) / 2 });
 function drawBin() {
   if (drags.get("g") == null) return;
   const { x, y } = binPt(), hot = !!gripOff;
@@ -589,7 +593,7 @@ function applyPreset(v) {
   for (const i of [...voices.keys()]) stopVoice(i);
   vib.length = 0;
   if (v === "reset") S = { ...DEFAULT(), snap: S.snap, info: S.info, notes: S.notes };
-  else if (TUNINGS[v]) { S.strings = TUNINGS[v].L.map((L) => ({ L })); S.pendant = null; }
+  else if (TUNINGS[v]) { S.strings = TUNINGS[v].L.map((L) => ({ L, ...(v === "two" ? {} : { fixed: nameOf(L) }) })); S.pendant = null; if (v !== "two") S.notes = true; }
   save(); controls(); layout();
 }
 // which tuning the strings are in now (any order, lengths within 0.2%)
@@ -600,12 +604,44 @@ function stageOf() {
   }
   return null;
 }
+const TWELVE = new Set(["pyth", "mean", "et"]);
 function ffButton() {
   const b = $("ff"), st = stageOf(), nx = demo ? demo.to : st && NEXT[st];
+  const twelve = !demo && (TWELVE.has(st) || tempering);
+  b.hidden = twelve;
+  const t = $("temper");
+  t.hidden = !twelve;
+  for (const x of t.querySelectorAll("button")) x.setAttribute("aria-pressed", x.dataset.t === (tempering || st));
+  if (!!G && (G.foot > FOOT) !== (twelve && G.W < 560)) requestAnimationFrame(layout);
   b.disabled = !nx;
   b.title = nx ? (demo ? "Skip to " : "Show the steps to ") + TUNINGS[nx].name : "⏩ works from a preset's strings";
   b.querySelector("span").textContent = nx ? TUNINGS[nx].name : "";
 }
+
+// once there are 12 notes: Fifths · Meantone · Equal — every bridge glides to that tuning (by rank, low → high),
+// the names kept
+let tempering = null;
+function temperTo(key) {
+  if (demo || tempering || stageOf() === key || !TWELVE.has(stageOf())) return;
+  audio();
+  const order = S.strings.map((s, i) => i).sort((a, b) => S.strings[b].L - S.strings[a].L);
+  const from = order.map((i) => S.strings[i].L), to = TUNINGS[key].L, t0 = performance.now(), dur = 1600;
+  tempering = key; ffButton();
+  const step = () => {
+    const u = Math.min(1, (performance.now() - t0) / dur), e = u < 0.5 ? 2 * u * u : 1 - 2 * (1 - u) * (1 - u);
+    order.forEach((i, k) => {
+      const f = S.pendant?.s === i ? S.pendant.a / S.strings[i].L : null;
+      S.strings[i].L = from[k] + (to[k] - from[k]) * e;
+      if (f != null) S.pendant.a = f * S.strings[i].L;
+    });
+    draw();
+    if (u < 1) return requestAnimationFrame(step);
+    order.forEach((i, k) => { S.strings[i].L = to[k]; });
+    tempering = null; save(); controls(); draw();
+  };
+  requestAnimationFrame(step);
+}
+for (const x of document.querySelectorAll("#temper button")) x.addEventListener("click", () => temperTo(x.dataset.t));
 
 let demo = null;                   // { to, cancel } while ⏩ acts the steps out
 let demoSpeed = 1;                 // (tests: faster)
@@ -750,6 +786,6 @@ probe();
 window.resonateDebug = () => ({
   state: JSON.parse(JSON.stringify(S)), freqs: S.strings.map((_, i) => freqOf(i)), plucks: plucks.map((p) => ({ ...p })),
   land: G?.land, span: G?.span, beats: $("beats").textContent, pt: (i, a) => pt(i, a), dock: G && { ...G.dock },
-  audio: ac?.state || null, frac, clinks, locked, bin: () => binPt(), binHot: !!gripOff && drags.get("g") != null, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), stage: stageOf(), demo: demo && demo.to, demoLog: demoLog.map((x) => ({ ...x })), speed: (v) => { demoSpeed = v; }, lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
+  audio: ac?.state || null, frac, clinks, locked, bin: () => binPt(), binHot: !!gripOff && drags.get("g") != null, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), stage: stageOf(), demo: demo && demo.to, tempering, setL: (i, L) => { S.strings[i].L = L; draw(); }, noteOf: (L) => noteOf(L), demoLog: demoLog.map((x) => ({ ...x })), speed: (v) => { demoSpeed = v; }, lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
   ending: (f) => { makeCtx(); const d = buffer(f, null).getChannelData(0), n = d.length, w = Math.round(n * 0.01); let pk = 0, e = 0; for (let k = 0; k < n; k++) pk = Math.max(pk, Math.abs(d[k])); for (let k = n - w; k < n; k++) e = Math.max(e, Math.abs(d[k])); return { dur: n / ac.sampleRate, peak: pk, end: e / pk }; }, voices: voices.size, partials: (f, x) => partials(f, x, 48000),
 });

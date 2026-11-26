@@ -31,8 +31,8 @@
 // Position = the hand's frame (the ghost hand): the key under its thumb; several in a bar: "RH
 // positions: thumb on E4 · @3 thumb on G4".
 
-import { ALG } from "./finger.js?v=116";
-import { fingOf, nameOf, midiName, staffWords } from "./scoretext.js?v=116";
+import { ALG } from "./finger.js?v=117";
+import { fingOf, nameOf, midiName, staffWords } from "./scoretext.js?v=117";
 
 export const FINGER_TEXT_V = 1;
 const EPS = 1e-6;
