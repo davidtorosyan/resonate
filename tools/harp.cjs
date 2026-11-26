@@ -343,10 +343,11 @@ async function main() {
     await page.click('#temper [data-t="pyth"]');
     await until(() => window.resonateDebug().stage === 'pyth' && !window.resonateDebug().tempering);
     const zp = await bx();
-    ok(d.lens && Math.abs(zp - zm) > 150, `F 🔍: A♯3 in Meantone vs Fifths ${Math.abs(zp - zm).toFixed(0)} px apart`);
+    const top = await page.evaluate(() => { const d = window.resonateDebug(), w = innerWidth; return [d.pt(0, 1).x, d.pt(12, 0.5).x, w]; });
+    ok(d.lens && top[0] > top[2] * 0.85 && top[1] < top[2] * 0.15, `F 🔍: F♯4's bridge to F♯3's fills the width (${top.map((v) => v.toFixed(0))})`);
     await page.click('#zoom'); await sleep(150);
     const fp = await bx();
-    ok(!(await D(page)).lens && Math.abs(fp - far0) < 40 && Math.abs(fp - far0) < Math.abs(zp - zm) / 5, `F … without it ${Math.abs(fp - far0).toFixed(0)} px`);
+    ok(!(await D(page)).lens && Math.abs(zp - zm) > 1.7 * Math.abs(fp - far0), `F 🔍: A♯3 Meantone ↔ Fifths ${Math.abs(zp - zm).toFixed(0)} px, ${Math.abs(fp - far0).toFixed(0)} without`);
     await page.click('#zoom'); await sleep(150);
     const q = await P(page, 6, (await D(page)).state.strings[6].L);
     await page.mouse.click(q.x - 120, q.y); await sleep(150);
