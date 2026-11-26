@@ -593,7 +593,7 @@ function applyPreset(v) {
   for (const i of [...voices.keys()]) stopVoice(i);
   vib.length = 0;
   if (v === "reset") S = { ...DEFAULT(), snap: S.snap, info: S.info, notes: S.notes };
-  else if (TUNINGS[v]) { S.strings = TUNINGS[v].L.map((L) => ({ L, ...(v === "two" ? {} : { fixed: nameOf(L) }) })); S.pendant = null; if (v !== "two") S.notes = true; }
+  else if (TUNINGS[v]) { S.strings = TUNINGS[v].L.map((L) => ({ L, ...(v === "two" ? {} : { fixed: nameOf(L) }) })); S.pendant = null; }
   save(); controls(); layout();
 }
 // which tuning the strings are in now (any order, lengths within 0.2%)

@@ -7,11 +7,11 @@
 // ?reprocess=<song id>: that song's stored PDF read again (after an engine or clean-up fix) — a job like
 // any import; the result replaces the song's MusicXML under the same id (importer.js reprocess).
 
-import { spaceChanged } from "./nav.js?v=117";
-import { activeSpace, activeDb } from "./space.js?v=117";
-import { mount as mountReader } from "./omr/reader.js?v=117";
-import { createImporter } from "./omr/importer.js?v=117";
-import { readFlag } from "./omr/jobs.js?v=117";
+import { spaceChanged } from "./nav.js?v=118";
+import { activeSpace, activeDb } from "./space.js?v=118";
+import { mount as mountReader } from "./omr/reader.js?v=118";
+import { createImporter } from "./omr/importer.js?v=118";
+import { readFlag } from "./omr/jobs.js?v=118";
 
 const $ = (id) => document.getElementById(id);
 const chooseBtn = $("choose");
