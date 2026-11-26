@@ -20,14 +20,14 @@
 // alone, on its PDF — on every device, unsaved, whatever opened it (Next-up, the Reader's links, an
 // assistant): no Sing toggle, the Score's ▶ stays in its bar (hidden: nothing to play), the Piano as
 // saved (its keyboard under the PDF, the Score's). Converted (reload), the saved modules come back.
-import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=106";
-import { mountSing } from "./singview.js?v=106";
-import { mountScore } from "./scoreview.js?v=106";
-import { mountPiano, rangeOf } from "./pianoview.js?v=106";
-import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=106";
-import { loadSong, songInfo } from "../catalog.js?v=106";
-import { parseMusicXml } from "../musicxml.js?v=106";
-import { titleOf } from "./songlist.js?v=106";
+import { openPage, closePage, openOverlay, closeOverlay, overlayOpen, device } from "./chrome.js?v=107";
+import { mountSing } from "./singview.js?v=107";
+import { mountScore } from "./scoreview.js?v=107";
+import { mountPiano, rangeOf } from "./pianoview.js?v=107";
+import { settle, slideIn, slideOut, fadeIn, fadeOut, ghost, morph, glide, drop, running } from "./motion.js?v=107";
+import { loadSong, songInfo } from "../catalog.js?v=107";
+import { parseMusicXml } from "../musicxml.js?v=107";
+import { titleOf } from "./songlist.js?v=107";
 
 const $ = (id) => document.getElementById(id);
 const PREF = "resonate.shell.modules"; // { phone | tablet | desktop: ["sing", "score", "piano"] } — this device's

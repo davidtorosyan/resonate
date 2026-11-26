@@ -2,7 +2,7 @@
 // A string's pitch is the open note × 1 / its length (the full length = the open note, F♯3 by default). A pluck is
 // synthesised from its harmonics (exact multiples of the string's frequency, so two strings nearly in tune beat as real
 // ones do); the pendant — a light finger resting on a string — leaves only the harmonics with a node where it rests
-// (at ½ the octave rings, at ⅓ the twelfth). Numbers (lengths, Hz, notes, beats) are hidden until 👁.
+// (at ½ the octave rings, at ⅓ the twelfth). Numbers (lengths, Hz, notes, beats) are hidden until 123.
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), cv = $("cv"), cx = cv.getContext("2d");
@@ -136,6 +136,9 @@ function pluck(i) {
   src.buffer = buffer(f, x);
   src.connect(g).connect(master);
   src.start(a.currentTime + 0.003);
+  // iOS starts a page's sound only at a finger's lift: a pluck made before that waits for it (unlock), and is dropped
+  // if the sound still hasn't started 1.5 s on — never played late in a heap
+  if (a.state !== "running") setTimeout(() => { if (ac && ac.state !== "running") { try { src.stop(); } catch {} } }, 1500);
   voices.set(i, { src, g });
   src.onended = () => { if (voices.get(i)?.src === src) voices.delete(i); };
   const kept = partials(f, x, a.sampleRate).filter(([n, v]) => n <= 16 && Math.abs(v) > 0.02 * Math.abs(Math.sin(n * Math.PI * PLUCK_AT) / n ** 1.3)).map(([n]) => n);
@@ -149,7 +152,7 @@ function pluck(i) {
   tick();
 }
 
-// ---------- beats (👁): the last two strings plucked ----------
+// ---------- beats (123): the last two strings plucked ----------
 function showBeats() {
   const el = $("beats");
   if (!S.info || plucks.length < 2) { el.textContent = ""; return; }
@@ -207,7 +210,7 @@ function draw() {
       k ? cx.lineTo(X, Y) : cx.moveTo(X, Y);
     }
     cx.stroke();
-    // the nodes (👁)
+    // the nodes (123)
     if (S.info) {
       cx.fillStyle = "rgba(124,196,255,0.55)";
       for (const nd of [1 / 2, 1 / 3, 2 / 3, 1 / 4, 3 / 4]) { const p = pt(i, nd * s.L); cx.beginPath(); cx.arc(p.x, p.y, nd === 0.5 ? 3 : 2, 0, 7); cx.fill(); }
@@ -320,6 +323,9 @@ function end(e) {
   tick();
 }
 stage.addEventListener("pointerup", end);
+// the first tap's lift (or any tap on the page) starts the sound
+const unlock = () => { if (ac && ac.state !== "running") ac.resume().catch(() => {}); };
+for (const t of ["pointerup", "touchend", "click"]) document.addEventListener(t, unlock, true);
 stage.addEventListener("pointercancel", end);
 stage.addEventListener("contextmenu", (e) => e.preventDefault());
 
