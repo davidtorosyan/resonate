@@ -39,7 +39,9 @@ async function main() {
     await page.goto(BASE + 'harp.html');
     await page.waitForFunction(() => window.resonateDebug);
     let d = await D(page);
-    ok(d.land && d.state.strings.length === 2 && d.state.base === 54 && d.state.strings.every((s) => s.L === 1), 'L two strings, full length, open F♯3, laid across');
+    ok(d.land && d.state.strings.length === 1 && d.state.base === 54 && d.state.strings[0].L === 1, 'L one string, full length, open F♯3, laid across');
+    await page.click('#add'); await sleep(100);
+    d = await D(page);
     ok(!d.state.info && (await page.$eval('#beats', (e) => e.textContent)) === '', 'L the numbers hidden');
     await sleep(700); d = await D(page);
     ok(d.lockShown === (d.audio !== 'running'), `L ▶ Start only when the sound can't start by itself (${d.audio}, start ${d.lockShown ? 'shown' : 'not shown'})`);
@@ -198,7 +200,7 @@ async function main() {
     ok(d.state.strings.length === 6 && d.state.base === 60 && d.state.info, 'L kept across a reload');
     await page.selectOption('#preset', 'reset'); await sleep(80);
     d = await D(page);
-    ok(d.state.strings.length === 2 && d.state.base === 54 && d.state.strings.every((s) => s.L === 1), 'L Reset: two F♯3 strings');
+    ok(d.state.strings.length === 1 && d.state.base === 54 && d.state.strings[0].L === 1, 'L Reset: one F♯3 string');
     await ctx.close();
   }
   {
@@ -214,6 +216,7 @@ async function main() {
     await page.touchscreen.tap(s.x, s.y); await sleep(100);
     d = await D(page);
     ok(d.plucks.length === 1 && d.plucks[0].i === 0, 'P a tap plucks');
+    await page.tap('#add'); await sleep(100);
     const cdp = await ctx.newCDPSession(page);
     const b = await P(page, 1, 1), t = await P(page, 1, 0.505);
     const touch = (type, p) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x: p.x, y: p.y, id: 1 }] });
@@ -262,14 +265,14 @@ async function main() {
     await page.selectOption('#preset', 'reset'); await sleep(150);
     await page.evaluate(() => window.resonateDebug().speed(0.03));
     let d = await D(page);
-    ok(d.stage === 'two' && (await page.$eval('#ff span', (e) => e.textContent)) === 'Pentatonic', '⏩ offers the next tuning (Pentatonic)'.replace(/^/, 'F '));
+    ok(d.stage === 'one' && (await page.$eval('#ff span', (e) => e.textContent)) === 'Pentatonic', '⏩ offers the next tuning (Pentatonic)'.replace(/^/, 'F '));
     const until = async (fn, ms = 30000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await page.evaluate(fn)) return true; await sleep(100); } return false; };
     await page.click('#ff');
     await sleep(150);
     const mid = await D(page);
     const doneP = await until(() => !window.resonateDebug().demo);
     d = await D(page);
-    ok(mid.demo === 'penta' && doneP && d.stage === 'penta' && d.state.strings.length === 6, `F 2 strings → Pentatonic, step by step (${d.stage}, ${d.state.strings.length} strings, ${d.plucks.length} plucks)`);
+    ok(mid.demo === 'penta' && doneP && d.stage === 'penta' && d.state.strings.length === 6, `F 1 string → Pentatonic, step by step (${d.stage}, ${d.state.strings.length} strings, ${d.plucks.length} plucks)`);
     ok(d.state.notes && d.fixed.join() === 'F♯3,G♯3,A♯3,C♯4,D♯4,F♯4', `F each note named as it's won, in order (${d.fixed})`);
     ok(d.demoLog.length === 6 && d.demoLog.every((x) => x.sorted && x.L >= 0.5 - 1e-9), `F each slid into place as it was won, none named above the octave (${d.demoLog.map((x) => x.name)})`);
     ok(d.plucks.length >= 12 && d.plucks.some((p) => p.x != null && Math.abs(p.x - 1 / 3) < 1e-6) && d.plucks.some((p) => p.x != null && Math.abs(p.x - 0.5) < 1e-6), 'F with the pendant at ⅓ and ½ along the way');
@@ -308,6 +311,7 @@ async function main() {
     d = await D(page);
     const nm = await page.evaluate(() => [window.resonateDebug().noteOf(2 ** (-1 / 12)), window.resonateDebug().noteOf(4 / 5), window.resonateDebug().noteOf(0.83)]);
     ok(nm[0] === 'G3' && nm[1] === 'A♯3' && nm[2] === null, `F ♪ Notes: an ET G3 and a meantone (pure) A♯3 are notes, 0.83 isn't (${nm})`);
+    await page.click('#add'); await sleep(100);
     await page.evaluate(() => window.resonateDebug().setL(1, 2 ** (-1 / 12)));
     if (!(await D(page)).state.notes) await page.click('#notes');
     const sx = await P(page, 1, 0.3); await page.mouse.click(sx.x, sx.y); await sleep(150);

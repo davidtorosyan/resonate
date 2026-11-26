@@ -14,7 +14,7 @@ const PLUCK_AT = 0.2;              // where a finger plucks (of the length): nea
 const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 const noteName = (m) => NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
 const hz = (m) => 440 * 2 ** ((m - 69) / 12);
-const DEFAULT = () => ({ base: 54, strings: [{ L: 1 }, { L: 1 }], snap: "strong", info: false, notes: false, pendant: null });
+const DEFAULT = () => ({ base: 54, strings: [{ L: 1 }], snap: "strong", info: false, notes: false, pendant: null });
 
 // ---------- state ----------
 let S = load();
@@ -602,19 +602,20 @@ const chainLs = (fifth, n) => {
   return [...r.sort((a, b) => a - b), 2].map((v) => 1 / v);
 };
 const TUNINGS = {
+  one: { name: "1 string", L: [1] },
   two: { name: "2 strings", L: [1, 1] },
   penta: { name: "Pentatonic", L: [1, 8 / 9, 64 / 81, 2 / 3, 16 / 27, 1 / 2] },
   pyth: { name: "12 by fifths", L: chainLs(3 / 2, 12) },
   mean: { name: "Meantone", L: chainLs(5 ** 0.25, 12) },
   et: { name: "Equal temperament", L: Array.from({ length: 13 }, (_, k) => 2 ** (-k / 12)) },
 };
-const NEXT = { two: "penta", penta: "pyth", pyth: "et", mean: "et" };
+const NEXT = { one: "penta", two: "penta", penta: "pyth", pyth: "et", mean: "et" };
 function applyPreset(v) {
   stopDemo(false);
   for (const i of [...voices.keys()]) stopVoice(i);
   vib.length = 0;
   if (v === "reset") S = { ...DEFAULT(), snap: S.snap, info: S.info, notes: S.notes };
-  else if (TUNINGS[v]) { S.strings = TUNINGS[v].L.map((L) => ({ L, ...(v === "two" ? {} : { fixed: nameOf(L) }) })); S.pendant = null; }
+  else if (TUNINGS[v]) { S.strings = TUNINGS[v].L.map((L) => ({ L, ...(v === "two" || v === "one" ? {} : { fixed: nameOf(L) }) })); S.pendant = null; }
   save(); controls(); layout();
 }
 // which tuning the strings are in now (any order, lengths within 0.2%)
@@ -739,10 +740,11 @@ async function fifthFrom(src) {
 }
 const SCRIPTS = {
   async penta() {
-    // the octave: the pendant at ½ on the root, string 2 slid until its open note matches
+    // the octave: the pendant at ½ on the root, a second string slid until its open note matches
     pluck(0); await wait(700); await reveal(0);
     pend(0, 1 / 2); pluck(0); await wait(800);
-    await glide(1, 0.5); pend(null); pluck(1); await wait(800); await reveal(1);
+    const o = S.strings.length > 1 ? 1 : addStr(); await wait(250);   // a second string beside it (from 1 string)
+    await glide(o, 0.5); pend(null); pluck(o); await wait(800); await reveal(o);
     let src = 0;
     for (let k = 0; k < 4; k++) src = await fifthFrom(src);
     await sortStrings(); await wait(300); await strumAll();

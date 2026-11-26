@@ -1,7 +1,7 @@
 // The songs the Sing and Play pages offer: the bundled samples and My songs (library.js), and a
 // song's MusicXML as the pages read it — a converted (Audiveris) score with the OMR clean-ups.
-import { listSongs, getSong, saveClean, isMusicXml } from "./library.js?v=121";
-import { fixOmrScore } from "./omr/fixscore.js?v=121";
+import { listSongs, getSong, saveClean, isMusicXml } from "./library.js?v=122";
+import { fixOmrScore } from "./omr/fixscore.js?v=122";
 
 // Bundled sample scores (songs/README.md). sing.html also lists them in its Samples optgroup.
 export const SAMPLES = { "amazing-grace": { title: "Amazing Grace", url: "songs/amazing-grace.musicxml" } };
