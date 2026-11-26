@@ -8,7 +8,7 @@
 //   G  an iOS-like gate (a context starts only from a resume in a finger's lift): the harp grey with ▶ Start, a tap wakes
 //      it (strings ring softly), a string sounds, back from hidden → ▶ Start again
 //   (L also: ▶ Start only when the sound can't start by itself, none on coming back when it can, a grip moves a string,
-//    a pluck rings ≥ 5 s and fades to nothing, ■ damps every string with a clink)
+//    a pluck rings ≥ 5 s and fades to nothing, ■ damps every string with a clink; ▶ Start and ■ are one button at the foot)
 // usage: node harp.cjs   (BASE=…)
 const { chromium } = require('playwright');
 const { ok, done, fail } = require('./lib/check.cjs');
@@ -42,9 +42,13 @@ async function main() {
     ok(!d.state.info && (await page.$eval('#beats', (e) => e.textContent)) === '', 'L the numbers hidden');
     await sleep(700); d = await D(page);
     ok(d.lockShown === (d.audio !== 'running'), `L ▶ Start only when the sound can't start by itself (${d.audio}, start ${d.lockShown ? 'shown' : 'not shown'})`);
-    if (d.lockShown) { await page.click('#start'); await sleep(500); }
+    if (d.lockShown) { await page.click('#go'); await sleep(500); }
     d = await D(page);
     ok(!d.locked && d.audio === 'running' && !(await page.$eval('#stage', (e) => 'locked' in e.dataset)), 'L the harp awake, in colour');
+    const go = await page.$eval('#go', (b) => { const r = b.getBoundingClientRect(), st = document.getElementById('stage').getBoundingClientRect(); return { mode: b.dataset.mode, cx: r.left + r.width / 2, bottom: st.bottom - r.bottom, mid: st.left + st.width / 2 }; });
+    const lowest = await page.evaluate(() => { const d = window.resonateDebug(); let y = 0; for (let i = 0; i < d.state.strings.length; i++) { y = Math.max(y, d.grip(i).y, d.pt(i, 0).y); } const st = document.getElementById('stage').getBoundingClientRect(); return st.top + y; });
+    const goTop = await page.$eval('#go', (b) => b.getBoundingClientRect().top);
+    ok(go.mode === 'stop' && Math.abs(go.cx - go.mid) < 2 && go.bottom < 30 && goTop > lowest + 10, `L ■ centred at the foot, under the strings and grips (${go.mode}, ${goTop.toFixed(0)} > ${lowest.toFixed(0)})`);
     await hideShow(page); d = await D(page);
     ok(d.audio === 'running' && !d.lockShown, 'L back from hidden with the sound able to start: no ▶ Start');
     const e185 = await page.evaluate(() => window.resonateDebug().ending(185));
@@ -110,7 +114,7 @@ async function main() {
     ok(d.state.pendant === null, 'L the pendant dropped off a string goes back to its tray');
     await page.mouse.click(s0.x, s0.y); await sleep(50); await page.mouse.click(s2.x, s2.y); await sleep(80);
     ok((await D(page)).voices === 2, 'L two strings ringing');
-    await page.click('#stop'); await sleep(150);
+    await page.click('#go'); await sleep(150);
     d = await D(page);
     ok(d.voices === 0 && d.clinks === 1, 'L ■ damps them all, with a clink');
     // 123
@@ -153,7 +157,7 @@ async function main() {
     await page.waitForFunction(() => window.resonateDebug);
     let d = await D(page);
     ok(!d.land, 'P strings stand up on a phone');
-    await sleep(700); if ((await D(page)).lockShown) { await page.tap('#start'); await sleep(500); }
+    await sleep(700); if ((await D(page)).lockShown) { await page.tap('#go'); await sleep(500); }
     const s = await P(page, 0, 0.5);
     await page.touchscreen.tap(s.x, s.y); await sleep(100);
     d = await D(page);
@@ -183,7 +187,7 @@ async function main() {
     await sleep(700);
     let d = await D(page);
     ok(d.lockShown && d.locked && (await page.$eval('#stage', (e) => 'locked' in e.dataset)), 'G the harp grey, ▶ Start over it');
-    await page.tap('#start'); await sleep(700);
+    await page.tap('#go'); await sleep(700);
     d = await D(page);
     ok(d.audio === 'running' && !d.locked && !(await page.$eval('#stage', (e) => 'locked' in e.dataset)), `G ▶ Start wakes it behind an iOS-like gate (${d.audio})`);
     ok(d.voices >= 1 && d.plucks.length === 0, `G the strings ring softly as it wakes (${d.voices} sounding)`);

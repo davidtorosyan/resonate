@@ -5,7 +5,7 @@
 // Minimizes to a corner pill (ring = progress). A self-contained component: no page globals,
 // its CSS injected once, colours and sizes as custom properties on .rd.
 //
-//   import { mount } from './omr/reader.js?v=109';
+//   import { mount } from './omr/reader.js?v=110';
 //   const reader = mount(el, { onMinimize, onExpand, onStop, minimized, links: { sing: './?open=sing', play: './?open=score' } });
 //     (onStop: a ✕ in the card's top bar; a second tap — "Stop?" — within 3 s calls it; hidden at done
 //     and while reader.canStop(false))
@@ -21,7 +21,7 @@
 // at most the queue). Minimized or hidden: events are only reduced, nothing is drawn; on return
 // the latest state is drawn at once.
 
-import * as R from './readerstate.js?v=109';
+import * as R from './readerstate.js?v=110';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const FF_BACKLOG = 8;        // heavy events waiting beyond which the Reader jumps to the latest state
