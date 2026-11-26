@@ -22,7 +22,7 @@
 // frames: [{ t (song time of the audio, s), midi | null, rms }] in time order.
 // notes:  [{ midi, t, d }] (s), in time order.
 
-import { fold, median } from "./music.js?v=122";
+import { fold, median } from "./music.js?v=123";
 
 export const MAX_SHIFT = 0.24;
 const STEP = 0.03;

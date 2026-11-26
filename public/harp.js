@@ -136,7 +136,7 @@ function makeCtx() {
 function audio() {
   makeCtx();
   try { if (navigator.audioSession && navigator.audioSession.type !== "playback") navigator.audioSession.type = "playback"; } catch {}
-  if (ac.state !== "running") ac.resume().catch(() => {});
+  if (ac.state !== "running" && (!startShown() || goTap)) ac.resume().catch(() => {});   // with ▶ Start shown, only it starts the sound
   return ac;
 }
 // the harmonics a pluck gives: amplitude of harmonic n (plucked at PLUCK_AT; a touch at x keeps those with a node there)
@@ -273,7 +273,7 @@ async function probe() {
 }
 // one button at the foot: ▶ Start while the sound is locked, ■ (stop every string) once awake
 function goButton() { const b = $("go"); b.dataset.mode = locked ? "start" : "stop"; b.textContent = locked ? "▶ Start" : "■"; b.setAttribute("aria-label", locked ? "Start the harp" : "Stop all strings"); }
-$("go").addEventListener("click", () => { if (locked) { strumOnWake = true; audio(); } else stopAll(); });
+$("go").addEventListener("click", () => { if (locked) { strumOnWake = true; goTap = true; audio(); goTap = false; } else stopAll(); });
 
 // ---------- beats (123): the last two strings plucked ----------
 function showBeats() {
@@ -498,7 +498,9 @@ function end(e) {
 }
 stage.addEventListener("pointerup", end);
 // the first tap's lift (or any tap on the page) starts the sound
-const unlock = () => { if (ac && ac.state !== "running") ac.resume().catch(() => {}); };
+function startShown() { const l = document.getElementById("lock"); return !!l && !l.hidden && !l.classList.contains("out"); }
+var goTap = false;                 // (hoisted: audio() can run before this line)
+const unlock = () => { if (ac && ac.state !== "running" && !startShown()) ac.resume().catch(() => {}); };
 for (const t of ["pointerup", "touchend", "click"]) document.addEventListener(t, unlock, true);
 stage.addEventListener("pointercancel", end);
 stage.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -674,7 +676,7 @@ async function playChord(names) {
   idx.sort((a, b) => S.strings[b].L - S.strings[a].L);
   for (const i of idx) { pluck(i); flashAt.set(S.strings[i], performance.now()); tick(); await new Promise((r) => setTimeout(r, 60)); }
 }
-for (const x of document.querySelectorAll("#chords button")) x.addEventListener("click", () => { unlock(); playChord(x.dataset.c); });
+for (const x of document.querySelectorAll("#chords button")) x.addEventListener("click", () => { if (startShown()) return; unlock(); playChord(x.dataset.c); });
 
 let demo = null;                   // { to, cancel } while ⏩ acts the steps out
 let demoSpeed = 1;                 // (tests: faster)
@@ -796,7 +798,7 @@ function stopDemo(finish) {
   for (const t of demo.timers) t();
   if (finish) finishDemo(to); else { demo = null; delete stage.dataset.demo; ffButton(); }
 }
-$("ff").addEventListener("click", runDemo);
+$("ff").addEventListener("click", () => { if (!startShown()) runDemo(); });
 $("snap").addEventListener("change", (e) => { S.snap = e.target.value; e.target.blur(); save(); controls(); });
 $("info").addEventListener("click", () => { S.info = !S.info; save(); controls(); draw(); });
 $("zoom").addEventListener("click", () => { S.zoom = !S.zoom; save(); controls(); layout(); });

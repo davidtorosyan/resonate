@@ -2,8 +2,8 @@
 // remove connected assistants (Supabase Auth OAuth grants), and the account's devices — which
 // one has its AI button on (switched on only on that device, at the top of Resonate; off from here
 // too).
-import { SUPABASE_URL } from "./auth.js?v=122";
-import { ready, device, renameDevice, AI_MARK } from "./assist.js?v=122";
+import { SUPABASE_URL } from "./auth.js?v=123";
+import { ready, device, renameDevice, AI_MARK } from "./assist.js?v=123";
 
 // (In the one-page shell this page is mounted in a sheet: its own elements first — the Voice sheet has
 // a #msg too. On assistants.html resonateAssistants isn't set: the document.)

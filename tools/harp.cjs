@@ -242,6 +242,12 @@ async function main() {
     await sleep(700);
     let d = await D(page);
     ok(d.lockShown && d.locked && (await page.$eval('#stage', (e) => 'locked' in e.dataset)), 'G the harp grey, ▶ Start over it');
+    const g0 = await P(page, 0, 0.5);
+    await page.touchscreen.tap(g0.x, g0.y); await sleep(300);
+    await page.tap('#info'); await sleep(300); await page.tap('#info'); await sleep(300);
+    await page.tap('#ff'); await sleep(300);
+    d = await D(page);
+    ok(d.lockShown && d.locked && d.audio !== 'running' && !d.demo && d.plucks.length === 0, `G only ▶ Start starts it: a tap on the harp, 123, ⏩ don't (${d.audio})`);
     await page.tap('#go'); await sleep(700);
     d = await D(page);
     ok(d.audio === 'running' && !d.locked && !(await page.$eval('#stage', (e) => 'locked' in e.dataset)), `G ▶ Start wakes it behind an iOS-like gate (${d.audio})`);
