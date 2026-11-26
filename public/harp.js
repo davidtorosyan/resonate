@@ -106,6 +106,7 @@ let ac = null, master = null;
 const voices = new Map();        // string → { src, g }
 const cache = new Map();         // "f|x" → AudioBuffer
 const plucks = [];               // the last plucks (debug, beats)
+const plucksAt = [];             // when the last plucks sounded (a chord's level)
 function makeCtx() {
   if (!ac) {
     ac = new (window.AudioContext || window.webkitAudioContext)();
@@ -113,7 +114,7 @@ function makeCtx() {
     const lim = ac.createWaveShaper(), curve = new Float32Array(1025);
     for (let k = 0; k < 1025; k++) { const x = k / 512 - 1, a = Math.abs(x); curve[k] = Math.sign(x) * (a < 0.7 ? a : 0.7 + 0.3 * Math.tanh((a - 0.7) / 0.3)); }
     lim.curve = curve;
-    master = ac.createGain(); master.gain.value = 0.6;
+    master = ac.createGain(); master.gain.value = 0.5;
     master.connect(lim).connect(ac.destination);
     ac.addEventListener("statechange", () => { if (ac?.state === "running") wake(); });
   }
@@ -148,10 +149,13 @@ function buffer(f, x) {
   const gain = (x == null ? 0.5 : 0.9) / ref;
   for (const [n, a0] of partials(f, x, sr)) {
     const tau = tau1 / (1 + 0.15 * (n - 1)), r = Math.exp(-1 / (tau * sr)), w = (2 * Math.PI * n * f) / sr;
+    // each harmonic from its own phase (a fixed pseudo-random one per harmonic number): started all in step, five
+    // strings at once peaked at 0.96 into the limiter and came out distorted — "too many things playing at once"
+    const ph = (n * 2.399963) % (2 * Math.PI);
     const A = a0 * gain, c = 2 * r * Math.cos(w), r2 = r * r;
     const kmax = Math.min(len, Math.ceil(tau * sr * Math.log(Math.abs(A) / 1e-6 + 1)));
-    let y2 = 0, y1 = A * r * Math.sin(w);
-    d[1] += y1;
+    let y2 = A * Math.sin(ph), y1 = A * r * Math.sin(w + ph);
+    d[0] += y2; d[1] += y1;
     for (let k = 2; k < kmax; k++) { const y = c * y1 - r2 * y2; d[k] += y; y2 = y1; y1 = y; }
   }
   const att = Math.round(0.003 * sr);
@@ -168,7 +172,10 @@ function pluck(i, { level = 1, log = true } = {}) {
   const old = voices.get(i);
   if (old) { try { old.g.gain.setTargetAtTime(0, a.currentTime, 0.015); old.src.stop(a.currentTime + 0.12); } catch {} }
   const src = a.createBufferSource(), g = a.createGain();
-  g.gain.value = level;
+  // strings struck together share the headroom: each beyond 2 within 0.25 s a little softer
+  const t0 = performance.now(), together = plucksAt.filter((t) => t0 - t < 250).length;
+  plucksAt.push(t0); if (plucksAt.length > 16) plucksAt.shift();
+  g.gain.value = level / Math.sqrt(Math.max(1, (together + 1) / 2));
   src.buffer = buffer(f, x);
   src.connect(g).connect(master);
   src.start(a.currentTime + 0.003);
@@ -353,6 +360,7 @@ function draw() {
       else { cx.save(); cx.translate(p.x - 6, p.y - 10); cx.rotate(-Math.PI / 2); cx.textAlign = "left"; cx.fillText(label, 0, 0); cx.restore(); }
     }
   });
+  drawBin();
   // the pendant's tray, and the pendant
   const d = G.dock;
   cx.strokeStyle = "rgba(124,196,255,0.35)"; cx.setLineDash([3, 4]); cx.lineWidth = 1.5;
@@ -431,7 +439,7 @@ stage.addEventListener("pointermove", (e) => {
     S.strings.forEach((_, k) => { const d = Math.abs(G.across(k) - c); if (d < bd) { bd = d; j = k; } });
     if (j !== g.i) { moveString(g.i, j); g.i = j; drags.set("g", j); }
     gripAt = c;
-    gripOff = S.strings.length > 1 && (p.x < 8 || p.y < 8 || p.x > G.W - 8 || p.y > G.H - 8) ? p : null;   // dragged off the harp
+    gripOff = S.strings.length > 1 && (p.x < 8 || p.y < 8 || p.x > G.W - 8 || p.y > G.H - 8 || dist(p, binPt()) < 46) ? p : null;   // onto the bin, or off the harp
     tick();
   } else if (g.k === "bridge") {
     S.strings[g.i].L = snapLength(g.i, clamp(alongOf(p.x, p.y), LMIN, 1));
@@ -469,7 +477,23 @@ for (const t of ["pointerup", "touchend", "click"]) document.addEventListener(t,
 stage.addEventListener("pointercancel", end);
 stage.addEventListener("contextmenu", (e) => e.preventDefault());
 
-// ---------- rearranging: a grip at each string's nut end ----------
+// ---------- rearranging: a grip at each string's nut end; the bin while one is held ----------
+const binPt = () => ({ x: G.W - 36, y: (G.H - FOOT) / 2 });
+function drawBin() {
+  if (drags.get("g") == null) return;
+  const { x, y } = binPt(), hot = !!gripOff;
+  cx.save();
+  cx.translate(x, y);
+  cx.fillStyle = hot ? "rgba(255,90,120,0.25)" : "rgba(255,255,255,0.06)";
+  cx.beginPath(); cx.arc(0, 0, 28, 0, 7); cx.fill();
+  cx.strokeStyle = hot ? "#ff8aa8" : "rgba(255,255,255,0.55)"; cx.lineWidth = 2; cx.lineJoin = "round";
+  cx.beginPath(); cx.moveTo(-9, -6); cx.lineTo(-7, 12); cx.lineTo(7, 12); cx.lineTo(9, -6); cx.stroke();      // the can
+  cx.beginPath(); cx.moveTo(-3, -2); cx.lineTo(-2.5, 8); cx.moveTo(3, -2); cx.lineTo(2.5, 8); cx.stroke();
+  cx.save(); if (hot) { cx.translate(-11, -9); cx.rotate(-0.45); cx.translate(11, 9); }                         // the lid lifts
+  cx.beginPath(); cx.moveTo(-12, -9); cx.lineTo(12, -9); cx.moveTo(-4, -9); cx.lineTo(-3, -13); cx.lineTo(3, -13); cx.lineTo(4, -9); cx.stroke();
+  cx.restore();
+  cx.restore();
+}
 let gripAt = null;                 // the dragged grip's across position (it follows the finger)
 let gripOff = null;                // the finger, while a grip is dragged off the harp (let go: the string goes)
 function gripOf(i) {
@@ -539,8 +563,8 @@ $("preset").addEventListener("change", (e) => {
   for (const i of [...voices.keys()]) stopVoice(i);
   vib.length = 0;
   if (v === "reset") S = { ...DEFAULT(), snap: S.snap, info: S.info };
-  // five pure fifths from the open string, each folded back into its octave
-  else if (v === "penta") S.strings = [1, 8 / 9, 64 / 81, 2 / 3, 16 / 27].map((L) => ({ L })), S.pendant = null;
+  // five pure fifths from the open string, each folded back into its octave, and the octave above
+  else if (v === "penta") S.strings = [1, 8 / 9, 64 / 81, 2 / 3, 16 / 27, 1 / 2].map((L) => ({ L })), S.pendant = null;
   save(); controls(); layout();
 });
 $("add").addEventListener("click", () => { if (S.strings.length < 12) { S.strings.push({ L: 1 }); save(); controls(); layout(); } });
@@ -567,6 +591,6 @@ probe();
 window.resonateDebug = () => ({
   state: JSON.parse(JSON.stringify(S)), freqs: S.strings.map((_, i) => freqOf(i)), plucks: plucks.map((p) => ({ ...p })),
   land: G?.land, span: G?.span, beats: $("beats").textContent, pt: (i, a) => pt(i, a), dock: G && { ...G.dock },
-  audio: ac?.state || null, frac, clinks, locked, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
+  audio: ac?.state || null, frac, clinks, locked, bin: () => binPt(), binHot: !!gripOff && drags.get("g") != null, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
   ending: (f) => { makeCtx(); const d = buffer(f, null).getChannelData(0), n = d.length, w = Math.round(n * 0.01); let pk = 0, e = 0; for (let k = 0; k < n; k++) pk = Math.max(pk, Math.abs(d[k])); for (let k = n - w; k < n; k++) e = Math.max(e, Math.abs(d[k])); return { dur: n / ac.sampleRate, peak: pk, end: e / pk }; }, voices: voices.size, partials: (f, x) => partials(f, x, 48000),
 });
