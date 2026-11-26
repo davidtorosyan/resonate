@@ -33,16 +33,17 @@
       #beats { position: absolute; left: 0.8rem; bottom: 0.5rem; font-size: 0.78rem; opacity: 0.7; pointer-events: none; }
       canvas { transition: filter 0.8s ease; }
       #stage[data-locked] canvas { filter: grayscale(1) brightness(0.45); }
-      #lock { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(10,10,24,0.35); opacity: 1; transition: opacity 0.45s ease; }
+      #lock { position: absolute; inset: 0; background: rgba(10,10,24,0.35); opacity: 1; transition: opacity 0.45s ease; }
       #lock[hidden] { display: none; }
       #lock.out { opacity: 0; pointer-events: none; }
-      #start {
-        font-size: 1.15rem; font-weight: 600; min-height: 64px; padding: 0 2rem; border-radius: 999px; border: none;
-        background: #7a3fe0; color: #fff; box-shadow: 0 10px 34px rgba(0,0,0,0.55), 0 0 0 6px rgba(122,63,224,0.18);
-        transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+      #go {
+        position: absolute; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom) * 0); transform: translateX(-50%); z-index: 2;
+        height: 56px; min-width: 56px; padding: 0 1.6rem; border-radius: 999px; font-size: 1.1rem; font-weight: 600;
+        transition: background 0.4s ease, padding 0.4s ease, box-shadow 0.4s ease, transform 0.15s ease;
       }
-      #start:active { transform: scale(0.96); }
-      #lock.out #start { transform: scale(1.12); }
+      #go[data-mode="start"] { border: none; background: #7a3fe0; color: #fff; box-shadow: 0 10px 34px rgba(0,0,0,0.55), 0 0 0 6px rgba(122,63,224,0.18); }
+      #go[data-mode="stop"] { padding: 0; width: 56px; font-size: 1.3rem; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.25); }
+      #go:active { transform: translateX(-50%) scale(0.94); }
       #remove { position: absolute; display: none; transform: translate(-50%, -50%); background: #3a1530; border-color: #ff7aa8; color: #ffc2d6; }
     </style>
   </head>
@@ -57,18 +58,18 @@
         <option value="reset">Reset · 2 strings</option>
         <option value="penta">Pentatonic</option>
       </select>
-      <button id="stop" aria-label="Stop all strings">■</button>
       <button id="add" aria-label="Add a string">+ string</button>
       <button id="snap" aria-label="Snapping">Snap: strong</button>
       <button id="info" aria-pressed="false" aria-label="Show the numbers" class="mono">123</button>
-      <span id="version" class="mono">v109</span>
+      <span id="version" class="mono">v110</span>
     </header>
     <div id="stage" data-locked="1">
       <canvas id="cv"></canvas>
       <div id="beats" class="mono"></div>
       <button id="remove">✕ remove</button>
-      <div id="lock" hidden><button id="start" aria-label="Start the harp">▶ Start</button></div>
+      <div id="lock" hidden></div>
+      <button id="go" data-mode="start" aria-label="Start the harp">▶ Start</button>
     </div>
-    <script type="module" src="harp.js?v=109"></script>
+    <script type="module" src="harp.js?v=110"></script>
   </body>
 </html>

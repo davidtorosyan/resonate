@@ -7,6 +7,7 @@
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), cv = $("cv"), cx = cv.getContext("2d");
 const KEY = "resonate.harp";
+const FOOT = 84;                   // px at the stage's foot for ▶ Start / ■
 const LMIN = 0.2;                  // the shortest a string can be (of the full length)
 const PLUCK_AT = 0.2;              // where a finger plucks (of the length): nearer the middle, rounder
 const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
@@ -37,15 +38,16 @@ function layout() {
   const r = stage.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
   cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
   cx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const W = r.width, H = r.height, land = W >= H, n = S.strings.length, m = 28;
+  // the foot (FOOT px) holds ▶ Start / ■, centred under the strings and their grips
+  const W = r.width, H0 = r.height, H = H0 - FOOT, land = W >= H, n = S.strings.length, m = 28;
   if (land) {
     const nut = m + 24, end = W - m - 64;             // the pendant's tray on the right
     const span = Math.min((H - 2 * m) / n, 110), top = (H - span * n) / 2;
-    G = { W, H, land, nut, Lpx: end - nut, span, across: (i) => top + (n - 1 - i + 0.5) * span, dock: { x: W - m - 22, y: m + 22 } };
+    G = { W, H: H0, land, nut, Lpx: end - nut, span, across: (i) => top + (n - 1 - i + 0.5) * span, dock: { x: W - m - 22, y: m + 22 } };
   } else {
     const nut = H - m - 24, end = m + 70;               // the tray at the top
     const span = Math.min((W - 2 * m) / n, 90), left = (W - span * n) / 2;
-    G = { W, H, land, nut, Lpx: nut - end, span, across: (i) => left + (i + 0.5) * span, dock: { x: W - m - 18, y: m + 18 } };
+    G = { W, H: H0, land, nut, Lpx: nut - end, span, across: (i) => left + (i + 0.5) * span, dock: { x: W - m - 18, y: m + 18 } };
   }
   draw();
 }
@@ -196,13 +198,14 @@ let locked = true, strumOnWake = false, probing = 0;
 function setLocked(on) {
   locked = on;
   const lk = $("lock");
-  if (on) { stage.dataset.locked = "1"; lk.hidden = false; requestAnimationFrame(() => lk.classList.remove("out")); }
+  if (on) { stage.dataset.locked = "1"; lk.hidden = false; goButton(); requestAnimationFrame(() => lk.classList.remove("out")); }
   else wake();
 }
 function wake() {
   if (!stage.dataset.locked && $("lock").hidden) return;
   locked = false;
   delete stage.dataset.locked;
+  goButton();
   const lk = $("lock");
   if (!lk.hidden) { lk.classList.add("out"); setTimeout(() => { if (!locked) lk.hidden = true; }, 450); }
   const strum = strumOnWake; strumOnWake = false;
@@ -226,7 +229,9 @@ async function probe() {
   if (my !== probing) return;
   if (ac?.state === "running") wake(); else setLocked(true);
 }
-$("start").addEventListener("click", () => { strumOnWake = true; audio(); });
+// one button at the foot: ▶ Start while the sound is locked, ■ (stop every string) once awake
+function goButton() { const b = $("go"); b.dataset.mode = locked ? "start" : "stop"; b.textContent = locked ? "▶ Start" : "■"; b.setAttribute("aria-label", locked ? "Start the harp" : "Stop all strings"); }
+$("go").addEventListener("click", () => { if (locked) { strumOnWake = true; audio(); } else stopAll(); });
 
 // ---------- beats (123): the last two strings plucked ----------
 function showBeats() {
@@ -355,7 +360,7 @@ function onString(p) {             // where the pendant would rest
   return null;
 }
 stage.addEventListener("pointerdown", (e) => {
-  if (e.target.id === "remove" || locked) return;
+  if (e.target.closest?.("button") || locked) return;   // ✕ remove, ▶ Start / ■: their own taps
   hideRemove();
   audio();
   stage.setPointerCapture(e.pointerId);
@@ -494,7 +499,6 @@ $("preset").addEventListener("change", (e) => {
   else if (v === "penta") S.strings = [1, 8 / 9, 64 / 81, 2 / 3, 16 / 27].map((L) => ({ L })), S.pendant = null;
   save(); controls(); layout();
 });
-$("stop").addEventListener("click", stopAll);
 $("add").addEventListener("click", () => { if (S.strings.length < 12) { S.strings.push({ L: 1 }); save(); controls(); layout(); } });
 $("snap").addEventListener("click", () => { S.snap = { strong: "gentle", gentle: "off", off: "strong" }[S.snap]; save(); controls(); });
 $("info").addEventListener("click", () => { S.info = !S.info; save(); controls(); draw(); });
