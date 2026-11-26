@@ -83,7 +83,7 @@ let ac = null, master = null;
 const voices = new Map();        // string → { src, g }
 const cache = new Map();         // "f|x" → AudioBuffer
 const plucks = [];               // the last plucks (debug, beats)
-function audio() {
+function makeCtx() {
   if (!ac) {
     ac = new (window.AudioContext || window.webkitAudioContext)();
     // a soft limiter, not a compressor (one pumped: a pluck's tail swelled back after its attack)
@@ -92,8 +92,12 @@ function audio() {
     lim.curve = curve;
     master = ac.createGain(); master.gain.value = 0.6;
     master.connect(lim).connect(ac.destination);
-    ac.addEventListener("statechange", soundButton);
+    ac.addEventListener("statechange", () => { if (ac?.state === "running") wake(); });
   }
+  return ac;
+}
+function audio() {
+  makeCtx();
   try { if (navigator.audioSession && navigator.audioSession.type !== "playback") navigator.audioSession.type = "playback"; } catch {}
   if (ac.state !== "running") ac.resume().catch(() => {});
   return ac;
@@ -135,12 +139,13 @@ function buffer(f, x) {
   cache.set(key, buf);
   return buf;
 }
-function pluck(i) {
+function pluck(i, { level = 1, log = true } = {}) {
   const a = audio(), f = freqOf(i);
   const x = S.pendant && S.pendant.s === i ? S.pendant.a / S.strings[i].L : null;
   const old = voices.get(i);
   if (old) { try { old.g.gain.setTargetAtTime(0, a.currentTime, 0.015); old.src.stop(a.currentTime + 0.12); } catch {} }
   const src = a.createBufferSource(), g = a.createGain();
+  g.gain.value = level;
   src.buffer = buffer(f, x);
   src.connect(g).connect(master);
   src.start(a.currentTime + 0.003);
@@ -148,9 +153,9 @@ function pluck(i) {
   // if the sound still hasn't started 1.5 s on — never played late in a heap
   if (a.state !== "running") setTimeout(() => { if (ac && ac.state !== "running") { try { src.stop(); } catch {} } }, 1500);
   voices.set(i, { src, g });
-  src.onended = () => { if (voices.get(i)?.src === src) voices.delete(i); };
+  src.onended = () => { for (const [k, v] of voices) if (v.src === src) voices.delete(k); };
   const kept = partials(f, x, a.sampleRate).filter(([n, v]) => n <= 16 && Math.abs(v) > 0.02 * Math.abs(Math.sin(n * Math.PI * PLUCK_AT) / n ** 1.6)).map(([n]) => n);
-  plucks.push({ i, f, x, kept, at: performance.now() });
+  if (log) plucks.push({ i, f, x, kept, at: performance.now() });
   if (plucks.length > 24) plucks.shift();
   // the string's motion: its first harmonics' shapes, slowed down
   const shape = partials(f, x, 48000).filter(([n]) => n <= 8);
@@ -183,9 +188,45 @@ function stopAll() {
   tick();
 }
 
-// ---------- sound on: iOS starts a page's sound only from a tap ----------
-function soundButton() { $("sound").hidden = !!ac && ac.state === "running"; }
-$("sound").addEventListener("click", () => { audio(); setTimeout(soundButton, 300); });
+// ---------- asleep until the sound can start ----------
+// On load and whenever the page comes back, try to start the sound with no tap (most browsers allow it once the
+// site has been used); only where that fails (iOS: a page's sound starts only from a tap) the harp stays grey with
+// ▶ Start over it. Its tap wakes it: the colour comes back and the strings ring softly, one after another.
+let locked = true, strumOnWake = false, probing = 0;
+function setLocked(on) {
+  locked = on;
+  const lk = $("lock");
+  if (on) { stage.dataset.locked = "1"; lk.hidden = false; requestAnimationFrame(() => lk.classList.remove("out")); }
+  else wake();
+}
+function wake() {
+  if (!stage.dataset.locked && $("lock").hidden) return;
+  locked = false;
+  delete stage.dataset.locked;
+  const lk = $("lock");
+  if (!lk.hidden) { lk.classList.add("out"); setTimeout(() => { if (!locked) lk.hidden = true; }, 450); }
+  const strum = strumOnWake; strumOnWake = false;
+  const now = performance.now();
+  S.strings.forEach((s, i) => {
+    setTimeout(() => {
+      if (strum && ac?.state === "running") pluck(i, { level: 0.3, log: false });
+      else vib[i] = { t0: performance.now(), shape: [[1, 0.6], [2, 0.25]], tau: 0.35 };
+      tick();
+    }, 120 + i * 70);
+  });
+  void now;
+}
+async function probe() {
+  const my = ++probing;
+  makeCtx();
+  if (ac.state !== "running") {
+    try { ac.resume().catch(() => {}); } catch {}
+    await new Promise((r) => setTimeout(r, 350));
+  }
+  if (my !== probing) return;
+  if (ac?.state === "running") wake(); else setLocked(true);
+}
+$("start").addEventListener("click", () => { strumOnWake = true; audio(); });
 
 // ---------- beats (123): the last two strings plucked ----------
 function showBeats() {
@@ -228,6 +269,16 @@ function draw() {
   if (G.land) { cx.moveTo(a0.x, a0.y + G.span * 0.4); cx.lineTo(a1.x, a1.y - G.span * 0.4); }
   else { cx.moveTo(a0.x - G.span * 0.4, a0.y); cx.lineTo(a1.x + G.span * 0.4, a1.y); }
   cx.stroke();
+  // the grips (drag to rearrange)
+  S.strings.forEach((_, i) => {
+    const q = gripOf(i), held = drags.get("g") === i;
+    cx.fillStyle = held ? "rgba(197,140,255,0.9)" : "rgba(255,255,255,0.28)";
+    for (const o of [-4, 0, 4]) {
+      cx.beginPath();
+      if (G.land) cx.fillRect(q.x - 7, q.y + o - 1, 14, 2); else cx.fillRect(q.x + o - 1, q.y - 7, 2, 14);
+      cx.fill();
+    }
+  });
   S.strings.forEach((s, i) => {
     // the rest of the full length, faint
     const e = pt(i, s.L), f = pt(i, 1);
@@ -304,7 +355,7 @@ function onString(p) {             // where the pendant would rest
   return null;
 }
 stage.addEventListener("pointerdown", (e) => {
-  if (e.target.id === "remove" || e.target.id === "sound") return;
+  if (e.target.id === "remove" || locked) return;
   hideRemove();
   audio();
   stage.setPointerCapture(e.pointerId);
@@ -312,6 +363,9 @@ stage.addEventListener("pointerdown", (e) => {
   if (dist(p, pendantPos()) < 26) { drags.set(e.pointerId, { k: "pendant" }); pendDrag = { ...p }; tick(); return; }
   for (let i = 0; i < S.strings.length; i++) {
     if (dist(p, pt(i, S.strings[i].L)) < 26) { drags.set(e.pointerId, { k: "bridge", i, id: "b" + i }); drags.set("b" + i, true); tick(); return; }
+  }
+  for (let i = 0; i < S.strings.length; i++) {
+    if (dist(p, gripOf(i)) < 22) { drags.set(e.pointerId, { k: "grip", i }); drags.set("g", i); tick(); return; }
   }
   const i = stringAt(p), g = { k: "strum", c: acrossOf(p.x, p.y), last: i, start: p, moved: false, lp: 0 };
   if (i >= 0) {
@@ -329,6 +383,12 @@ stage.addEventListener("pointermove", (e) => {
     pendDrag = on ? { on, ...pt(on.s, on.a) } : { ...p };
     if (on) S.pendant = on;
     tick();
+  } else if (g.k === "grip") {
+    const c = acrossOf(p.x, p.y);
+    let j = g.i, bd = Infinity;
+    S.strings.forEach((_, k) => { const d = Math.abs(G.across(k) - c); if (d < bd) { bd = d; j = k; } });
+    if (j !== g.i) { moveString(g.i, j); g.i = j; drags.set("g", j); }
+    gripAt = c; tick();
   } else if (g.k === "bridge") {
     S.strings[g.i].L = snapLength(g.i, clamp(alongOf(p.x, p.y), LMIN, 1));
     if (S.pendant?.s === g.i && S.pendant.a > S.strings[g.i].L * 0.98) S.pendant.a = S.strings[g.i].L * 0.98;
@@ -354,6 +414,7 @@ function end(e) {
     pendDrag = null;
     save();
   } else if (g.k === "bridge") drags.delete(g.id);
+  else if (g.k === "grip") { drags.delete("g"); gripAt = null; save(); }
   else clearTimeout(g.lp);
   tick();
 }
@@ -363,6 +424,27 @@ const unlock = () => { if (ac && ac.state !== "running") ac.resume().catch(() =>
 for (const t of ["pointerup", "touchend", "click"]) document.addEventListener(t, unlock, true);
 stage.addEventListener("pointercancel", end);
 stage.addEventListener("contextmenu", (e) => e.preventDefault());
+
+// ---------- rearranging: a grip at each string's nut end ----------
+let gripAt = null;                 // the dragged grip's across position (it follows the finger)
+function gripOf(i) {
+  const c = drags.get("g") === i && gripAt != null ? gripAt : G.across(i);
+  return G.land ? { x: G.nut - 26, y: c } : { x: c, y: G.nut + 26 };
+}
+function moveString(from, to) {
+  const ord = S.strings.map((_, k) => k);
+  ord.splice(to, 0, ord.splice(from, 1)[0]);            // ord[new] = old
+  const inv = [];
+  ord.forEach((o, n) => (inv[o] = n));
+  S.strings = ord.map((o) => S.strings[o]);
+  const v2 = ord.map((o) => vib[o]);
+  vib.length = 0; vib.push(...v2);
+  const nv = [...voices].map(([k, v]) => [inv[k], v]);
+  voices.clear(); for (const [k, v] of nv) voices.set(k, v);
+  if (S.pendant) S.pendant.s = inv[S.pendant.s];
+  for (const p of plucks) if (inv[p.i] != null) p.i = inv[p.i];
+  save();
+}
 
 // ---------- removing a string (long press) ----------
 let removing = -1;
@@ -419,20 +501,23 @@ $("info").addEventListener("click", () => { S.info = !S.info; save(); controls()
 
 // ---------- sleep ----------
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden || !ac) return;
+  if (!document.hidden) { probe(); return; }
+  if (!ac) return;
   for (const i of [...voices.keys()]) stopVoice(i);
-  ac.suspend().then(soundButton, () => {});
+  ac.suspend().catch(() => {});
   try { if (navigator.audioSession) navigator.audioSession.type = "auto"; } catch {}
 });
 addEventListener("pagehide", () => { clearTimeout(saveT); try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} try { ac?.close(); } catch {} ac = null; cache.clear(); try { if (navigator.audioSession) navigator.audioSession.type = "auto"; } catch {} });
 
+addEventListener("pageshow", (e) => { if (e.persisted) probe(); });
 new ResizeObserver(layout).observe(stage);
 controls();
 layout();
+probe();
 
 window.resonateDebug = () => ({
   state: JSON.parse(JSON.stringify(S)), freqs: S.strings.map((_, i) => freqOf(i)), plucks: plucks.map((p) => ({ ...p })),
   land: G?.land, span: G?.span, beats: $("beats").textContent, pt: (i, a) => pt(i, a), dock: G && { ...G.dock },
-  audio: ac?.state || null, frac, clinks, sound: !$("sound").hidden,
-  ending: (f) => { audio(); const d = buffer(f, null).getChannelData(0), n = d.length, w = Math.round(n * 0.01); let pk = 0, e = 0; for (let k = 0; k < n; k++) pk = Math.max(pk, Math.abs(d[k])); for (let k = n - w; k < n; k++) e = Math.max(e, Math.abs(d[k])); return { dur: n / ac.sampleRate, peak: pk, end: e / pk }; }, voices: voices.size, partials: (f, x) => partials(f, x, 48000),
+  audio: ac?.state || null, frac, clinks, locked, lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
+  ending: (f) => { makeCtx(); const d = buffer(f, null).getChannelData(0), n = d.length, w = Math.round(n * 0.01); let pk = 0, e = 0; for (let k = 0; k < n; k++) pk = Math.max(pk, Math.abs(d[k])); for (let k = n - w; k < n; k++) e = Math.max(e, Math.abs(d[k])); return { dur: n / ac.sampleRate, peak: pk, end: e / pk }; }, voices: voices.size, partials: (f, x) => partials(f, x, 48000),
 });

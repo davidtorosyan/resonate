@@ -5,8 +5,10 @@
 //      + string, a long press removes one, presets (Pentatonic: 1, 8/9, 64/81, 2/3, 16/27; Reset), another open
 //      note, the state across a reload
 //   P  iPhone portrait: strings stand up, the same pluck and bridge snap
-//   G  an iOS-like gate (a context starts only from a resume in a finger's lift): Sound on starts it, then a string sounds
-//   (L also: Sound on, a pluck rings ≥ 5 s and fades to nothing, ■ damps every string with a clink)
+//   G  an iOS-like gate (a context starts only from a resume in a finger's lift): the harp grey with ▶ Start, a tap wakes
+//      it (strings ring softly), a string sounds, back from hidden → ▶ Start again
+//   (L also: ▶ Start only when the sound can't start by itself, none on coming back when it can, a grip moves a string,
+//    a pluck rings ≥ 5 s and fades to nothing, ■ damps every string with a clink)
 // usage: node harp.cjs   (BASE=…)
 const { chromium } = require('playwright');
 const { ok, done, fail } = require('./lib/check.cjs');
@@ -15,6 +17,10 @@ const sleep = (t) => new Promise((r) => setTimeout(r, t));
 const D = (page) => page.evaluate(() => { const d = window.resonateDebug(); delete d.pt; delete d.partials; return d; });
 const P = (page, i, a) => page.evaluate(([i, a]) => { const r = document.getElementById('stage').getBoundingClientRect(); const p = window.resonateDebug().pt(i, a); return { x: p.x + r.left, y: p.y + r.top }; }, [i, a]);
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
+async function hideShow(page) {
+  const set = (h) => page.evaluate((h) => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => h }); Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (h ? 'hidden' : 'visible') }); document.dispatchEvent(new Event('visibilitychange')); }, h);
+  await set(true); await sleep(200); await set(false); await sleep(700);
+}
 
 async function drag(page, from, to, steps = 12) {
   await page.mouse.move(from.x, from.y); await page.mouse.down();
@@ -34,10 +40,13 @@ async function main() {
     let d = await D(page);
     ok(d.land && d.state.strings.length === 2 && d.state.base === 54 && d.state.strings.every((s) => s.L === 1), 'L two strings, full length, open F♯3, laid across');
     ok(!d.state.info && (await page.$eval('#beats', (e) => e.textContent)) === '', 'L the numbers hidden');
-    ok(d.sound, 'L 🔈 Sound on shows before any sound');
-    await page.click('#sound'); await sleep(400);
+    await sleep(700); d = await D(page);
+    ok(d.lockShown === (d.audio !== 'running'), `L ▶ Start only when the sound can't start by itself (${d.audio}, start ${d.lockShown ? 'shown' : 'not shown'})`);
+    if (d.lockShown) { await page.click('#start'); await sleep(500); }
     d = await D(page);
-    ok(!d.sound && d.audio === 'running', 'L Sound on starts the sound and goes away');
+    ok(!d.locked && d.audio === 'running' && !(await page.$eval('#stage', (e) => 'locked' in e.dataset)), 'L the harp awake, in colour');
+    await hideShow(page); d = await D(page);
+    ok(d.audio === 'running' && !d.lockShown, 'L back from hidden with the sound able to start: no ▶ Start');
     const e185 = await page.evaluate(() => window.resonateDebug().ending(185));
     ok(e185.dur >= 5 && e185.end < 0.002, `L a pluck rings ${e185.dur.toFixed(1)} s and fades to nothing (its last 1 % at ${(e185.end * 100).toFixed(2)} % of its peak)`);
     const s0 = await P(page, 0, 0.5);
@@ -53,6 +62,15 @@ async function main() {
     await drag(page, b, t);
     d = await D(page);
     ok(near(d.state.strings[1].L, 2 / 3, 1e-9) && near(d.freqs[1], d.freqs[0] * 1.5, 1e-6), `L strong snap: the bridge dropped near ⅔ rests on it (${d.state.strings[1].L.toFixed(4)}, ${d.freqs[1].toFixed(1)} Hz)`);
+    // a grip drags a string to another place
+    const g0 = await page.evaluate(() => { const r = document.getElementById('stage').getBoundingClientRect(); const q = window.resonateDebug().grip(0); return { x: q.x + r.left, y: q.y + r.top }; });
+    const to = await P(page, 1, 0);
+    await drag(page, g0, { x: g0.x, y: to.y });
+    d = await D(page);
+    ok(near(d.state.strings[0].L, 2 / 3, 1e-9) && d.state.strings[1].L === 1, `L a string's grip moves it (lengths now ${d.state.strings.map((s) => s.L.toFixed(3))})`);
+    await drag(page, await page.evaluate(() => { const r = document.getElementById('stage').getBoundingClientRect(); const q = window.resonateDebug().grip(1); return { x: q.x + r.left, y: q.y + r.top }; }), { x: g0.x, y: g0.y });
+    d = await D(page);
+    ok(d.state.strings[0].L === 1 && near(d.state.strings[1].L, 2 / 3, 1e-9), 'L and back');
     await page.click('#snap'); // gentle
     let b2 = await P(page, 1, 2 / 3), t2 = await P(page, 1, 0.672);
     await drag(page, b2, t2);
@@ -135,7 +153,7 @@ async function main() {
     await page.waitForFunction(() => window.resonateDebug);
     let d = await D(page);
     ok(!d.land, 'P strings stand up on a phone');
-    await page.tap('#sound'); await sleep(300);
+    await sleep(700); if ((await D(page)).lockShown) { await page.tap('#start'); await sleep(500); }
     const s = await P(page, 0, 0.5);
     await page.touchscreen.tap(s.x, s.y); await sleep(100);
     d = await D(page);
@@ -162,14 +180,19 @@ async function main() {
     page.on('pageerror', (e) => errors.push(e.message));
     await page.goto(BASE + 'harp.html');
     await page.waitForFunction(() => window.resonateDebug);
-    ok((await D(page)).sound, 'G Sound on shows');
-    await page.tap('#sound'); await sleep(300);
+    await sleep(700);
     let d = await D(page);
-    ok(d.audio === 'running' && !d.sound, `G a tap on Sound on starts it behind an iOS-like gate (${d.audio})`);
+    ok(d.lockShown && d.locked && (await page.$eval('#stage', (e) => 'locked' in e.dataset)), 'G the harp grey, ▶ Start over it');
+    await page.tap('#start'); await sleep(700);
+    d = await D(page);
+    ok(d.audio === 'running' && !d.locked && !(await page.$eval('#stage', (e) => 'locked' in e.dataset)), `G ▶ Start wakes it behind an iOS-like gate (${d.audio})`);
+    ok(d.voices >= 1 && d.plucks.length === 0, `G the strings ring softly as it wakes (${d.voices} sounding)`);
     const s = await P(page, 0, 0.5);
     await page.touchscreen.tap(s.x, s.y); await sleep(300);
     d = await D(page);
-    ok(d.plucks.length === 1 && d.voices === 1, 'G then a string sounds');
+    ok(d.plucks.length === 1, 'G then a string sounds');
+    await hideShow(page); d = await D(page);
+    ok(d.lockShown && d.locked, 'G back from hidden, the sound unable to start by itself: ▶ Start again');
     await ctx.close();
   }
   ok(!errors.length, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);

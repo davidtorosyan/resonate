@@ -14,22 +14,22 @@
 //
 // A PDF only (added, not converted yet: docs/LIBRARY.md) opens straight into its PDF (📄's view, no
 // Verovio): ‹ › and the pedals turn its pages, the keyboard stays under it, ⟳ reads Convert.
-import { spaceChanged } from "./nav.js?v=108";
-import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=108";
-import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=108";
-import { decorate, fullName, labelOf } from "./playnames.js?v=108";
-import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=108";
-import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=108";
-import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=108";
-import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=108";
-import * as lib from "./library.js?v=108"; // (getSong; getPages where this library has it)
-import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=108";
-import { mountKeyboard } from "./keyboard.js?v=108";
-import { chordMoments } from "./chords.js?v=108";
-import { barsText, sliceMeasures, spanInfo, placeOf, textLegend } from "./scoretext.js?v=108";
-import { remote, hasAssistant, shareFocus, shareFingering } from "./assist.js?v=108";
-import { fingerText } from "./fingertext.js?v=108";
-import { fingeringFor, stats as fingStats } from "./fingering.js?v=108";
+import { spaceChanged } from "./nav.js?v=109";
+import { SAMPLES, loadSong, songChoices, songRev } from "./catalog.js?v=109";
+import { prepare, buildView, VIEW_LABELS, keeps } from "./playprep.js?v=109";
+import { decorate, fullName, labelOf } from "./playnames.js?v=109";
+import { loadPiano, pianoNow, holdPiano, primeHold, playPiano, keepAlive, pianoBus } from "./piano.js?v=109";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=109";
+import { timeline, track, onsets, nextOnset, barAt } from "./playtime.js?v=109";
+import { listPdfIds, getPdf, persistent, dbGen } from "./library.js?v=109";
+import * as lib from "./library.js?v=109"; // (getSong; getPages where this library has it)
+import { readLayout, matchMeasures, sheetPages, focusRects, musicPages } from "./pdfmap.js?v=109";
+import { mountKeyboard } from "./keyboard.js?v=109";
+import { chordMoments } from "./chords.js?v=109";
+import { barsText, sliceMeasures, spanInfo, placeOf, textLegend } from "./scoretext.js?v=109";
+import { remote, hasAssistant, shareFocus, shareFingering } from "./assist.js?v=109";
+import { fingerText } from "./fingertext.js?v=109";
+import { fingeringFor, stats as fingStats } from "./fingering.js?v=109";
 
 const $ = (id) => document.getElementById(id);
 const stage = $("stage"), msgEl = $("msg"), pgEl = $("pg");
@@ -4318,7 +4318,7 @@ async function songMap(doc) {
     const kept = S.st.pdfMusic;
     if (kept && kept.n === n && Array.isArray(kept.music) && kept.music.length >= last) music = kept.music;
     else {
-      const { findStaves } = await import("./omr/pdfprep.js?v=108");
+      const { findStaves } = await import("./omr/pdfprep.js?v=109");
       const t0 = performance.now();
       music = await musicPages(doc, findStaves, { need: last });
       S.t.pdfMusic = ms(t0);
