@@ -3,8 +3,8 @@
 // note's onset and what the timing says (rhythmOf), per phrase for guided practice
 // (phraseRhythm). No page state: the score, the notes, the take and the session come in as
 // arguments. rhythm.js finds the onsets; practice.js's PRACTICE holds the guided thresholds.
-import { findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=114";
-import { PRACTICE } from "./practice.js?v=114";
+import { findOnsets, rhythmStats, rhythmObservations, tolOn, firstSound, voiceCover, noteCover } from "./rhythm.js?v=115";
+import { PRACTICE } from "./practice.js?v=115";
 
 // (The meter is the one in effect at a measure — a song may change it, e.g. Piano Man's
 // "Freely" intro in 4/4, then 3/4.)

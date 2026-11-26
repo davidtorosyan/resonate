@@ -8,7 +8,8 @@ const $ = (id) => document.getElementById(id);
 const stage = $("stage"), cv = $("cv"), cx = cv.getContext("2d");
 const KEY = "resonate.harp";
 const FOOT = 84;                   // px at the stage's foot for ▶ Start / ■
-const LMIN = 0.2;                  // the shortest a string can be (of the full length)
+const LMIN = 0.2;
+const MAXS = 16;                   // strings at most (12 by fifths + the octave + one to show the comma)                  // the shortest a string can be (of the full length)
 const PLUCK_AT = 0.2;              // where a finger plucks (of the length): nearer the middle, rounder
 const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 const noteName = (m) => NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
@@ -402,7 +403,7 @@ function onString(p) {             // where the pendant would rest
   return null;
 }
 stage.addEventListener("pointerdown", (e) => {
-  if (e.target.closest?.("button") || locked) return;   // ✕ remove, ▶ Start / ■: their own taps
+  if (e.target.closest?.("button") || locked || demo) return;   // ✕ remove, ▶ Start / ■: their own taps
   hideRemove();
   audio();
   stage.setPointerCapture(e.pointerId);
@@ -553,21 +554,160 @@ function controls() {
   $("snap").value = S.snap;
   $("info").setAttribute("aria-pressed", S.info);
   $("notes").setAttribute("aria-pressed", !!S.notes);
-  $("add").disabled = S.strings.length >= 12;
+  $("add").disabled = S.strings.length >= MAXS;
+  ffButton();
   showBeats();
 }
 noteSel.addEventListener("change", () => { S.base = +noteSel.value; noteSel.blur(); save(); draw(); showBeats(); });
 $("preset").addEventListener("change", (e) => {
   const v = e.target.value;
   e.target.value = ""; e.target.blur();
+  if (v) applyPreset(v);
+});
+$("add").addEventListener("click", () => { if (S.strings.length < MAXS) { S.strings.push({ L: 1 }); save(); controls(); layout(); } });
+
+// ---------- tunings: the presets, and ⏩ acting out the steps from one to the next ----------
+// Each tuning as string lengths, low to high. Pentatonic: four pure fifths from the root folded into the octave, and
+// the octave. 12 by fifths (Pythagorean): eleven pure fifths. Meantone (quarter-comma): fifths ¼ syntonic comma narrow
+// (5^¼), so major thirds are pure. Equal temperament: every semitone 2^(1/12).
+const chainLs = (fifth, n) => {
+  const r = [1];
+  let x = 1;
+  for (let k = 1; k < n; k++) { x *= fifth; while (x >= 2) x /= 2; r.push(x); }
+  return [...r.sort((a, b) => a - b), 2].map((v) => 1 / v);
+};
+const TUNINGS = {
+  two: { name: "2 strings", L: [1, 1] },
+  penta: { name: "Pentatonic", L: [1, 8 / 9, 64 / 81, 2 / 3, 16 / 27, 1 / 2] },
+  pyth: { name: "12 by fifths", L: chainLs(3 / 2, 12) },
+  mean: { name: "Meantone", L: chainLs(5 ** 0.25, 12) },
+  et: { name: "Equal temperament", L: Array.from({ length: 13 }, (_, k) => 2 ** (-k / 12)) },
+};
+const NEXT = { two: "penta", penta: "pyth", pyth: "et", mean: "et" };
+function applyPreset(v) {
+  stopDemo(false);
   for (const i of [...voices.keys()]) stopVoice(i);
   vib.length = 0;
-  if (v === "reset") S = { ...DEFAULT(), snap: S.snap, info: S.info };
-  // five pure fifths from the open string, each folded back into its octave, and the octave above
-  else if (v === "penta") S.strings = [1, 8 / 9, 64 / 81, 2 / 3, 16 / 27, 1 / 2].map((L) => ({ L })), S.pendant = null;
+  if (v === "reset") S = { ...DEFAULT(), snap: S.snap, info: S.info, notes: S.notes };
+  else if (TUNINGS[v]) { S.strings = TUNINGS[v].L.map((L) => ({ L })); S.pendant = null; }
   save(); controls(); layout();
-});
-$("add").addEventListener("click", () => { if (S.strings.length < 12) { S.strings.push({ L: 1 }); save(); controls(); layout(); } });
+}
+// which tuning the strings are in now (any order, lengths within 0.2%)
+function stageOf() {
+  const mine = S.strings.map((s) => s.L).sort((a, b) => b - a);
+  for (const [k, t] of Object.entries(TUNINGS)) {
+    if (t.L.length === mine.length && t.L.every((L, i) => Math.abs(mine[i] - L) / L < 0.002)) return k;
+  }
+  return null;
+}
+function ffButton() {
+  const b = $("ff"), st = stageOf(), nx = demo ? demo.to : st && NEXT[st];
+  b.disabled = !nx;
+  b.title = nx ? (demo ? "Skip to " : "Show the steps to ") + TUNINGS[nx].name : "⏩ works from a preset's strings";
+  b.querySelector("span").textContent = nx ? TUNINGS[nx].name : "";
+}
+
+let demo = null;                   // { to, cancel } while ⏩ acts the steps out
+let demoSpeed = 1;                 // (tests: faster)
+const wait = (ms) => new Promise((r, j) => { const t = setTimeout(r, ms * demoSpeed); demo?.timers.push(() => { clearTimeout(t); j(new Error("skip")); }); });
+function glide(i, to, ms = 650) {
+  return new Promise((r, j) => {
+    const from = S.strings[i].L, t0 = performance.now(), dur = ms * demoSpeed;
+    const step = () => {
+      if (!demo) return j(new Error("skip"));
+      const u = Math.min(1, (performance.now() - t0) / dur), e = u < 0.5 ? 2 * u * u : 1 - 2 * (1 - u) * (1 - u);
+      const L = from + (to - from) * e, f = S.pendant?.s === i ? S.pendant.a / S.strings[i].L : null;
+      S.strings[i].L = L;
+      if (f != null) S.pendant.a = f * L;                           // a light finger stays at its fraction
+      draw();
+      u < 1 ? requestAnimationFrame(step) : r();
+    };
+    requestAnimationFrame(step);
+  });
+}
+function glideAll(targets, ms) {
+  return Promise.all(targets.map((L, i) => glide(i, L, ms)));
+}
+const pend = (i, f) => { S.pendant = i == null ? null : { s: i, a: f * S.strings[i].L }; draw(); };
+function addStr() { S.strings.push({ L: 1 }); layout(); return S.strings.length - 1; }
+async function sortStrings() {
+  for (let k = 0; k < S.strings.length; k++) {
+    let m = k;
+    for (let j = k + 1; j < S.strings.length; j++) if (S.strings[j].L > S.strings[m].L) m = j;
+    if (m !== k) { moveString(m, k); draw(); await wait(140); }
+  }
+}
+async function strumAll(gap = 90) {
+  for (let i = 0; i < S.strings.length; i++) { pluck(i); await wait(gap); }
+}
+// one pure fifth from string src, by ear: the pendant at ⅓ on it (its twelfth), a new string whose octave harmonic
+// (the pendant at ½) is slid until it matches; folded down an octave (length doubled) when it lands above the octave
+async function fifthFrom(src) {
+  pend(src, 1 / 3); pluck(src); await wait(800);
+  const j = addStr(); await wait(250);
+  pend(j, 1 / 2);
+  await glide(j, S.strings[src].L * 2 / 3); pluck(j); await wait(800);
+  if (S.strings[j].L < 0.5 - 1e-9) {
+    pend(null); pluck(j); await wait(600);
+    pend(j, 1 / 2); await glide(j, S.strings[j].L * 2); pluck(j); await wait(800);
+  }
+  pend(null);
+  return j;
+}
+const SCRIPTS = {
+  async penta() {
+    // the octave: the pendant at ½ on the root, string 2 slid until its open note matches
+    pluck(0); await wait(700);
+    pend(0, 1 / 2); pluck(0); await wait(800);
+    await glide(1, 0.5); pend(null); pluck(1); await wait(800);
+    let src = 0;
+    for (let k = 0; k < 4; k++) src = await fifthFrom(src);
+    await sortStrings(); await wait(300); await strumAll();
+  },
+  async pyth() {
+    let src = S.strings.findIndex((s) => Math.abs(s.L - 64 / 81) < 1e-3);
+    for (let k = 0; k < 7; k++) src = await fifthFrom(src);
+    await sortStrings(); await wait(300);
+    // the twelfth fifth should come home to the octave — it lands 23.5¢ sharp of it, and the two beat
+    const top = S.strings.findIndex((s) => Math.abs(s.L - 0.5) < 1e-6), last = src;
+    pend(last, 1 / 3); pluck(last); await wait(800);
+    const j = addStr(); pend(j, 1 / 2);
+    await glide(j, S.strings[last].L * 2 / 3); pend(null);
+    for (let r = 0; r < 2; r++) { pluck(top); pluck(j); await wait(1600); }
+    removeString(j); await wait(400);
+    // the wolf: the last fifth, from that string to the octave, is 23.5¢ narrow
+    const w = S.strings.findIndex((s) => Math.abs(s.L - TUNINGS.pyth.L[11]) < 1e-6);
+    for (let r = 0; r < 2; r++) { pluck(w); pluck(S.strings.findIndex((s) => Math.abs(s.L - 0.5) < 1e-6)); await wait(1400); }
+  },
+  async et() {
+    await sortStrings();
+    await glideAll(TUNINGS.et.L, 2600); await wait(300); await strumAll();
+  },
+};
+async function runDemo() {
+  if (demo) return stopDemo(true);                                // tapped again: straight to the end
+  const st = stageOf(), to = st && NEXT[st];
+  if (!to) return;
+  audio();
+  demo = { to, timers: [] };
+  ffButton(); stage.dataset.demo = "1";
+  try { await SCRIPTS[to](); } catch {}
+  if (demo?.to === to) finishDemo(to);
+}
+function finishDemo(to) {
+  demo = null;
+  delete stage.dataset.demo;
+  S.strings = TUNINGS[to].L.map((L) => ({ L }));
+  S.pendant = null;
+  save(); controls(); layout();
+}
+function stopDemo(finish) {
+  if (!demo) return;
+  const to = demo.to;
+  for (const t of demo.timers) t();
+  if (finish) finishDemo(to); else { demo = null; delete stage.dataset.demo; ffButton(); }
+}
+$("ff").addEventListener("click", runDemo);
 $("snap").addEventListener("change", (e) => { S.snap = e.target.value; e.target.blur(); save(); controls(); });
 $("info").addEventListener("click", () => { S.info = !S.info; save(); controls(); draw(); });
 $("notes").addEventListener("click", () => { S.notes = !S.notes; save(); controls(); tick(); });
@@ -591,6 +731,6 @@ probe();
 window.resonateDebug = () => ({
   state: JSON.parse(JSON.stringify(S)), freqs: S.strings.map((_, i) => freqOf(i)), plucks: plucks.map((p) => ({ ...p })),
   land: G?.land, span: G?.span, beats: $("beats").textContent, pt: (i, a) => pt(i, a), dock: G && { ...G.dock },
-  audio: ac?.state || null, frac, clinks, locked, bin: () => binPt(), binHot: !!gripOff && drags.get("g") != null, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
+  audio: ac?.state || null, frac, clinks, locked, bin: () => binPt(), binHot: !!gripOff && drags.get("g") != null, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), stage: stageOf(), demo: demo && demo.to, speed: (v) => { demoSpeed = v; }, lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
   ending: (f) => { makeCtx(); const d = buffer(f, null).getChannelData(0), n = d.length, w = Math.round(n * 0.01); let pk = 0, e = 0; for (let k = 0; k < n; k++) pk = Math.max(pk, Math.abs(d[k])); for (let k = n - w; k < n; k++) e = Math.max(e, Math.abs(d[k])); return { dur: n / ac.sampleRate, peak: pk, end: e / pk }; }, voices: voices.size, partials: (f, x) => partials(f, x, 48000),
 });
