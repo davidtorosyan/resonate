@@ -31,6 +31,8 @@
       #stage { position: relative; flex: 1; min-height: 0; touch-action: none; }
       canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
       #beats { position: absolute; left: 0.8rem; bottom: 0.5rem; font-size: 0.78rem; opacity: 0.7; pointer-events: none; }
+      #sound { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 1.05rem; min-height: 56px; padding: 0 1.4rem; border-radius: 999px; background: rgba(166,79,255,0.3); border-color: rgba(166,79,255,0.8); box-shadow: 0 6px 24px rgba(0,0,0,0.4); }
+      #sound[hidden] { display: none; }
       #remove { position: absolute; display: none; transform: translate(-50%, -50%); background: #3a1530; border-color: #ff7aa8; color: #ffc2d6; }
     </style>
   </head>
@@ -45,16 +47,18 @@
         <option value="reset">Reset · 2 strings</option>
         <option value="penta">Pentatonic</option>
       </select>
+      <button id="stop" aria-label="Stop all strings">■</button>
       <button id="add" aria-label="Add a string">+ string</button>
       <button id="snap" aria-label="Snapping">Snap: strong</button>
       <button id="info" aria-pressed="false" aria-label="Show the numbers" class="mono">123</button>
-      <span id="version" class="mono">v107</span>
+      <span id="version" class="mono">v108</span>
     </header>
     <div id="stage">
       <canvas id="cv"></canvas>
       <div id="beats" class="mono"></div>
       <button id="remove">✕ remove</button>
+      <button id="sound">🔈 Sound on</button>
     </div>
-    <script type="module" src="harp.js?v=107"></script>
+    <script type="module" src="harp.js?v=108"></script>
   </body>
 </html>

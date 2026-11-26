@@ -23,8 +23,8 @@
 //   staffWords(doc) → (e) → the clef of the staff e is written on ("treble", "bass"…), null where that
 //     doesn't tell its staff apart
 
-import { fullName } from "./playnames.js?v=107";
-import { barAt } from "./playtime.js?v=107";
+import { fullName } from "./playnames.js?v=108";
+import { barAt } from "./playtime.js?v=108";
 
 const kids = (el, name) => { const out = []; for (const c of el.children) if (c.nodeName === name) out.push(c); return out; };
 const kid = (el, name) => { for (const c of el.children) if (c.nodeName === name) return c; return null; };

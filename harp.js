@@ -8,7 +8,7 @@ const $ = (id) => document.getElementById(id);
 const stage = $("stage"), cv = $("cv"), cx = cv.getContext("2d");
 const KEY = "resonate.harp";
 const LMIN = 0.2;                  // the shortest a string can be (of the full length)
-const PLUCK_AT = 0.13;             // where a finger plucks (of the length)
+const PLUCK_AT = 0.2;              // where a finger plucks (of the length): nearer the middle, rounder
 const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 const noteName = (m) => NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
 const hz = (m) => 440 * 2 ** ((m - 69) / 12);
@@ -86,10 +86,13 @@ const plucks = [];               // the last plucks (debug, beats)
 function audio() {
   if (!ac) {
     ac = new (window.AudioContext || window.webkitAudioContext)();
-    const comp = ac.createDynamicsCompressor();
-    comp.threshold.value = -10; comp.ratio.value = 6;
-    master = ac.createGain(); master.gain.value = 0.7;
-    master.connect(comp).connect(ac.destination);
+    // a soft limiter, not a compressor (one pumped: a pluck's tail swelled back after its attack)
+    const lim = ac.createWaveShaper(), curve = new Float32Array(1025);
+    for (let k = 0; k < 1025; k++) { const x = k / 512 - 1, a = Math.abs(x); curve[k] = Math.sign(x) * (a < 0.7 ? a : 0.7 + 0.3 * Math.tanh((a - 0.7) / 0.3)); }
+    lim.curve = curve;
+    master = ac.createGain(); master.gain.value = 0.6;
+    master.connect(lim).connect(ac.destination);
+    ac.addEventListener("statechange", soundButton);
   }
   try { if (navigator.audioSession && navigator.audioSession.type !== "playback") navigator.audioSession.type = "playback"; } catch {}
   if (ac.state !== "running") ac.resume().catch(() => {});
@@ -99,31 +102,36 @@ function audio() {
 function partials(f, x, sr) {
   const out = [], top = Math.min(sr * 0.45, 10000);
   for (let n = 1; n * f < top && n <= 64; n++) {
-    let a = Math.sin(n * Math.PI * PLUCK_AT) / n ** 1.3;
+    let a = Math.sin(n * Math.PI * PLUCK_AT) / n ** 1.6;
     if (x != null) a *= Math.exp(-60 * Math.sin(n * Math.PI * x) ** 2);
     if (Math.abs(a) > 1e-4) out.push([n, a]);
   }
   return out;
 }
+const ringOf = (f) => clamp(2.5 + 500 / f, 2, 7);   // s: the fundamental's decay
 function buffer(f, x) {
   const key = f.toFixed(3) + "|" + (x == null ? "-" : x.toFixed(4));
   if (cache.has(key)) return cache.get(key);
-  const sr = ac.sampleRate, dur = Math.min(6, 2.2 + 400 / f), len = Math.round(dur * sr);
+  // a long, even ring: the fundamental decays slowly, the upper harmonics a little faster (not a twang that
+  // drops away), and the buffer fades out over its last third — never an abrupt stop
+  const tau1 = ringOf(f), sr = ac.sampleRate, dur = Math.min(8, 2 * tau1), len = Math.round(dur * sr);
   const buf = ac.createBuffer(1, len, sr), d = buf.getChannelData(0);
-  const tau1 = 1.2 + 250 / f;
   let ref = 0;
   for (const [, a] of partials(f, null, sr)) ref += Math.abs(a);
   const gain = (x == null ? 0.5 : 0.9) / ref;
   for (const [n, a0] of partials(f, x, sr)) {
-    const tau = tau1 / (1 + 0.35 * (n - 1)), r = Math.exp(-1 / (tau * sr)), w = (2 * Math.PI * n * f) / sr;
+    const tau = tau1 / (1 + 0.15 * (n - 1)), r = Math.exp(-1 / (tau * sr)), w = (2 * Math.PI * n * f) / sr;
     const A = a0 * gain, c = 2 * r * Math.cos(w), r2 = r * r;
     const kmax = Math.min(len, Math.ceil(tau * sr * Math.log(Math.abs(A) / 1e-6 + 1)));
     let y2 = 0, y1 = A * r * Math.sin(w);
     d[1] += y1;
     for (let k = 2; k < kmax; k++) { const y = c * y1 - r2 * y2; d[k] += y; y2 = y1; y1 = y; }
   }
-  for (let k = 0; k < 48 && k < len; k++) d[k] *= k / 48;   // no click
-  if (cache.size > 64) cache.delete(cache.keys().next().value);
+  const att = Math.round(0.003 * sr);
+  for (let k = 0; k < att && k < len; k++) d[k] *= k / att;                 // no click
+  const f0 = Math.floor(len * 0.65);
+  for (let k = f0; k < len; k++) d[k] *= 0.5 + 0.5 * Math.cos((Math.PI * (k - f0)) / (len - f0));
+  if (cache.size > 16) cache.delete(cache.keys().next().value);
   cache.set(key, buf);
   return buf;
 }
@@ -141,16 +149,43 @@ function pluck(i) {
   if (a.state !== "running") setTimeout(() => { if (ac && ac.state !== "running") { try { src.stop(); } catch {} } }, 1500);
   voices.set(i, { src, g });
   src.onended = () => { if (voices.get(i)?.src === src) voices.delete(i); };
-  const kept = partials(f, x, a.sampleRate).filter(([n, v]) => n <= 16 && Math.abs(v) > 0.02 * Math.abs(Math.sin(n * Math.PI * PLUCK_AT) / n ** 1.3)).map(([n]) => n);
+  const kept = partials(f, x, a.sampleRate).filter(([n, v]) => n <= 16 && Math.abs(v) > 0.02 * Math.abs(Math.sin(n * Math.PI * PLUCK_AT) / n ** 1.6)).map(([n]) => n);
   plucks.push({ i, f, x, kept, at: performance.now() });
   if (plucks.length > 24) plucks.shift();
   // the string's motion: its first harmonics' shapes, slowed down
   const shape = partials(f, x, 48000).filter(([n]) => n <= 8);
   const peak = shape.reduce((s, [, v]) => s + Math.abs(v), 0) || 1;
-  vib[i] = { t0: performance.now(), shape: shape.map(([n, v]) => [n, v / peak]), tau: Math.min(1.6, (1.2 + 250 / f) * 0.6) };
+  vib[i] = { t0: performance.now(), shape: shape.map(([n, v]) => [n, v / peak]), tau: Math.min(2.4, ringOf(f) * 0.5) };
   showBeats();
   tick();
 }
+
+// ---------- ■: every string damped at once, with the clink of hands closing on them ----------
+let clinks = 0;
+function stopAll() {
+  const a = audio(), t = a.currentTime;
+  for (const [i, v] of voices) { try { v.g.gain.setTargetAtTime(0, t + 0.01, 0.025); v.src.stop(t + 0.3); } catch {} voices.delete(i); }
+  // the clink: a few short metallic partials and a tick of noise
+  const out = a.createGain(); out.gain.value = 0.22; out.connect(master);
+  for (const [fq, tc, lv] of [[1870, 0.05, 1], [2960, 0.035, 0.7], [4410, 0.025, 0.5], [6230, 0.018, 0.3]]) {
+    const o = a.createOscillator(), g = a.createGain();
+    o.frequency.value = fq; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(lv, t + 0.002); g.gain.setTargetAtTime(0, t + 0.002, tc);
+    o.connect(g).connect(out); o.start(t); o.stop(t + 0.4);
+  }
+  const nb = a.createBuffer(1, Math.round(a.sampleRate * 0.02), a.sampleRate), nd = nb.getChannelData(0);
+  for (let k = 0; k < nd.length; k++) nd[k] = (Math.random() * 2 - 1) * (1 - k / nd.length) ** 2 * 0.6;
+  const ns = a.createBufferSource(), bp = a.createBiquadFilter();
+  bp.type = "bandpass"; bp.frequency.value = 3500; bp.Q.value = 1.2;
+  ns.buffer = nb; ns.connect(bp).connect(out); ns.start(t);
+  clinks++;
+  const now = performance.now();
+  vib.forEach((v) => { if (v) { v.t0 = now - 0.0001; v.tau = 0.06; } });
+  tick();
+}
+
+// ---------- sound on: iOS starts a page's sound only from a tap ----------
+function soundButton() { $("sound").hidden = !!ac && ac.state === "running"; }
+$("sound").addEventListener("click", () => { audio(); setTimeout(soundButton, 300); });
 
 // ---------- beats (123): the last two strings plucked ----------
 function showBeats() {
@@ -269,7 +304,7 @@ function onString(p) {             // where the pendant would rest
   return null;
 }
 stage.addEventListener("pointerdown", (e) => {
-  if (e.target.id === "remove") return;
+  if (e.target.id === "remove" || e.target.id === "sound") return;
   hideRemove();
   audio();
   stage.setPointerCapture(e.pointerId);
@@ -377,6 +412,7 @@ $("preset").addEventListener("change", (e) => {
   else if (v === "penta") S.strings = [1, 8 / 9, 64 / 81, 2 / 3, 16 / 27].map((L) => ({ L })), S.pendant = null;
   save(); controls(); layout();
 });
+$("stop").addEventListener("click", stopAll);
 $("add").addEventListener("click", () => { if (S.strings.length < 12) { S.strings.push({ L: 1 }); save(); controls(); layout(); } });
 $("snap").addEventListener("click", () => { S.snap = { strong: "gentle", gentle: "off", off: "strong" }[S.snap]; save(); controls(); });
 $("info").addEventListener("click", () => { S.info = !S.info; save(); controls(); draw(); });
@@ -385,7 +421,7 @@ $("info").addEventListener("click", () => { S.info = !S.info; save(); controls()
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden || !ac) return;
   for (const i of [...voices.keys()]) stopVoice(i);
-  ac.suspend().catch(() => {});
+  ac.suspend().then(soundButton, () => {});
   try { if (navigator.audioSession) navigator.audioSession.type = "auto"; } catch {}
 });
 addEventListener("pagehide", () => { clearTimeout(saveT); try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} try { ac?.close(); } catch {} ac = null; cache.clear(); try { if (navigator.audioSession) navigator.audioSession.type = "auto"; } catch {} });
@@ -397,5 +433,6 @@ layout();
 window.resonateDebug = () => ({
   state: JSON.parse(JSON.stringify(S)), freqs: S.strings.map((_, i) => freqOf(i)), plucks: plucks.map((p) => ({ ...p })),
   land: G?.land, span: G?.span, beats: $("beats").textContent, pt: (i, a) => pt(i, a), dock: G && { ...G.dock },
-  audio: ac?.state || null, frac, voices: voices.size, partials: (f, x) => partials(f, x, 48000),
+  audio: ac?.state || null, frac, clinks, sound: !$("sound").hidden,
+  ending: (f) => { audio(); const d = buffer(f, null).getChannelData(0), n = d.length, w = Math.round(n * 0.01); let pk = 0, e = 0; for (let k = 0; k < n; k++) pk = Math.max(pk, Math.abs(d[k])); for (let k = n - w; k < n; k++) e = Math.max(e, Math.abs(d[k])); return { dur: n / ac.sampleRate, peak: pk, end: e / pk }; }, voices: voices.size, partials: (f, x) => partials(f, x, 48000),
 });
