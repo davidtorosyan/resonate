@@ -98,6 +98,9 @@ const RATIOS = [1 / 3, 1 / 2, 2 / 3, 3 / 4, 4 / 5, 5 / 6, 1, 6 / 5, 5 / 4, 4 / 3
 // the pendant snaps to the nodes whose harmonic rings clearly (the octave, the twelfth, two octaves up) — not 1/5 or
 // 1/6, whose harmonics are high and faint — with a wider pull than a bridge's
 const NODES = [1 / 2, 1 / 3, 2 / 3, 1 / 4, 3 / 4];
+// strong: the pendant rests only on ½, ⅓ or ⅔ — the nearest of them, wherever it's dropped on the string
+const STRONG_NODES = [1 / 2, 1 / 3, 2 / 3];
+const nearest = (v, list) => list.reduce((b, t) => (Math.abs(v - t) < Math.abs(v - b) ? t : b));
 // pull v towards the nearest target (relative distance for lengths, absolute for fractions)
 function pull(v, targets, rel) {
   if (S.snap === "off") return v;
@@ -422,7 +425,7 @@ function onString(p) {             // where the pendant would rest
   for (let i = 0; i < S.strings.length; i++) {
     const L = S.strings[i].L, a = alongOf(p.x, p.y);
     if (Math.abs(acrossOf(p.x, p.y) - G.across(i)) < Math.min(26, G.span * 0.45) && a > 0.02 && a < L - 0.02) {
-      return { s: i, a: clamp(pull(a / L, NODES, false), 0.02, 0.98) * L };
+      return { s: i, a: (S.snap === "strong" ? nearest(a / L, STRONG_NODES) : clamp(pull(a / L, NODES, false), 0.02, 0.98)) * L };
     }
   }
   return null;
