@@ -2,26 +2,26 @@
 // line with their lyrics; after a count-in you sing along, and each score
 // note is graded on the pitch you held during its own time slot (any octave).
 
-import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=126";
-import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=126";
-import { openMic, createReader, soundGone, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=126";
-import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=126";
-import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=126";
-import * as P from "./practice.js?v=126";
-import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=126";
-import { startCapture, playVoice } from "./capture.js?v=126";
-import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=126";
-import { makeFeatures, findClicks, tolOn } from "./rhythm.js?v=126";
-import * as TR from "./takerhythm.js?v=126";
-import * as E from "./ear.js?v=126";
-import { listSongs, getSong, addSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=126";
-import { SAMPLES, songXml, songRev, songInfo } from "./catalog.js?v=126";
-import { forgetSong } from "./forget.js?v=126";
-import { activeProfile } from "./profiles.js?v=126";
-import { fitOptions, fitKey, fitToRange } from "./fit.js?v=126";
-import { DATA_KEYS } from "./space.js?v=126";
-import { spaceChanged } from "./nav.js?v=126";
-import { shareSong, takeStarted, lineDone, takeEnded, remote, paintRemote } from "./assist.js?v=126";
+import { parseMusicXml, readScoreFile, notesForVerse, lyricLines } from "./musicxml.js?v=127";
+import { noteName as nameOf, BLACK, fold, median, centsLabel, transposeKey, keyName, spellTransposed } from "./music.js?v=127";
+import { openMic, createReader, soundGone, ANALYSIS_LAG, FFT_SIZE, MIN_RMS } from "./pitch.js?v=127";
+import { gradeTake, gradeLive, takeScore, timingTendency, MAX_SHIFT, GOOD_CENTS, OK_CENTS } from "./grade.js?v=127";
+import { analyzeLines, lineDelta, feedback, rhythmText, roundResult, runResult, securedText } from "./coach.js?v=127";
+import * as P from "./practice.js?v=127";
+import { knotsFromTaps, mergeKnots, makeTiming, splitPauses, MIN_GAP } from "./timing.js?v=127";
+import { startCapture, playVoice } from "./capture.js?v=127";
+import { loadPiano, pianoReady, playPiano, holdPiano, playClick, clickWave, CLICK_GAIN, scheduleAhead, keepAlive, ownContext, sleepAudio } from "./piano.js?v=127";
+import { makeFeatures, findClicks, tolOn } from "./rhythm.js?v=127";
+import * as TR from "./takerhythm.js?v=127";
+import * as E from "./ear.js?v=127";
+import { listSongs, getSong, addSong, persistent, getTake, putTake, putClip, getClip, listClips } from "./library.js?v=127";
+import { SAMPLES, songXml, songRev, songInfo } from "./catalog.js?v=127";
+import { forgetSong } from "./forget.js?v=127";
+import { activeProfile } from "./profiles.js?v=127";
+import { fitOptions, fitKey, fitToRange } from "./fit.js?v=127";
+import { DATA_KEYS } from "./space.js?v=127";
+import { spaceChanged } from "./nav.js?v=127";
+import { shareSong, takeStarted, lineDone, takeEnded, remote, paintRemote } from "./assist.js?v=127";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("lane");

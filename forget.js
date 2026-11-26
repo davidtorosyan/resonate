@@ -9,12 +9,12 @@
 // hides a song whose sync tombstone is in.)
 // It doesn't stop a conversion running in this page — the shell's tray does that first (tray.forget).
 // Only for pages that load nav.js already (spaceChanged: its side effects belong to every such page).
-import { removeSong } from "./library.js?v=126";
-import { SAMPLES } from "./catalog.js?v=126";
-import { spaceChanged } from "./nav.js?v=126";
-import { dropFromQueue } from "./omr/queue.js?v=126";
-import { deleteJobsFor } from "./omr/jobs.js?v=126";
-import { dropFingering } from "./assist.js?v=126";
+import { removeSong } from "./library.js?v=127";
+import { SAMPLES } from "./catalog.js?v=127";
+import { spaceChanged } from "./nav.js?v=127";
+import { dropFromQueue } from "./omr/queue.js?v=127";
+import { deleteJobsFor } from "./omr/jobs.js?v=127";
+import { dropFingering } from "./assist.js?v=127";
 
 // Per song: { songId: … } maps in localStorage (DATA_KEYS).
 const PER_SONG = ["resonate.sing.keys", "resonate.sing.rates", "resonate.sing.timing", "resonate.sing.history", "resonate.sing.practice", "resonate.sing.eardata", "resonate.play"];

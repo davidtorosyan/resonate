@@ -8,9 +8,9 @@
 // when the page is hidden on its own (record.js / voice.js visibilitychange, as on their pages).
 // Their scripts look their elements up in the sheet first (window.resonateRecord / resonateVoice /
 // resonateAssistants .root — sing.html has a #play and a #status, play.html a #strip).
-import { scopeCss } from "./scopecss.js?v=126";
-import { ic, openOverlay, closeOverlay, overlayOpen, staleShell, pageOpen } from "./chrome.js?v=126";
-import { reduced } from "./motion.js?v=126";
+import { scopeCss } from "./scopecss.js?v=127";
+import { ic, openOverlay, closeOverlay, overlayOpen, staleShell, pageOpen } from "./chrome.js?v=127";
+import { reduced } from "./motion.js?v=127";
 
 const $ = (id) => document.getElementById(id);
 const PROFILES = "resonate.profiles";
@@ -21,11 +21,11 @@ const readProfiles = () => { try { return localStorage.getItem(PROFILES); } catc
 // around it — Record lays its page out to the height, the others scroll)
 const PLACES = {
   record: { page: "record.html", title: "Record", hook: "resonateRecord", scope: "rec", mic: true, body: false, extra: ["footer"],
-    load: () => import("../record.js?v=126") },
+    load: () => import("../record.js?v=127") },
   voice: { page: "voice.html", title: "Voice", hook: "resonateVoice", scope: "voice", mic: true, body: true, extra: ["#test"],
-    load: () => import("../voice.js?v=126") },
+    load: () => import("../voice.js?v=127") },
   assistants: { page: "assistants.html", title: "Assistants", hook: "resonateAssistants", scope: "asst", mic: false, body: true, extra: [],
-    load: () => import("../assistants.js?v=126") },
+    load: () => import("../assistants.js?v=127") },
 };
 // A link's place: the shell's own address for it (./?open=voice), or — for one more release — its
 // old page (voice.html).
