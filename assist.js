@@ -14,8 +14,8 @@
 // their `device_commands` row. Only for a signed-in, approved account whose data is on this
 // device and whose sync is on (as sync.js); nothing at all otherwise.
 
-import { supabase, savedUser } from "./auth.js?v=119";
-import { activeSpace } from "./space.js?v=119";
+import { supabase, savedUser } from "./auth.js?v=120";
+import { activeSpace } from "./space.js?v=120";
 
 const SYNC_OFF = "resonate.sync.off";
 const DEVICE_KEY = "resonate.device"; // { id, name }
