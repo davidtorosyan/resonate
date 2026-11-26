@@ -311,6 +311,7 @@ function draw() {
   if (!G) return;
   const { W, H } = G, now = performance.now();
   cx.clearRect(0, 0, W, H);
+  const dd = !canDouble(); if (dblBtn.disabled !== dd) dblBtn.disabled = dd;
   tagsPlaced = [];
   const n = S.strings.length;
   // the nut
@@ -602,6 +603,16 @@ $("preset").addEventListener("change", (e) => {
   const v = e.target.value;
   e.target.value = ""; e.target.blur();
   if (v) applyPreset(v);
+});
+// ×2: a string twice as long as the last one — its octave below (named so when the last one is)
+const dblBtn = document.getElementById("dbl");
+function canDouble() { const n = S.strings.length; return !demo && n < MAXS && S.strings[n - 1].L * 2 <= 1 + 1e-9; }
+$("dbl").addEventListener("click", () => {
+  if (!canDouble()) return;
+  const last = S.strings[S.strings.length - 1], L = Math.min(1, last.L * 2);
+  S.strings.push({ L, ...(last.fixed ? { fixed: nameOf(L) } : {}) });
+  save(); controls(); layout();
+  if (!startShown()) pluck(S.strings.length - 1);
 });
 $("add").addEventListener("click", () => { if (S.strings.length < MAXS) { S.strings.push({ L: 1 }); save(); controls(); layout(); } });
 

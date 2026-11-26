@@ -414,6 +414,23 @@ async function main() {
     ok((await D(page)).chain === 13 && !(await page.$eval('#temper', (t) => t.hidden)), 'S the 12-by-fifths preset: the switch back');
     await page.click('#temper [data-t="et"]'); await until(() => window.resonateDebug().stage === 'et' && !window.resonateDebug().tempering);
     ok(await page.$eval('#step', (b) => b.disabled), 'S + fifth off once the strings leave the chain (Equal)');
+    // ×2: a string twice the last one's length — an octave below it, named when the last one is
+    await page.selectOption('#preset', 'reset'); await sleep(150);
+    ok(await page.$eval('#dbl', (b) => b.disabled), 'D ×2 off when the last string is longer than half');
+    await page.selectOption('#preset', 'penta'); await sleep(150);
+    if (!(await D(page)).state.notes) await page.click('#notes');
+    await page.evaluate(() => window.resonateDebug().setL(5, 0.4)); await sleep(100);
+    ok(!(await page.$eval('#dbl', (b) => b.disabled)), 'D ×2 on once the last string is short enough');
+    await page.click('#dbl'); await sleep(200);
+    d = await D(page);
+    ok(d.state.strings.length === 7 && near(d.state.strings[6].L, 0.8, 1e-9) && d.plucks[d.plucks.length - 1].i === 6, `D ×2 adds a string twice the last one's length (${d.state.strings[6].L}) and plucks it`);
+    await page.evaluate(() => window.resonateDebug().setL(6, 0.5)); await page.click('#dbl'); await sleep(200);
+    d = await D(page);
+    ok(d.state.strings.length === 8 && d.state.strings[7].L === 1, 'D a second ×2: the full length again');
+    await page.selectOption('#preset', 'penta'); await sleep(150);
+    await page.click('#dbl'); await sleep(200);
+    d = await D(page);
+    ok(d.fixed[6] === 'F♯3' && d.fixed[5] === 'F♯4', `D the octave below a named string is named (${d.fixed[5]} → ${d.fixed[6]})`);
     await ctx.close();
   }
   {
@@ -424,9 +441,10 @@ async function main() {
     await page.goto(BASE + 'harp.html');
     await page.waitForFunction(() => window.resonateDebug);
     await page.selectOption('#preset', 'pyth'); await sleep(400);
-    const r = await page.evaluate(() => { const b = (id) => document.getElementById(id).getBoundingClientRect(); const d = window.resonateDebug(); const st = b('stage'); let low = 0; for (let i = 0; i < d.state.strings.length; i++) low = Math.max(low, d.grip(i).y + st.top + 8); return { t: b('temper'), c: b('chords'), st: b('step'), go: b('go'), add: b('add'), low, w: innerWidth }; });
+    const r = await page.evaluate(() => { const b = (id) => document.getElementById(id).getBoundingClientRect(); const d = window.resonateDebug(); const st = b('stage'); let low = 0; for (let i = 0; i < d.state.strings.length; i++) low = Math.max(low, d.grip(i).y + st.top + 8); return { t: b('temper'), c: b('chords'), st: b('step'), db: b('dbl'), go: b('go'), add: b('add'), low, w: innerWidth }; });
     const apart = (a, b) => a.bottom <= b.top || b.bottom <= a.top || a.right <= b.left || b.right <= a.left;
     ok(r.t.left >= 0 && r.t.right <= r.w && apart(r.t, r.go) && apart(r.t, r.add) && r.t.top >= r.low, `P the switch on a row of its own (${r.t.top.toFixed(0)} ≥ ${r.low.toFixed(0)})`);
+    ok(r.db.width === 0 || (r.db.right <= r.w && apart(r.db, r.add) && apart(r.db, r.st) && apart(r.db, r.go)), `P ×2 fits on the foot (${r.db.left.toFixed(0)}–${r.db.right.toFixed(0)} of ${r.w})`);
     ok(r.st.right <= r.w && apart(r.st, r.add) && apart(r.st, r.go) && apart(r.st, r.c), `P + fifth fits beside + string (${r.st.left.toFixed(0)}–${r.st.right.toFixed(0)} of ${r.w})`);
     ok(r.c.left >= 0 && r.c.right <= r.w && apart(r.c, r.t) && apart(r.c, r.go) && apart(r.c, r.add) && r.c.top >= r.low, `P the chords beside the switch (${r.t.right.toFixed(0)} ≤ ${r.c.left.toFixed(0)} ≤ ${r.c.right.toFixed(0)} of ${r.w})`);
     await ctx.close();

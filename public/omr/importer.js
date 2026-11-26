@@ -3,7 +3,7 @@
 // engine's book after every finished page and the events shown). No DOM: the host page draws the
 // events (the Reader, omr/reader.js) and its own buttons.
 //
-//   import { createImporter } from './omr/importer.js?v=125';
+//   import { createImporter } from './omr/importer.js?v=126';
 //   const imp = createImporter({ onEvent, onLog, onState, onProgress, app: 'v80', spaceChanged });
 //   const job = await imp.pending();            // an unfinished import of this space, or null:
 //                                               //   { id, name, size, done, of, page, stuck: { s, page } | null, phase }
@@ -36,13 +36,13 @@
 // At most the page under way is read again. A job made by another engine (ENGINE) starts over from
 // the stored PDF.
 
-import { convertPdf, ENGINE, LOCK, BUSY, STEPS } from './omr.js?v=125';
-import { ENGINE_N } from './engine.js?v=125';
-import * as J from './jobs.js?v=125';
-import { readScoreFile, parseMusicXml } from '../musicxml.js?v=125';
-import { addSong, getSong, getPdf, replaceSong } from '../library.js?v=125';
-import { fixOmrScore, joinMovements } from './fixscore.js?v=125';
-import { activeSpace, dbName, knownDbs } from '../space.js?v=125';
+import { convertPdf, ENGINE, LOCK, BUSY, STEPS } from './omr.js?v=126';
+import { ENGINE_N } from './engine.js?v=126';
+import * as J from './jobs.js?v=126';
+import { readScoreFile, parseMusicXml } from '../musicxml.js?v=126';
+import { addSong, getSong, getPdf, replaceSong } from '../library.js?v=126';
+import { fixOmrScore, joinMovements } from './fixscore.js?v=126';
+import { activeSpace, dbName, knownDbs } from '../space.js?v=126';
 
 const LEFT = 'resonate.import.left'; // { id, stage, at }: the page was left (reload, navigation, hidden) in that stage — not a crash
 const WAIT_MS = 6000;                // a reload's old page releases the engine lock as it unloads
@@ -630,13 +630,13 @@ export function createImporter(opts = {}) {
 // nothing it does can fail the import (fingering.js fingerSong never throws; a module that didn't
 // load is only logged).
 function fingerLater(id) {
-  import('../fingering.js?v=125').then((m) => m.fingerSong(id)).catch((err) => console.info('fingering', err?.message || err));
+  import('../fingering.js?v=126').then((m) => m.fingerSong(id)).catch((err) => console.info('fingering', err?.message || err));
 }
 // A replaced song's fingering as assistants read it (assist.js: its score_fingering row, and this
 // device's marker of what it sent) was the old MusicXML's: it goes — the Score sends the new one when
 // it shows it. Best effort, as fingerLater: nothing it does can fail the import.
 function dropFingeringLater(id) {
-  import('../assist.js?v=125').then((m) => m.dropFingering(id)).catch((err) => console.info('fingering: drop', err?.message || err));
+  import('../assist.js?v=126').then((m) => m.dropFingering(id)).catch((err) => console.info('fingering: drop', err?.message || err));
 }
 
 // --- the song's title and key mode (moved from pdf-import.js in v81; tools/titlecases.cjs evaluates
