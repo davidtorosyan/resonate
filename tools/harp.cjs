@@ -251,6 +251,44 @@ async function main() {
     ok(d.lockShown && d.locked, 'G back from hidden, the sound unable to start by itself: ▶ Start again');
     await ctx.close();
   }
+  {
+    // ⏩: the steps from one tuning to the next, acted out (fast here); a second tap skips to the end
+    const ctx = await browser.newContext({ viewport: { width: 1180, height: 820 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(BASE + 'harp.html');
+    await page.waitForFunction(() => window.resonateDebug);
+    await sleep(700); if ((await D(page)).lockShown) { await page.click('#go'); await sleep(500); }
+    await page.selectOption('#preset', 'reset'); await sleep(150);
+    await page.evaluate(() => window.resonateDebug().speed(0.03));
+    let d = await D(page);
+    ok(d.stage === 'two' && (await page.$eval('#ff span', (e) => e.textContent)) === 'Pentatonic', '⏩ offers the next tuning (Pentatonic)'.replace(/^/, 'F '));
+    const until = async (fn, ms = 30000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await page.evaluate(fn)) return true; await sleep(100); } return false; };
+    await page.click('#ff');
+    await sleep(150);
+    const mid = await D(page);
+    const doneP = await until(() => !window.resonateDebug().demo);
+    d = await D(page);
+    ok(mid.demo === 'penta' && doneP && d.stage === 'penta' && d.state.strings.length === 6, `F 2 strings → Pentatonic, step by step (${d.stage}, ${d.state.strings.length} strings, ${d.plucks.length} plucks)`);
+    ok(d.plucks.length >= 12 && d.plucks.some((p) => p.x != null && Math.abs(p.x - 1 / 3) < 1e-6) && d.plucks.some((p) => p.x != null && Math.abs(p.x - 0.5) < 1e-6), 'F with the pendant at ⅓ and ½ along the way');
+    await page.click('#ff');
+    const doneY = await until(() => !window.resonateDebug().demo, 60000);
+    d = await D(page);
+    ok(doneY && d.stage === 'pyth' && d.state.strings.length === 13, `F Pentatonic → 12 by fifths (${d.stage}, ${d.state.strings.length} strings)`);
+    await page.click('#ff');
+    const doneE = await until(() => !window.resonateDebug().demo);
+    d = await D(page);
+    ok(doneE && d.stage === 'et' && near(d.freqs[7], d.freqs[0] * 2 ** (7 / 12), 1e-6), 'F 12 by fifths → Equal temperament (a tempered fifth)');
+    ok(await page.$eval('#ff', (b) => b.disabled), 'F nothing after Equal temperament');
+    await page.selectOption('#preset', 'reset'); await sleep(150);
+    await page.click('#ff'); await sleep(300); await page.click('#ff'); await sleep(150);
+    d = await D(page);
+    ok(!d.demo && d.stage === 'penta', 'F a second tap skips to the end');
+    await page.selectOption('#preset', 'mean'); await sleep(150);
+    d = await D(page);
+    ok(d.stage === 'mean' && near(d.freqs[4] / d.freqs[0], 1.25, 1e-9), 'F Meantone: a pure major third (5:4)');
+    await ctx.close();
+  }
   ok(!errors.length, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await browser.close();
   done();

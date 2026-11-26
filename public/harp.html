@@ -45,6 +45,12 @@
       #go[data-mode="stop"] { padding: 0; width: 56px; font-size: 1.3rem; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.25); }
       #add { position: absolute; bottom: 14px; left: calc(50% + 44px); z-index: 2; height: 48px; margin-bottom: 4px; border-radius: 999px; padding: 0 1rem; }
       #go[data-mode="start"] ~ #add { left: calc(50% + 86px); }
+      #ff { position: absolute; bottom: 14px; right: calc(50% + 44px); z-index: 2; height: 48px; margin-bottom: 4px; border-radius: 999px; padding: 0 0.9rem; display: flex; align-items: center; gap: 0.4rem; }
+      #go[data-mode="start"] ~ #ff { right: calc(50% + 86px); }
+      #ff span { font-size: 0.85rem; }
+      #ff:disabled { opacity: 0.35; }
+      #stage[data-demo] #ff { background: rgba(166,79,255,0.28); border-color: rgba(166,79,255,0.7); }
+      @media (max-width: 560px) { #ff span { display: none; } }
       #go:active { transform: translateX(-50%) scale(0.94); }
       #remove { position: absolute; display: none; transform: translate(-50%, -50%); background: #3a1530; border-color: #ff7aa8; color: #ffc2d6; }
     </style>
@@ -59,6 +65,9 @@
         <option value="">Preset…</option>
         <option value="reset">Reset · 2 strings</option>
         <option value="penta">Pentatonic</option>
+        <option value="pyth">12 by fifths</option>
+        <option value="mean">Meantone</option>
+        <option value="et">Equal temperament</option>
       </select>
       <select id="snap" aria-label="Snapping">
         <option value="strong">Snap: strong</option>
@@ -67,7 +76,7 @@
       </select>
       <button id="notes" aria-pressed="false" aria-label="Find the notes">♪ Notes</button>
       <button id="info" aria-pressed="false" aria-label="Show the numbers" class="mono">123</button>
-      <span id="version" class="mono">v114</span>
+      <span id="version" class="mono">v115</span>
     </header>
     <div id="stage" data-locked="1">
       <canvas id="cv"></canvas>
@@ -76,7 +85,8 @@
       <div id="lock" hidden></div>
       <button id="go" data-mode="start" aria-label="Start the harp">▶ Start</button>
       <button id="add" aria-label="Add a string">+ string</button>
+      <button id="ff" aria-label="Show the steps to the next tuning">⏩<span></span></button>
     </div>
-    <script type="module" src="harp.js?v=114"></script>
+    <script type="module" src="harp.js?v=115"></script>
   </body>
 </html>

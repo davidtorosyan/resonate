@@ -19,7 +19,7 @@
 //         once stored in the book) · "<id>|mxl" → [ArrayBuffer]
 // Events are kept as the Reader got them; a preview Blob is stored as { blob: ArrayBuffer, type }.
 
-import { activeDb, activeSpace } from '../space.js?v=114';
+import { activeDb, activeSpace } from '../space.js?v=115';
 
 export const DB = 'resonate-imports';
 export const FLAG = 'resonate.import';           // { id, db, space, name, done, of, page, pages, at } — for nav.js's pill
