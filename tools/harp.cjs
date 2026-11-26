@@ -42,7 +42,7 @@ async function main() {
     ok(d.land && d.state.strings.length === 1 && d.state.base === 54 && d.state.strings[0].L === 1, 'L one string, full length, open F♯3, laid across');
     await page.click('#add'); await sleep(100);
     d = await D(page);
-    ok(!d.state.info && (await page.$eval('#beats', (e) => e.textContent)) === '', 'L the numbers hidden');
+    ok(!d.state.info && await page.$eval('#beats', (e) => e.hidden), 'L the numbers hidden, no beats badge before two strings are played');
     await sleep(700); d = await D(page);
     ok(d.lockShown === (d.audio !== 'running'), `L ▶ Start only when the sound can't start by itself (${d.audio}, start ${d.lockShown ? 'shown' : 'not shown'})`);
     if (d.lockShown) { await page.click('#go'); await sleep(500); }
@@ -166,7 +166,7 @@ async function main() {
     await page.click('#info'); await sleep(80);
     await page.mouse.click(s0.x, s0.y); await sleep(50); await page.mouse.click(s2.x, s2.y); await sleep(80);
     d = await D(page);
-    ok(d.state.info && /no beats/.test(d.beats), `L 123: a pure fifth has no beats ("${d.beats}")`);
+    ok(d.beatsD !== null && d.beatsD < 0.05 && d.beatsLevel === 'calm' && /beats\s*0/.test(d.beats), `L the beats badge: a pure fifth, 0, green ("${d.beats}", ${d.beatsLevel})`);
     // + and a long press removes
     await page.click('#add'); await sleep(80);
     d = await D(page);
@@ -303,8 +303,26 @@ async function main() {
     await page.click('#chords [data-c^="F♯3"]'); await sleep(400);
     d = await D(page);
     ok(d.plucks.slice(-3).map((p) => d.fixed[p.i]).join() === 'F♯3,A♯3,C♯4', 'F ▶ F♯ plucks F♯3, A♯3, C♯4');
+    // the pairs: plucked together; the badge says how much they beat
+    const pair = async (c) => { await page.click(`#chords [data-c="${c}"]`); await sleep(250); return D(page); };
+    d = await pair('F♯3 A♯3');
+    ok(d.plucks.slice(-2).map((p) => d.fixed[p.i]).sort().join() === 'A♯3,F♯3' && Math.abs(d.plucks.at(-1).at - d.plucks.at(-2).at) < 20, 'F F♯·A♯ plucks the third, together');
+    ok(d.beatsD > 9 && d.beatsLevel === 'harsh', `F … 12 by fifths: the third beats fast, red (${d.beatsD.toFixed(1)}/s, ${d.beatsLevel})`);
+    d = await pair('B3 F♯4');
+    ok(d.beatsD > 8 && d.beatsLevel === 'harsh', `F B·F♯ in 12 by fifths: the wolf (${d.beatsD.toFixed(1)}/s)`);
     await page.click('#temper [data-t="mean"]');
     ok(await until(() => window.resonateDebug().stage === 'mean' && !window.resonateDebug().tempering), 'F Meantone: every bridge glides there');
+    d = await pair('F♯3 A♯3');
+    ok(d.beatsD < 0.05 && d.beatsLevel === 'calm', `F F♯·A♯ in Meantone: a pure third, green (${d.beatsD.toFixed(2)})`);
+    d = await pair('B3 F♯4');
+    ok(d.beatsD > 12 && d.beatsLevel === 'harsh', `F B·F♯ in Meantone: the wolf howls (${d.beatsD.toFixed(1)}/s)`);
+    await page.click('#temper [data-t="et"]'); await until(() => window.resonateDebug().stage === 'et' && !window.resonateDebug().tempering);
+    d = await pair('B3 F♯4');
+    ok(d.beatsD < 1.5 && d.beatsLevel !== 'harsh', `F B·F♯ in Equal: near pure (${d.beatsD.toFixed(2)}/s, ${d.beatsLevel})`);
+    d = await pair('F♯3 A♯3');
+    ok(d.beatsD > 5 && d.beatsD < 9, `F F♯·A♯ in Equal: in between (${d.beatsD.toFixed(1)}/s, ${d.beatsLevel})`);
+    await page.click('#temper [data-t="mean"]');
+    await until(() => window.resonateDebug().stage === 'mean' && !window.resonateDebug().tempering);
     d = await D(page);
     ok(d.fixed.join() === 'F♯3,G3,G♯3,A3,A♯3,B3,C4,C♯4,D4,D♯4,E4,F4,F♯4', `F the names kept (${d.fixed})`);
     ok(await page.$eval('#temper [data-t="mean"]', (b) => b.getAttribute('aria-pressed') === 'true'), 'F the switch shows Meantone');
