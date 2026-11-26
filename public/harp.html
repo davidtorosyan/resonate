@@ -51,6 +51,12 @@
       #ff:disabled { opacity: 0.35; }
       #stage[data-demo] #ff { background: rgba(166,79,255,0.28); border-color: rgba(166,79,255,0.7); }
       @media (max-width: 560px) { #ff span { display: none; } }
+      #temper { position: absolute; bottom: 18px; right: calc(50% + 44px); z-index: 2; display: flex; border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; overflow: hidden; }
+      #temper[hidden] { display: none; }
+      #temper button { border: none; border-radius: 0; min-height: 44px; background: rgba(255,255,255,0.05); padding: 0 0.85rem; font-size: 0.85rem; }
+      #temper button + button { border-left: 1px solid rgba(255,255,255,0.14); }
+      #temper button[aria-pressed="true"] { background: rgba(166,79,255,0.4); }
+      @media (max-width: 560px) { #temper { right: auto; left: 50%; transform: translateX(-50%); bottom: 82px; } }
       #go:active { transform: translateX(-50%) scale(0.94); }
       #remove { position: absolute; display: none; transform: translate(-50%, -50%); background: #3a1530; border-color: #ff7aa8; color: #ffc2d6; }
     </style>
@@ -76,7 +82,7 @@
       </select>
       <button id="notes" aria-pressed="false" aria-label="Find the notes">♪ Notes</button>
       <button id="info" aria-pressed="false" aria-label="Show the numbers" class="mono">123</button>
-      <span id="version" class="mono">v116</span>
+      <span id="version" class="mono">v117</span>
     </header>
     <div id="stage" data-locked="1">
       <canvas id="cv"></canvas>
@@ -86,7 +92,10 @@
       <button id="go" data-mode="start" aria-label="Start the harp">▶ Start</button>
       <button id="add" aria-label="Add a string">+ string</button>
       <button id="ff" aria-label="Show the steps to the next tuning">⏩<span></span></button>
+      <div id="temper" role="group" aria-label="Tuning" hidden>
+        <button data-t="pyth" title="12 by fifths (Pythagorean)">Fifths</button><button data-t="mean" title="Meantone (quarter-comma)">Meantone</button><button data-t="et" title="Equal temperament">Equal</button>
+      </div>
     </div>
-    <script type="module" src="harp.js?v=116"></script>
+    <script type="module" src="harp.js?v=117"></script>
   </body>
 </html>

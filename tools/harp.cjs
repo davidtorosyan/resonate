@@ -278,18 +278,51 @@ async function main() {
     d = await D(page);
     ok(doneY && d.stage === 'pyth' && d.state.strings.length === 13, `F Pentatonic → 12 by fifths (${d.stage}, ${d.state.strings.length} strings)`);
     ok(d.demoLog.length === 7 && d.demoLog.every((x) => x.sorted) && d.fixed.every(Boolean) && new Set(d.fixed).size === 13, `F seven more named in place (${d.demoLog.map((x) => x.name)})`);
-    await page.click('#ff');
-    const doneE = await until(() => !window.resonateDebug().demo);
+    // 12 notes: no ⏩, the switch instead; the names kept as it glides
+    ok(await page.$eval('#ff', (b) => b.hidden) && !(await page.$eval('#temper', (t) => t.hidden)), 'F with 12 notes: Fifths · Meantone · Equal instead of ⏩');
+    await page.click('#temper [data-t="mean"]');
+    ok(await until(() => window.resonateDebug().stage === 'mean' && !window.resonateDebug().tempering), 'F Meantone: every bridge glides there');
     d = await D(page);
-    ok(doneE && d.stage === 'et' && near(d.freqs[7], d.freqs[0] * 2 ** (7 / 12), 1e-6), 'F 12 by fifths → Equal temperament (a tempered fifth)');
-    ok(await page.$eval('#ff', (b) => b.disabled), 'F nothing after Equal temperament');
+    ok(d.fixed.join() === 'F♯3,G3,G♯3,A3,A♯3,B3,C4,C♯4,D4,D♯4,E4,F4,F♯4', `F the names kept (${d.fixed})`);
+    ok(await page.$eval('#temper [data-t="mean"]', (b) => b.getAttribute('aria-pressed') === 'true'), 'F the switch shows Meantone');
+    await page.click('#temper [data-t="et"]');
+    const doneE = await until(() => window.resonateDebug().stage === 'et' && !window.resonateDebug().tempering);
+    d = await D(page);
+    ok(doneE && near(d.freqs[7], d.freqs[0] * 2 ** (7 / 12), 1e-6) && d.fixed.every(Boolean), 'F Equal: a tempered fifth, the names kept');
+    await page.click('#temper [data-t="pyth"]');
+    ok(await until(() => window.resonateDebug().stage === 'pyth' && !window.resonateDebug().tempering), 'F and back to Fifths');
     await page.selectOption('#preset', 'reset'); await sleep(150);
     await page.click('#ff'); await sleep(300); await page.click('#ff'); await sleep(150);
     d = await D(page);
     ok(!d.demo && d.stage === 'penta' && d.fixed.join() === 'F♯3,G♯3,A♯3,C♯4,D♯4,F♯4', 'F a second tap skips to the end, every string named');
+    // ♪ Notes knows every tuning's notes: an equal-tempered G, a meantone A♯ — plucked, they sparkle
+    await page.selectOption('#preset', 'reset'); await sleep(150);
+    d = await D(page);
+    const nm = await page.evaluate(() => [window.resonateDebug().noteOf(2 ** (-1 / 12)), window.resonateDebug().noteOf(4 / 5), window.resonateDebug().noteOf(0.83)]);
+    ok(nm[0] === 'G3' && nm[1] === 'A♯3' && nm[2] === null, `F ♪ Notes: an ET G3 and a meantone (pure) A♯3 are notes, 0.83 isn't (${nm})`);
+    await page.evaluate(() => window.resonateDebug().setL(1, 2 ** (-1 / 12)));
+    if (!(await D(page)).state.notes) await page.click('#notes');
+    const sx = await P(page, 1, 0.3); await page.mouse.click(sx.x, sx.y); await sleep(150);
+    ok((await D(page)).glows[1], 'F an equal-tempered G played: a sparkle');
+    await page.selectOption('#preset', 'et'); await sleep(150);
+    d = await D(page);
+    ok(d.fixed.every(Boolean) && d.state.notes, 'F a tuning preset names its strings');
     await page.selectOption('#preset', 'mean'); await sleep(150);
     d = await D(page);
     ok(d.stage === 'mean' && near(d.freqs[4] / d.freqs[0], 1.25, 1e-9), 'F Meantone: a pure major third (5:4)');
+    await ctx.close();
+  }
+  {
+    // the switch on a phone: a row of its own, over nothing
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(BASE + 'harp.html');
+    await page.waitForFunction(() => window.resonateDebug);
+    await page.selectOption('#preset', 'pyth'); await sleep(400);
+    const r = await page.evaluate(() => { const b = (id) => document.getElementById(id).getBoundingClientRect(); const d = window.resonateDebug(); const st = b('stage'); let low = 0; for (let i = 0; i < d.state.strings.length; i++) low = Math.max(low, d.grip(i).y + st.top + 8); return { t: b('temper'), go: b('go'), add: b('add'), low, w: innerWidth }; });
+    const apart = (a, b) => a.bottom <= b.top || b.bottom <= a.top || a.right <= b.left || b.right <= a.left;
+    ok(r.t.left >= 0 && r.t.right <= r.w && apart(r.t, r.go) && apart(r.t, r.add) && r.t.top >= r.low, `P the switch on a row of its own (${r.t.top.toFixed(0)} ≥ ${r.low.toFixed(0)})`);
     await ctx.close();
   }
   ok(!errors.length, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
