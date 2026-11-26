@@ -1,10 +1,11 @@
 // Harp (Tools → Harp): strings tuned by length.
 //   L  iPad landscape: two F♯3 strings, a tap plucks (185 Hz), a strum across plucks both, a bridge dragged near ⅔
 //      snaps there (strong) and sounds a pure fifth (277.5 Hz), gentle / off snapping, the pendant at ½ and ⅓
-//      (only the even / every third harmonic rings), off a string → back to its tray, 👁 shows lengths and beats,
+//      (only the even / every third harmonic rings), off a string → back to its tray, 123 shows lengths and beats,
 //      + string, a long press removes one, presets (Pentatonic: 1, 8/9, 64/81, 2/3, 16/27; Reset), another open
 //      note, the state across a reload
 //   P  iPhone portrait: strings stand up, the same pluck and bridge snap
+//   G  an iOS-like gate (a context starts only from a resume in a finger's lift): the very first tap sounds
 // usage: node harp.cjs   (BASE=…)
 const { chromium } = require('playwright');
 const { ok, done, fail } = require('./lib/check.cjs');
@@ -82,11 +83,11 @@ async function main() {
     await drag(page, await P(page, 0, 1 / 3), { x: dock.x - 40, y: dock.y + 300 });
     d = await D(page);
     ok(d.state.pendant === null, 'L the pendant dropped off a string goes back to its tray');
-    // 👁
+    // 123
     await page.click('#info'); await sleep(80);
     await page.mouse.click(s0.x, s0.y); await sleep(50); await page.mouse.click(s2.x, s2.y); await sleep(80);
     d = await D(page);
-    ok(d.state.info && /no beats/.test(d.beats), `L 👁: a pure fifth has no beats ("${d.beats}")`);
+    ok(d.state.info && /no beats/.test(d.beats), `L 123: a pure fifth has no beats ("${d.beats}")`);
     // + and a long press removes
     await page.click('#add'); await sleep(80);
     d = await D(page);
@@ -102,7 +103,7 @@ async function main() {
     d = await D(page);
     const want = [1, 8 / 9, 64 / 81, 2 / 3, 16 / 27];
     ok(d.state.strings.length === 5 && d.state.strings.every((s, i) => near(s.L, want[i], 1e-12)), 'L Pentatonic: five folded pure fifths');
-    ok(await page.evaluate(() => window.resonateDebug().frac(64 / 81)) === '64/81', 'L 👁 names 64/81 exactly');
+    ok(await page.evaluate(() => window.resonateDebug().frac(64 / 81)) === '64/81', 'L 123 names 64/81 exactly');
     await page.selectOption('#note', '60'); await sleep(50);
     d = await D(page);
     ok(near(d.freqs[0], 261.63, 0.01) && near(d.freqs[3], 261.63 * 1.5, 0.02), 'L another open note (C4) moves every string');
@@ -135,6 +136,23 @@ async function main() {
     d = await D(page);
     ok(near(d.state.strings[1].L, 0.5, 1e-9), `P the bridge dragged near ½ snaps to the octave (${d.state.strings[1].L.toFixed(4)})`);
     ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'P no sideways scroll');
+    await ctx.close();
+  }
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    await ctx.addInitScript(() => {
+      const AC = window.AudioContext, resume = AC.prototype.resume;
+      window.AudioContext = class extends AC { constructor(o) { super(o); AC.prototype.suspend.call(this); } };
+      AC.prototype.resume = function () { const t = window.event?.type; return ['pointerup', 'touchend', 'click'].includes(t) ? resume.call(this) : Promise.resolve(); };
+    });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(BASE + 'harp.html');
+    await page.waitForFunction(() => window.resonateDebug);
+    const s = await P(page, 0, 0.5);
+    await page.touchscreen.tap(s.x, s.y); await sleep(300);
+    const d = await D(page);
+    ok(d.audio === 'running' && d.plucks.length === 1 && d.voices === 1, `G the first tap sounds behind an iOS-like gate (${d.audio}, ${d.voices} sounding)`);
     await ctx.close();
   }
   ok(!errors.length, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
