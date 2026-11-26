@@ -311,6 +311,7 @@ function draw() {
   if (!G) return;
   const { W, H } = G, now = performance.now();
   cx.clearRect(0, 0, W, H);
+  tagsPlaced = [];
   const n = S.strings.length;
   // the nut
   const a0 = pt(0, 0), a1 = pt(n - 1, 0);
@@ -390,9 +391,17 @@ function draw() {
   }
 }
 // a note's tag above its bridge; k (1 → 0) = a chord button's flash: white and a little larger, fading back to gold
+let tagsPlaced = [];               // the tags drawn so far this frame
 function drawTag(i, t, k = 0) {
-  const q = tagPt(i), sc = 1 + 0.18 * k;
-  cx.font = `600 ${Math.round(13 * sc)}px system-ui, -apple-system, sans-serif`; const w = cx.measureText(t).width + 16 * sc, h = 22 * sc;
+  const q = { ...tagPt(i) }, sc = 1 + 0.18 * k;
+  cx.font = `600 ${Math.round(13 * sc)}px system-ui, -apple-system, sans-serif`; let w = cx.measureText(t).width + 16 * sc; const h = 22 * sc;
+  // mostly over one already drawn (the comma's tag beside its near twin's): just below its own bridge instead
+  const covers = (r) => Math.min(r.x + r.w / 2, q.x + w / 2) - Math.max(r.x - r.w / 2, q.x - w / 2) > 0.5 * Math.min(r.w, w) && Math.abs(r.y - q.y) < (r.h + h) / 2;
+  if (tagsPlaced.some(covers)) {
+    const e = pt(i, S.strings[i].L); q.y = G.land ? e.y + 22 : e.y + 26;
+    if (/¢/.test(t)) { t = t.replace(/^\S+ /, ""); w = cx.measureText(t).width + 16 * sc; }   // its twin's name is beside it
+  }
+  tagsPlaced.push({ x: q.x, y: q.y, w, h });
   if (k > 0) { cx.fillStyle = `rgba(255,236,170,${0.5 * k})`; cx.beginPath(); cx.arc(q.x, q.y, w / 2 + 10 * k, 0, 7); cx.fill(); }
   const mix = (a, b) => Math.round(a + (b - a) * k);
   cx.fillStyle = `rgb(${mix(233, 255)},${mix(196, 255)},${mix(106, 255)})`;
@@ -632,8 +641,40 @@ function stageOf() {
   return null;
 }
 const TWELVE = new Set(["pyth", "mean", "et"]);
+// the chain of pure fifths from the root, each folded into the octave below it: n strings = the root, its octave
+// (from 2) and n − 2 fifths. 6 strings = Pentatonic, 13 = 12 by fifths; the 13th fifth (14 strings) lands 23.5¢
+// sharp of the root — the Pythagorean comma.
+const foldL = (k) => { let x = 1.5 ** k; while (x >= 2) x /= 2; return 1 / x; };
+function chainSpec(n) {
+  const out = [{ L: 1, k: 0 }];
+  if (n >= 2) out.push({ L: 0.5, k: -1 });
+  for (let k = 1; k <= n - 2; k++) out.push({ L: foldL(k), k });
+  return out.sort((a, b) => b.L - a.L);
+}
+function chainCount() {
+  const n = S.strings.length, mine = S.strings.map((s) => s.L).sort((a, b) => b - a);
+  if (n > MAXS) return 0;
+  const ref = chainSpec(n).map((x) => x.L);
+  return ref.every((L, i) => Math.abs(mine[i] - L) / L < 0.002) ? n : 0;
+}
+// a string's tag: its note, and how far off the piano's key it is once that's past the comma (k ≥ 12)
+const tagOf = (L, k) => {
+  if (!(k >= 12)) return nameOf(L);
+  const m = S.base + 12 * Math.log2(1 / L), r = Math.round(m), c = Math.round((m - r) * 100);
+  return `${noteName(r)} ${c >= 0 ? "+" : "−"}${Math.abs(c)}¢`;
+};
+// ⏩'s next stopping point: along the chain to 5 notes (6 strings), then to 12 (13); from 12 by fifths, Meantone or
+// 2 strings as before
+function ffTarget() {
+  const n = chainCount();
+  if (n && n < 6) return { n: 6, name: TUNINGS.penta.name };
+  if (n && n < 13) return { n: 13, name: TUNINGS.pyth.name };
+  const st = stageOf(), to = st && NEXT[st];
+  if (st === "two") return { n: 6, name: TUNINGS.penta.name };
+  return to ? { key: to, name: TUNINGS[to].name } : null;
+}
 function ffButton() {
-  const b = $("ff"), st = stageOf(), nx = demo ? demo.to : st && NEXT[st];
+  const b = $("ff"), st = stageOf(), tg = demo ? demo.to : ffTarget(), nx = tg && tg.name;
   const twelve = !demo && (TWELVE.has(st) || tempering);
   b.hidden = twelve;
   const t = $("temper");
@@ -644,9 +685,11 @@ function ffButton() {
   if (G && G.lens !== lensOn()) requestAnimationFrame(layout);
   for (const x of t.querySelectorAll("button")) x.setAttribute("aria-pressed", x.dataset.t === (tempering || st));
   if (!!G && (G.foot > FOOT) !== (twelve && G.W < 560)) requestAnimationFrame(layout);
-  b.disabled = !nx;
-  b.title = nx ? (demo ? "Skip to " : "Show the steps to ") + TUNINGS[nx].name : "⏩ works from a preset's strings";
-  b.querySelector("span").textContent = nx ? TUNINGS[nx].name : "";
+  b.disabled = !nx || (demo && demo.step);
+  b.title = nx ? (demo ? "Skip to " : "Show the steps to ") + nx : "⏩ works from a preset's strings";
+  b.querySelector("span").textContent = nx || "";
+  const sb = $("step"), n = chainCount();
+  sb.disabled = demo ? !demo.step : !(n && n < MAXS);
 }
 
 // once there are 12 notes: Fifths · Meantone · Equal — every bridge glides to that tuning (by rank, low → high),
@@ -717,10 +760,10 @@ async function strumAll(gap = 90) {
 // a note won: it sparkles, its name sticks above it, and it slides into its place among the strings (low → high)
 const nameOf = (L) => noteName(Math.round(S.base + 12 * Math.log2(1 / L)));
 const demoLog = [];
-async function reveal(j) {
+async function reveal(j, kk) {
   S.strings[j].sparkle = true; tick(); await wait(550);
   delete S.strings[j].sparkle;
-  S.strings[j].fixed = nameOf(S.strings[j].L);
+  S.strings[j].fixed = tagOf(S.strings[j].L, kk);
   pluck(j); draw();
   const k = S.strings.filter((s, i) => i !== j && s.L > S.strings[j].L + 1e-9).length;
   while (j > k) { moveString(j, j - 1); j--; draw(); await wait(110); }
@@ -731,7 +774,7 @@ async function reveal(j) {
 }
 // one pure fifth from string src, by ear: the pendant at ⅓ on it (its twelfth), a new string whose octave harmonic
 // (the pendant at ½) is slid until it matches; folded down an octave (length doubled) when it lands above the octave
-async function fifthFrom(src) {
+async function fifthFrom(src, k) {
   pend(src, 1 / 3); pluck(src); await wait(800);
   const j = addStr(); await wait(250);
   pend(j, 1 / 2);
@@ -741,57 +784,61 @@ async function fifthFrom(src) {
     pend(j, 1 / 2); await glide(j, S.strings[j].L * 2); pluck(j); await wait(800);
   }
   pend(null);
-  return reveal(j);                                             // only the note in the octave is named
+  return reveal(j, k);
+}
+// the newest fifth on the harp (where the next one is taken from): the chain's k = n − 2, the root for n ≤ 2
+const newest = () => { const n = S.strings.length, L = n <= 2 ? 1 : foldL(n - 2); return S.strings.findIndex((s) => Math.abs(s.L - L) / L < 0.002); };
+// the octave: the pendant at ½ on the root, a second string slid until its open note matches
+async function octaveStep() {
+  pluck(0); await wait(700); await reveal(0);
+  pend(0, 1 / 2); pluck(0); await wait(800);
+  const o = S.strings.length > 1 ? 1 : addStr(); await wait(250);
+  await glide(o, 0.5); pend(null); pluck(o); await wait(800); await reveal(o);
+}
+// one more along the chain; past 12 fifths it isn't a new note: tagged with its offset, then played with its near twin
+async function chainStep() {
+  if (S.strings.length < 2) return octaveStep();
+  const k = S.strings.length - 1, j = await fifthFrom(newest(), k);
+  if (k >= 12) {
+    let t = -1, bd = Infinity;
+    S.strings.forEach((x, i) => { const d = Math.abs(Math.log2(x.L / S.strings[j].L)); if (i !== j && d < bd) { bd = d; t = i; } });
+    for (let r = 0; r < 2; r++) { pluck(t); pluck(j); await wait(1800); }
+  }
+}
+async function chainTo(n) {
+  if (S.strings.length < 2 || !chainCount()) await octaveStep();
+  else { for (const x of S.strings) x.fixed = x.fixed || nameOf(x.L); draw(); await wait(300); }
+  while (S.strings.length < n) await fifthFrom(newest(), S.strings.length - 1);
+  await sortStrings(); await wait(300);
+  if (n === 13) {
+    // the wolf: the last fifth, from that string up to the octave, is 23.5¢ narrow
+    const w = S.strings.findIndex((x) => Math.abs(x.L - TUNINGS.pyth.L[11]) < 1e-6), o = S.strings.findIndex((x) => Math.abs(x.L - 0.5) < 1e-6);
+    for (let r = 0; r < 2; r++) { pluck(w); pluck(o); await wait(1400); }
+  } else await strumAll();
 }
 const SCRIPTS = {
-  async penta() {
-    // the octave: the pendant at ½ on the root, a second string slid until its open note matches
-    pluck(0); await wait(700); await reveal(0);
-    pend(0, 1 / 2); pluck(0); await wait(800);
-    const o = S.strings.length > 1 ? 1 : addStr(); await wait(250);   // a second string beside it (from 1 string)
-    await glide(o, 0.5); pend(null); pluck(o); await wait(800); await reveal(o);
-    let src = 0;
-    for (let k = 0; k < 4; k++) src = await fifthFrom(src);
-    await sortStrings(); await wait(300); await strumAll();
-  },
-  async pyth() {
-    for (const s of S.strings) s.fixed = nameOf(s.L);
-    draw(); await wait(300);
-    let src = S.strings.findIndex((s) => Math.abs(s.L - 64 / 81) < 1e-3);
-    for (let k = 0; k < 7; k++) src = await fifthFrom(src);
-    await sortStrings(); await wait(300);
-    // the twelfth fifth should come home to the octave — it lands 23.5¢ sharp of it, and the two beat
-    const top = S.strings.findIndex((s) => Math.abs(s.L - 0.5) < 1e-6), last = src;
-    pend(last, 1 / 3); pluck(last); await wait(800);
-    const j = addStr(); pend(j, 1 / 2);
-    await glide(j, S.strings[last].L * 2 / 3); pend(null);
-    for (let r = 0; r < 2; r++) { pluck(top); pluck(j); await wait(1600); }
-    removeString(j); await wait(400);
-    // the wolf: the last fifth, from that string to the octave, is 23.5¢ narrow
-    const w = S.strings.findIndex((s) => Math.abs(s.L - TUNINGS.pyth.L[11]) < 1e-6);
-    for (let r = 0; r < 2; r++) { pluck(w); pluck(S.strings.findIndex((s) => Math.abs(s.L - 0.5) < 1e-6)); await wait(1400); }
-  },
   async et() {
     await sortStrings();
     await glideAll(TUNINGS.et.L, 2600); await wait(300); await strumAll();
   },
 };
-async function runDemo() {
+async function runDemo(step) {
   if (demo) return stopDemo(true);                                // tapped again: straight to the end
-  const st = stageOf(), to = st && NEXT[st];
-  if (!to) return;
+  let to;
+  if (step) { const n = chainCount(); if (!n || n >= MAXS) return; to = { n: n + 1, step: true }; }
+  else { to = ffTarget(); if (!to) return; }
   audio();
-  demo = { to, timers: [] };
+  demo = { to, step: !!step, timers: [] };
   demoLog.length = 0;
   if (!S.notes) S.notes = true;                                   // the names it reveals show with Notes on
   ffButton(); stage.dataset.demo = "1";
-  try { await SCRIPTS[to](); } catch {}
+  try { await (to.n ? (step ? chainStep() : chainTo(to.n)) : SCRIPTS[to.key]()); } catch {}
   if (demo?.to === to) finishDemo(to);
 }
 function finishDemo(to) {
   demo = null;
   delete stage.dataset.demo;
-  S.strings = TUNINGS[to].L.map((L) => ({ L, fixed: nameOf(L) }));
+  S.strings = to.n ? chainSpec(to.n).map(({ L, k }) => ({ L, fixed: tagOf(L, k) })) : TUNINGS[to.key].L.map((L) => ({ L, fixed: nameOf(L) }));
   S.pendant = null;
   save(); controls(); layout();
 }
@@ -801,7 +848,8 @@ function stopDemo(finish) {
   for (const t of demo.timers) t();
   if (finish) finishDemo(to); else { demo = null; delete stage.dataset.demo; ffButton(); }
 }
-$("ff").addEventListener("click", () => { if (!startShown()) runDemo(); });
+$("ff").addEventListener("click", () => { if (!startShown() && !demo?.step) runDemo(); });
+$("step").addEventListener("click", () => { if (!startShown() && !(demo && !demo.step)) runDemo(true); });
 $("snap").addEventListener("change", (e) => { S.snap = e.target.value; e.target.blur(); save(); controls(); });
 $("info").addEventListener("click", () => { S.info = !S.info; save(); controls(); draw(); });
 $("zoom").addEventListener("click", () => { S.zoom = !S.zoom; save(); controls(); layout(); });
@@ -826,6 +874,6 @@ probe();
 window.resonateDebug = () => ({
   state: JSON.parse(JSON.stringify(S)), freqs: S.strings.map((_, i) => freqOf(i)), plucks: plucks.map((p) => ({ ...p })),
   land: G?.land, span: G?.span, beats: $("beats").textContent, pt: (i, a) => pt(i, a), dock: G && { ...G.dock },
-  audio: ac?.state || null, lens: !!G?.lens, flash: S.strings.map((x) => flashOf(x, performance.now()) > 0), frac, clinks, locked, bin: () => binPt(), binHot: !!gripOff && drags.get("g") != null, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), stage: stageOf(), demo: demo && demo.to, tempering, setL: (i, L) => { S.strings[i].L = L; draw(); }, noteOf: (L) => noteOf(L), demoLog: demoLog.map((x) => ({ ...x })), speed: (v) => { demoSpeed = v; }, lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
+  audio: ac?.state || null, lens: !!G?.lens, flash: S.strings.map((x) => flashOf(x, performance.now()) > 0), frac, clinks, locked, bin: () => binPt(), binHot: !!gripOff && drags.get("g") != null, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), stage: stageOf(), demo: demo && (demo.to.key || (demo.step ? "step" : demo.to.n === 6 ? "penta" : demo.to.n === 13 ? "pyth" : String(demo.to.n))), chain: chainCount(), tempering, setL: (i, L) => { S.strings[i].L = L; draw(); }, noteOf: (L) => noteOf(L), demoLog: demoLog.map((x) => ({ ...x })), speed: (v) => { demoSpeed = v; }, lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
   ending: (f) => { makeCtx(); const d = buffer(f, null).getChannelData(0), n = d.length, w = Math.round(n * 0.01); let pk = 0, e = 0; for (let k = 0; k < n; k++) pk = Math.max(pk, Math.abs(d[k])); for (let k = n - w; k < n; k++) e = Math.max(e, Math.abs(d[k])); return { dur: n / ac.sampleRate, peak: pk, end: e / pk }; }, voices: voices.size, partials: (f, x) => partials(f, x, 48000),
 });

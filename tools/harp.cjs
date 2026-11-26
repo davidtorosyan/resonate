@@ -374,6 +374,49 @@ async function main() {
     await ctx.close();
   }
   {
+    // + fifth: one step along the chain of fifths; ⏩ from any count to the next stop; past 12 the comma
+    const ctx = await browser.newContext({ viewport: { width: 1180, height: 820 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(BASE + 'harp.html');
+    await page.waitForFunction(() => window.resonateDebug);
+    await sleep(700); if ((await D(page)).lockShown) { await page.click('#go'); await sleep(500); }
+    await page.selectOption('#preset', 'reset'); await sleep(150);
+    await page.evaluate(() => window.resonateDebug().speed(0.03));
+    const until = async (fn, ms = 30000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await page.evaluate(fn)) return true; await sleep(100); } return false; };
+    const step = async () => { await page.click('#step'); return until(() => !window.resonateDebug().demo); };
+    await step();
+    let d = await D(page);
+    ok(d.chain === 2 && near(d.state.strings[1].L, 0.5, 1e-9) && d.fixed.join() === 'F♯3,F♯4', `S + fifth from one string: the octave first (${d.fixed})`);
+    await step();
+    d = await D(page);
+    ok(d.chain === 3 && d.fixed.join() === 'F♯3,C♯4,F♯4', `S then a fifth, named and in place (${d.fixed})`);
+    for (let k = 0; k < 5; k++) await step();
+    d = await D(page);
+    ok(d.chain === 8 && d.fixed.every(Boolean) && !d.demo, `S five more: 7 notes (${d.fixed})`);
+    ok((await page.$eval('#ff span', (e) => e.textContent)) === '12 by fifths' && !(await page.$eval('#ff', (b) => b.disabled)), 'S ⏩ from 7 notes offers 12 by fifths');
+    await page.click('#ff');
+    ok(await until(() => !window.resonateDebug().demo, 60000), 'S ⏩ runs');
+    d = await D(page);
+    ok(d.chain === 13 && d.stage === 'pyth' && d.fixed.every((t) => !/¢/.test(t)), `S … to 12 by fifths (${d.chain} strings)`);
+    ok(!(await page.$eval('#step', (b) => b.disabled)) && await page.$eval('#step', (b) => getComputedStyle(b).display !== 'none'), 'S + fifth still there with 12 notes');
+    await step();
+    d = await D(page);
+    const comma = d.fixed.find((t) => /¢/.test(t));
+    ok(d.chain === 14 && comma === 'F♯3 +23¢', `S the 13th fifth: no new note, F♯3 23.5¢ sharp (${comma})`);
+    const last2 = d.plucks.slice(-2).map((p) => d.fixed[p.i]).sort().join();
+    ok(last2 === 'F♯3,F♯3 +23¢', `S … played with its near twin (${last2})`);
+    ok(d.stage === null && await page.$eval('#temper', (t) => t.hidden) && await page.$eval('#ff', (b) => b.disabled), 'S past 12: no switch, nothing for ⏩');
+    await page.click('#step'); await sleep(150); await page.click('#step'); await sleep(200);
+    d = await D(page);
+    ok(!d.demo && d.chain === 15 && d.fixed.filter((t) => /¢/.test(t)).length === 2, `S a second tap finishes the step (${d.fixed.filter((t) => /¢/.test(t))})`);
+    await page.selectOption('#preset', 'et'.replace('et', 'pyth')); await sleep(150);
+    ok((await D(page)).chain === 13 && !(await page.$eval('#temper', (t) => t.hidden)), 'S the 12-by-fifths preset: the switch back');
+    await page.click('#temper [data-t="et"]'); await until(() => window.resonateDebug().stage === 'et' && !window.resonateDebug().tempering);
+    ok(await page.$eval('#step', (b) => b.disabled), 'S + fifth off once the strings leave the chain (Equal)');
+    await ctx.close();
+  }
+  {
     // the switch on a phone: a row of its own, over nothing
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
     const page = await ctx.newPage();
@@ -381,9 +424,10 @@ async function main() {
     await page.goto(BASE + 'harp.html');
     await page.waitForFunction(() => window.resonateDebug);
     await page.selectOption('#preset', 'pyth'); await sleep(400);
-    const r = await page.evaluate(() => { const b = (id) => document.getElementById(id).getBoundingClientRect(); const d = window.resonateDebug(); const st = b('stage'); let low = 0; for (let i = 0; i < d.state.strings.length; i++) low = Math.max(low, d.grip(i).y + st.top + 8); return { t: b('temper'), c: b('chords'), go: b('go'), add: b('add'), low, w: innerWidth }; });
+    const r = await page.evaluate(() => { const b = (id) => document.getElementById(id).getBoundingClientRect(); const d = window.resonateDebug(); const st = b('stage'); let low = 0; for (let i = 0; i < d.state.strings.length; i++) low = Math.max(low, d.grip(i).y + st.top + 8); return { t: b('temper'), c: b('chords'), st: b('step'), go: b('go'), add: b('add'), low, w: innerWidth }; });
     const apart = (a, b) => a.bottom <= b.top || b.bottom <= a.top || a.right <= b.left || b.right <= a.left;
     ok(r.t.left >= 0 && r.t.right <= r.w && apart(r.t, r.go) && apart(r.t, r.add) && r.t.top >= r.low, `P the switch on a row of its own (${r.t.top.toFixed(0)} ≥ ${r.low.toFixed(0)})`);
+    ok(r.st.right <= r.w && apart(r.st, r.add) && apart(r.st, r.go) && apart(r.st, r.c), `P + fifth fits beside + string (${r.st.left.toFixed(0)}–${r.st.right.toFixed(0)} of ${r.w})`);
     ok(r.c.left >= 0 && r.c.right <= r.w && apart(r.c, r.t) && apart(r.c, r.go) && apart(r.c, r.add) && r.c.top >= r.low, `P the chords beside the switch (${r.t.right.toFixed(0)} ≤ ${r.c.left.toFixed(0)} ≤ ${r.c.right.toFixed(0)} of ${r.w})`);
     await ctx.close();
   }

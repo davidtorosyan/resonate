@@ -1,5 +1,5 @@
 // Mic + YIN pitch detection: the tuner's (shell/tuner.js), Sing's, Record's and Voice's.
-import { activeProfile } from "./profiles.js?v=124";
+import { activeProfile } from "./profiles.js?v=125";
 
 export const MIN_RMS = 0.012;    // loudness gate (−38 dB) until this device's volume is calibrated
 export const GATE_DB = 6;        // a calibrated gate: this far above the room's noise, or under your quietest hold when that's higher
