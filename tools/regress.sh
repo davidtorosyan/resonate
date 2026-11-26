@@ -123,6 +123,7 @@ if [ "$TIER" = main ]; then
   run playfocus 900 env SHOTS=0 node playfocus.cjs # E3: a highlight's exact span for assistants, a double-tap picks one chord
   run playmarks 900 env SHOTS=0 node playmarks.cjs # E6: bookmarks — made, tabs on the music, the list, per song, the shell's Score
   run playbar 300 env SHOTS=0 node playbar.cjs # one bar at a time: a held ‹ › / Shift + ← → starts the page a bar on
+  run harp 200 node harp.cjs # Tools → Harp: strings tuned by length — pluck, strum, bridge snapping, the pendant's harmonics, presets
   run playfinger 1800 env SHOTS=0 node playfinger.cjs # E7: fingering on the shell's Piano — #fing, digits, the drawn hand, the hands' rules, the cache, off = today
 
   # ---- PDF → Song: the Reader (a synthetic fixture with clean-ups; the real recorded Chromium run) --------
