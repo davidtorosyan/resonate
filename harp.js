@@ -55,13 +55,13 @@ function layout() {
   // the foot (FOOT px) holds ▶ Start / ■, centred under the strings and their grips
   const W = r.width, H0 = r.height, H = H0 - FOOT, land = W >= H, n = S.strings.length, m = 28;
   if (land) {
-    const nut = m + 24, end = W - m - 64;             // the pendant's tray on the right
+    const nut = m + 24, end = W - m - 24;
     const span = Math.min((H - 2 * m) / n, 110), top = (H - span * n) / 2;
-    G = { W, H: H0, land, nut, Lpx: end - nut, span, across: (i) => top + (n - 1 - i + 0.5) * span, dock: { x: W - m - 22, y: m + 22 } };
+    G = { W, H: H0, land, nut, Lpx: end - nut, span, across: (i) => top + (n - 1 - i + 0.5) * span, dock: { x: m + 22, y: H0 - 42 } };      // the pendant's tray: the foot's left
   } else {
-    const nut = H - m - 24, end = m + 70;               // the tray at the top
+    const nut = H - m - 24, end = m + 40;               // room above for a ✦ or a note's tag
     const span = Math.min((W - 2 * m) / n, 90), left = (W - span * n) / 2;
-    G = { W, H: H0, land, nut, Lpx: nut - end, span, across: (i) => left + (i + 0.5) * span, dock: { x: W - m - 18, y: m + 18 } };
+    G = { W, H: H0, land, nut, Lpx: nut - end, span, across: (i) => left + (i + 0.5) * span, dock: { x: m + 18, y: H0 - 42 } };
   }
   draw();
 }
@@ -75,18 +75,18 @@ const acrossOf = (x, y) => (G.land ? y : x);
 
 // ---------- snapping ----------
 const RATIOS = [1 / 3, 1 / 2, 2 / 3, 3 / 4, 4 / 5, 5 / 6, 1, 6 / 5, 5 / 4, 4 / 3, 3 / 2, 2, 3];
-const NODES = [];
-for (let q = 2; q <= 6; q++) for (let p = 1; p < q; p++) if (gcd(p, q) === 1) NODES.push(p / q);
-function gcd(a, b) { return b ? gcd(b, a % b) : a; }
+// the pendant snaps to the nodes whose harmonic rings clearly (the octave, the twelfth, two octaves up) — not 1/5 or
+// 1/6, whose harmonics are high and faint — with a wider pull than a bridge's
+const NODES = [1 / 2, 1 / 3, 2 / 3, 1 / 4, 3 / 4];
 // pull v towards the nearest target (relative distance for lengths, absolute for fractions)
 function pull(v, targets, rel) {
   if (S.snap === "off") return v;
   let best = null, bd = Infinity;
   for (const t of targets) { const d = Math.abs(v - t) / (rel ? t : 1); if (d < bd) { bd = d; best = t; } }
   if (best == null) return v;
-  if (S.snap === "strong") return bd < (rel ? 0.018 : 0.025) ? best : v;
-  if (bd < (rel ? 0.0025 : 0.004)) return best;
-  return bd < (rel ? 0.01 : 0.014) ? best + (v - best) * 0.35 : v;  // gentle: drawn in, not stuck
+  if (S.snap === "strong") return bd < (rel ? 0.018 : 0.045) ? best : v;
+  if (bd < (rel ? 0.0025 : 0.006)) return best;
+  return bd < (rel ? 0.01 : 0.025) ? best + (v - best) * 0.35 : v;  // gentle: drawn in, not stuck
 }
 function snapLength(i, L) {
   const t = [1];
@@ -518,7 +518,7 @@ const noteSel = $("note");
 for (let m = 36; m <= 72; m++) noteSel.add(new Option(noteName(m), m));
 function controls() {
   noteSel.value = S.base;
-  $("snap").textContent = "Snap: " + S.snap;
+  $("snap").value = S.snap;
   $("info").setAttribute("aria-pressed", S.info);
   $("notes").setAttribute("aria-pressed", !!S.notes);
   $("add").disabled = S.strings.length >= 12;
@@ -536,7 +536,7 @@ $("preset").addEventListener("change", (e) => {
   save(); controls(); layout();
 });
 $("add").addEventListener("click", () => { if (S.strings.length < 12) { S.strings.push({ L: 1 }); save(); controls(); layout(); } });
-$("snap").addEventListener("click", () => { S.snap = { strong: "gentle", gentle: "off", off: "strong" }[S.snap]; save(); controls(); });
+$("snap").addEventListener("change", (e) => { S.snap = e.target.value; e.target.blur(); save(); controls(); });
 $("info").addEventListener("click", () => { S.info = !S.info; save(); controls(); draw(); });
 $("notes").addEventListener("click", () => { S.notes = !S.notes; save(); controls(); tick(); });
 

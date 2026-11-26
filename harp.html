@@ -43,6 +43,8 @@
       }
       #go[data-mode="start"] { border: none; background: #7a3fe0; color: #fff; box-shadow: 0 10px 34px rgba(0,0,0,0.55), 0 0 0 6px rgba(122,63,224,0.18); }
       #go[data-mode="stop"] { padding: 0; width: 56px; font-size: 1.3rem; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.25); }
+      #add { position: absolute; bottom: 14px; left: calc(50% + 44px); z-index: 2; height: 48px; margin-bottom: 4px; border-radius: 999px; padding: 0 1rem; }
+      #go[data-mode="start"] ~ #add { left: calc(50% + 86px); }
       #go:active { transform: translateX(-50%) scale(0.94); }
       #remove { position: absolute; display: none; transform: translate(-50%, -50%); background: #3a1530; border-color: #ff7aa8; color: #ffc2d6; }
     </style>
@@ -58,11 +60,14 @@
         <option value="reset">Reset · 2 strings</option>
         <option value="penta">Pentatonic</option>
       </select>
-      <button id="add" aria-label="Add a string">+ string</button>
-      <button id="snap" aria-label="Snapping">Snap: strong</button>
+      <select id="snap" aria-label="Snapping">
+        <option value="strong">Snap: strong</option>
+        <option value="gentle">Snap: gentle</option>
+        <option value="off">Snap: off</option>
+      </select>
       <button id="notes" aria-pressed="false" aria-label="Find the notes">♪ Notes</button>
       <button id="info" aria-pressed="false" aria-label="Show the numbers" class="mono">123</button>
-      <span id="version" class="mono">v111</span>
+      <span id="version" class="mono">v112</span>
     </header>
     <div id="stage" data-locked="1">
       <canvas id="cv"></canvas>
@@ -70,7 +75,8 @@
       <button id="remove">✕ remove</button>
       <div id="lock" hidden></div>
       <button id="go" data-mode="start" aria-label="Start the harp">▶ Start</button>
+      <button id="add" aria-label="Add a string">+ string</button>
     </div>
-    <script type="module" src="harp.js?v=111"></script>
+    <script type="module" src="harp.js?v=112"></script>
   </body>
 </html>
