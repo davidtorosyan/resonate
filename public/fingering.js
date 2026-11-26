@@ -14,12 +14,12 @@
 //   else 90 — never the speed menu) or MusicXML (sig: its length + FNV-1a) is worked out again.
 // Every record made ready (stored or worked out) is announced on window as "resonate:fingering"
 // { song, fing, computed (worked out now), from: "score" | "import" }.
-import { ALG, fingerNotes } from "./finger.js?v=127";
-import { prepare } from "./playprep.js?v=127";
-import { timeline, track } from "./playtime.js?v=127";
-import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=127";
-import { getSong, saveFing } from "./library.js?v=127";
-import { songXml, SAMPLES } from "./catalog.js?v=127";
+import { ALG, fingerNotes } from "./finger.js?v=128";
+import { prepare } from "./playprep.js?v=128";
+import { timeline, track } from "./playtime.js?v=128";
+import { parseMusicXml, DEFAULT_TEMPO } from "./musicxml.js?v=128";
+import { getSong, saveFing } from "./library.js?v=128";
+import { songXml, SAMPLES } from "./catalog.js?v=128";
 
 export { ALG };
 export const HAND = "sb"; // the hand size (D3: small, the beginner weights) — in the cache key
@@ -125,7 +125,7 @@ function onMain(w) {
 function ensureWorker() {
   if (worker !== null) return worker;
   try {
-    worker = new Worker(`${BASE}finger-worker.js?v=127`, { type: "module" });
+    worker = new Worker(`${BASE}finger-worker.js?v=128`, { type: "module" });
     worker.onmessage = (e) => {
       const w = waiting.get(e.data?.id);
       if (!w) return;

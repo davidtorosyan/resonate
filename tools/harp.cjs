@@ -329,7 +329,7 @@ async function main() {
     const sx = await P(page, 1, 0.3); await page.mouse.click(sx.x, sx.y); await sleep(150);
     ok((await D(page)).glows[1], 'F an equal-tempered G played: a sparkle');
     const opts = await page.$$eval('#preset option', (o) => o.map((x) => x.value).filter(Boolean));
-    ok(opts.join() === 'reset,penta,pyth', `F the presets: Reset, Pentatonic, 12 by fifths (${opts})`);
+    ok(opts.join() === 'reset,penta,chain11,pyth', `F the presets: Reset, Pentatonic, 11 by fifths, 12 by fifths (${opts})`);
     await page.selectOption('#preset', 'pyth'); await sleep(150);
     d = await D(page);
     ok(d.fixed.every(Boolean) && d.state.notes, 'F a tuning preset names its strings');
@@ -414,6 +414,13 @@ async function main() {
     ok((await D(page)).chain === 13 && !(await page.$eval('#temper', (t) => t.hidden)), 'S the 12-by-fifths preset: the switch back');
     await page.click('#temper [data-t="et"]'); await until(() => window.resonateDebug().stage === 'et' && !window.resonateDebug().tempering);
     ok(await page.$eval('#step', (b) => b.disabled), 'S + fifth off once the strings leave the chain (Equal)');
+    // 11 by fifths: one fifth short of 12, named; + fifth adds the last
+    await page.selectOption('#preset', 'chain11'); await sleep(150);
+    d = await D(page);
+    ok(d.chain === 12 && d.state.strings.length === 12 && d.state.strings.every((x) => x.fixed) && await page.$eval('#temper', (t) => t.hidden) && !(await page.$eval('#step', (b) => b.disabled)), `F 11 by fifths: 12 strings on the chain, named, + fifth on (${d.chain})`);
+    await page.click('#step'); await until(() => !window.resonateDebug().demo); await sleep(150);
+    d = await D(page);
+    ok(d.chain === 13 && d.stage === 'pyth' && !(await page.$eval('#temper', (t) => t.hidden)), `F … + fifth makes it 12 by fifths, the switch back (${d.stage})`);
     // ×2: a string twice the length of the one played last — an octave below it, named when that one is
     const tapS = async (i) => { const q = await P(page, i, 0.3); await page.mouse.click(q.x, q.y); await sleep(120); };
     await page.selectOption('#preset', 'penta'); await sleep(150);
