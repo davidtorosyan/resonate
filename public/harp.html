@@ -47,6 +47,7 @@
       #go[data-mode="start"] ~ #add { left: calc(50% + 86px); }
       #ff { position: absolute; bottom: 14px; right: calc(50% + 44px); z-index: 2; height: 48px; margin-bottom: 4px; border-radius: 999px; padding: 0 0.9rem; display: flex; align-items: center; gap: 0.4rem; }
       #go[data-mode="start"] ~ #ff { right: calc(50% + 86px); }
+      #ff[hidden] { display: none; }
       #ff span { font-size: 0.85rem; }
       #ff:disabled { opacity: 0.35; }
       #stage[data-demo] #ff { background: rgba(166,79,255,0.28); border-color: rgba(166,79,255,0.7); }
@@ -83,8 +84,6 @@
         <option value="reset">Reset · 2 strings</option>
         <option value="penta">Pentatonic</option>
         <option value="pyth">12 by fifths</option>
-        <option value="mean">Meantone</option>
-        <option value="et">Equal temperament</option>
       </select>
       <select id="snap" aria-label="Snapping">
         <option value="strong">Snap: strong</option>
@@ -92,8 +91,9 @@
         <option value="off">Snap: off</option>
       </select>
       <button id="notes" aria-pressed="false" aria-label="Find the notes">♪ Notes</button>
+      <button id="zoom" aria-pressed="false" aria-label="Zoom in on the bridges" title="Zoom in on the bridges" hidden>🔍</button>
       <button id="info" aria-pressed="false" aria-label="Show the numbers" class="mono">123</button>
-      <span id="version" class="mono">v119</span>
+      <span id="version" class="mono">v120</span>
     </header>
     <div id="stage" data-locked="1">
       <canvas id="cv"></canvas>
@@ -110,6 +110,6 @@
         <button data-c="F♯3 A♯3 C♯4" aria-label="Play F♯ major" title="F♯3 · A♯3 · C♯4">▶ F♯</button><button data-c="B3 D♯4 F♯4" aria-label="Play B major" title="B3 · D♯4 · F♯4">▶ B</button>
       </div>
     </div>
-    <script type="module" src="harp.js?v=119"></script>
+    <script type="module" src="harp.js?v=120"></script>
   </body>
 </html>

@@ -75,14 +75,29 @@ function layout() {
     const span = Math.min((W - 2 * m) / n, 90), left = (W - span * n) / 2;
     G = { W, H: H0, foot, land, nut, Lpx: nut - end, span, across: (i) => left + (i + 0.5) * span, dock: { x: m + 18, y: H0 - 42 } };
   }
+  G.lens = lensOn();
+  if (G.lens && (!zoomRef || zoomRef.length !== n)) zoomRef = S.strings.map((x) => refOf(x.L));
+  if (!G.lens) zoomRef = null;
   draw();
+}
+// 🔍 (12 notes): each string seen through a lens on its bridge — ±LENS cents around its equal-tempered length, sharp
+// towards the nut — so Fifths, Meantone and Equal sit visibly apart (they differ by up to ~40¢, ~2% of a length)
+const LENS = 45;
+const lensOn = () => !!S.zoom && (TWELVE.has(stageOf()) || !!tempering);
+const refOf = (L) => 2 ** (-Math.round(-12 * Math.log2(L)) / 12);
+let zoomRef = null;                // each string's reference length while the lens is on (kept through a glide)
+function lensA(i, a) {
+  const ref = zoomRef?.[i] ?? refOf(S.strings[i].L);
+  const c = 1200 * Math.log2(ref / Math.max(a, 1e-6));
+  return 0.5 - c / (2 * LENS);
 }
 // a point on string i at a (0 = the nut … 1 = the full length)
 function pt(i, a) {
   const c = G.across(i);
+  if (G.lens) a = lensA(i, a);
   return G.land ? { x: G.nut + a * G.Lpx, y: c } : { x: c, y: G.nut - a * G.Lpx };
 }
-const alongOf = (x, y) => (G.land ? (x - G.nut) / G.Lpx : (G.nut - y) / G.Lpx);
+const alongOf = (x, y) => (G.lens ? 0.5 : G.land ? (x - G.nut) / G.Lpx : (G.nut - y) / G.Lpx);
 const acrossOf = (x, y) => (G.land ? y : x);
 
 // ---------- snapping ----------
@@ -290,7 +305,7 @@ function frame() {
   raf = 0;
   draw();
   const now = performance.now();
-  if (vib.some((v) => v && now - v.t0 < v.tau * 4000) || drags.size || S.strings.some((_, i) => glowing(i))) tick();
+  if (vib.some((v) => v && now - v.t0 < v.tau * 4000) || S.strings.some((x) => flashOf(x, now) > 0) || drags.size || S.strings.some((_, i) => glowing(i))) tick();
 }
 function frac(v) {
   for (let q = 1; q <= 256; q++) { const p = Math.round(v * q); if (p && Math.abs(v - p / q) < 2e-6 * v) return q === 1 ? `${p}` : `${p}/${q}`; }
@@ -301,6 +316,7 @@ function draw() {
   const { W, H } = G, now = performance.now();
   cx.clearRect(0, 0, W, H);
   const n = S.strings.length;
+  if (G.lens) { drawLens(now); return; }
   // the nut
   const a0 = pt(0, 0), a1 = pt(n - 1, 0);
   cx.strokeStyle = "#8a6a4a"; cx.lineWidth = 8; cx.lineCap = "round";
@@ -344,12 +360,8 @@ function draw() {
     cx.fillStyle = fixedOn(i) ? "#6b6488" : drags.has("b" + i) ? "#c58cff" : "#a64fff";
     cx.strokeStyle = "rgba(255,255,255,0.7)"; cx.lineWidth = 1.5;
     cx.beginPath(); cx.arc(e.x, e.y, 9, 0, 7); cx.fill(); cx.stroke();
-    if (fixedOn(i)) {
-      const q = tagPt(i), t = s.fixed;
-      cx.font = "600 13px system-ui, -apple-system, sans-serif"; const w = cx.measureText(t).width + 16;
-      cx.fillStyle = "#e9c46a"; cx.beginPath(); cx.roundRect ? cx.roundRect(q.x - w / 2, q.y - 11, w, 22, 11) : cx.rect(q.x - w / 2, q.y - 11, w, 22); cx.fill();
-      cx.fillStyle = "#1b1838"; cx.textAlign = "center"; cx.textBaseline = "middle"; cx.fillText(t, q.x, q.y + 0.5); cx.textBaseline = "alphabetic";
-    } else if (glowing(i) || s.sparkle) {
+    if (fixedOn(i) || flashOf(s, now) > 0) drawTag(i, fixedOn(i) ? s.fixed : nameOf(s.L), flashOf(s, now));
+    else if (glowing(i) || s.sparkle) {
       const q = tagPt(i), ph = (now % 1600) / 1600, pulse = 0.5 + 0.5 * Math.sin(ph * 2 * Math.PI);
       const gr = cx.createRadialGradient(q.x, q.y, 0, q.x, q.y, 18 + 4 * pulse);
       gr.addColorStop(0, `rgba(255,220,120,${0.55 + 0.35 * pulse})`); gr.addColorStop(1, "rgba(255,220,120,0)");
@@ -378,6 +390,64 @@ function draw() {
     cx.fillText(frac(S.pendant.a / S.strings[S.pendant.s].L), pp.x, pp.y - 16);
   }
 }
+// a note's tag above its bridge; k (1 → 0) = a chord button's flash: white and a little larger, fading back to gold
+function drawTag(i, t, k = 0) {
+  const q = tagPt(i), sc = 1 + 0.18 * k;
+  cx.font = `600 ${Math.round(13 * sc)}px system-ui, -apple-system, sans-serif`; const w = cx.measureText(t).width + 16 * sc, h = 22 * sc;
+  if (k > 0) { cx.fillStyle = `rgba(255,236,170,${0.5 * k})`; cx.beginPath(); cx.arc(q.x, q.y, w / 2 + 10 * k, 0, 7); cx.fill(); }
+  const mix = (a, b) => Math.round(a + (b - a) * k);
+  cx.fillStyle = `rgb(${mix(233, 255)},${mix(196, 255)},${mix(106, 255)})`;
+  cx.beginPath(); cx.roundRect ? cx.roundRect(q.x - w / 2, q.y - h / 2, w, h, h / 2) : cx.rect(q.x - w / 2, q.y - h / 2, w, h); cx.fill();
+  cx.fillStyle = "#1b1838"; cx.textAlign = "center"; cx.textBaseline = "middle"; cx.fillText(t, q.x, q.y + 0.5); cx.textBaseline = "alphabetic";
+}
+const flashAt = new WeakMap();     // string → when a chord button plucked it
+const FLASH_MS = 900;
+const flashOf = (s, now) => { const t = flashAt.get(s); return t == null ? 0 : Math.max(0, 1 - (now - t) / FLASH_MS); };
+// 🔍: the strings through the lens — each string up to its bridge, the three tunings' places marked on it
+const TCOL = { pyth: "#7cc4ff", mean: "#ff9f6e", et: "#e8e8f0" };
+function drawLens(now) {
+  const n = S.strings.length, rank = S.strings.map((_, i) => i).sort((a, b) => S.strings[b].L - S.strings[a].L), rk = [];
+  rank.forEach((i, r) => { rk[i] = r; });
+  const marks = n === 13 ? ["pyth", "mean", "et"] : [];
+  S.strings.forEach((s, i) => {
+    const e = pt(i, s.L), z = G.land ? { x: 0, y: e.y } : { x: e.x, y: G.H - G.foot }, f = G.land ? { x: G.W, y: e.y } : { x: e.x, y: 0 };
+    // the three tunings' places for this string, faint ticks across it
+    for (const t of marks) {
+      const p = pt(i, TUNINGS[t].L[rk[i]]), h = G.span * 0.32;
+      cx.strokeStyle = TCOL[t]; cx.globalAlpha = 0.55; cx.lineWidth = 2;
+      cx.beginPath(); if (G.land) { cx.moveTo(p.x, p.y - h); cx.lineTo(p.x, p.y + h); } else { cx.moveTo(p.x - h, p.y); cx.lineTo(p.x + h, p.y); } cx.stroke();
+      cx.globalAlpha = 1;
+    }
+    cx.strokeStyle = "rgba(255,255,255,0.08)"; cx.lineWidth = 1; cx.setLineDash([3, 5]);
+    cx.beginPath(); cx.moveTo(e.x, e.y); cx.lineTo(f.x, f.y); cx.stroke(); cx.setLineDash([]);
+    // the string; it glows while it rings
+    const v = vib[i], t = v ? (now - v.t0) / 1000 : 9, ring = v ? Math.exp(-t / v.tau) : 0;
+    if (ring > 0.05) { cx.strokeStyle = `rgba(233,196,106,${0.35 * ring})`; cx.lineWidth = 10; cx.beginPath(); cx.moveTo(z.x, z.y); cx.lineTo(e.x, e.y); cx.stroke(); }
+    cx.strokeStyle = "#e9c46a"; cx.lineWidth = 1.2 + 1.4 * s.L;
+    cx.beginPath(); cx.moveTo(z.x, z.y); cx.lineTo(e.x, e.y); cx.stroke();
+    cx.fillStyle = fixedOn(i) ? "#6b6488" : "#a64fff"; cx.strokeStyle = "rgba(255,255,255,0.7)"; cx.lineWidth = 1.5;
+    cx.beginPath(); cx.arc(e.x, e.y, 9, 0, 7); cx.fill(); cx.stroke();
+    const k = flashOf(s, now);
+    if (fixedOn(i) || k > 0) drawTag(i, fixedOn(i) ? s.fixed : nameOf(s.L), k);
+    if (S.info) {
+      const c = Math.round(1200 * Math.log2(zoomRef[i] / s.L));
+      cx.fillStyle = "rgba(232,232,240,0.75)"; cx.font = "11px ui-monospace, SF Mono, monospace"; cx.textAlign = G.land ? "left" : "center";
+      const label = c === 0 ? "0¢" : (c > 0 ? "+" : "−") + Math.abs(c) + "¢";
+      if (G.land) cx.fillText(label, e.x + 14, e.y + 4); else cx.fillText(label, e.x, e.y + 22);
+    }
+  });
+  // which tick is which
+  if (marks.length) {
+    cx.font = "12px system-ui, sans-serif"; cx.textBaseline = "middle"; cx.textAlign = "left";
+    const items = [["pyth", "Fifths"], ["mean", "Meantone"], ["et", "Equal"]];
+    let x = G.W / 2 - items.reduce((w, [, l]) => w + cx.measureText(l).width + 30, 0) / 2;
+    for (const [t, l] of items) { cx.fillStyle = TCOL[t]; cx.fillRect(x, 8, 3, 14); cx.fillStyle = "rgba(232,232,240,0.8)"; cx.fillText(l, x + 9, 15); x += cx.measureText(l).width + 30; }
+    cx.textBaseline = "alphabetic";
+  }
+  // sharp ← → flat
+  cx.fillStyle = "rgba(232,232,240,0.45)"; cx.font = "11px system-ui, sans-serif";
+  if (G.land) { const y = G.H - G.foot + 6; cx.textAlign = "left"; cx.fillText("← sharper", G.nut, y); cx.textAlign = "right"; cx.fillText("flatter →", G.nut + G.Lpx, y); }
+}
 let pendDrag = null;               // { x, y } while dragged off a string
 function pendantPos() {
   if (pendDrag && !pendDrag.on) return pendDrag;
@@ -393,7 +463,7 @@ function stringAt(p) {
   let best = -1, bd = Infinity;
   S.strings.forEach((s, i) => {
     const a = alongOf(p.x, p.y), d = Math.abs(acrossOf(p.x, p.y) - G.across(i));
-    if (a >= -0.02 && a <= s.L + 0.02 && d < G.span * 0.5 && d < bd) { bd = d; best = i; }
+    if ((G.lens || (a >= -0.02 && a <= s.L + 0.02)) && d < G.span * 0.5 && d < bd) { bd = d; best = i; }
   });
   return best;
 }
@@ -412,14 +482,14 @@ stage.addEventListener("pointerdown", (e) => {
   audio();
   stage.setPointerCapture(e.pointerId);
   const p = where(e);
-  for (let i = 0; i < S.strings.length; i++) {
+  for (let i = 0; i < S.strings.length && !G.lens; i++) {
     if (glowing(i) && dist(p, tagPt(i)) < 24) { S.strings[i].fixed = noteOf(S.strings[i].L); save(); tick(); return; }
   }
-  if (dist(p, pendantPos()) < 26) { drags.set(e.pointerId, { k: "pendant" }); pendDrag = { ...p }; tick(); return; }
-  for (let i = 0; i < S.strings.length; i++) {
+  if (!G.lens && dist(p, pendantPos()) < 26) { drags.set(e.pointerId, { k: "pendant" }); pendDrag = { ...p }; tick(); return; }
+  for (let i = 0; i < S.strings.length && !G.lens; i++) {
     if (!fixedOn(i) && dist(p, pt(i, S.strings[i].L)) < 26) { drags.set(e.pointerId, { k: "bridge", i, id: "b" + i }); drags.set("b" + i, true); tick(); return; }
   }
-  for (let i = 0; i < S.strings.length; i++) {
+  for (let i = 0; i < S.strings.length && !G.lens; i++) {
     if (dist(p, gripOf(i)) < 22) { drags.set(e.pointerId, { k: "grip", i }); drags.set("g", i); tick(); return; }
   }
   const i = stringAt(p), g = { k: "strum", c: acrossOf(p.x, p.y), last: i, start: p, moved: false, lp: 0 };
@@ -454,7 +524,7 @@ stage.addEventListener("pointermove", (e) => {
     if (dist(p, g.start) > 8) { g.moved = true; clearTimeout(g.lp); }
     const c = acrossOf(p.x, p.y), a = alongOf(p.x, p.y);
     const lo = Math.min(g.c, c), hi = Math.max(g.c, c);
-    const crossed = S.strings.map((s, i) => i).filter((i) => i !== g.last && G.across(i) > lo && G.across(i) <= hi && a >= 0 && a <= S.strings[i].L + 0.02);
+    const crossed = S.strings.map((s, i) => i).filter((i) => i !== g.last && G.across(i) > lo && G.across(i) <= hi && (G.lens || (a >= 0 && a <= S.strings[i].L + 0.02)));
     crossed.sort((i, j) => (c > g.c ? G.across(i) - G.across(j) : G.across(j) - G.across(i)));
     for (const i of crossed) { pluck(i); g.last = i; }
     if (g.last >= 0 && Math.abs(c - G.across(g.last)) > G.span * 0.45) g.last = -1;
@@ -612,6 +682,9 @@ function ffButton() {
   const t = $("temper");
   t.hidden = !twelve;
   $("chords").hidden = !twelve;
+  $("zoom").hidden = !twelve;
+  $("zoom").setAttribute("aria-pressed", !!S.zoom);
+  if (G && G.lens !== lensOn()) requestAnimationFrame(layout);
   for (const x of t.querySelectorAll("button")) x.setAttribute("aria-pressed", x.dataset.t === (tempering || st));
   if (!!G && (G.foot > FOOT) !== (twelve && G.W < 560)) requestAnimationFrame(layout);
   b.disabled = !nx;
@@ -647,7 +720,7 @@ for (const x of document.querySelectorAll("#temper button")) x.addEventListener(
 async function playChord(names) {
   const idx = names.split(" ").map((n) => S.strings.findIndex((x) => nameOf(x.L) === n)).filter((i) => i >= 0);
   idx.sort((a, b) => S.strings[b].L - S.strings[a].L);
-  for (const i of idx) { pluck(i); await new Promise((r) => setTimeout(r, 60)); }
+  for (const i of idx) { pluck(i); flashAt.set(S.strings[i], performance.now()); tick(); await new Promise((r) => setTimeout(r, 60)); }
 }
 for (const x of document.querySelectorAll("#chords button")) x.addEventListener("click", () => { unlock(); playChord(x.dataset.c); });
 
@@ -773,6 +846,7 @@ function stopDemo(finish) {
 $("ff").addEventListener("click", runDemo);
 $("snap").addEventListener("change", (e) => { S.snap = e.target.value; e.target.blur(); save(); controls(); });
 $("info").addEventListener("click", () => { S.info = !S.info; save(); controls(); draw(); });
+$("zoom").addEventListener("click", () => { S.zoom = !S.zoom; save(); controls(); layout(); });
 $("notes").addEventListener("click", () => { S.notes = !S.notes; save(); controls(); tick(); });
 
 // ---------- sleep ----------
@@ -794,6 +868,6 @@ probe();
 window.resonateDebug = () => ({
   state: JSON.parse(JSON.stringify(S)), freqs: S.strings.map((_, i) => freqOf(i)), plucks: plucks.map((p) => ({ ...p })),
   land: G?.land, span: G?.span, beats: $("beats").textContent, pt: (i, a) => pt(i, a), dock: G && { ...G.dock },
-  audio: ac?.state || null, frac, clinks, locked, bin: () => binPt(), binHot: !!gripOff && drags.get("g") != null, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), stage: stageOf(), demo: demo && demo.to, tempering, setL: (i, L) => { S.strings[i].L = L; draw(); }, noteOf: (L) => noteOf(L), demoLog: demoLog.map((x) => ({ ...x })), speed: (v) => { demoSpeed = v; }, lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
+  audio: ac?.state || null, lens: !!G?.lens, flash: S.strings.map((x) => flashOf(x, performance.now()) > 0), frac, clinks, locked, bin: () => binPt(), binHot: !!gripOff && drags.get("g") != null, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), stage: stageOf(), demo: demo && demo.to, tempering, setL: (i, L) => { S.strings[i].L = L; draw(); }, noteOf: (L) => noteOf(L), demoLog: demoLog.map((x) => ({ ...x })), speed: (v) => { demoSpeed = v; }, lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
   ending: (f) => { makeCtx(); const d = buffer(f, null).getChannelData(0), n = d.length, w = Math.round(n * 0.01); let pk = 0, e = 0; for (let k = 0; k < n; k++) pk = Math.max(pk, Math.abs(d[k])); for (let k = n - w; k < n; k++) e = Math.max(e, Math.abs(d[k])); return { dur: n / ac.sampleRate, peak: pk, end: e / pk }; }, voices: voices.size, partials: (f, x) => partials(f, x, 48000),
 });

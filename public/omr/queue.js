@@ -17,7 +17,7 @@
 //           not stored its job yet).
 // No DOM and nothing heavy: forget.js and the shell import it. Writes don't check whose data the
 // page shows — the caller does (nav.js spaceChanged), as for every DATA_KEYS write.
-import { activeDb } from '../space.js?v=119';
+import { activeDb } from '../space.js?v=120';
 
 export const QUEUE = 'resonate.convert';
 

@@ -279,7 +279,7 @@ async function main() {
     ok(doneY && d.stage === 'pyth' && d.state.strings.length === 13, `F Pentatonic → 12 by fifths (${d.stage}, ${d.state.strings.length} strings)`);
     ok(d.demoLog.length === 7 && d.demoLog.every((x) => x.sorted) && d.fixed.every(Boolean) && new Set(d.fixed).size === 13, `F seven more named in place (${d.demoLog.map((x) => x.name)})`);
     // 12 notes: no ⏩, the switch instead; the names kept as it glides
-    ok(await page.$eval('#ff', (b) => b.hidden) && !(await page.$eval('#temper', (t) => t.hidden)), 'F with 12 notes: Fifths · Meantone · Equal instead of ⏩');
+    ok(await page.$eval('#ff', (b) => getComputedStyle(b).display === 'none') && !(await page.$eval('#temper', (t) => t.hidden)), 'F with 12 notes: Fifths · Meantone · Equal instead of ⏩ (not drawn)');
     // the chord buttons: F♯ major and B major, each string plucked low → high
     await page.click('#chords [data-c^="B3"]'); await sleep(400);
     d = await D(page);
@@ -312,7 +312,9 @@ async function main() {
     if (!(await D(page)).state.notes) await page.click('#notes');
     const sx = await P(page, 1, 0.3); await page.mouse.click(sx.x, sx.y); await sleep(150);
     ok((await D(page)).glows[1], 'F an equal-tempered G played: a sparkle');
-    await page.selectOption('#preset', 'et'); await sleep(150);
+    const opts = await page.$$eval('#preset option', (o) => o.map((x) => x.value).filter(Boolean));
+    ok(opts.join() === 'reset,penta,pyth', `F the presets: Reset, Pentatonic, 12 by fifths (${opts})`);
+    await page.selectOption('#preset', 'pyth'); await sleep(150);
     d = await D(page);
     ok(d.fixed.every(Boolean) && d.state.notes, 'F a tuning preset names its strings');
     await page.click('#notes'); await page.selectOption('#preset', 'penta'); await sleep(150);
@@ -320,9 +322,38 @@ async function main() {
     ok(!d.state.notes && d.fixed.every(Boolean), 'F a preset with ♪ Notes off leaves it off');
     await page.click('#notes'); await sleep(100);
     ok((await D(page)).state.notes && (await D(page)).fixed.join() === 'F♯3,G♯3,A♯3,C♯4,D♯4,F♯4', 'F ♪ Notes on: the names there at once');
-    await page.selectOption('#preset', 'mean'); await sleep(150);
+    await page.selectOption('#preset', 'pyth'); await sleep(150);
+    await page.click('#temper [data-t="mean"]');
+    await until(() => window.resonateDebug().stage === 'mean' && !window.resonateDebug().tempering);
     d = await D(page);
     ok(d.stage === 'mean' && near(d.freqs[4] / d.freqs[0], 1.25, 1e-9), 'F Meantone: a pure major third (5:4)');
+    // a chord button: its tags flash
+    await page.click('#chords [data-c^="F♯3"]'); await sleep(250);
+    d = await D(page);
+    ok(d.flash.filter(Boolean).length === 3 && [0, 4, 7].every((i) => d.flash[i]), `F ▶ F♯: its three tags flash (${d.flash.map((x, i) => x ? d.fixed[i] : '').filter(Boolean)})`);
+    await sleep(1000);
+    ok(!(await D(page)).flash.some(Boolean), 'F … and stop');
+    // 🔍 the lens: the bridges far apart, plucking still works, off again
+    ok(!(await page.$eval('#zoom', (b) => b.hidden)), 'F 🔍 with 12 notes');
+    const bx = () => page.evaluate(() => window.resonateDebug().pt(4, window.resonateDebug().state.strings[4].L).x);
+    const far0 = await bx();
+    await page.click('#zoom'); await sleep(150);
+    d = await D(page);
+    const zm = await bx();
+    await page.click('#temper [data-t="pyth"]');
+    await until(() => window.resonateDebug().stage === 'pyth' && !window.resonateDebug().tempering);
+    const zp = await bx();
+    ok(d.lens && Math.abs(zp - zm) > 150, `F 🔍: A♯3 in Meantone vs Fifths ${Math.abs(zp - zm).toFixed(0)} px apart`);
+    await page.click('#zoom'); await sleep(150);
+    const fp = await bx();
+    ok(!(await D(page)).lens && Math.abs(fp - far0) < 40 && Math.abs(fp - far0) < Math.abs(zp - zm) / 5, `F … without it ${Math.abs(fp - far0).toFixed(0)} px`);
+    await page.click('#zoom'); await sleep(150);
+    const q = await P(page, 6, (await D(page)).state.strings[6].L);
+    await page.mouse.click(q.x - 120, q.y); await sleep(150);
+    d = await D(page);
+    ok(d.plucks[d.plucks.length - 1].i === 6, 'F 🔍: a tap on a string plucks it');
+    await page.selectOption('#preset', 'penta'); await sleep(200);
+    ok(!(await D(page)).lens && await page.$eval('#zoom', (b) => b.hidden), 'F 🔍 gone with fewer than 12 notes');
     await ctx.close();
   }
   {
