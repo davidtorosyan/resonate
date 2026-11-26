@@ -34,7 +34,8 @@ const freqOf = (i) => hz(S.base) / S.strings[i].L;
 
 // ---------- ♪ Notes: the pentatonic's notes found by length ----------
 // The pentatonic of five pure fifths from the open note (frequency ×1, 9/8, 81/64, 3/2, 27/16), in every octave a
-// string can reach. A string within 3¢ of one (not fixed) shows a glowing ✦ above it; a tap names it and fixes it.
+// string can reach. A string within 3¢ of one, plucked open there, shows a glowing ✦ above it (not for a note
+// another string already has); a tap names it and fixes it.
 const PENTA = [1, 9 / 8, 81 / 64, 3 / 2, 27 / 16];
 const CANON = [1, 2, 4].flatMap((o) => PENTA.map((r) => r * o)).filter((r) => r <= 1 / LMIN + 1e-9);
 function noteOf(L) {
@@ -43,7 +44,13 @@ function noteOf(L) {
   return null;
 }
 const fixedOn = (i) => S.notes && !!S.strings[i]?.fixed;
-const glowing = (i) => S.notes && !S.strings[i].fixed && !drags.has("b" + i) && !!noteOf(S.strings[i].L);
+// a ✦ only once the string has been plucked open at that length (`heard`), and never for a note a string already has
+const glowing = (i) => {
+  const s = S.strings[i];
+  if (!S.notes || s.fixed || drags.has("b" + i) || s.heard !== s.L) return false;
+  const n = noteOf(s.L);
+  return !!n && !S.strings.some((o) => o.fixed === n);
+};
 function tagPt(i) { const e = pt(i, S.strings[i].L); return G.land ? { x: e.x, y: e.y - 22 } : { x: e.x, y: e.y - 24 }; }
 
 // ---------- geometry ----------
@@ -172,6 +179,7 @@ function pluck(i, { level = 1, log = true } = {}) {
   src.onended = () => { for (const [k, v] of voices) if (v.src === src) voices.delete(k); };
   const kept = partials(f, x, a.sampleRate).filter(([n, v]) => n <= 16 && Math.abs(v) > 0.02 * Math.abs(Math.sin(n * Math.PI * PLUCK_AT) / n ** 1.6)).map(([n]) => n);
   if (log) plucks.push({ i, f, x, kept, at: performance.now() });
+  if (log && x == null && S.notes) { S.strings[i].heard = S.strings[i].L; tick(); }   // played open at this length with ♪ Notes on: it may be named
   if (plucks.length > 24) plucks.shift();
   // the string's motion: its first harmonics' shapes, slowed down
   const shape = partials(f, x, 48000).filter(([n]) => n <= 8);
