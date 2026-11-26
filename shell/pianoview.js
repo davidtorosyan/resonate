@@ -26,12 +26,12 @@
 // (hand.js, forScore().hands()). In hand mode the row grows a band under the keys (handplan.js
 // bandOf: from the keys' height; 0 where a white key is too narrow for a hand — numbers then) for the
 // palm, the wrist and the forearm; it comes or goes with the Score laid out once (resized: keep).
-import { mountKeyboard } from "../keyboard.js?v=108";
-import { mountHands } from "../hand.js?v=108";
-import { bandOf } from "../handplan.js?v=108";
-import { loadPiano, pianoNow, holdPiano, primeHold, pianoBus, keepAlive, ownContext, sleepAudio } from "../piano.js?v=108";
-import { soundGone } from "../pitch.js?v=108";
-import { SHARPS } from "../music.js?v=108";
+import { mountKeyboard } from "../keyboard.js?v=109";
+import { mountHands } from "../hand.js?v=109";
+import { bandOf } from "../handplan.js?v=109";
+import { loadPiano, pianoNow, holdPiano, primeHold, pianoBus, keepAlive, ownContext, sleepAudio } from "../piano.js?v=109";
+import { soundGone } from "../pitch.js?v=109";
+import { SHARPS } from "../music.js?v=109";
 
 const MIN_PRESS = 0.25; // s: a quick tap still sounds this long
 const LIFT_PLAY = 0.8; // s: a press that could only sound at the lift
