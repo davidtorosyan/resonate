@@ -645,6 +645,7 @@ function applyPreset(v) {
   for (const i of [...voices.keys()]) stopVoice(i);
   vib.length = 0;
   if (v === "reset") S = { ...DEFAULT(), snap: S.snap, info: S.info, notes: S.notes };
+  else if (v === "chain11") { S.strings = chainSpec(12).map(({ L, k }) => ({ L, fixed: tagOf(L, k) })); S.pendant = null; }
   else if (TUNINGS[v]) { S.strings = TUNINGS[v].L.map((L) => ({ L, ...(v === "two" || v === "one" ? {} : { fixed: nameOf(L) }) })); S.pendant = null; }
   save(); controls(); layout();
 }
