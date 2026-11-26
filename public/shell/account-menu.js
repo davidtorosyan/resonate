@@ -2,11 +2,11 @@
 // out; read from the saved session, the sign-in library is never loaded here) and its menu: a sheet
 // on a phone, a popover under the avatar on a tablet. Sign in, password and sign out stay on
 // account.html (its Sign out order: sync, warn, stop the sync, leave, sign out).
-import { savedUser } from "../auth.js?v=123";
-import { activeSpace } from "../space.js?v=123";
-import { activeProfile } from "../profiles.js?v=123";
-import { SHARPS } from "../music.js?v=123";
-import { ic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=123";
+import { savedUser } from "../auth.js?v=124";
+import { activeSpace } from "../space.js?v=124";
+import { activeProfile } from "../profiles.js?v=124";
+import { SHARPS } from "../music.js?v=124";
+import { ic, esc, openOverlay, closeOverlay, overlayOpen, go } from "./chrome.js?v=124";
 
 const SYNC_OFF = "resonate.sync.off"; // (sync.js OFF_KEY, as account.js: this device doesn't sync)
 const $ = (id) => document.getElementById(id);
@@ -56,7 +56,7 @@ export function mountAccount({ version }) {
       const on = sw.getAttribute("aria-checked") !== "true";
       try { on ? localStorage.removeItem(SYNC_OFF) : localStorage.setItem(SYNC_OFF, "1"); } catch {}
       sw.setAttribute("aria-checked", String(on));
-      if (on) import("../sync.js?v=123").then((m) => { if (!m.syncOff()) { m.start(); m.syncNow(); } }).catch((err) => console.warn("sync", err));
+      if (on) import("../sync.js?v=124").then((m) => { if (!m.syncOff()) { m.start(); m.syncNow(); } }).catch((err) => console.warn("sync", err));
     }
   });
 

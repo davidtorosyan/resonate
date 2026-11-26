@@ -142,12 +142,18 @@ async function main() {
     d = await D(page); last = d.plucks[d.plucks.length - 1];
     ok(last.i === 1 && last.x == null && last.kept[0] === 1, 'L another string sounds open');
     // off the strings → back to the tray
-    // forgiving: dropped at 0.37 it rests on ⅓; at 0.205 it isn't pulled onto 1/5 (a faint, high harmonic)
+    // strong: only ½, ⅓, ⅔ — the nearest, wherever it's dropped; off: anywhere
     await drag(page, await P(page, 0, 1 / 3), await P(page, 0, 0.37));
     ok(near((await D(page)).state.pendant?.a, 1 / 3, 1e-9), 'L strong: the pendant dropped at 0.37 rests on ⅓');
-    await drag(page, await P(page, 0, 1 / 3), await P(page, 0, 0.205));
+    await drag(page, await P(page, 0, 1 / 3), await P(page, 0, 0.24));
+    ok(near((await D(page)).state.pendant?.a, 1 / 3, 1e-9), 'L strong: dropped near ¼ it rests on ⅓ (only ½, ⅓, ⅔)');
+    await drag(page, await P(page, 0, 1 / 3), await P(page, 0, 0.86));
+    ok(near((await D(page)).state.pendant?.a, 2 / 3, 1e-9), 'L strong: dropped at 0.86 it rests on ⅔');
+    await page.selectOption('#snap', 'off');
+    await drag(page, await P(page, 0, 2 / 3), await P(page, 0, 0.205));
     d = await D(page);
-    ok(d.state.pendant && Math.abs(d.state.pendant.a - 0.2) > 0.003, `L never pulled onto 1/5 (${d.state.pendant?.a.toFixed(3)})`);
+    ok(d.state.pendant && Math.abs(d.state.pendant.a - 0.205) < 0.01, `L snap off: it rests where it's dropped (${d.state.pendant?.a.toFixed(3)})`);
+    await page.selectOption('#snap', 'strong');
     await drag(page, await P(page, 0, d.state.pendant.a), { x: dock.x + 2, y: dock.y });
     d = await D(page);
     ok(d.state.pendant === null, 'L the pendant dropped off a string goes back to its tray');
