@@ -270,11 +270,14 @@ async function main() {
     const doneP = await until(() => !window.resonateDebug().demo);
     d = await D(page);
     ok(mid.demo === 'penta' && doneP && d.stage === 'penta' && d.state.strings.length === 6, `F 2 strings → Pentatonic, step by step (${d.stage}, ${d.state.strings.length} strings, ${d.plucks.length} plucks)`);
+    ok(d.state.notes && d.fixed.join() === 'F♯3,G♯3,A♯3,C♯4,D♯4,F♯4', `F each note named as it's won, in order (${d.fixed})`);
+    ok(d.demoLog.length === 6 && d.demoLog.every((x) => x.sorted && x.L >= 0.5 - 1e-9), `F each slid into place as it was won, none named above the octave (${d.demoLog.map((x) => x.name)})`);
     ok(d.plucks.length >= 12 && d.plucks.some((p) => p.x != null && Math.abs(p.x - 1 / 3) < 1e-6) && d.plucks.some((p) => p.x != null && Math.abs(p.x - 0.5) < 1e-6), 'F with the pendant at ⅓ and ½ along the way');
     await page.click('#ff');
     const doneY = await until(() => !window.resonateDebug().demo, 60000);
     d = await D(page);
     ok(doneY && d.stage === 'pyth' && d.state.strings.length === 13, `F Pentatonic → 12 by fifths (${d.stage}, ${d.state.strings.length} strings)`);
+    ok(d.demoLog.length === 7 && d.demoLog.every((x) => x.sorted) && d.fixed.every(Boolean) && new Set(d.fixed).size === 13, `F seven more named in place (${d.demoLog.map((x) => x.name)})`);
     await page.click('#ff');
     const doneE = await until(() => !window.resonateDebug().demo);
     d = await D(page);
@@ -283,7 +286,7 @@ async function main() {
     await page.selectOption('#preset', 'reset'); await sleep(150);
     await page.click('#ff'); await sleep(300); await page.click('#ff'); await sleep(150);
     d = await D(page);
-    ok(!d.demo && d.stage === 'penta', 'F a second tap skips to the end');
+    ok(!d.demo && d.stage === 'penta' && d.fixed.join() === 'F♯3,G♯3,A♯3,C♯4,D♯4,F♯4', 'F a second tap skips to the end, every string named');
     await page.selectOption('#preset', 'mean'); await sleep(150);
     d = await D(page);
     ok(d.stage === 'mean' && near(d.freqs[4] / d.freqs[0], 1.25, 1e-9), 'F Meantone: a pure major third (5:4)');
