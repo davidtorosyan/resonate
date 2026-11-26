@@ -49,6 +49,10 @@ async function main() {
     const go = await page.$eval('#go', (b) => { const r = b.getBoundingClientRect(), st = document.getElementById('stage').getBoundingClientRect(); return { mode: b.dataset.mode, cx: r.left + r.width / 2, bottom: st.bottom - r.bottom, mid: st.left + st.width / 2 }; });
     const lowest = await page.evaluate(() => { const d = window.resonateDebug(); let y = 0; for (let i = 0; i < d.state.strings.length; i++) { y = Math.max(y, d.grip(i).y, d.pt(i, 0).y); } const st = document.getElementById('stage').getBoundingClientRect(); return st.top + y; });
     const goTop = await page.$eval('#go', (b) => b.getBoundingClientRect().top);
+    const foot = await page.evaluate(() => { const r = (id) => document.getElementById(id).getBoundingClientRect(); const st = r('stage'), d = window.resonateDebug().dock; return { add: r('add'), go: r('go'), dock: { x: d.x, y: d.y + st.top }, w: st.width, inHead: !!document.querySelector('header #add') }; });
+    ok(!foot.inHead && foot.add.left > foot.go.right && Math.abs((foot.add.top + foot.add.bottom) / 2 - (foot.go.top + foot.go.bottom) / 2) < 6, '+ string at the foot, beside ■'.replace(/^/, 'L '));
+    ok(foot.dock.x < foot.w * 0.15 && Math.abs(foot.dock.y - (foot.go.top + foot.go.bottom) / 2) < 6, `L the pendant's tray at the foot's left (${foot.dock.x.toFixed(0)}, ${foot.dock.y.toFixed(0)})`);
+    ok(await page.$eval('#snap', (e) => e.tagName === 'SELECT' && e.value === 'strong'), 'L snapping is a menu');
     ok(go.mode === 'stop' && Math.abs(go.cx - go.mid) < 2 && go.bottom < 30 && goTop > lowest + 10, `L ■ centred at the foot, under the strings and grips (${go.mode}, ${goTop.toFixed(0)} > ${lowest.toFixed(0)})`);
     await hideShow(page); d = await D(page);
     ok(d.audio === 'running' && !d.lockShown, 'L back from hidden with the sound able to start: no ▶ Start');
@@ -90,17 +94,17 @@ async function main() {
     d = await D(page);
     ok(near(d.state.strings[1].L, 2 / 3, 1e-9), 'L a fixed string keeps its length');
     await page.click('#notes'); await sleep(100);
-    await page.click('#snap'); // gentle
+    await page.selectOption('#snap', 'gentle');
     let b2 = await P(page, 1, 2 / 3), t2 = await P(page, 1, 0.672);
     await drag(page, b2, t2);
     d = await D(page);
     ok(d.state.snap === 'gentle' && d.state.strings[1].L > 2 / 3 && d.state.strings[1].L < 0.672, `L gentle: drawn towards ⅔, not onto it (${d.state.strings[1].L.toFixed(4)})`);
-    await page.click('#snap'); // off
+    await page.selectOption('#snap', 'off');
     b2 = await P(page, 1, d.state.strings[1].L); t2 = await P(page, 1, 0.672);
     await drag(page, b2, t2);
     d = await D(page);
     ok(d.state.snap === 'off' && near(d.state.strings[1].L, 0.672, 0.003), `L off: where it's dropped (${d.state.strings[1].L.toFixed(4)})`);
-    await page.click('#snap'); // strong again
+    await page.selectOption('#snap', 'strong');
     b2 = await P(page, 1, d.state.strings[1].L); t2 = await P(page, 1, 0.665);
     await drag(page, b2, t2);
     // the pendant at ½ on string 1
@@ -124,7 +128,13 @@ async function main() {
     d = await D(page); last = d.plucks[d.plucks.length - 1];
     ok(last.i === 1 && last.x == null && last.kept[0] === 1, 'L another string sounds open');
     // off the strings → back to the tray
-    await drag(page, await P(page, 0, 1 / 3), { x: dock.x - 40, y: dock.y + 300 });
+    // forgiving: dropped at 0.37 it rests on ⅓; at 0.205 it isn't pulled onto 1/5 (a faint, high harmonic)
+    await drag(page, await P(page, 0, 1 / 3), await P(page, 0, 0.37));
+    ok(near((await D(page)).state.pendant?.a, 1 / 3, 1e-9), 'L strong: the pendant dropped at 0.37 rests on ⅓');
+    await drag(page, await P(page, 0, 1 / 3), await P(page, 0, 0.205));
+    d = await D(page);
+    ok(d.state.pendant && Math.abs(d.state.pendant.a - 0.2) > 0.003, `L never pulled onto 1/5 (${d.state.pendant?.a.toFixed(3)})`);
+    await drag(page, await P(page, 0, d.state.pendant.a), { x: dock.x + 2, y: dock.y });
     d = await D(page);
     ok(d.state.pendant === null, 'L the pendant dropped off a string goes back to its tray');
     await page.mouse.click(s0.x, s0.y); await sleep(50); await page.mouse.click(s2.x, s2.y); await sleep(80);
