@@ -58,7 +58,7 @@ async function main() {
     ok(d.audio === 'running' && !d.lockShown, 'L back from hidden with the sound able to start: no ▶ Start');
     const e185 = await page.evaluate(() => window.resonateDebug().ending(185));
     ok(e185.dur >= 5 && e185.end < 0.002, `L a pluck rings ${e185.dur.toFixed(1)} s and fades to nothing (its last 1 % at ${(e185.end * 100).toFixed(2)} % of its peak)`);
-    const s0 = await P(page, 0, 0.5);
+    const s0 = await P(page, 0, 0.5), s2 = await P(page, 1, 0.3);
     await page.mouse.click(s0.x, s0.y); await sleep(100);
     d = await D(page);
     ok(d.plucks.length === 1 && d.plucks[0].i === 0 && near(d.plucks[0].f, 185.0, 0.1) && d.audio, `L a tap plucks string 1 at ${d.plucks[0]?.f.toFixed(1)} Hz`);
@@ -84,7 +84,10 @@ async function main() {
     ok(!(await D(page)).glows.some(Boolean), 'L no glows with ♪ Notes off');
     await page.click('#notes'); await sleep(150);
     d = await D(page);
-    ok(d.glows[1] && !d.glows[0] === false, `L ♪ Notes: a glow over each string on a pentatonic note (${d.glows})`);
+    ok(!d.glows.some(Boolean), 'L ♪ Notes on: no glow before a string is played');
+    await page.mouse.click(s2.x, s2.y); await sleep(150);
+    d = await D(page);
+    ok(d.glows[1] && !d.glows[0], `L played on a pentatonic note: a glow over that string only (${d.glows})`);
     const tg = await page.evaluate(() => { const r = document.getElementById('stage').getBoundingClientRect(); const q = window.resonateDebug().tag(1); return { x: q.x + r.left, y: q.y + r.top }; });
     await page.mouse.click(tg.x, tg.y); await sleep(120);
     d = await D(page);
@@ -93,6 +96,16 @@ async function main() {
     await drag(page, fb, ft);
     d = await D(page);
     ok(near(d.state.strings[1].L, 2 / 3, 1e-9), 'L a fixed string keeps its length');
+    // no duplicates: a new string at ⅔ played → no glow (C♯4 is taken)
+    await page.click('#add'); await sleep(100);
+    const nb = await P(page, 2, 1), nt = await P(page, 2, 0.668);
+    await drag(page, nb, nt);
+    const n2 = await P(page, 2, 0.3);
+    await page.mouse.click(n2.x, n2.y); await sleep(150);
+    d = await D(page);
+    ok(near(d.state.strings[2].L, 2 / 3, 1e-9) && !d.glows[2], 'L a note already tagged on another string: no glow');
+    const g2 = await page.evaluate(() => { const r = document.getElementById('stage').getBoundingClientRect(); const q = window.resonateDebug().grip(2); return { x: q.x + r.left, y: q.y + r.top, left: r.left }; });
+    await drag(page, g2, { x: g2.left + 2, y: g2.y });
     await page.click('#notes'); await sleep(100);
     await page.selectOption('#snap', 'gentle');
     let b2 = await P(page, 1, 2 / 3), t2 = await P(page, 1, 0.672);
@@ -123,7 +136,6 @@ async function main() {
     d = await D(page); last = d.plucks[d.plucks.length - 1];
     ok(near(last.x, 1 / 3, 1e-9) && last.kept.length && last.kept.every((n) => n % 3 === 0), `L at ⅓ every third harmonic (${last.kept.join(' ')})`);
     // string 2 plucked open, the pendant off it
-    const s2 = await P(page, 1, 0.3);
     await page.mouse.click(s2.x, s2.y); await sleep(80);
     d = await D(page); last = d.plucks[d.plucks.length - 1];
     ok(last.i === 1 && last.x == null && last.kept[0] === 1, 'L another string sounds open');
