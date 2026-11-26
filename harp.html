@@ -45,7 +45,8 @@
       #go[data-mode="stop"] { padding: 0; width: 56px; font-size: 1.3rem; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.25); }
       #footR { position: absolute; bottom: 14px; left: calc(50% + 44px); height: 56px; z-index: 2; display: flex; align-items: center; gap: 8px; }
       #go[data-mode="start"] ~ #footR { left: calc(50% + 86px); }
-      #add, #step { height: 48px; border-radius: 999px; padding: 0 1rem; white-space: nowrap; }
+      #add, #step, #dbl { height: 48px; border-radius: 999px; padding: 0 1rem; white-space: nowrap; }
+      #dbl:disabled { opacity: 0.35; }
       #step:disabled { opacity: 0.35; }
       #step .narrow { display: none; }
       #ff { position: absolute; bottom: 14px; right: calc(50% + 44px); z-index: 2; height: 48px; margin-bottom: 4px; border-radius: 999px; padding: 0 0.9rem; display: flex; align-items: center; gap: 0.4rem; }
@@ -68,8 +69,9 @@
       @media (max-width: 560px) {
         #temper { right: auto; left: calc(50% - 170px); bottom: 82px; }
         #temper button { padding: 0 0.6rem; }
-        #footR { left: calc(50% + 36px); gap: 6px; }
-        #add, #step { padding: 0 0.45rem; font-size: 0.78rem; }
+        #footR { left: calc(50% + 36px); gap: 4px; }
+        #add, #step, #dbl { padding: 0 0.45rem; font-size: 0.78rem; }
+        #go[data-mode="start"] ~ #footR #dbl { display: none; }
         #step .wide { display: none; } #step .narrow { display: inline; }
         #chords { position: absolute; left: 134px; transform: translateX(-100%); bottom: 68px; }
         #go[data-mode="start"] ~ #footR { left: calc(50% + 63px); }
@@ -101,7 +103,7 @@
       <button id="notes" aria-pressed="false" aria-label="Find the notes">♪ Notes</button>
       <button id="zoom" aria-pressed="false" aria-label="Zoom in on the bridges" title="Zoom in on the bridges" hidden>🔍</button>
       <button id="info" aria-pressed="false" aria-label="Show the numbers" class="mono">123</button>
-      <span id="version" class="mono">v125</span>
+      <span id="version" class="mono">v126</span>
     </header>
     <div id="stage" data-locked="1">
       <canvas id="cv"></canvas>
@@ -116,12 +118,13 @@
       </div>
       <div id="footR">
         <button id="add" aria-label="Add a string">+ string</button>
+        <button id="dbl" aria-label="Add a string an octave below the last" title="An octave below the last string (twice its length)">×2</button>
         <button id="step" aria-label="Add the next fifth" title="Add the next fifth"><span class="wide">+ fifth</span><span class="narrow">+5th</span></button>
         <div id="chords" role="group" aria-label="Chords" hidden>
           <button data-c="F♯3 A♯3 C♯4" aria-label="Play F♯ major" title="F♯3 · A♯3 · C♯4">▶ F♯</button><button data-c="B3 D♯4 F♯4" aria-label="Play B major" title="B3 · D♯4 · F♯4">▶ B</button>
         </div>
       </div>
     </div>
-    <script type="module" src="harp.js?v=125"></script>
+    <script type="module" src="harp.js?v=126"></script>
   </body>
 </html>
