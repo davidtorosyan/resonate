@@ -56,7 +56,18 @@
       #temper button { border: none; border-radius: 0; min-height: 44px; background: rgba(255,255,255,0.05); padding: 0 0.85rem; font-size: 0.85rem; }
       #temper button + button { border-left: 1px solid rgba(255,255,255,0.14); }
       #temper button[aria-pressed="true"] { background: rgba(166,79,255,0.4); }
-      @media (max-width: 560px) { #temper { right: auto; left: 50%; transform: translateX(-50%); bottom: 82px; } }
+      #chords { position: absolute; bottom: 18px; left: calc(50% + 170px); z-index: 2; display: flex; border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; overflow: hidden; }
+      #go[data-mode="start"] ~ #chords { left: calc(50% + 212px); }
+      #chords[hidden] { display: none; }
+      #chords button { border: none; border-radius: 0; min-height: 44px; min-width: 52px; background: rgba(255,255,255,0.05); padding: 0 0.75rem; font-size: 0.85rem; }
+      #chords button + button { border-left: 1px solid rgba(255,255,255,0.14); }
+      #chords button:active { background: rgba(166,79,255,0.4); }
+      @media (max-width: 560px) {
+        #temper { right: auto; left: calc(50% - 170px); bottom: 82px; }
+        #temper button { padding: 0 0.6rem; }
+        #chords, #go[data-mode="start"] ~ #chords { left: auto; right: calc(50% - 170px); bottom: 82px; }
+        #chords button { min-width: 44px; padding: 0 0.55rem; }
+      }
       #go:active { transform: translateX(-50%) scale(0.94); }
       #remove { position: absolute; display: none; transform: translate(-50%, -50%); background: #3a1530; border-color: #ff7aa8; color: #ffc2d6; }
     </style>
@@ -82,7 +93,7 @@
       </select>
       <button id="notes" aria-pressed="false" aria-label="Find the notes">♪ Notes</button>
       <button id="info" aria-pressed="false" aria-label="Show the numbers" class="mono">123</button>
-      <span id="version" class="mono">v118</span>
+      <span id="version" class="mono">v119</span>
     </header>
     <div id="stage" data-locked="1">
       <canvas id="cv"></canvas>
@@ -95,7 +106,10 @@
       <div id="temper" role="group" aria-label="Tuning" hidden>
         <button data-t="pyth" title="12 by fifths (Pythagorean)">Fifths</button><button data-t="mean" title="Meantone (quarter-comma)">Meantone</button><button data-t="et" title="Equal temperament">Equal</button>
       </div>
+      <div id="chords" role="group" aria-label="Chords" hidden>
+        <button data-c="F♯3 A♯3 C♯4" aria-label="Play F♯ major" title="F♯3 · A♯3 · C♯4">▶ F♯</button><button data-c="B3 D♯4 F♯4" aria-label="Play B major" title="B3 · D♯4 · F♯4">▶ B</button>
+      </div>
     </div>
-    <script type="module" src="harp.js?v=118"></script>
+    <script type="module" src="harp.js?v=119"></script>
   </body>
 </html>

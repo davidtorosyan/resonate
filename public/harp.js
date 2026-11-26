@@ -611,6 +611,7 @@ function ffButton() {
   b.hidden = twelve;
   const t = $("temper");
   t.hidden = !twelve;
+  $("chords").hidden = !twelve;
   for (const x of t.querySelectorAll("button")) x.setAttribute("aria-pressed", x.dataset.t === (tempering || st));
   if (!!G && (G.foot > FOOT) !== (twelve && G.W < 560)) requestAnimationFrame(layout);
   b.disabled = !nx;
@@ -642,6 +643,13 @@ function temperTo(key) {
   requestAnimationFrame(step);
 }
 for (const x of document.querySelectorAll("#temper button")) x.addEventListener("click", () => temperTo(x.dataset.t));
+// a chord at a tap: its strings plucked low → high, 60 ms apart (F♯ major: meantone's pure third; B major: its wolf)
+async function playChord(names) {
+  const idx = names.split(" ").map((n) => S.strings.findIndex((x) => nameOf(x.L) === n)).filter((i) => i >= 0);
+  idx.sort((a, b) => S.strings[b].L - S.strings[a].L);
+  for (const i of idx) { pluck(i); await new Promise((r) => setTimeout(r, 60)); }
+}
+for (const x of document.querySelectorAll("#chords button")) x.addEventListener("click", () => { unlock(); playChord(x.dataset.c); });
 
 let demo = null;                   // { to, cancel } while ⏩ acts the steps out
 let demoSpeed = 1;                 // (tests: faster)

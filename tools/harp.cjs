@@ -280,6 +280,14 @@ async function main() {
     ok(d.demoLog.length === 7 && d.demoLog.every((x) => x.sorted) && d.fixed.every(Boolean) && new Set(d.fixed).size === 13, `F seven more named in place (${d.demoLog.map((x) => x.name)})`);
     // 12 notes: no ⏩, the switch instead; the names kept as it glides
     ok(await page.$eval('#ff', (b) => b.hidden) && !(await page.$eval('#temper', (t) => t.hidden)), 'F with 12 notes: Fifths · Meantone · Equal instead of ⏩');
+    // the chord buttons: F♯ major and B major, each string plucked low → high
+    await page.click('#chords [data-c^="B3"]'); await sleep(400);
+    d = await D(page);
+    const ch = d.plucks.slice(-3).map((p) => d.fixed[p.i]);
+    ok(ch.join() === 'B3,D♯4,F♯4', `F ▶ B plucks B3, D♯4, F♯4 low → high (${ch})`);
+    await page.click('#chords [data-c^="F♯3"]'); await sleep(400);
+    d = await D(page);
+    ok(d.plucks.slice(-3).map((p) => d.fixed[p.i]).join() === 'F♯3,A♯3,C♯4', 'F ▶ F♯ plucks F♯3, A♯3, C♯4');
     await page.click('#temper [data-t="mean"]');
     ok(await until(() => window.resonateDebug().stage === 'mean' && !window.resonateDebug().tempering), 'F Meantone: every bridge glides there');
     d = await D(page);
@@ -325,9 +333,10 @@ async function main() {
     await page.goto(BASE + 'harp.html');
     await page.waitForFunction(() => window.resonateDebug);
     await page.selectOption('#preset', 'pyth'); await sleep(400);
-    const r = await page.evaluate(() => { const b = (id) => document.getElementById(id).getBoundingClientRect(); const d = window.resonateDebug(); const st = b('stage'); let low = 0; for (let i = 0; i < d.state.strings.length; i++) low = Math.max(low, d.grip(i).y + st.top + 8); return { t: b('temper'), go: b('go'), add: b('add'), low, w: innerWidth }; });
+    const r = await page.evaluate(() => { const b = (id) => document.getElementById(id).getBoundingClientRect(); const d = window.resonateDebug(); const st = b('stage'); let low = 0; for (let i = 0; i < d.state.strings.length; i++) low = Math.max(low, d.grip(i).y + st.top + 8); return { t: b('temper'), c: b('chords'), go: b('go'), add: b('add'), low, w: innerWidth }; });
     const apart = (a, b) => a.bottom <= b.top || b.bottom <= a.top || a.right <= b.left || b.right <= a.left;
     ok(r.t.left >= 0 && r.t.right <= r.w && apart(r.t, r.go) && apart(r.t, r.add) && r.t.top >= r.low, `P the switch on a row of its own (${r.t.top.toFixed(0)} ≥ ${r.low.toFixed(0)})`);
+    ok(r.c.left >= 0 && r.c.right <= r.w && apart(r.c, r.t) && apart(r.c, r.go) && apart(r.c, r.add) && r.c.top >= r.low, `P the chords beside the switch (${r.t.right.toFixed(0)} ≤ ${r.c.left.toFixed(0)} ≤ ${r.c.right.toFixed(0)} of ${r.w})`);
     await ctx.close();
   }
   ok(!errors.length, `no page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
