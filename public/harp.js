@@ -294,28 +294,38 @@ function beatOf(f1, f2) {
   }
   return null;
 }
-let beatsTimer = 0;
+// The badge: a small B, coloured by the rate; tapped, it opens to BEATS + the number (S.beatsOpen) and closes again.
+// It goes back to neutral 2 s after the pair has stopped sounding (■, or both rung out).
+let quietFor = null;               // the pluck (its time) whose beats were let go
+let quietSince = 0, beatsPoll = 0;
+function neutral(el, num) { num.textContent = "–"; el.style.setProperty("--h", "none"); el.dataset.level = "none"; el.dataset.d = ""; }
 function showBeats() {
-  const el = $("beats");
+  const el = $("beats"), num = el.querySelector("b");
+  el.dataset.open = S.beatsOpen ? "1" : "";
+  el.setAttribute("aria-expanded", S.beatsOpen ? "true" : "false");
   const p = plucks[plucks.length - 1], q = p && [...plucks].reverse().find((v) => v.i !== p.i);
-  if (!q || p.i < 0 || q.i < 0 || p.i >= S.strings.length || q.i >= S.strings.length) { el.hidden = true; return; }
+  if (!q || p.i < 0 || q.i < 0 || p.i >= S.strings.length || q.i >= S.strings.length || p.at === quietFor) { neutral(el, num); return; }
   const best = beatOf(freqOf(p.i), freqOf(q.i));
-  el.hidden = false;
-  const num = el.querySelector("b");
-  if (!best) { num.textContent = "–"; el.style.setProperty("--h", "none"); el.dataset.level = "none"; }
+  if (!best) neutral(el, num);
   else {
     const d = best.d < 0.05 ? 0 : best.d;
     num.textContent = d === 0 ? "0" : d < 10 ? d.toFixed(1) : String(Math.round(d));
     el.style.setProperty("--h", String(Math.round(135 * (1 - Math.min(1, d / 12)))));   // green → red at 12/s
     el.dataset.level = d < 0.6 ? "calm" : d < 4 ? "mild" : d < 9 ? "rough" : "harsh";
+    el.dataset.d = String(best.d);
   }
   el.dataset.pair = `${q.i} ${p.i}`;
-  el.dataset.d = best ? String(best.d) : "";
-  // dim once the pair has rung out
-  el.classList.remove("old");
-  clearTimeout(beatsTimer);
-  beatsTimer = setTimeout(() => el.classList.add("old"), 9000);
+  // watch for the pair falling silent
+  quietSince = 0;
+  if (!beatsPoll) beatsPoll = setInterval(() => {
+    const p2 = plucks[plucks.length - 1], q2 = p2 && [...plucks].reverse().find((v) => v.i !== p2.i);
+    if (!p2 || !q2 || p2.at === quietFor) { clearInterval(beatsPoll); beatsPoll = 0; return; }
+    if (voices.has(p2.i) || voices.has(q2.i)) { quietSince = 0; return; }
+    if (!quietSince) quietSince = performance.now();
+    else if (performance.now() - quietSince >= 2000) { quietFor = p2.at; clearInterval(beatsPoll); beatsPoll = 0; showBeats(); }
+  }, 250);
 }
+$("beats").addEventListener("click", () => { S.beatsOpen = !S.beatsOpen; save(); showBeats(); });
 
 // ---------- drawing ----------
 const vib = [];
@@ -916,7 +926,7 @@ probe();
 
 window.resonateDebug = () => ({
   state: JSON.parse(JSON.stringify(S)), freqs: S.strings.map((_, i) => freqOf(i)), plucks: plucks.map((p) => ({ ...p })),
-  land: G?.land, span: G?.span, beats: $("beats").hidden ? "" : $("beats").textContent, beatsLevel: $("beats").dataset.level || null, beatsD: $("beats").dataset.d === undefined || $("beats").dataset.d === "" ? null : +$("beats").dataset.d, pt: (i, a) => pt(i, a), dock: G && { ...G.dock },
+  land: G?.land, span: G?.span, beats: $("beats").textContent, beatsOpen: !!S.beatsOpen, beatsLevel: $("beats").dataset.level || null, beatsD: $("beats").dataset.d === undefined || $("beats").dataset.d === "" ? null : +$("beats").dataset.d, pt: (i, a) => pt(i, a), dock: G && { ...G.dock },
   audio: ac?.state || null, lens: !!G?.lens, flash: S.strings.map((x) => flashOf(x, performance.now()) > 0), frac, clinks, locked, bin: () => binPt(), binHot: !!gripOff && drags.get("g") != null, glows: S.strings.map((_, i) => glowing(i)), tag: (i) => tagPt(i), fixed: S.strings.map((x) => x.fixed || null), stage: stageOf(), demo: demo && (demo.to.key || (demo.step ? "step" : demo.to.n === 6 ? "penta" : demo.to.n === 13 ? "pyth" : String(demo.to.n))), chain: chainCount(), tempering, setL: (i, L) => { S.strings[i].L = L; draw(); }, noteOf: (L) => noteOf(L), demoLog: demoLog.map((x) => ({ ...x })), speed: (v) => { demoSpeed = v; }, lockShown: !$("lock").hidden && !$("lock").classList.contains("out"), grip: (i) => gripOf(i),
   ending: (f) => { makeCtx(); const d = buffer(f, null).getChannelData(0), n = d.length, w = Math.round(n * 0.01); let pk = 0, e = 0; for (let k = 0; k < n; k++) pk = Math.max(pk, Math.abs(d[k])); for (let k = n - w; k < n; k++) e = Math.max(e, Math.abs(d[k])); return { dur: n / ac.sampleRate, peak: pk, end: e / pk }; }, voices: voices.size, partials: (f, x) => partials(f, x, 48000),
 });

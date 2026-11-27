@@ -42,7 +42,7 @@ async function main() {
     ok(d.land && d.state.strings.length === 1 && d.state.base === 54 && d.state.strings[0].L === 1, 'L one string, full length, open F♯3, laid across');
     await page.click('#add'); await sleep(100);
     d = await D(page);
-    ok(!d.state.info && await page.$eval('#beats', (e) => e.hidden), 'L the numbers hidden, no beats badge before two strings are played');
+    ok(!d.state.info && d.beatsLevel === 'none' && !d.beatsOpen && /^B/.test(d.beats), 'L the numbers hidden; the beats badge a neutral B before two strings are played');
     await sleep(700); d = await D(page);
     ok(d.lockShown === (d.audio !== 'running'), `L ▶ Start only when the sound can't start by itself (${d.audio}, start ${d.lockShown ? 'shown' : 'not shown'})`);
     if (d.lockShown) { await page.click('#go'); await sleep(500); }
@@ -166,7 +166,23 @@ async function main() {
     await page.click('#info'); await sleep(80);
     await page.mouse.click(s0.x, s0.y); await sleep(50); await page.mouse.click(s2.x, s2.y); await sleep(80);
     d = await D(page);
-    ok(d.beatsD !== null && d.beatsD < 0.05 && d.beatsLevel === 'calm' && /beats\s*0/.test(d.beats), `L the beats badge: a pure fifth, 0, green ("${d.beats}", ${d.beatsLevel})`);
+    ok(d.beatsD !== null && d.beatsD < 0.05 && d.beatsLevel === 'calm' && /Beats\s*0/i.test(d.beats), `L the beats badge: a pure fifth, 0, green ("${d.beats}", ${d.beatsLevel})`);
+    const bw = () => page.$eval('#beats', (e) => ({ w: e.getBoundingClientRect().width, num: getComputedStyle(e.querySelector('b')).display }));
+    let w0 = await bw();
+    ok(w0.w <= 40 && w0.num === 'none', `L the badge closed: a small B (${w0.w.toFixed(0)} px)`);
+    await page.click('#beats'); await sleep(250);
+    let w1 = await bw();
+    ok(w1.w > 70 && w1.num !== 'none' && (await D(page)).beatsOpen, `L a tap opens it: BEATS and the number (${w1.w.toFixed(0)} px)`);
+    await page.click('#beats'); await sleep(250);
+    ok((await bw()).w <= 40 && !(await D(page)).beatsOpen, 'L a second tap closes it');
+    ok((await D(page)).voices === 2, 'L (the pair still ringing: the badge keeps its colour)');
+    await page.click('#go'); await sleep(1200);
+    ok((await D(page)).beatsLevel === 'calm', 'L ■: the badge waits a moment…');
+    await sleep(1600);
+    d = await D(page);
+    ok(d.beatsLevel === 'none' && /–/.test(d.beats), `L … then goes back to a neutral B once the sound has stopped (${d.beatsLevel})`);
+    await page.click('#info'); await sleep(50); await page.click('#info'); await sleep(50);
+    ok((await D(page)).beatsLevel === 'none', 'L … and stays neutral through other redraws');
     // + and a long press removes
     await page.click('#add'); await sleep(80);
     d = await D(page);
